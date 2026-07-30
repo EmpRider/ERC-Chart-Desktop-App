@@ -49,9 +49,13 @@ export function validateBranchPolicy(context) {
     if (context.base !== "main") {
       errors.push("The delivery-governance bootstrap branch must target main.");
     }
-    for (const path of context.changedFiles ?? []) {
-      if (!BOOTSTRAP_PATHS.some((pattern) => pattern.test(path))) {
-        errors.push(`Bootstrap pull request contains a disallowed path: ${path}`);
+    if (!Array.isArray(context.changedFiles) || context.changedFiles.length === 0) {
+      errors.push("Bootstrap validation requires non-empty PR_CHANGED_FILES.");
+      return errors;
+    }
+    for (const changedPath of context.changedFiles) {
+      if (!BOOTSTRAP_PATHS.some((pattern) => pattern.test(changedPath))) {
+        errors.push(`Bootstrap pull request contains a disallowed path: ${changedPath}`);
       }
     }
     return errors;
