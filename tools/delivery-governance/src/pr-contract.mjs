@@ -14,6 +14,7 @@ export const REQUIRED_SECTIONS = [
 ];
 
 const JIRA_PREFIX = "https://erc-chart.atlassian.net/browse/";
+const TEMPLATE_INSTRUCTION = /<!--\s*(?:Task PR:|Replace with linked Jira|State what this pull request|Explain the smallest implementation|Include exact commands|Include measurements|List added or changed dependencies|Describe failure modes|Add screenshots)/i;
 
 export function parsePullRequestBody(markdown) {
   if (typeof markdown !== "string") throw new TypeError("Pull-request body must be text.");
@@ -66,7 +67,9 @@ export function validatePullRequestBody(markdown, context) {
   for (const heading of REQUIRED_SECTIONS) {
     if (!Object.hasOwn(sections, heading)) errors.push(`Missing required section: ${heading}`);
   }
-  if (/<!--/.test(markdown)) errors.push("Pull-request body still contains template instructions.");
+  if (TEMPLATE_INSTRUCTION.test(markdown)) {
+    errors.push("Pull-request body still contains template instructions.");
+  }
   if (errors.length) return errors;
 
   const acceptance = sections["Acceptance criteria"];
