@@ -1,0 +1,41 @@
+{
+  "calibratedAt": "2026-01-01T00:00:00Z",
+  "codingAuthor": "example-coding-bot",
+  "independentApprover": "EmpRider",
+  "taskPullRequest": 2,
+  "epicPullRequest": 3,
+  "qodoTrialEndsOn": "2026-01-15",
+  "reviewers": {
+    "coderabbit": {
+      "login": "example-coderabbit",
+      "representation": "review",
+      "observedContexts": ["example/CodeRabbit"]
+    },
+    "semgrep": {
+      "login": "example-semgrep",
+      "representation": "check",
+      "observedContexts": ["example/Semgrep"]
+    },
+    "qodo": {
+      "login": "example-qodo",
+      "representation": "review",
+      "observedContexts": ["example/Qodo"]
+    },
+    "codeReviewAi": {
+      "login": "example-code-review-ai",
+      "representation": "comment",
+      "observedContexts": []
+    }
+  },
+  "assertions": {
+    "separateAuthor": true,
+    "coderabbitComprehensive": true,
+    "semgrepBlocks": true,
+    "qodoTaskAndEpic": true,
+    "codeReviewAiEpicOnly": true,
+    "staleApprovalDismissed": true,
+    "directPushRejected": true,
+    "forcePushRejected": true,
+    "documentationMergeCreatedNoRelease": true
+  }
+}
