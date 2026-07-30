@@ -1,0 +1,20 @@
+[config]
+disable_auto_feedback = true
+
+[github_app]
+handle_push_trigger = false
+pr_commands = []
+push_commands = []
+
+[review_agent]
+comments_location_policy = "both"
+inline_comments_severity_threshold = 3
+issues_user_guidelines = """
+Verify correctness, the linked Jira acceptance criteria, failure paths, and the
+approved ERC-chart architecture. Treat behavior outside scope as actionable.
+"""
+compliance_user_guidelines = """
+Prefer the smallest complete implementation. Flag speculative abstractions,
+duplicate layers, unnecessary dependencies, unrelated refactoring, missing
+performance evidence, hidden deferred features, and untested failure paths.
+"""
