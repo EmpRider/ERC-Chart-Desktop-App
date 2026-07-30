@@ -132,6 +132,26 @@ test("root package-lock receives a bounded higher structured-file limit", async 
   assert.deepEqual(await validateRepository(root), []);
 });
 
+test("large root package-lock is still scanned for secrets", async () => {
+  const token = `ghp_${"z".repeat(36)}`;
+  const root = await fixture({
+    "package-lock.json": JSON.stringify({
+      name: "large-workspace",
+      lockfileVersion: 3,
+      packages: {},
+      padding: "x".repeat(2_050_000),
+      marker: token,
+    }),
+  });
+  const errors = await validateRepository(root);
+  assert.ok(
+    errors.some(
+      (error) => error.startsWith("package-lock.json:") && error.endsWith("github-legacy-token"),
+    ),
+  );
+  assert.equal(errors.some((error) => error.includes(token)), false);
+});
+
 test("oversized Markdown files fail before link scanning", async () => {
   const root = await fixture({ "large.md": `# Large\n${"x".repeat(2_000_000)}` });
   const errors = await validateRepository(root);
