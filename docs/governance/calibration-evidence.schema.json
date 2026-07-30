@@ -30,7 +30,10 @@
         "semgrep": {
           "allOf": [
             { "$ref": "#/$defs/reviewer" },
-            { "properties": { "representation": { "const": "check" } } }
+            {
+              "type": "object",
+              "properties": { "representation": { "const": "check" } }
+            }
           ]
         },
         "qodo": { "$ref": "#/$defs/reviewer" },
