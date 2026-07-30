@@ -5,6 +5,7 @@ import { parse as parseToml } from "smol-toml";
 import { parseAllDocuments } from "yaml";
 
 const MAX_SCAN_BYTES = 2_000_000;
+const MAX_ROOT_PACKAGE_LOCK_BYTES = 20_000_000;
 
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 const FORBIDDEN_GENERATED_DIRECTORIES = new Set(["coverage", "dist", "out", "release"]);
@@ -55,6 +56,12 @@ async function exists(filePath) {
 
 function relative(root, file) {
   return path.relative(root, file).split(path.sep).join("/");
+}
+
+function structuredFileLimit(root, file) {
+  return relative(root, file) === "package-lock.json"
+    ? MAX_ROOT_PACKAGE_LOCK_BYTES
+    : MAX_SCAN_BYTES;
 }
 
 async function scanTree(root) {
@@ -108,8 +115,9 @@ async function validateStructuredFilesFrom(root, files) {
     const ext = path.extname(file).toLowerCase();
     if (!STRUCTURED_EXTENSIONS.has(ext)) continue;
     const info = await stat(file);
-    if (info.size > MAX_SCAN_BYTES) {
-      errors.push(`${rel}: structured file exceeds ${MAX_SCAN_BYTES}-byte validation limit`);
+    const limit = structuredFileLimit(root, file);
+    if (info.size > limit) {
+      errors.push(`${rel}: structured file exceeds ${limit}-byte validation limit`);
       continue;
     }
     const text = await readFile(file, "utf8");
@@ -280,6 +288,7 @@ export {
   EXCLUDED_DIRECTORIES,
   FORBIDDEN_BINARY_EXTENSIONS,
   FORBIDDEN_GENERATED_DIRECTORIES,
+  MAX_ROOT_PACKAGE_LOCK_BYTES,
   MAX_SCAN_BYTES,
   SECRET_PATTERNS,
 };
