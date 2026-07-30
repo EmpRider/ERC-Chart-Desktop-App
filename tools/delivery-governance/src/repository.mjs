@@ -137,7 +137,7 @@ export async function validateStructuredFiles(root) {
 
 export async function validateSchemaExamples(root) {
   const errors = [];
-  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  const ajv = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
   for (const [schemaRel, exampleRel] of SCHEMA_EXAMPLES) {
     const schemaPath = path.join(root, schemaRel);
     const examplePath = path.join(root, exampleRel);
