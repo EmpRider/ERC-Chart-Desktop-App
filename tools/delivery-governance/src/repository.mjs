@@ -1,5 +1,7 @@
+import { createReadStream } from "node:fs";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import Ajv2020 from "ajv/dist/2020.js";
 import { parse as parseToml } from "smol-toml";
 import { parseAllDocuments } from "yaml";
@@ -66,6 +68,12 @@ function relative(root, file) {
 }
 
 function structuredFileLimit(root, file) {
+  return relative(root, file) === "package-lock.json"
+    ? MAX_ROOT_PACKAGE_LOCK_BYTES
+    : MAX_SCAN_BYTES;
+}
+
+function trackedContentLimit(root, file) {
   return relative(root, file) === "package-lock.json"
     ? MAX_ROOT_PACKAGE_LOCK_BYTES
     : MAX_SCAN_BYTES;
@@ -367,6 +375,25 @@ function isScannableText(file) {
   ].includes(ext);
 }
 
+async function scanSecretPatterns(root, file) {
+  const errors = [];
+  const rel = relative(root, file);
+  const lines = createInterface({
+    input: createReadStream(file, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  let lineNumber = 0;
+
+  for await (const line of lines) {
+    lineNumber += 1;
+    for (const [rule, pattern] of SECRET_PATTERNS) {
+      if (pattern.test(line)) errors.push(`${rel}:${lineNumber}: ${rule}`);
+    }
+  }
+
+  return errors;
+}
+
 async function validateTrackedContentFrom(root, files) {
   const errors = [];
   for (const file of files) {
@@ -377,19 +404,17 @@ async function validateTrackedContentFrom(root, files) {
       continue;
     }
     if (!isScannableText(file)) continue;
+
     const info = await stat(file);
-    if (info.size > MAX_SCAN_BYTES) {
+    const limit = trackedContentLimit(root, file);
+    if (info.size > limit) {
       if (!STRUCTURED_EXTENSIONS.has(ext) && ext !== ".md") {
-        errors.push(`${rel}: text file exceeds ${MAX_SCAN_BYTES}-byte validation limit`);
+        errors.push(`${rel}: text file exceeds ${limit}-byte validation limit`);
       }
       continue;
     }
-    const lines = (await readFile(file, "utf8")).split(/\r?\n/);
-    for (let index = 0; index < lines.length; index += 1) {
-      for (const [rule, pattern] of SECRET_PATTERNS) {
-        if (pattern.test(lines[index])) errors.push(`${rel}:${index + 1}: ${rule}`);
-      }
-    }
+
+    errors.push(...(await scanSecretPatterns(root, file)));
   }
   return errors;
 }
