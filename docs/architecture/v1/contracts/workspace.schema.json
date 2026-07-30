@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erc-chart.local/schemas/workspace-v1.json",
+  "title": "ERC-chart Workspace v1",
+  "description": "Local MVP workspace. Drawing objects and provider secrets are deliberately not part of this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "activeTabId",
+    "tabs",
+    "savedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "activeTabId": {
+      "$ref": "#/$defs/id"
+    },
+    "tabs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/tab"
+      }
+    },
+    "savedAtMs": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "layout": {
+      "enum": [
+        "grid-1",
+        "split-horizontal",
+        "split-vertical",
+        "grid-3-left",
+        "grid-3-top",
+        "grid-4"
+      ]
+    },
+    "tab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "layout",
+        "chartSlots"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "layout": {
+          "$ref": "#/$defs/layout"
+        },
+        "chartSlots": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/chartSlot"
+          }
+        }
+      }
+    },
+    "chartSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "providerProfileId",
+        "instrumentId",
+        "timeframeSeconds",
+        "chartType",
+        "indicators"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "providerProfileId": {
+          "$ref": "#/$defs/id"
+        },
+        "instrumentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "timeframeSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31536000
+        },
+        "chartType": {
+          "enum": [
+            "candlestick",
+            "line",
+            "area"
+          ]
+        },
+        "viewport": {
+          "$ref": "#/$defs/viewport"
+        },
+        "indicators": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/indicator"
+          }
+        }
+      }
+    },
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "visibleBars",
+        "rightOffsetBars",
+        "priceScaleMode"
+      ],
+      "properties": {
+        "visibleBars": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 100000
+        },
+        "rightOffsetBars": {
+          "type": "integer",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "priceScaleMode": {
+          "enum": [
+            "auto",
+            "manual"
+          ]
+        },
+        "manualPriceMin": {
+          "type": "number"
+        },
+        "manualPriceMax": {
+          "type": "number"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "priceScaleMode": {
+                "const": "manual"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "manualPriceMin": true,
+              "manualPriceMax": true
+            },
+            "required": [
+              "manualPriceMin",
+              "manualPriceMax"
+            ]
+          }
+        }
+      ]
+    },
+    "indicator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "pluginId",
+        "definitionId",
+        "enabled",
+        "parameters",
+        "inputs"
+      ],
+      "properties": {
+        "instanceId": {
+          "$ref": "#/$defs/id"
+        },
+        "pluginId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+          "maxLength": 128
+        },
+        "definitionId": {
+          "$ref": "#/$defs/id"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/inputBinding"
+          }
+        }
+      }
+    },
+    "inputBinding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "candles"
+            },
+            "timeframeSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 31536000
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ticks"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instanceId",
+            "outputKey"
+          ],
+          "properties": {
+            "kind": {
+              "const": "indicator-output"
+            },
+            "instanceId": {
+              "$ref": "#/$defs/id"
+            },
+            "outputKey": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

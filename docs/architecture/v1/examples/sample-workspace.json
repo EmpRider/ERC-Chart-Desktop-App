@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "workspace-default",
+  "name": "Default Workspace",
+  "activeTabId": "tab-main",
+  "tabs": [
+    {
+      "id": "tab-main",
+      "title": "Main",
+      "layout": "grid-4",
+      "chartSlots": [
+        {
+          "id": "chart-1",
+          "providerProfileId": "profile-binomo-main",
+          "instrumentId": "Z-CRY/IDX",
+          "timeframeSeconds": 60,
+          "chartType": "candlestick",
+          "viewport": {
+            "visibleBars": 120,
+            "rightOffsetBars": 0,
+            "priceScaleMode": "auto"
+          },
+          "indicators": []
+        },
+        {
+          "id": "chart-2",
+          "providerProfileId": "profile-binomo-main",
+          "instrumentId": "Z-CRY/IDX",
+          "timeframeSeconds": 120,
+          "chartType": "line",
+          "viewport": {
+            "visibleBars": 120,
+            "rightOffsetBars": 0,
+            "priceScaleMode": "auto"
+          },
+          "indicators": []
+        },
+        {
+          "id": "chart-3",
+          "providerProfileId": "profile-binomo-main",
+          "instrumentId": "Z-CRY/IDX",
+          "timeframeSeconds": 180,
+          "chartType": "area",
+          "viewport": {
+            "visibleBars": 120,
+            "rightOffsetBars": 0,
+            "priceScaleMode": "auto"
+          },
+          "indicators": []
+        },
+        {
+          "id": "chart-4",
+          "providerProfileId": "profile-binomo-main",
+          "instrumentId": "Z-CRY/IDX",
+          "timeframeSeconds": 300,
+          "chartType": "candlestick",
+          "viewport": {
+            "visibleBars": 120,
+            "rightOffsetBars": 0,
+            "priceScaleMode": "auto"
+          },
+          "indicators": []
+        }
+      ]
+    }
+  ],
+  "savedAtMs": 1785398400000
+}

@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erc-chart.local/schemas/plugin-manifest-v1.json",
+  "title": "ERC-chart Plugin Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "id",
+    "kind",
+    "name",
+    "version",
+    "apiVersion",
+    "entry",
+    "authoringLanguage",
+    "permissions"
+  ],
+  "properties": {
+    "manifestVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "kind": {
+      "enum": [
+        "data-provider",
+        "indicator"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
+        }
+      }
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "apiVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "entry": {
+      "allOf": [
+        {
+          "type": "string",
+          "pattern": "^dist/[A-Za-z0-9._/-]+\\.m?js$",
+          "maxLength": 240
+        },
+        {
+          "not": {
+            "type": "string",
+            "pattern": "(^|/)\\.\\.(/|$)"
+          }
+        }
+      ]
+    },
+    "authoringLanguage": {
+      "enum": [
+        "javascript",
+        "typescript"
+      ]
+    },
+    "permissions": {
+      "$ref": "#/$defs/permissions"
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "integrity": {
+      "$ref": "#/$defs/integrity"
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "pattern": "^(https|wss)://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/.*)?$",
+            "maxLength": 300
+          },
+          "default": []
+        },
+        "credentials": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "default": []
+        },
+        "storage": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 8,
+          "items": {
+            "enum": [
+              "plugin-settings",
+              "provider-cache"
+            ]
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "network",
+        "credentials",
+        "storage"
+      ]
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "files"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "files": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          },
+          "propertyNames": {
+            "allOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "not": {
+                  "type": "string",
+                  "pattern": "(^|/)\\.\\.(/|$)"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "publisherKeyId",
+        "value"
+      ],
+      "properties": {
+        "algorithm": {
+          "enum": [
+            "ed25519"
+          ]
+        },
+        "publisherKeyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    }
+  }
+}
