@@ -537,7 +537,7 @@ because automatic updates are outside the MVP.
 - A failed release is never repaired by moving an existing tag.
 - A version collision fails closed and requires a new reviewed version change.
 - Missing code-signing credentials produce an explicitly unsigned pre-MVP build;
-  the MVP signing decision remains governed by architecture decision OD-005.
+  the MVP signing decision remains governed by open decision OD-005.
 - Release secrets are stored only as GitHub Actions secrets or environment
   secrets and are never available to pull-request jobs.
 
@@ -595,9 +595,9 @@ The delivery workflow is accepted only when:
 ## 16. Current external references
 
 - GitHub protected branches:
-  <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
+  <https://docs.github.com/en/repositories/configuring-branches-and-merges/in-your-repository/managing-protected-branches/about-protected-branches>
 - GitHub repository rulesets:
-  <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository>
+  <https://docs.github.com/en/repositories/configuring-branches-and-merges/in-your-repository/managing-rulesets/creating-rulesets-for-a-repository>
 - GitHub Actions workflow syntax:
   <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax>
 - GitHub Actions token permissions:
