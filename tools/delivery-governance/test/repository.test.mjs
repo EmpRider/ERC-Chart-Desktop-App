@@ -30,7 +30,7 @@ test("valid structured files and relative links pass", async () => {
   assert.deepEqual(await validateRepository(root), []);
 });
 
-test("schema examples accept standard format keywords without throwing", async () => {
+test("schema examples accept valid standard format values", async () => {
   const root = await fixture({
     "docs/architecture/v1/contracts/plugin-manifest.schema.json": JSON.stringify({
       $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -43,6 +43,38 @@ test("schema examples accept standard format keywords without throwing", async (
     }),
   });
   assert.deepEqual(await validateSchemaExamples(root), []);
+});
+
+test("schema examples reject invalid standard format values", async () => {
+  const root = await fixture({
+    "docs/architecture/v1/contracts/plugin-manifest.schema.json": JSON.stringify({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      required: ["createdAt"],
+      properties: { createdAt: { type: "string", format: "date-time" } },
+    }),
+    "docs/architecture/v1/examples/binomo-provider.plugin.json": JSON.stringify({
+      createdAt: "not-a-date",
+    }),
+  });
+  const errors = await validateSchemaExamples(root);
+  assert.ok(errors.some((error) => error.includes("does not satisfy")));
+});
+
+test("calibration evidence example is part of schema validation", async () => {
+  const root = await fixture({
+    "docs/governance/calibration-evidence.schema.json": JSON.stringify({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      required: ["independentApprover"],
+      properties: { independentApprover: { const: "EmpRider" } },
+    }),
+    "docs/governance/calibration-evidence.example.json": JSON.stringify({
+      independentApprover: "wrong-user",
+    }),
+  });
+  const errors = await validateSchemaExamples(root);
+  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
 });
 
 test("broken relative Markdown link fails", async () => {
