@@ -1,0 +1,166 @@
+name: Delivery gates
+
+on:
+  pull_request:
+    branches:
+      - main
+      - "epic/**"
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - edited
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  governance:
+    name: Governance
+    runs-on: ubuntu-24.04
+    outputs:
+      application_present: ${{ steps.application.outputs.application_present }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          package-manager-cache: false
+      - name: Install governance dependencies
+        run: npm ci --prefix tools/delivery-governance --ignore-scripts
+      - name: Build pull-request context
+        id: context
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          sha_pattern='^[0-9a-f]{40}$'
+          [[ "$PR_BASE_SHA" =~ $sha_pattern ]]
+          [[ "$PR_HEAD_SHA" =~ $sha_pattern ]]
+          if git merge-base --is-ancestor "$PR_BASE_SHA" "$PR_HEAD_SHA"; then
+            echo "base_is_ancestor=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_is_ancestor=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo 'changed_files<<EOF'
+            git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Test governance tool
+        run: npm --prefix tools/delivery-governance test
+      - name: Validate pull-request contract
+        env:
+          PR_BASE_IS_ANCESTOR: ${{ steps.context.outputs.base_is_ancestor }}
+          PR_CHANGED_FILES: ${{ steps.context.outputs.changed_files }}
+        run: npm --prefix tools/delivery-governance run validate:pr
+      - name: Validate repository
+        run: npm --prefix tools/delivery-governance run validate:repository
+      - name: Detect application contract
+        id: application
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { validateApplicationContract } from "./tools/delivery-governance/src/application-contract.mjs";
+          const result = await validateApplicationContract(process.cwd());
+          for (const error of result.errors) console.error(error);
+          if (result.errors.length) process.exit(1);
+          console.error(result.message);
+          console.log(`application_present=${result.applicationPresent}`);
+          NODE
+
+  application-linux:
+    name: Application / Linux
+    needs: governance
+    if: needs.governance.outputs.application_present == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:integration
+      - run: npm run build
+      - run: npm run test:performance
+      - run: npm run audit:ci
+      - run: npm run version:check
+
+  application-windows:
+    name: Application / Windows
+    needs: governance
+    if: >-
+      needs.governance.outputs.application_present == 'true' &&
+      startsWith(github.head_ref, 'epic/') &&
+      github.base_ref == 'main'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:integration
+      - run: npm run build
+      - run: npm run test:performance
+      - run: npm run audit:ci
+      - run: npm run version:check
+      - run: npm run package:win
+      - run: npm run smoke:installer
+
+  delivery-gates:
+    name: Delivery gates
+    if: always()
+    needs:
+      - governance
+      - application-linux
+      - application-windows
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          package-manager-cache: false
+      - name: Aggregate required results
+        shell: bash
+        env:
+          GOVERNANCE_RESULT: ${{ needs.governance.result }}
+          APPLICATION_LINUX_RESULT: ${{ needs.application-linux.result }}
+          APPLICATION_WINDOWS_RESULT: ${{ needs.application-windows.result }}
+          APPLICATION_PRESENT: ${{ needs.governance.outputs.application_present }}
+          EPIC_TO_MAIN: ${{ startsWith(github.head_ref, 'epic/') && github.base_ref == 'main' }}
+        run: |
+          set -euo pipefail
+          node tools/delivery-governance/src/aggregate.mjs | tee -a "$GITHUB_STEP_SUMMARY"
