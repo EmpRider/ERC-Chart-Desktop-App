@@ -308,12 +308,12 @@ three blocking checks are active. If those checks are unavailable, CodeRabbit's
 request-changes review remains required, but the repository must not claim that
 three distinct automated pre-merge checks are enforced.
 
-The initial draft governance pull request reported CodeRabbit's `Free` plan,
-summary-only behavior, and a successful status for a skipped draft review.
-Therefore neither that status nor the generated summary satisfies this design's
-CodeRabbit gate. The CodeRabbit connection or entitlement must be refreshed and a
-ready calibration pull request must receive a comprehensive review before product
-code proceeds.
+The latest draft governance pull-request feedback reports CodeRabbit's
+`Pro Plus` plan, but it also states `Review skipped` because the pull request is
+still a draft. Its successful status therefore confirms the entitlement refresh,
+not a comprehensive review pass. A ready calibration pull request must still
+prove comprehensive review behavior and the availability of configured
+pre-merge checks before product code proceeds.
 
 ### 8.2 Semgrep
 
