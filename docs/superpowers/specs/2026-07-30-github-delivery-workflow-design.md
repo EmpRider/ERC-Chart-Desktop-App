@@ -5,6 +5,7 @@
 | Date | 2026-07-30 |
 | Status | Approved conversational design, awaiting written-spec review |
 | Repository | `EmpRider/ERC-Chart-Desktop-App` |
+| Visibility | Public |
 | Jira project | `ECDD` |
 
 ## 1. Purpose
@@ -17,7 +18,8 @@ The workflow has four goals:
 1. isolate each Jira task from its parent implementation epic;
 2. prevent off-scope, slow, unnecessarily complex, or over-engineered code from
    being merged;
-3. require automated and independent review at both task and epic boundaries;
+3. require quota-aware automated and independent review at both task and epic
+   boundaries;
 4. publish the exact Windows installer built from each released `main` commit
    under its matching GitHub Release tag.
 
@@ -28,12 +30,17 @@ changes.
 ## 2. Related project scope
 
 The first application implementation epic is
-[ECDD-53 — Repository, build, and secure desktop shell](https://erc-chart.atlassian.net/browse/ECDD-53).
+[ECDD-53 — Repository, build, and secure desktop shell][ecdd-53].
 Its relevant existing tasks include:
 
-- [ECDD-54 — Create TypeScript monorepo and package boundaries](https://erc-chart.atlassian.net/browse/ECDD-54);
-- [ECDD-56 — Configure strict lint, type, and test gates](https://erc-chart.atlassian.net/browse/ECDD-56); and
-- [ECDD-62 — Build the NSIS x64 installer pipeline](https://erc-chart.atlassian.net/browse/ECDD-62).
+- [ECDD-54 — Create TypeScript monorepo and package boundaries][ecdd-54];
+- [ECDD-56 — Configure strict lint, type, and test gates][ecdd-56]; and
+- [ECDD-62 — Build the NSIS x64 installer pipeline][ecdd-62].
+
+[ecdd-53]: https://erc-chart.atlassian.net/browse/ECDD-53
+[ecdd-54]: https://erc-chart.atlassian.net/browse/ECDD-54
+[ecdd-56]: https://erc-chart.atlassian.net/browse/ECDD-56
+[ecdd-62]: https://erc-chart.atlassian.net/browse/ECDD-62
 
 The delivery-governance configuration is established before normal implementation
 begins. Executable build and release jobs become active only when Epic 1 introduces
@@ -175,27 +182,73 @@ state.
 
 ## 6. Mandatory review loop
 
-The same loop applies to task-to-epic and epic-to-`main` pull requests.
+### 6.1 Reviewer allocation
+
+Semgrep is a deterministic static-analysis and security gate, not one of the three
+AI review agents. The three AI review agents are CodeRabbit, Qodo, and Code Review
+AI.
+
+| Gate | Task → epic (trial) | Task → epic (later) | Epic → `main` |
+|---|---:|---:|---:|
+| GitHub Actions quality gates | Required | Required | Required, full suite |
+| Semgrep | Required | Required | Required |
+| CodeRabbit | Required | Required | Required |
+| Qodo | Required | Conditional | Required |
+| Code Review AI | Not run | Not run | Required |
+| Independent Code Owner review | Required | Required | Required |
+
+The public repository is eligible for CodeRabbit's public-repository review
+entitlement. That eligibility is not treated as active until calibration proves
+that CodeRabbit performs a comprehensive review rather than only a summary or a
+draft-skip status. Code Review AI is reserved exclusively for epic-to-`main` pull
+requests because its free plan permits up to ten code reviews per month.
+
+Qodo is required for both pull-request levels while the current 14-day trial is
+active. When the trial ends, task-to-epic pull requests return to the post-trial
+column unless the repository owner explicitly confirms sufficient continued Qodo
+capacity. Public repository visibility does not by itself extend the Qodo trial:
+continued access requires a paid plan or acceptance into Qodo's qualified
+open-source program. Qodo remains part of the approved epic-to-`main` gate. If
+continued access is not established, epic merges fail closed until the owner
+approves a governance change; the workflow must not silently omit Qodo.
+
+### 6.2 Review sequence and quota protection
 
 1. The coding agent pushes a complete change and marks the draft pull request
    ready.
-2. GitHub Actions runs all applicable deterministic checks.
-3. CodeRabbit performs an incremental review.
-4. CodeRabbit evaluates three explicit blocking concerns:
+2. GitHub Actions and Semgrep run all applicable deterministic checks.
+3. CodeRabbit performs its review and evaluates three explicit blocking concerns:
    - scope and architecture alignment;
    - performance safety;
    - simplicity and absence of over-engineering.
-5. Any failing check or review finding results in requested changes.
-6. The coding agent fixes the same branch, updates evidence, and requests review
-   again.
-7. A new reviewable commit dismisses stale approvals and restarts applicable
-   checks.
-8. After CodeRabbit approves and all checks pass, the independent approver reviews
-   the complete diff, test evidence, measurements, and unresolved conversations.
-9. The independent approver submits `APPROVE` only when every gate is satisfied;
-   otherwise the approver submits `REQUEST_CHANGES`.
-10. The pull request is merged only after both approvals are current and all
-    conversations are resolved.
+4. The coding agent fixes all failing checks and actionable CodeRabbit findings
+   before a quota-limited reviewer is invoked.
+5. Qodo is invoked against the stable head commit for every epic-to-`main` pull
+   request and, during the 14-day trial, for every task-to-epic pull request.
+   Per-push Qodo reviews are disabled; a new review is requested only after a
+   coherent fix round is ready.
+6. The coding agent fixes all actionable Qodo findings and reruns affected
+   deterministic checks.
+7. For epic-to-`main` only, Code Review AI is invoked after GitHub Actions,
+   Semgrep, CodeRabbit, and Qodo are clear. This prevents its monthly quota from
+   being spent on draft work or early fix iterations.
+8. Any code change made after a Qodo or Code Review AI review invalidates that
+   review for merge purposes. The affected reviewer must assess the new head
+   commit.
+9. The independent approver reviews the complete diff, current-head review
+   evidence, test results, measurements, and unresolved conversations.
+10. The independent approver submits `APPROVE` only when every applicable gate is
+    satisfied; otherwise the approver submits `REQUEST_CHANGES`.
+11. The pull request is merged only after approvals are current, every required
+    reviewer has completed a current-head review, all blocking checks pass, and
+    all actionable conversations are resolved.
+
+Code Review AI's monthly operational budget is eight first-pass epic reviews plus
+two reserved re-reviews. If a ninth first-pass epic review would consume the
+reserve, that merge waits for quota availability or an explicit policy change.
+Any calibration review counts against the same ten-review allowance and reduces
+that month's first-pass capacity before the reserve is touched.
+Code Review AI must never be intentionally invoked on task-to-epic pull requests.
 
 There is no review-round limit. A pull request remains unmergeable until it passes.
 There is no routine bypass for administrators.
@@ -210,19 +263,31 @@ Before the first product-code task is accepted, a calibration pull request must
 prove all of the following:
 
 1. the coding-agent pull-request author is not `EmpRider`;
-2. CodeRabbit reviews pull requests targeting both `main` and `epic/*`;
-3. an unresolved CodeRabbit finding blocks the pull request;
-4. resolving the finding causes CodeRabbit to approve;
-5. `EmpRider` can submit a second, counted approval;
-6. pushing a new reviewable commit dismisses the prior approvals;
-7. direct pushes to `main` and `epic/*` are rejected.
+2. CodeRabbit performs comprehensive reviews, rather than summary-only or skipped
+   reviews, for pull requests targeting both `main` and `epic/*`;
+3. the Semgrep scan runs for both pull-request directions and a blocking test
+   finding fails its check;
+4. Qodo can review task-to-epic and epic-to-`main` pull requests during the trial,
+   and its review can be tied to the current head commit;
+5. Code Review AI can be restricted to epic-to-`main` pull requests or invoked
+   manually without consuming quota on task-to-epic pull requests;
+6. unresolved actionable findings from every applicable reviewer prevent approval;
+7. `EmpRider` can submit a counted independent approval after automated reviews;
+8. pushing a new reviewable commit dismisses prior approvals and invalidates old
+   review evidence; and
+9. direct pushes to `main` and `epic/*` are rejected.
 
 If the coding agent uses `EmpRider`, the calibration fails and product code must
 not merge until a separate author identity is connected. A written review comment
 from the assistant is useful evidence but is not represented as a formal GitHub
 approval in that condition.
 
-## 8. CodeRabbit configuration
+Exact GitHub check names and bot identities are recorded from calibration output;
+they are never guessed when configuring required checks.
+
+## 8. Automated reviewer and scanner configuration
+
+### 8.1 CodeRabbit
 
 The repository-root `.coderabbit.yaml` must:
 
@@ -242,6 +307,64 @@ calibration pull request, not the presence of YAML alone, is the proof that the
 three blocking checks are active. If those checks are unavailable, CodeRabbit's
 request-changes review remains required, but the repository must not claim that
 three distinct automated pre-merge checks are enforced.
+
+The initial draft governance pull request reported CodeRabbit's `Free` plan,
+summary-only behavior, and a successful status for a skipped draft review.
+Therefore neither that status nor the generated summary satisfies this design's
+CodeRabbit gate. The CodeRabbit connection or entitlement must be refreshed and a
+ready calibration pull request must receive a comprehensive review before product
+code proceeds.
+
+### 8.2 Semgrep
+
+Semgrep runs on task-to-epic and epic-to-`main` pull requests. Its diff-aware scan
+is a required check, and policies designated as Block fail the pull request. The
+initial policy prioritizes newly introduced high- or critical-severity code
+findings plus verified-secret findings when that Semgrep capability is enabled;
+lower-confidence findings remain visible for triage without creating an
+unreviewable noise gate. The independent secret-like-content check remains active
+regardless of the connected Semgrep product set.
+
+The exact Semgrep check name is captured from the calibration pull request before
+it is added to a ruleset. A missing, cancelled, or failed required Semgrep result
+blocks the merge. A false positive is resolved through documented Semgrep triage,
+not by bypassing branch protection.
+
+### 8.3 Qodo
+
+The repository-root `.pr_agent.toml` supplies Qodo with the same scope,
+performance, correctness, and simplicity instructions used by the other
+reviewers. Qodo runs in manual or ready-for-review mode rather than on every push.
+The `/agentic_review` command is used when an explicit current-head review is
+required.
+
+During the 14-day trial, Qodo reviews pull requests targeting `epic/*` and `main`.
+After the trial, task-to-epic automatic review can be excluded with Qodo's target
+branch filtering while epic-to-`main` review is retained. The transition is a
+reviewed governance configuration change; it is not an undocumented manual
+bypass. Before the trial expires, the repository owner must either activate a
+paid Qodo plan, obtain acceptance into Qodo's open-source program, or accept that
+epic-to-`main` merges will pause pending a newly approved reviewer policy.
+
+### 8.4 Code Review AI
+
+Code Review AI is installed for this single repository and is reserved for
+epic-to-`main` review. Its current free Marketplace plan permits up to ten code
+reviews per month. Provider settings or a supported manual trigger must prevent
+task-to-epic pull requests from consuming that allowance.
+
+Calibration must prove the scoping behavior before Code Review AI is treated as
+an enforceable epic gate. If the app automatically spends reviews on task pull
+requests and offers no usable scope control, the quota strategy is not accepted;
+the integration must be reconfigured before product-code pull requests proceed.
+
+### 8.5 Enforcement evidence
+
+Some review apps may publish comments instead of a stable pass/fail check or a
+counted GitHub approval. Branch rules require only check names that calibration
+proves stable. Regardless of API representation, the independent Code Owner must
+verify that every reviewer required by the matrix completed a review of the
+current head commit and that all actionable findings are resolved.
 
 ## 9. GitHub Actions design
 
@@ -314,16 +437,24 @@ as test builds. They are not GitHub Releases.
 
 ## 10. Repository rules
 
-Two active branch rulesets are required:
+Two active branch rulesets are required. Both `main` and `epic/*` require:
 
-| Target | Rules |
-|---|---|
-| `main` | Pull request required; two current approvals; Code Owner approval; stale approvals dismissed; latest push approved by another actor; required checks; conversations resolved; force-push and deletion blocked |
-| `epic/*` | Same controls as `main` |
+- a pull request and current approvals;
+- Code Owner approval;
+- dismissal of stale approvals;
+- approval of the latest push by another actor;
+- resolution of all actionable conversations; and
+- blocked force pushes and deletion.
+
+The `main` ruleset additionally requires the full CI and Semgrep checks plus all
+epic-level reviewer evidence. The `epic/*` ruleset requires task-level CI,
+Semgrep, CodeRabbit, and Qodo evidence while the trial-period rule applies.
 
 `CODEOWNERS` assigns repository content to `@EmpRider`, so the independent approval
-is explicit. The two required approvals are expected to be CodeRabbit and
-`EmpRider`.
+is explicit. GitHub's numeric approval count is set only after calibration proves
+which bots submit counted approvals. Review completion requirements from
+Section 6 still apply when a reviewer publishes comments instead of a counted
+approval.
 
 Routine bypass lists are empty. Merge queue, rebase merge, release branches, and
 long-lived development branches are excluded because the expected repository
@@ -417,11 +548,16 @@ Before the governance bootstrap is considered active:
 1. validate all YAML, JSON, and JSON Schema files locally;
 2. run table-driven policy tests for allowed and rejected branch pairs;
 3. verify the pull-request template produces all required fields;
-4. open the calibration pull request and exercise a deliberate CodeRabbit finding;
-5. confirm both branch rulesets block missing approvals, missing checks, direct
+4. open the calibration pull request and exercise deliberate CodeRabbit and
+   Semgrep findings;
+5. confirm Qodo reviews both pull-request levels while its trial is active;
+6. prove Code Review AI is restricted to epic-to-`main` review and record one
+   quota-consuming calibration review;
+7. confirm both branch rulesets block missing approvals, missing checks, direct
    pushes, and unresolved conversations;
-6. inspect the check names produced by GitHub before making them required;
-7. confirm that a documentation-only merge creates no release.
+8. inspect the check names and bot review types produced by GitHub before making
+   them required; and
+9. confirm that a documentation-only merge creates no release.
 
 Before the first `v0.1.0` release:
 
@@ -437,8 +573,14 @@ Before the first `v0.1.0` release:
 The delivery workflow is accepted only when:
 
 - the branch hierarchy and source/target policy are enforced;
-- task and epic pull requests cannot merge without current CodeRabbit and
-  independent approvals;
+- task-to-epic pull requests cannot merge without current CodeRabbit, Semgrep,
+  independent approval, and Qodo while the trial rule applies;
+- epic-to-`main` pull requests cannot merge without current CodeRabbit, Semgrep,
+  Qodo, Code Review AI, and independent review evidence;
+- a CodeRabbit summary or skipped-review success status cannot satisfy the
+  CodeRabbit gate;
+- Code Review AI is not intentionally consumed by task-to-epic pull requests and
+  its two-review monthly reserve is preserved;
 - stale approvals are dismissed after new code is pushed;
 - simplicity, scope alignment, and performance are explicit blocking review
   concerns;
@@ -468,3 +610,17 @@ The delivery workflow is accepted only when:
   <https://docs.coderabbit.ai/configuration/auto-review>
 - CodeRabbit pre-merge checks:
   <https://docs.coderabbit.ai/pr-reviews/pre-merge-checks>
+- CodeRabbit public-repository pricing:
+  <https://www.coderabbit.ai/pricing>
+- Semgrep pull-request comments and blocking policies:
+  <https://semgrep.dev/docs/semgrep-appsec-platform/github-pr-comments>
+- Qodo review triggers:
+  <https://docs.qodo.ai/code-review/use-qodo-in-prs>
+- Qodo branch filtering:
+  <https://docs.qodo.ai/code-review/get-started/configuration-overview/configuration-and-command-reference>
+- Qodo repository configuration:
+  <https://docs.qodo.ai/install-and-configure/configuration-overview/configuration-file>
+- Qodo trial and post-trial usage:
+  <https://docs.qodo.ai/pricing-and-usage>
+- Code Review AI Marketplace plan:
+  <https://github.com/marketplace/code-review-ai>
