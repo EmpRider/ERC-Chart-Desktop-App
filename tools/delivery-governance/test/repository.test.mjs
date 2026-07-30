@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -31,6 +31,50 @@ test("broken relative Markdown link fails", async () => {
   assert.ok((await validateRepository(root))[0].includes("broken relative link"));
 });
 
+test("Markdown links cannot escape the repository root", async () => {
+  const root = await fixture({});
+  const outside = `${root}-outside.md`;
+  await writeFile(outside, "# Outside\n");
+  await writeFile(path.join(root, "README.md"), `[Outside](../${path.basename(outside)})\n`);
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error.includes("escapes repository root")));
+});
+
+test("absolute Markdown links are rejected as local filesystem paths", async () => {
+  const root = await fixture({ "README.md": "[Host file](/etc/passwd)\n" });
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error.includes("absolute local path")));
+});
+
+test("malformed Markdown percent encoding is a deterministic validation error", async () => {
+  const root = await fixture({ "README.md": "[Bad](docs/bad%ZZ.md)\n" });
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error.includes("malformed percent-encoding")));
+});
+
+test("symlinks fail closed instead of bypassing repository scans", async () => {
+  const root = await fixture({});
+  const outside = `${root}-target.txt`;
+  await writeFile(outside, "outside\n");
+  await symlink(outside, path.join(root, "linked.txt"));
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error === "linked.txt: symlinks are forbidden"));
+});
+
+test("oversized structured files fail before parsing", async () => {
+  const root = await fixture({
+    "large.json": JSON.stringify({ payload: "x".repeat(2_000_000) }),
+  });
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error.includes("large.json: structured file exceeds")));
+});
+
+test("oversized Markdown files fail before link scanning", async () => {
+  const root = await fixture({ "large.md": `# Large\n${"x".repeat(2_000_000)}` });
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error.includes("large.md: Markdown file exceeds")));
+});
+
 test("current GitHub token families are detected without echoing values", async () => {
   const tokens = [
     `ghp_${"a".repeat(36)}`,
@@ -47,15 +91,16 @@ test("current GitHub token families are detected without echoing values", async 
   for (const token of tokens) assert.equal(errors.some((error) => error.includes(token)), false);
 });
 
-test("forbidden binaries fail and excluded directories are skipped", async () => {
+test("generated output directories and committed binaries fail", async () => {
   const root = await fixture({
     "release/app.exe": "binary",
     "node_modules/ignored.dll": "binary",
     "src/native.dll": "binary",
   });
-  const errors = await validateTrackedContent(root);
-  assert.equal(errors.length, 1);
-  assert.ok(errors[0].startsWith("src/native.dll:"));
+  const errors = await validateRepository(root);
+  assert.ok(errors.some((error) => error === "release: generated output directory is forbidden"));
+  assert.ok(errors.some((error) => error.startsWith("src/native.dll:")));
+  assert.equal(errors.some((error) => error.includes("node_modules")), false);
 });
 
 test("quoted passwords and private keys fail", async () => {
