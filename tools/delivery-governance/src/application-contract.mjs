@@ -45,6 +45,14 @@ export async function validateApplicationContract(root) {
     };
   }
 
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return {
+      applicationPresent: true,
+      errors: ["package.json must contain a JSON object."],
+      message: "Application gates: invalid root package.json.",
+    };
+  }
+
   const scripts = manifest.scripts ?? {};
   const errors = [];
   for (const script of [...REQUIRED_APPLICATION_SCRIPTS, ...REQUIRED_WINDOWS_SCRIPTS]) {
