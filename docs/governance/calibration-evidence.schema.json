@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erc-chart.local/schemas/calibration-evidence.schema.json",
+  "title": "ERC Chart delivery calibration evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "calibratedAt",
+    "codingAuthor",
+    "independentApprover",
+    "taskPullRequest",
+    "epicPullRequest",
+    "qodoTrialEndsOn",
+    "reviewers",
+    "assertions"
+  ],
+  "properties": {
+    "calibratedAt": { "type": "string", "format": "date-time" },
+    "codingAuthor": { "type": "string", "minLength": 1 },
+    "independentApprover": { "const": "EmpRider" },
+    "taskPullRequest": { "type": "integer", "minimum": 1 },
+    "epicPullRequest": { "type": "integer", "minimum": 1 },
+    "qodoTrialEndsOn": { "type": "string", "format": "date" },
+    "reviewers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coderabbit", "semgrep", "qodo", "codeReviewAi"],
+      "properties": {
+        "coderabbit": { "$ref": "#/$defs/reviewer" },
+        "semgrep": {
+          "allOf": [
+            { "$ref": "#/$defs/reviewer" },
+            { "properties": { "representation": { "const": "check" } } }
+          ]
+        },
+        "qodo": { "$ref": "#/$defs/reviewer" },
+        "codeReviewAi": { "$ref": "#/$defs/reviewer" }
+      }
+    },
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "separateAuthor",
+        "coderabbitComprehensive",
+        "semgrepBlocks",
+        "qodoTaskAndEpic",
+        "codeReviewAiEpicOnly",
+        "staleApprovalDismissed",
+        "directPushRejected",
+        "forcePushRejected",
+        "documentationMergeCreatedNoRelease"
+      ],
+      "properties": {
+        "separateAuthor": { "const": true },
+        "coderabbitComprehensive": { "const": true },
+        "semgrepBlocks": { "const": true },
+        "qodoTaskAndEpic": { "const": true },
+        "codeReviewAiEpicOnly": { "const": true },
+        "staleApprovalDismissed": { "const": true },
+        "directPushRejected": { "const": true },
+        "forcePushRejected": { "const": true },
+        "documentationMergeCreatedNoRelease": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login", "representation", "observedContexts"],
+      "properties": {
+        "login": { "type": "string", "minLength": 1 },
+        "representation": {
+          "enum": ["check", "review", "comment"]
+        },
+        "observedContexts": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}
