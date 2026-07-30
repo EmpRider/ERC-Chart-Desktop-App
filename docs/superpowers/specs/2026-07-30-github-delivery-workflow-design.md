@@ -595,9 +595,9 @@ The delivery workflow is accepted only when:
 ## 16. Current external references
 
 - GitHub protected branches:
-  <https://docs.github.com/en/repositories/configuring-branches-and-merges/in-your-repository/managing-protected-branches/about-protected-branches>
+  <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
 - GitHub repository rulesets:
-  <https://docs.github.com/en/repositories/configuring-branches-and-merges/in-your-repository/managing-rulesets/creating-rulesets-for-a-repository>
+  <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository>
 - GitHub Actions workflow syntax:
   <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax>
 - GitHub Actions token permissions:
