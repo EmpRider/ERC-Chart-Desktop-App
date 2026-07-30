@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { validateRepository, validateTrackedContent } from "../src/repository.mjs";
+import {
+  validateRepository,
+  validateSchemaExamples,
+  validateTrackedContent,
+} from "../src/repository.mjs";
 
 async function fixture(files) {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-governance-"));
@@ -24,6 +28,21 @@ test("valid structured files and relative links pass", async () => {
     "config.json": '{"ok":true}\n',
   });
   assert.deepEqual(await validateRepository(root), []);
+});
+
+test("schema examples accept standard format keywords without throwing", async () => {
+  const root = await fixture({
+    "docs/architecture/v1/contracts/plugin-manifest.schema.json": JSON.stringify({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      required: ["createdAt"],
+      properties: { createdAt: { type: "string", format: "date-time" } },
+    }),
+    "docs/architecture/v1/examples/binomo-provider.plugin.json": JSON.stringify({
+      createdAt: "2026-07-30T18:00:00Z",
+    }),
+  });
+  assert.deepEqual(await validateSchemaExamples(root), []);
 });
 
 test("broken relative Markdown link fails", async () => {
