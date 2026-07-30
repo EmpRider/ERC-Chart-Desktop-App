@@ -35,8 +35,15 @@ jobs:
         with:
           node-version: 24.18.1
           package-manager-cache: false
-      - name: Install governance dependencies
-        run: npm ci --prefix tools/delivery-governance --ignore-scripts
+      - name: Generate updated governance lockfile
+        run: npm install --prefix tools/delivery-governance --ignore-scripts
+      - name: Upload generated governance lockfile
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: governance-lockfile
+          path: tools/delivery-governance/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Build pull-request context
         id: context
         shell: bash
