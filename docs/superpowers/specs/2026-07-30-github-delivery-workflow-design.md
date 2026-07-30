@@ -1,9 +1,9 @@
 # ERC-chart GitHub Delivery Workflow Design
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Date | 2026-07-30 |
-| Status | Approved conversational design, awaiting written-spec review |
+| Status | Approved by product owner; implementation planning active |
 | Repository | `EmpRider/ERC-Chart-Desktop-App` |
 | Visibility | Public |
 | Jira project | `ECDD` |
@@ -119,7 +119,7 @@ and task branches.
 ### 4.4 Allowed pull-request directions
 
 | Head branch | Required base branch | Merge method |
-|---|---|---|
+| --- | --- | --- |
 | `task/ECDD-*` | Its declared `epic/ECDD-*` parent | Squash |
 | `epic/ECDD-*` | `main` | Merge commit |
 
@@ -189,7 +189,7 @@ AI review agents. The three AI review agents are CodeRabbit, Qodo, and Code Revi
 AI.
 
 | Gate | Task → epic (trial) | Task → epic (later) | Epic → `main` |
-|---|---:|---:|---:|
+| --- | ---: | ---: | ---: |
 | GitHub Actions quality gates | Required | Required | Required, full suite |
 | Semgrep | Required | Required | Required |
 | CodeRabbit | Required | Required | Required |
@@ -469,7 +469,7 @@ ERC-chart uses Semantic Versioning without a leading `v` in the application
 manifest and with a leading `v` in Git tags.
 
 | Milestone | Application version | Git tag |
-|---|---:|---:|
+| --- | ---: | ---: |
 | Epic 1 packaged shell | `0.1.0` | `v0.1.0` |
 | Epic 2 | `0.2.0` | `v0.2.0` |
 | Epic 3 | `0.3.0` | `v0.3.0` |
