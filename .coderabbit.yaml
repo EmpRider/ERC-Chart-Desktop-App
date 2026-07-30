@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+early_access: false
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  review_details: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    base_branches:
+      - "^epic/.*$"
+  path_filters:
+    - "!**/dist/**"
+    - "!**/out/**"
+    - "!**/release/**"
+    - "!**/coverage/**"
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Verify the linked Jira acceptance criteria and approved architecture.
+        Block behavior outside scope, correctness defects, unmeasured
+        performance-sensitive changes, unnecessary dependencies, speculative
+        abstractions, duplicate layers, and avoidable complexity. Prefer the
+        smallest complete solution. Verify failure-path tests and ensure no
+        deferred feature is exposed as partially working UI.
+  pre_merge_checks:
+    override_requested_reviewers_only: true
+    title:
+      mode: error
+      requirements: |
+        Task PR titles must use "ECDD-N: imperative summary". Epic PR titles
+        must use "ECDD-N: merge epic summary". N must match the head branch.
+    issue_assessment:
+      mode: error
+    custom_checks:
+      - name: Scope alignment
+        mode: error
+        instructions: |
+          Pass only when every changed behavior is required by the linked Jira
+          acceptance criteria or approved architecture and unrelated refactoring
+          is absent.
+      - name: Performance safety
+        mode: error
+        instructions: |
+          Pass when changed performance-sensitive paths include relevant,
+          reproducible measurements and do not regress their declared budget.
+          Pass non-performance-sensitive changes only when the PR explains why.
+      - name: Simplicity
+        mode: error
+        instructions: |
+          Pass only when no smaller clear implementation satisfies the same
+          requirement and the change contains no speculative abstraction,
+          duplicate layer, unnecessary dependency, or unused extension point.
+chat:
+  auto_reply: false
