@@ -65,3 +65,10 @@ test("calibration evidence schema requires all approved assertions", async () =>
   assert.ok(schema.properties.assertions.required.includes("documentationMergeCreatedNoRelease"));
   assert.ok(schema.properties.reviewers.required.includes("codeReviewAi"));
 });
+
+test("calibration evidence includes a representative checked example", async () => {
+  const example = JSON.parse(await read("docs/governance/calibration-evidence.example.json"));
+  assert.equal(example.independentApprover, "EmpRider");
+  assert.equal(example.assertions.documentationMergeCreatedNoRelease, true);
+  assert.ok(example.reviewers.semgrep.observedContexts.length > 0);
+});
