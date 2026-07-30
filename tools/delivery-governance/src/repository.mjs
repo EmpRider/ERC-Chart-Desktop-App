@@ -1,12 +1,8 @@
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
-import jsoncParser from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { parseAllDocuments } from "yaml";
-
-const { parse: parseJsoncDocument, printParseErrorCode } = jsoncParser;
 
 const MAX_SCAN_BYTES = 2_000_000;
 const MAX_ROOT_PACKAGE_LOCK_BYTES = 20_000_000;
@@ -52,6 +48,9 @@ const SCHEMA_EXAMPLES = [
     "docs/governance/calibration-evidence.example.json",
   ],
 ];
+
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME_PATTERN = /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
 
 async function exists(filePath) {
   try {
@@ -107,19 +106,129 @@ async function scanTree(root) {
   return { files, errors };
 }
 
-export function parseJsonc(text) {
-  const errors = [];
-  const value = parseJsoncDocument(text, errors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
-  if (errors.length > 0) {
-    const details = errors
-      .map(({ error, offset }) => `${printParseErrorCode(error)} at offset ${offset}`)
-      .join(", ");
-    throw new Error(`Invalid JSONC: ${details}`);
+function stripJsoncComments(text) {
+  let result = "";
+  let index = 0;
+  let inString = false;
+  let escaped = false;
+
+  while (index < text.length) {
+    const character = text[index];
+    const next = text[index + 1];
+
+    if (inString) {
+      result += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+      result += character;
+      index += 1;
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      index += 2;
+      while (index < text.length && text[index] !== "\n") index += 1;
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      index += 2;
+      let closed = false;
+      while (index < text.length) {
+        if (text[index] === "*" && text[index + 1] === "/") {
+          index += 2;
+          closed = true;
+          break;
+        }
+        if (text[index] === "\n") result += "\n";
+        index += 1;
+      }
+      if (!closed) throw new Error("Invalid JSONC: unterminated block comment");
+      continue;
+    }
+
+    result += character;
+    index += 1;
   }
-  return value;
+
+  if (inString) throw new Error("Invalid JSONC: unterminated string");
+  return result;
+}
+
+function stripJsoncTrailingCommas(text) {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (inString) {
+      result += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+      result += character;
+      continue;
+    }
+
+    if (character === ",") {
+      let lookahead = index + 1;
+      while (lookahead < text.length && /\s/.test(text[lookahead])) lookahead += 1;
+      if (text[lookahead] === "}" || text[lookahead] === "]") continue;
+    }
+
+    result += character;
+  }
+
+  return result;
+}
+
+export function parseJsonc(text) {
+  try {
+    return JSON.parse(stripJsoncTrailingCommas(stripJsoncComments(text)));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Invalid JSONC:")) throw error;
+    throw new Error(`Invalid JSONC: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function isLeapYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function isValidDate(value) {
+  const match = DATE_PATTERN.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12) return false;
+  const days = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= days[month - 1];
+}
+
+function isValidDateTime(value) {
+  const match = DATE_TIME_PATTERN.exec(value);
+  if (!match || !isValidDate(match[1])) return false;
+  const hour = Number(match[2]);
+  const minute = Number(match[3]);
+  const second = Number(match[4]);
+  const offsetHour = match[6] === undefined ? 0 : Number(match[6]);
+  const offsetMinute = match[7] === undefined ? 0 : Number(match[7]);
+  return hour <= 23 && minute <= 59 && second <= 60 && offsetHour <= 23 && offsetMinute <= 59;
 }
 
 async function validateStructuredFilesFrom(root, files) {
@@ -160,7 +269,9 @@ export async function validateStructuredFiles(root) {
 export async function validateSchemaExamples(root) {
   const errors = [];
   const ajv = new Ajv2020({ allErrors: true, strict: true });
-  addFormats(ajv);
+  ajv.addFormat("date", { type: "string", validate: isValidDate });
+  ajv.addFormat("date-time", { type: "string", validate: isValidDateTime });
+
   for (const [schemaRel, exampleRel] of SCHEMA_EXAMPLES) {
     const schemaPath = path.join(root, schemaRel);
     const examplePath = path.join(root, exampleRel);
