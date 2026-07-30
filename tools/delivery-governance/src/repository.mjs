@@ -1,8 +1,12 @@
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
+import jsoncParser from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { parseAllDocuments } from "yaml";
+
+const { parse: parseJsoncDocument, printParseErrorCode } = jsoncParser;
 
 const MAX_SCAN_BYTES = 2_000_000;
 const MAX_ROOT_PACKAGE_LOCK_BYTES = 20_000_000;
@@ -42,6 +46,10 @@ const SCHEMA_EXAMPLES = [
   [
     "docs/architecture/v1/contracts/workspace.schema.json",
     "docs/architecture/v1/examples/sample-workspace.json",
+  ],
+  [
+    "docs/governance/calibration-evidence.schema.json",
+    "docs/governance/calibration-evidence.example.json",
   ],
 ];
 
@@ -99,13 +107,19 @@ async function scanTree(root) {
   return { files, errors };
 }
 
-function parseJsonc(text) {
-  return JSON.parse(
-    text
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "")
-      .replace(/,\s*([}\]])/g, "$1"),
-  );
+export function parseJsonc(text) {
+  const errors = [];
+  const value = parseJsoncDocument(text, errors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+  if (errors.length > 0) {
+    const details = errors
+      .map(({ error, offset }) => `${printParseErrorCode(error)} at offset ${offset}`)
+      .join(", ");
+    throw new Error(`Invalid JSONC: ${details}`);
+  }
+  return value;
 }
 
 async function validateStructuredFilesFrom(root, files) {
@@ -145,7 +159,8 @@ export async function validateStructuredFiles(root) {
 
 export async function validateSchemaExamples(root) {
   const errors = [];
-  const ajv = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(ajv);
   for (const [schemaRel, exampleRel] of SCHEMA_EXAMPLES) {
     const schemaPath = path.join(root, schemaRel);
     const examplePath = path.join(root, exampleRel);
