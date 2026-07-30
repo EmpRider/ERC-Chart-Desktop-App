@@ -1,21 +1,27 @@
 # Dependencies and generated output
 node_modules/
+coverage/
 dist/
 build/
-coverage/
 out/
+release/
 
 # Local configuration and secrets
 .env
 .env.*
 !.env.example
 *.log
+*.local
 *.tmp
 
-# Packaged artifacts
-*.zip
+# Packaged and generated artifacts
 *.exe
 *.msi
+*.dll
+*.pdb
+*.zip
+*.7z
+*.rar
 
 # Editor and operating-system state
 .idea/
