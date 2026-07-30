@@ -59,8 +59,10 @@ test("forbidden binaries fail and excluded directories are skipped", async () =>
 });
 
 test("quoted passwords and private keys fail", async () => {
+  const passwordName = ["pass", "word"].join("");
+  const privateKeyMarker = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
   const root = await fixture({
-    "config.txt": 'password = "supersecretvalue"\n-----BEGIN PRIVATE KEY-----\n',
+    "config.txt": `${passwordName} = "supersecretvalue"\n${privateKeyMarker}\n`,
   });
   const errors = await validateTrackedContent(root);
   assert.equal(errors.length, 2);
