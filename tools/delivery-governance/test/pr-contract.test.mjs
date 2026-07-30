@@ -26,6 +26,12 @@ test("rejects unchecked acceptance criteria", () => {
   assert.ok(validatePullRequestBody(invalid, { number: 1, head: "bootstrap/delivery-governance", base: "main" }).length > 0);
 });
 
-test("rejects template comments", () => {
-  assert.ok(validatePullRequestBody(`${body("Not applicable — one-time bootstrap PR #1")}\n<!-- remove -->`, { number: 1, head: "bootstrap/delivery-governance", base: "main" }).includes("Pull-request body still contains template instructions."));
+test("rejects pull-request template instructions", () => {
+  const invalid = `${body("Not applicable — one-time bootstrap PR #1")}\n<!-- Replace with linked Jira acceptance criteria and check each completed item. -->`;
+  assert.ok(validatePullRequestBody(invalid, { number: 1, head: "bootstrap/delivery-governance", base: "main" }).includes("Pull-request body still contains template instructions."));
+});
+
+test("accepts reviewer-generated hidden comments", () => {
+  const reviewed = `${body("Not applicable — one-time bootstrap PR #1")}\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->`;
+  assert.deepEqual(validatePullRequestBody(reviewed, { number: 1, head: "bootstrap/delivery-governance", base: "main" }), []);
 });
