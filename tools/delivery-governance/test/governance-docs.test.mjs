@@ -9,7 +9,7 @@ import {
 const root = new URL("../../../", import.meta.url);
 const read = (name) => readFile(new URL(name, root), "utf8");
 
-test("review runbook contains the solo-maintainer order and capacity controls", async () => {
+test("review runbook distinguishes machine gates from manual AI evidence", async () => {
   const runbook = await read("docs/governance/REVIEW-RUNBOOK.md");
   const required = [
     "Deterministic checks run before any AI review",
@@ -25,6 +25,9 @@ test("review runbook contains the solo-maintainer order and capacity controls", 
     "fail-closed",
     "no administrator bypass",
     "A bot comment is evidence, not a GitHub approval",
+    "GitHub rulesets do not enforce Qodo or Code Review AI",
+    "manual, non-blocking review evidence",
+    "machine-enforced merge contract",
   ];
   for (const phrase of required) assert.ok(runbook.includes(phrase), phrase);
 });
@@ -45,7 +48,7 @@ test("application contract declares every stable script and handoff", async () =
   ]) assert.ok(contract.includes(phrase), phrase);
 });
 
-test("calibration procedure requires two levels and solo-maintainer evidence", async () => {
+test("calibration procedure requires two levels and honest provider evidence", async () => {
   const procedure = await read("docs/governance/CALIBRATION-PROCEDURE.md");
   for (const phrase of [
     "same `EmpRider` identity",
@@ -61,7 +64,21 @@ test("calibration procedure requires two levels and solo-maintainer evidence", a
     "non-fast-forward push",
     "previous seven days",
     "Day 1 of 14 · Trial",
+    "manual review evidence",
+    "not machine-enforced merge conditions",
   ]) assert.ok(procedure.includes(phrase), phrase);
+});
+
+test("solo-maintainer amendment preserves the enforceable boundary", async () => {
+  const design = await read(
+    "docs/superpowers/specs/2026-07-31-solo-maintainer-review-governance-design.md",
+  );
+  for (const phrase of [
+    "GitHub-enforced merge conditions",
+    "manual, non-blocking evidence",
+    "does not claim that Qodo or Code Review AI blocks a GitHub merge",
+    "original version and release policy remains unchanged",
+  ]) assert.ok(design.includes(phrase), phrase);
 });
 
 test("delivery workflow executes every governance verification command", async () => {
