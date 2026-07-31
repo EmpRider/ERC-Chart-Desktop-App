@@ -86,6 +86,7 @@ test("delivery workflow executes every governance verification command", async (
   for (const command of [
     "npm ci --prefix tools/delivery-governance --ignore-scripts",
     "npm --prefix tools/delivery-governance test",
+    "npm --prefix tools/delivery-governance run validate:pr",
     "npm --prefix tools/delivery-governance run validate:repository",
     "npm --prefix tools/delivery-governance run lint:markdown",
     "node tools/delivery-governance/src/github-admin.mjs",
