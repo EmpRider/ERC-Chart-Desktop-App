@@ -75,8 +75,11 @@ A fix commit returns the sequence to step 4.
 9. Recheck the machine-enforced merge contract and merge with a merge commit using
    expected-head locking.
 
-A code commit after a manual review makes that review stale as evidence, even
-though GitHub does not enforce rerunning it.
+After any code or governance commit made after Qodo or Code Review AI evidence,
+return to step 4. Rerun affected machine checks and request fresh manual reviews
+on the stable head when capacity is available. When a provider is unavailable,
+record the approved unavailability explicitly instead of treating stale evidence
+as current.
 
 ## Review Capacity
 
