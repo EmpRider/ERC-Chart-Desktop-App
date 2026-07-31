@@ -66,11 +66,11 @@ test("calibration evidence example is part of schema validation", async () => {
     "docs/governance/calibration-evidence.schema.json": JSON.stringify({
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
-      required: ["independentApprover"],
-      properties: { independentApprover: { const: "EmpRider" } },
+      required: ["maintainer"],
+      properties: { maintainer: { const: "EmpRider" } },
     }),
     "docs/governance/calibration-evidence.example.json": JSON.stringify({
-      independentApprover: "wrong-user",
+      maintainer: "wrong-user",
     }),
   });
   const errors = await validateSchemaExamples(root);
