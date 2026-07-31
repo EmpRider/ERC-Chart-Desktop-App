@@ -169,6 +169,32 @@ test("rejects a manifest dependency outside the approved direction", async () =>
   );
 });
 
+for (const section of [
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+]) {
+  test(`rejects a workspace dependency outside the approved direction in ${section}`, async () => {
+    const files = validFiles();
+    const contractsManifest = JSON.parse(
+      files["packages/contracts/package.json"],
+    );
+    contractsManifest[section] = {
+      "@erc-chart/chart-core": "workspace:*",
+    };
+    files["packages/contracts/package.json"] =
+      JSON.stringify(contractsManifest);
+
+    const errors = await validateWorkspace(await fixture(files), contract);
+
+    assert.ok(
+      errors.includes(
+        "packages/contracts/package.json: dependency @erc-chart/chart-core is not allowed",
+      ),
+    );
+  });
+}
+
 test("rejects an unknown ERC Chart manifest dependency", async () => {
   const files = validFiles();
   const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
@@ -232,6 +258,31 @@ test("rejects a circular workspace dependency", async () => {
     files["packages/contracts/package.json"],
   );
   contractsManifest.dependencies["@erc-chart/chart-core"] = "workspace:*";
+  files["packages/contracts/package.json"] = JSON.stringify(contractsManifest);
+  const cyclicContract = {
+    workspaces: {
+      "packages/contracts": ["packages/chart-core"],
+      "packages/chart-core": ["packages/contracts"],
+    },
+  };
+
+  const errors = await validateWorkspace(await fixture(files), cyclicContract);
+
+  assert.ok(
+    errors.includes(
+      "workspace dependency cycle: packages/chart-core -> packages/contracts -> packages/chart-core",
+    ),
+  );
+});
+
+test("rejects a cycle declared outside regular dependencies", async () => {
+  const files = validFiles();
+  const contractsManifest = JSON.parse(
+    files["packages/contracts/package.json"],
+  );
+  contractsManifest.devDependencies = {
+    "@erc-chart/chart-core": "workspace:*",
+  };
   files["packages/contracts/package.json"] = JSON.stringify(contractsManifest);
   const cyclicContract = {
     workspaces: {
@@ -408,6 +459,22 @@ test("rejects an undeclared workspace package dynamic import", async () => {
   assert.ok(
     errors.includes(
       "packages/chart-core/src/index.ts: @erc-chart/indicator-sdk is not a declared workspace dependency",
+    ),
+  );
+});
+
+test("rejects a non-literal dynamic import", async () => {
+  const files = validFiles();
+  files["packages/chart-core/src/index.ts"] = `
+const moduleName = "@erc-chart/contracts";
+export const loadContracts = async () => import(moduleName);
+`;
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/src/index.ts: non-literal dynamic import is forbidden",
     ),
   );
 });

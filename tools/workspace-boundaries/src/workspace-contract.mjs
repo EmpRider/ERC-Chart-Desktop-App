@@ -2,6 +2,13 @@ import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
 
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+];
+
 async function exists(filePath) {
   try {
     await access(filePath);
@@ -24,6 +31,7 @@ function importSpecifiers(source, fileName) {
     ts.ScriptKind.TSX,
   );
   const specifiers = [];
+  let hasNonLiteralDynamicImport = false;
 
   function visit(node) {
     if (
@@ -34,11 +42,14 @@ function importSpecifiers(source, fileName) {
       specifiers.push(node.moduleSpecifier.text);
     } else if (
       ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments.length > 0 &&
-      ts.isStringLiteralLike(node.arguments[0])
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
     ) {
-      specifiers.push(node.arguments[0].text);
+      const [argument] = node.arguments;
+      if (argument !== undefined && ts.isStringLiteralLike(argument)) {
+        specifiers.push(argument.text);
+      } else {
+        hasNonLiteralDynamicImport = true;
+      }
     } else if (
       ts.isImportTypeNode(node) &&
       ts.isLiteralTypeNode(node.argument) &&
@@ -51,7 +62,7 @@ function importSpecifiers(source, fileName) {
   }
 
   visit(sourceFile);
-  return specifiers;
+  return { hasNonLiteralDynamicImport, specifiers };
 }
 
 async function directoryNames(directory) {
@@ -307,7 +318,11 @@ export async function validateWorkspace(root, contract = undefined) {
 
   for (const [workspace, manifest] of manifests) {
     const allowed = new Set(contract.workspaces[workspace]);
-    const dependencies = manifest.dependencies ?? {};
+    const dependencies = Object.fromEntries(
+      DEPENDENCY_FIELDS.flatMap((field) =>
+        Object.entries(manifest[field] ?? {}),
+      ),
+    );
     const workspaceDependencies = [];
 
     for (const dependencyName of Object.keys(dependencies).sort()) {
@@ -338,7 +353,13 @@ export async function validateWorkspace(root, contract = undefined) {
     for (const file of await sourceFiles(path.join(root, workspace, "src"))) {
       const relativeFile = path.relative(root, file).split(path.sep).join("/");
       const source = await readFile(file, "utf8");
-      const specifiers = importSpecifiers(source, file);
+      const { hasNonLiteralDynamicImport, specifiers } = importSpecifiers(
+        source,
+        file,
+      );
+      if (hasNonLiteralDynamicImport) {
+        errors.push(`${relativeFile}: non-literal dynamic import is forbidden`);
+      }
       for (const specifier of specifiers) {
         if (specifier.startsWith(".")) {
           const resolved = path.resolve(path.dirname(file), specifier);
