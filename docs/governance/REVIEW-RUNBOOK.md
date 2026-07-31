@@ -25,7 +25,7 @@ technically block a GitHub merge.
   target branch.
 - Merge is blocked until all review conversations are resolved.
 - `CODEOWNERS` routes ownership to `@EmpRider`; it is not a self-approval gate.
-- Any code commit invalidates prior evidence for affected current-head checks.
+- Any code commit invalidates prior review evidence for affected checks.
 - A bot comment is evidence, not a GitHub approval or status check.
 - A provider becomes required by a ruleset only after calibration proves a stable
   machine-readable pass/fail context.
