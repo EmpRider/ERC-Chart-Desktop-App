@@ -8,7 +8,9 @@
     "calibratedAt",
     "maintainer",
     "taskPullRequest",
+    "taskHeadSha",
     "epicPullRequest",
+    "epicHeadSha",
     "qodoCapacity",
     "reviewers",
     "assertions"
@@ -17,17 +19,22 @@
     "calibratedAt": { "type": "string", "format": "date-time" },
     "maintainer": { "const": "EmpRider" },
     "taskPullRequest": { "type": "integer", "minimum": 1 },
+    "taskHeadSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
     "epicPullRequest": { "type": "integer", "minimum": 1 },
+    "epicHeadSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
     "qodoCapacity": {
       "type": "object",
       "additionalProperties": false,
       "required": ["observedAt", "displayText", "active", "exactEndsOn"],
       "properties": {
         "observedAt": { "type": "string", "format": "date-time" },
-        "displayText": {
-          "type": "string",
-          "pattern": "^Day [0-9]+ of 14 · Trial$"
-        },
+        "displayText": { "const": "Day 1 of 14 · Trial" },
         "active": { "const": true },
         "exactEndsOn": {
           "anyOf": [
