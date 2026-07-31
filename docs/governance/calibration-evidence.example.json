@@ -1,10 +1,12 @@
 {
-  "calibratedAt": "2026-07-31T04:30:00Z",
+  "calibratedAt": "2026-07-31T05:58:00Z",
   "maintainer": "EmpRider",
   "taskPullRequest": 2,
+  "taskHeadSha": "e9bab8b4446618f07d0927b284e3d800edccc451",
   "epicPullRequest": 3,
+  "epicHeadSha": "3a99970d14cde386abe70ace3adc4b3e6a33c9e4",
   "qodoCapacity": {
-    "observedAt": "2026-07-31T04:30:00Z",
+    "observedAt": "2026-07-31T05:58:00Z",
     "displayText": "Day 1 of 14 · Trial",
     "active": true,
     "exactEndsOn": null
