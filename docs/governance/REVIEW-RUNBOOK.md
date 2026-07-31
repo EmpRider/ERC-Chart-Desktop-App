@@ -5,15 +5,17 @@
 This runbook is the operational source of truth for task-to-epic and epic-to-main
 pull requests.
 
-Solo-maintainer mode permits `EmpRider` to author and merge a pull request only
-when every required current-head check and review condition is satisfied. The
-mode removes an impossible self-approval requirement; it does not create a
-review bypass.
+Solo-maintainer mode permits `EmpRider` to author and merge after every
+GitHub-enforced condition is current. The machine-enforced merge contract is
+fail-closed and has no administrator bypass.
 
-Missing, stale, cancelled, skipped, summary-only, or failed evidence never
-satisfies a gate. The process is fail-closed. There is no administrator bypass.
+Qodo and Code Review AI currently publish comments or review evidence rather than
+stable pass/fail contexts. GitHub rulesets do not enforce Qodo or Code Review AI.
+They are manual, non-blocking review evidence: the maintainer should request and
+consider them at the documented stage, but this runbook does not claim that they
+technically block a GitHub merge.
 
-## Enforced GitHub Evidence
+## Machine-Enforced GitHub Evidence
 
 - Deterministic checks run before any AI review.
 - `Delivery gates`, `semgrep-cloud-platform/scan`, and `CodeRabbit` are the
@@ -22,76 +24,84 @@ satisfies a gate. The process is fail-closed. There is no administrator bypass.
 - Strict branch freshness requires the pull-request head to be current with its
   target branch.
 - Merge is blocked until all review conversations are resolved.
-- `CODEOWNERS` routes repository ownership to `@EmpRider`, but it does not
-  require or represent a self-approval in solo-maintainer mode.
-- CodeRabbit runs before Qodo.
-- Qodo is requested with `/agentic_review` only on a stable head.
+- `CODEOWNERS` routes ownership to `@EmpRider`; it is not a self-approval gate.
+- Any code commit invalidates prior evidence for affected current-head checks.
+- A bot comment is evidence, not a GitHub approval or status check.
+- A provider becomes required by a ruleset only after calibration proves a stable
+  machine-readable pass/fail context.
+
+## Manual AI Evidence
+
+- CodeRabbit runs before Qodo because CodeRabbit is a required status and Qodo is
+  requested only after the machine gates are clear.
+- Qodo is requested with `/agentic_review` only on a stable head during approved
+  capacity.
 - Code Review AI is reserved for epic-to-main pull requests only.
-- Any code commit invalidates prior review evidence for affected checks and
-  reviewers.
-- A bot comment is evidence, not a GitHub approval.
-- A provider becomes a required ruleset status only after calibration proves a
-  stable machine-readable pass/fail context.
+- Findings from Qodo or Code Review AI should be fixed or explicitly rejected
+  with rationale.
+- Review comments that create GitHub conversations remain enforceable through the
+  required conversation-resolution rule.
+- Absence of Qodo or Code Review AI evidence does not create a GitHub ruleset
+  failure under the current provider capabilities.
 
 ## Task-to-Epic Sequence
 
 1. Keep the task pull request in draft while files are changing.
-2. Run the applicable deterministic commands and record exact output.
+2. Run deterministic commands and record exact output.
 3. Mark the pull request ready for review.
-4. Wait for current-head `Delivery gates`, `semgrep-cloud-platform/scan`, and
-   comprehensive CodeRabbit evidence.
+4. Wait for current-head `Delivery gates`, `semgrep-cloud-platform/scan`, and a
+   comprehensive CodeRabbit result.
 5. Resolve every actionable finding and every review conversation.
-6. During active approved Qodo capacity, request `/agentic_review` after the
-   earlier gates are clear and the head is stable.
-7. Confirm Qodo assessed the same current head and no actionable finding remains.
+6. During approved Qodo capacity, request `/agentic_review` after the machine
+   gates are clear and the head is stable.
+7. Consider Qodo findings and resolve any GitHub conversations it creates.
 8. Confirm Code Review AI was not intentionally invoked on the task pull request.
-9. Squash merge only while all evidence remains current and the branch remains
-   up to date with its epic target.
+9. Recheck the machine-enforced merge contract and squash merge with expected-head
+   locking.
 
-Any fix commit returns the sequence to step 4.
+A fix commit returns the sequence to step 4.
 
 ## Epic-to-Main Sequence
 
-1. Keep the epic pull request in draft while the epic branch is changing.
-2. Run the complete deterministic and Windows packaging suite that applies at
-   the current project stage.
+1. Keep the epic pull request in draft while the branch is changing.
+2. Run the complete deterministic and Windows packaging suite that applies.
 3. Mark the pull request ready for review.
-4. Wait for current-head `Delivery gates`, `semgrep-cloud-platform/scan`, and
-   comprehensive CodeRabbit evidence.
-5. Resolve all actionable findings and return to a stable head.
-6. Request Qodo `/agentic_review` on that stable head.
-7. Invoke Code Review AI once after all earlier gates are clear.
-8. Resolve every actionable finding and all review conversations.
-9. Merge with a merge commit using a freshly verified expected head SHA.
+4. Wait for current-head `Delivery gates`, `semgrep-cloud-platform/scan`, and a
+   comprehensive CodeRabbit result.
+5. Resolve all actionable findings and conversations.
+6. Request Qodo `/agentic_review` on the stable head when capacity is available.
+7. Invoke Code Review AI once after the earlier evidence is clear.
+8. Consider the manual AI findings and resolve any GitHub conversations.
+9. Recheck the machine-enforced merge contract and merge with a merge commit using
+   expected-head locking.
 
-Any code commit after Qodo or Code Review AI review invalidates the affected
-review evidence and requires the applicable sequence to run again.
+A code commit after a manual review makes that review stale as evidence, even
+though GitHub does not enforce rerunning it.
 
 ## Review Capacity
 
-Code Review AI quota is eight first-pass epic reviews plus two re-reviews.
-It must never be intentionally invoked on task pull requests. The two re-reviews
-remain reserved for coherent fixes after initial epic review.
+Code Review AI quota is eight first-pass epic reviews plus two re-reviews. It must
+not be intentionally invoked on task pull requests. The re-reviews remain
+reserved for coherent fixes after an initial epic review.
 
-Qodo task-to-epic review is required while the approved 14-day trial or another
-explicitly approved capacity rule is active. The current portal observation is
-recorded exactly as `Day 1 of 14 · Trial`. An exact end date is not inferred when
-the portal does not expose one.
+Qodo task review is requested while the approved 14-day trial or another approved
+capacity rule is active. The portal observation is recorded exactly as
+`Day 1 of 14 · Trial`; an end date is not inferred when the portal does not expose
+one.
 
-Epic-to-main remains fail-closed when qualified Qodo capacity is unavailable.
-There is no silent downgrade. A reviewed governance change must define any
-replacement before an epic merge can proceed without Qodo.
+Provider unavailability does not weaken the machine-enforced GitHub contract. It
+means the corresponding manual evidence is unavailable and must be recorded
+honestly rather than represented as a blocking status.
 
 ## Failure Handling
 
-- Missing or cancelled deterministic check: do not merge.
-- Required context attached to an older head: rerun it.
-- Out-of-date branch: update the branch and rerun all affected checks.
-- New high- or critical-severity Semgrep finding: do not merge.
-- Actionable CodeRabbit, Qodo, or Code Review AI finding: fix it or record a
-  reviewed rejection with rationale.
+- Missing or cancelled required status: do not merge.
+- Required status attached to an older head: rerun it.
+- Out-of-date branch: update the branch and rerun affected checks.
+- New blocking Semgrep finding: do not merge.
+- Comprehensive CodeRabbit review unavailable or rate-limited: do not treat its
+  success status alone as sufficient operational evidence.
+- Actionable manual AI finding: fix it or record a reasoned rejection.
 - Unresolved conversation: do not merge.
-- Missing required Qodo epic capacity: stop and restore capacity or approve a
-  governance change.
 - Unexpected status-context name: do not edit the live ruleset until the exact
   stable name is calibrated and committed.
