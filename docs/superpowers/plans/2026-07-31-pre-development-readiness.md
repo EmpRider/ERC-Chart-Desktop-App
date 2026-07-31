@@ -22,9 +22,11 @@
 ### Task 1: Freeze Contract Baseline v1
 
 **Files:**
+
 - Create: `docs/architecture/v1/CONTRACT-BASELINE-v1.md`
 
 **Interfaces:**
+
 - Consumes: approved architecture specification process and package boundaries.
 - Produces: immutable package names, dependency rules, contract version identifiers, ownership, and change-control rules for ECDD-54.
 
@@ -38,9 +40,11 @@
 ### Task 2: Record Architecture Acceptance and Deferred Gates
 
 **Files:**
+
 - Create: `docs/architecture/v1/PRE-DEVELOPMENT-READINESS.md`
 
 **Interfaces:**
+
 - Consumes: section 29 checklist, open decisions, ECDD-56 merge evidence, Contract Baseline v1.
 - Produces: one auditable approval addendum and readiness decision.
 
@@ -54,14 +58,16 @@
 ### Task 3: Verify Documentation and Open the Readiness PR
 
 **Files:**
+
 - Verify: all files changed on `task/ECDD-197-pre-development-readiness`
 
 **Interfaces:**
+
 - Consumes: Tasks 1 and 2.
 - Produces: reviewed, current-head readiness evidence on a task PR.
 
 - [x] Open draft PR #4 to `epic/ECDD-53-repository-build`.
-- [ ] Mark ready after document self-review.
+- [x] Mark ready after document self-review.
 - [ ] Confirm Delivery gates pass on the current head.
 - [ ] Confirm `semgrep-cloud-platform/scan` and `CodeRabbit` are successful.
 - [ ] Resolve every actionable review conversation.
@@ -70,9 +76,11 @@
 ### Task 4: Update Jira Evidence
 
 **Files:**
+
 - Jira: ECDD-2 through ECDD-11, ECDD-42 through ECDD-52, ECDD-56, ECDD-197, ECDD-41, ECDD-53.
 
 **Interfaces:**
+
 - Consumes: merged readiness PR and repository evidence.
 - Produces: Jira records that distinguish accepted decisions, completed governance, and milestone-deferred spikes.
 
