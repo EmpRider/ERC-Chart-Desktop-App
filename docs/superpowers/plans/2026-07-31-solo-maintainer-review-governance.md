@@ -3,7 +3,8 @@
 ## Goal
 
 Replace impossible self-approval requirements with fail-closed current-head
-review enforcement for the single-maintainer GitHub MCP workflow.
+GitHub enforcement for the single-maintainer MCP workflow, while documenting
+comment-only reviewers as manual evidence.
 
 ## Scope
 
@@ -16,26 +17,27 @@ This plan changes only delivery governance:
 - the solo-maintainer design amendment.
 
 Application code, installer implementation, release automation, generated
-artifacts, and reviewer-provider replacements are out of scope.
+artifacts, custom parsing of AI comments, and reviewer-provider replacement are
+out of scope.
 
-## Required Behavior
+## Enforcement Boundary
 
-Task-to-epic pull requests must require:
+GitHub-enforced task-to-epic conditions are:
 
 - `Delivery gates` on the current head;
 - `semgrep-cloud-platform/scan` on the current head;
 - `CodeRabbit` on the current head;
-- resolved review conversations;
-- a branch current with its epic target;
-- Qodo `/agentic_review` during approved trial capacity; and
-- squash merge only.
+- all review conversations resolved;
+- the branch current with its epic target;
+- squash merge only; and
+- no bypass actor.
 
-Epic-to-main pull requests additionally require Qodo and Code Review AI according
-to the review runbook and use merge commits only.
+The equivalent epic-to-main contract uses merge commits only.
 
-The sole maintainer may author and merge after every required condition is met.
-The rulesets require zero approvals, no Code Owner approval, no latest-push
-approval, and no bypass actor.
+Qodo `/agentic_review` and Code Review AI do not emit calibrated stable status
+contexts. They are requested at the documented stages as manual, non-blocking
+review evidence. This plan does not claim their absence creates a GitHub ruleset
+failure.
 
 ## Task 1: Ruleset Contract
 
@@ -44,8 +46,8 @@ approval, and no bypass actor.
 - [x] Disable Code Owner and latest-push approval requirements.
 - [x] Preserve resolved-conversation enforcement.
 - [x] Preserve deletion and non-fast-forward protection.
-- [x] Preserve merge methods: squash for `epic/*`, merge commit for `main`.
-- [x] Require these exact contexts:
+- [x] Preserve squash for `epic/*` and merge commits for `main`.
+- [x] Require exact contexts:
 
   ```text
   Delivery gates
@@ -53,38 +55,34 @@ approval, and no bypass actor.
   CodeRabbit
   ```
 
-- [x] Verify the tests fail before the ruleset implementation.
-- [x] Verify the full Delivery gates workflow passes after implementation.
+- [x] Verify RED before implementing the desired state.
+- [x] Verify the full Delivery gates workflow after implementation.
 
 ## Task 2: Calibration Evidence
 
-- [x] Replace separate author and independent approver fields with
-  `maintainer: EmpRider`.
+- [x] Replace separate author and approver fields with `maintainer: EmpRider`.
+- [x] Bind observations to task and epic head SHAs.
+- [x] Require lowercase 40-character commit SHAs.
 - [x] Record Qodo capacity as structured data.
-- [x] Keep `exactEndsOn` as `null` unless a trustworthy date is available.
-- [x] Add assertions for required-status, stale-branch, unresolved-conversation,
-  merge-method, direct-push, force-push, and no-release behavior.
-- [x] Validate the example through the repository schema validator.
-- [x] Verify failing tests before updating the schema and example.
-- [x] Verify the full Delivery gates workflow after implementation.
+- [x] Require exact portal text `Day 1 of 14 · Trial`.
+- [x] Keep `exactEndsOn` as `null` unless a trustworthy date exists.
+- [x] Validate the example through the actual schema.
+- [x] Add rejection tests for missing or malformed SHAs and alternate trial text.
 
 ## Task 3: Operational Documentation
 
-- [x] Rewrite the review runbook for current-head solo-maintainer evidence.
+- [x] Rewrite the runbook for solo-maintainer current-head evidence.
 - [x] Rewrite calibration to use the same `EmpRider` identity.
-- [x] Keep Qodo task review during the active trial.
+- [x] Separate GitHub-enforced conditions from manual provider evidence.
+- [x] Keep Qodo requested during available trial capacity.
 - [x] Keep Code Review AI exclusive to epic-to-main.
-- [x] Document fail-closed behavior for missing, stale, cancelled, or failed
-  evidence.
-- [x] Preserve review quotas, merge methods, performance requirements, and empty
-  bypass lists.
-- [x] Keep the existing release policy unchanged.
-- [x] Verify documentation tests fail before implementation.
-- [x] Verify the full Delivery gates workflow after implementation.
+- [x] Preserve quotas, merge methods, performance requirements, and no bypass.
+- [x] Keep the original version and release policy unchanged.
+- [x] Test the documentation contract before implementation.
 
 ## Task 4: Complete Verification
 
-The current-head workflow must execute these commands:
+The current-head workflow executes:
 
 ```bash
 npm ci --prefix tools/delivery-governance --ignore-scripts
@@ -97,44 +95,43 @@ node tools/delivery-governance/src/github-admin.mjs
 
 Expected evidence:
 
-- all governance tests pass;
-- pull-request contract validation passes;
-- repository validation passes;
+- every governance test passes;
+- pull-request and repository validation pass;
 - Markdown lint reports zero issues for active files;
-- the administration client prints only dry-run operations;
+- the administration client performs dry-run output only;
 - application gates report not applicable while root `package.json` is absent;
 - the branch diff contains governance files only.
 
-Legacy Markdown debt may be baselined only by exact path for files that predate
-this change. New or modified governance documents must remain linted.
+Only exact pre-existing legacy Markdown paths may be baselined. New or modified
+governance documents remain linted.
 
-## Task 5: Current-Head Reviewer Calibration
+## Task 5: Current-Head Calibration
 
 - [x] Open PR #2 from `task/ECDD-56-solo-maintainer-review` to
   `epic/ECDD-53-repository-build`.
-- [x] Keep the PR in draft while changes are being made.
-- [x] Mark it ready only after deterministic verification passes.
-- [x] Confirm `Delivery gates` runs on the exact head.
-- [x] Confirm CodeRabbit performs a comprehensive review rather than a draft skip.
-- [ ] Resolve every actionable CodeRabbit finding.
-- [ ] Confirm the exact Semgrep check context and result on the final head.
-- [ ] Request Qodo `/agentic_review` only after the final head is stable.
+- [x] Keep the PR in draft while files change.
+- [x] Confirm current-head Delivery gates.
+- [x] Address CodeRabbit scope, simplicity, schema, and enforcement findings.
+- [ ] Confirm a comprehensive CodeRabbit review on the final head; a rate-limited
+  success status is not sufficient operational evidence.
+- [ ] Confirm exact Semgrep current-head status.
+- [ ] Request Qodo `/agentic_review` after machine gates are clear and record it as
+  manual evidence.
 - [ ] Confirm Code Review AI was not intentionally invoked on this task PR.
 - [ ] Confirm no unresolved review conversation remains.
 
-Any fix commit invalidates affected current-head evidence and returns this task to
-reviewer calibration.
+A fix commit invalidates affected current-head evidence.
 
 ## Task 6: Live Ruleset Application
 
-Apply the final desired state only after exact context names are calibrated.
+Apply desired state only after exact status names are calibrated.
 
-For `ERC epic branches`:
+`ERC epic branches`:
 
 ```text
 Target: refs/heads/epic/*
-Allowed merge method: Squash
-Required approvals: 0
+Merge method: Squash
+Approvals: 0
 Code Owner review: Off
 Latest-push approval: Off
 Conversation resolution: On
@@ -142,12 +139,12 @@ Strict required statuses: On
 Bypass actors: none
 ```
 
-For `ERC main`:
+`ERC main`:
 
 ```text
 Target: refs/heads/main
-Allowed merge method: Merge commit
-Required approvals: 0
+Merge method: Merge commit
+Approvals: 0
 Code Owner review: Off
 Latest-push approval: Off
 Conversation resolution: On
@@ -155,36 +152,24 @@ Strict required statuses: On
 Bypass actors: none
 ```
 
-Both rulesets require:
-
-```text
-Delivery gates
-semgrep-cloud-platform/scan
-CodeRabbit
-```
-
-Read back the live state after application. Do not claim enforcement from the
-checked-in JSON alone.
+Both rulesets require only the three calibrated stable contexts. Read back live
+state after application; checked-in JSON is not proof of enforcement.
 
 ## Task 7: Merge and Evidence
 
 Before merging PR #2:
 
-- [ ] final head SHA is recorded;
+- [ ] final head SHA recorded;
 - [ ] current-head Delivery gates pass;
 - [ ] current-head Semgrep passes;
-- [ ] current-head CodeRabbit passes with no actionable finding;
-- [ ] current-head Qodo review is clear during trial capacity;
-- [ ] review conversations are resolved;
-- [ ] the live epic ruleset is read back and matches desired state;
-- [ ] squash merge is used with expected-head locking; and
-- [ ] Jira `ECDD-56` records the final evidence.
-
-After merge, verify the epic branch contains the squash commit and the task branch
-is retired according to repository policy.
+- [ ] current-head CodeRabbit status passes and a comprehensive review is clear;
+- [ ] manual Qodo evidence recorded when capacity is available;
+- [ ] all review conversations resolved;
+- [ ] live epic ruleset read back and matched;
+- [ ] squash merge uses expected-head locking; and
+- [ ] Jira `ECDD-56` records final evidence and any unavailable manual provider.
 
 ## Rollback
 
-Rollback restores the previous reviewed desired-state JSON and documentation,
-reapplies the previous rulesets, and reads back the live state before another
-merge is allowed. Administrator bypass is not part of rollback.
+Restore the previous reviewed desired state, reapply the rulesets, and read back
+live state before another merge. Administrator bypass is not part of rollback.
