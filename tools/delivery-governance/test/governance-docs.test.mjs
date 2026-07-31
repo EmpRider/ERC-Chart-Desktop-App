@@ -9,7 +9,7 @@ import {
 const root = new URL("../../../", import.meta.url);
 const read = (name) => readFile(new URL(name, root), "utf8");
 
-test("review runbook contains the approved order and capacity controls", async () => {
+test("review runbook contains the solo-maintainer order and capacity controls", async () => {
   const runbook = await read("docs/governance/REVIEW-RUNBOOK.md");
   const required = [
     "Deterministic checks run before any AI review",
@@ -19,7 +19,9 @@ test("review runbook contains the approved order and capacity controls", async (
     "Code Review AI is reserved for epic-to-main",
     "eight first-pass epic reviews plus two re-reviews",
     "Any code commit invalidates prior review evidence",
-    "approval from `@EmpRider` is requested last",
+    "Solo-maintainer mode permits `EmpRider` to author and merge",
+    "`Delivery gates`, `semgrep-cloud-platform/scan`, and `CodeRabbit`",
+    "all review conversations are resolved",
     "fail-closed",
     "no administrator bypass",
     "A bot comment is evidence, not a GitHub approval",
@@ -43,18 +45,22 @@ test("application contract declares every stable script and handoff", async () =
   ]) assert.ok(contract.includes(phrase), phrase);
 });
 
-test("calibration procedure requires two levels and observed evidence", async () => {
+test("calibration procedure requires two levels and solo-maintainer evidence", async () => {
   const procedure = await read("docs/governance/CALIBRATION-PROCEDURE.md");
   for (const phrase of [
-    "separate coding GitHub identity",
+    "same `EmpRider` identity",
     "Level 1: Task-to-Epic",
     "Level 2: Epic-to-Main",
     "obvious injection sink",
     "/agentic_review",
     "Code Review AI once",
+    "missing required status",
+    "out-of-date branch",
+    "unresolved conversation",
     "direct push",
     "non-fast-forward push",
     "previous seven days",
+    "Day 1 of 14 · Trial",
   ]) assert.ok(procedure.includes(phrase), phrase);
 });
 
