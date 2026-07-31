@@ -1,0 +1,16 @@
+{
+  "name": "@erc-chart/workspace-boundaries",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Executable ERC Chart workspace and dependency boundary contract",
+  "dependencies": {
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": "24.18.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

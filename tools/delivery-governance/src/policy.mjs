@@ -36,26 +36,37 @@ export function validateBranchPolicy(context) {
   const kind = branchKind(context.head ?? "");
 
   if (!SHA.test(context.baseSha ?? "") || !SHA.test(context.headSha ?? "")) {
-    errors.push("Pull-request base and head SHAs must be 40-character lowercase hexadecimal values.");
+    errors.push(
+      "Pull-request base and head SHAs must be 40-character lowercase hexadecimal values.",
+    );
   }
   if (context.baseIsAncestor === false) {
-    errors.push("The pull-request branch must be based on the current target branch.");
+    errors.push(
+      "The pull-request branch must be based on the current target branch.",
+    );
   }
 
   if (kind === "bootstrap") {
     if (context.number !== 1) {
-      errors.push("The delivery-governance bootstrap exception is restricted to PR 1.");
+      errors.push(
+        "The delivery-governance bootstrap exception is restricted to PR 1.",
+      );
     }
     if (context.base !== "main") {
       errors.push("The delivery-governance bootstrap branch must target main.");
     }
-    if (!Array.isArray(context.changedFiles) || context.changedFiles.length === 0) {
+    if (
+      !Array.isArray(context.changedFiles) ||
+      context.changedFiles.length === 0
+    ) {
       errors.push("Bootstrap validation requires non-empty PR_CHANGED_FILES.");
       return errors;
     }
     for (const changedPath of context.changedFiles) {
       if (!BOOTSTRAP_PATHS.some((pattern) => pattern.test(changedPath))) {
-        errors.push(`Bootstrap pull request contains a disallowed path: ${changedPath}`);
+        errors.push(
+          `Bootstrap pull request contains a disallowed path: ${changedPath}`,
+        );
       }
     }
     return errors;
@@ -65,14 +76,19 @@ export function validateBranchPolicy(context) {
     const issue = extractBranchIssueKey(context.head);
     const parent = jiraValue(context.body ?? "", "Parent epic");
     const bodyIssue = jiraValue(context.body ?? "", "Issue");
-    if (!EPIC_BRANCH.test(context.base ?? "") || extractBranchIssueKey(context.base) !== parent) {
+    if (
+      !EPIC_BRANCH.test(context.base ?? "") ||
+      extractBranchIssueKey(context.base) !== parent
+    ) {
       errors.push("Task branches must target their declared epic branch.");
     }
     if (issue !== bodyIssue) {
       errors.push("Task branch Jira key must match the pull-request Issue.");
     }
     if (!new RegExp(`^${issue}: (?!merge\\b).+`).test(context.title ?? "")) {
-      errors.push("Task pull-request title must use 'ECDD-N: imperative summary'.");
+      errors.push(
+        "Task pull-request title must use 'ECDD-N: imperative summary'.",
+      );
     }
     return errors;
   }
@@ -87,12 +103,16 @@ export function validateBranchPolicy(context) {
       errors.push("Epic branch Jira key must match the pull-request Epic.");
     }
     if (!new RegExp(`^${issue}: merge .+`).test(context.title ?? "")) {
-      errors.push("Epic pull-request title must use 'ECDD-N: merge epic summary'.");
+      errors.push(
+        "Epic pull-request title must use 'ECDD-N: merge epic summary'.",
+      );
     }
     return errors;
   }
 
-  errors.push("Head branch must be task/ECDD-N-slug, epic/ECDD-N-slug, or the one-time bootstrap branch.");
+  errors.push(
+    "Head branch must be task/ECDD-N-slug, epic/ECDD-N-slug, or the one-time bootstrap branch.",
+  );
   return errors;
 }
 

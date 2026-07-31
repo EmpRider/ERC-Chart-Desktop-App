@@ -1,0 +1,14 @@
+{
+  "name": "@erc-chart/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure versioned data shapes, error codes, capability identifiers, and validators",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

@@ -17,5 +17,11 @@ test("JSONC parsing preserves comment-like and trailing-comma text in strings", 
 });
 
 test("invalid JSONC produces a deterministic parse error", () => {
-  assert.throws(() => parseJsonc('{ "value": ] }'), /Invalid JSONC/);
+  assert.throws(
+    () => parseJsonc('{ "value": ] }'),
+    (error) =>
+      error instanceof Error &&
+      /Invalid JSONC/.test(error.message) &&
+      error.cause instanceof SyntaxError,
+  );
 });

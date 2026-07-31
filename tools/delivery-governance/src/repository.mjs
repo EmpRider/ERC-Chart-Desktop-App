@@ -10,7 +10,12 @@ const MAX_SCAN_BYTES = 2_000_000;
 const MAX_ROOT_PACKAGE_LOCK_BYTES = 20_000_000;
 
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
-const FORBIDDEN_GENERATED_DIRECTORIES = new Set(["coverage", "dist", "out", "release"]);
+const FORBIDDEN_GENERATED_DIRECTORIES = new Set([
+  "coverage",
+  "dist",
+  "out",
+  "release",
+]);
 
 const FORBIDDEN_BINARY_EXTENSIONS = new Set([
   ".exe",
@@ -22,7 +27,13 @@ const FORBIDDEN_BINARY_EXTENSIONS = new Set([
   ".rar",
 ]);
 
-const STRUCTURED_EXTENSIONS = new Set([".json", ".jsonc", ".yml", ".yaml", ".toml"]);
+const STRUCTURED_EXTENSIONS = new Set([
+  ".json",
+  ".jsonc",
+  ".yml",
+  ".yaml",
+  ".toml",
+]);
 
 const SECRET_PATTERNS = [
   ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
@@ -52,7 +63,8 @@ const SCHEMA_EXAMPLES = [
 ];
 
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DATE_TIME_PATTERN = /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
+const DATE_TIME_PATTERN =
+  /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
 
 async function exists(filePath) {
   try {
@@ -194,7 +206,8 @@ function stripJsoncTrailingCommas(text) {
 
     if (character === ",") {
       let lookahead = index + 1;
-      while (lookahead < text.length && /\s/.test(text[lookahead])) lookahead += 1;
+      while (lookahead < text.length && /\s/.test(text[lookahead]))
+        lookahead += 1;
       if (text[lookahead] === "}" || text[lookahead] === "]") continue;
     }
 
@@ -208,8 +221,12 @@ export function parseJsonc(text) {
   try {
     return JSON.parse(stripJsoncTrailingCommas(stripJsoncComments(text)));
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Invalid JSONC:")) throw error;
-    throw new Error(`Invalid JSONC: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof Error && error.message.startsWith("Invalid JSONC:"))
+      throw error;
+    throw new Error(
+      `Invalid JSONC: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -224,7 +241,20 @@ function isValidDate(value) {
   const month = Number(match[2]);
   const day = Number(match[3]);
   if (month < 1 || month > 12) return false;
-  const days = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const days = [
+    31,
+    isLeapYear(year) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
   return day >= 1 && day <= days[month - 1];
 }
 
@@ -236,7 +266,13 @@ function isValidDateTime(value) {
   const second = Number(match[4]);
   const offsetHour = match[6] === undefined ? 0 : Number(match[6]);
   const offsetMinute = match[7] === undefined ? 0 : Number(match[7]);
-  return hour <= 23 && minute <= 59 && second <= 60 && offsetHour <= 23 && offsetMinute <= 59;
+  return (
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 60 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59
+  );
 }
 
 async function validateStructuredFilesFrom(root, files) {
@@ -248,7 +284,9 @@ async function validateStructuredFilesFrom(root, files) {
     const info = await stat(file);
     const limit = structuredFileLimit(root, file);
     if (info.size > limit) {
-      errors.push(`${rel}: structured file exceeds ${limit}-byte validation limit`);
+      errors.push(
+        `${rel}: structured file exceeds ${limit}-byte validation limit`,
+      );
       continue;
     }
     const text = await readFile(file, "utf8");
@@ -263,7 +301,9 @@ async function validateStructuredFilesFrom(root, files) {
         }
       }
     } catch (error) {
-      errors.push(`${rel}: invalid ${ext.slice(1).toUpperCase()} (${error.message})`);
+      errors.push(
+        `${rel}: invalid ${ext.slice(1).toUpperCase()} (${error.message})`,
+      );
     }
   }
   return errors;
@@ -271,7 +311,10 @@ async function validateStructuredFilesFrom(root, files) {
 
 export async function validateStructuredFiles(root) {
   const scan = await scanTree(root);
-  return [...scan.errors, ...(await validateStructuredFilesFrom(root, scan.files))];
+  return [
+    ...scan.errors,
+    ...(await validateStructuredFilesFrom(root, scan.files)),
+  ];
 }
 
 export async function validateSchemaExamples(root) {
@@ -284,15 +327,22 @@ export async function validateSchemaExamples(root) {
     const schemaPath = path.join(root, schemaRel);
     const examplePath = path.join(root, exampleRel);
     if (!(await exists(schemaPath)) || !(await exists(examplePath))) continue;
-    if ((await stat(schemaPath)).size > MAX_SCAN_BYTES || (await stat(examplePath)).size > MAX_SCAN_BYTES) {
-      errors.push(`${exampleRel}: schema validation input exceeds ${MAX_SCAN_BYTES}-byte limit`);
+    if (
+      (await stat(schemaPath)).size > MAX_SCAN_BYTES ||
+      (await stat(examplePath)).size > MAX_SCAN_BYTES
+    ) {
+      errors.push(
+        `${exampleRel}: schema validation input exceeds ${MAX_SCAN_BYTES}-byte limit`,
+      );
       continue;
     }
     const schema = JSON.parse(await readFile(schemaPath, "utf8"));
     const example = JSON.parse(await readFile(examplePath, "utf8"));
     const validate = ajv.compile(schema);
     if (!validate(example)) {
-      errors.push(`${exampleRel}: does not satisfy ${schemaRel}: ${ajv.errorsText(validate.errors)}`);
+      errors.push(
+        `${exampleRel}: does not satisfy ${schemaRel}: ${ajv.errorsText(validate.errors)}`,
+      );
     }
   }
   return errors;
@@ -304,7 +354,11 @@ function isAbsoluteLocalPath(value) {
 
 function escapesRoot(root, resolved) {
   const relation = path.relative(path.resolve(root), resolved);
-  return relation === ".." || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation);
+  return (
+    relation === ".." ||
+    relation.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relation)
+  );
 }
 
 async function validateMarkdownLinksFrom(root, files) {
@@ -314,11 +368,15 @@ async function validateMarkdownLinksFrom(root, files) {
     const rel = relative(root, file);
     const info = await stat(file);
     if (info.size > MAX_SCAN_BYTES) {
-      errors.push(`${rel}: Markdown file exceeds ${MAX_SCAN_BYTES}-byte validation limit`);
+      errors.push(
+        `${rel}: Markdown file exceeds ${MAX_SCAN_BYTES}-byte validation limit`,
+      );
       continue;
     }
     const text = await readFile(file, "utf8");
-    for (const match of text.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+    for (const match of text.matchAll(
+      /!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    )) {
       const target = match[1];
       if (/^(?:https?:|mailto:|#)/i.test(target)) continue;
       const encodedPath = target.split(/[?#]/, 1)[0];
@@ -333,7 +391,9 @@ async function validateMarkdownLinksFrom(root, files) {
       }
 
       if (isAbsoluteLocalPath(decoded)) {
-        errors.push(`${rel}: absolute local path is forbidden in link '${target}'`);
+        errors.push(
+          `${rel}: absolute local path is forbidden in link '${target}'`,
+        );
         continue;
       }
 
@@ -350,7 +410,10 @@ async function validateMarkdownLinksFrom(root, files) {
 
 export async function validateMarkdownLinks(root) {
   const scan = await scanTree(root);
-  return [...scan.errors, ...(await validateMarkdownLinksFrom(root, scan.files))];
+  return [
+    ...scan.errors,
+    ...(await validateMarkdownLinksFrom(root, scan.files)),
+  ];
 }
 
 function isScannableText(file) {
@@ -421,7 +484,10 @@ async function validateTrackedContentFrom(root, files) {
 
 export async function validateTrackedContent(root) {
   const scan = await scanTree(root);
-  return [...scan.errors, ...(await validateTrackedContentFrom(root, scan.files))];
+  return [
+    ...scan.errors,
+    ...(await validateTrackedContentFrom(root, scan.files)),
+  ];
 }
 
 export async function validateRepository(root) {

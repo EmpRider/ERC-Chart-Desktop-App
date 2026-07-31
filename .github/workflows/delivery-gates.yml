@@ -36,7 +36,7 @@ jobs:
           node-version: 24.18.1
           package-manager-cache: false
       - name: Install governance dependencies
-        run: npm ci --prefix tools/delivery-governance --ignore-scripts
+        run: npm ci --ignore-scripts
       - name: Build pull-request context
         id: context
         shell: bash
@@ -59,16 +59,16 @@ jobs:
             echo EOF
           } >> "$GITHUB_OUTPUT"
       - name: Test governance tool
-        run: npm --prefix tools/delivery-governance test
+        run: npm --workspace @erc-chart/delivery-governance test
       - name: Validate pull-request contract
         env:
           PR_BASE_IS_ANCESTOR: ${{ steps.context.outputs.base_is_ancestor }}
           PR_CHANGED_FILES: ${{ steps.context.outputs.changed_files }}
-        run: npm --prefix tools/delivery-governance run validate:pr
+        run: npm --workspace @erc-chart/delivery-governance run validate:pr
       - name: Validate repository
-        run: npm --prefix tools/delivery-governance run validate:repository
+        run: npm --workspace @erc-chart/delivery-governance run validate:repository
       - name: Lint Markdown
-        run: npm --prefix tools/delivery-governance run lint:markdown
+        run: npm --workspace @erc-chart/delivery-governance run lint:markdown
       - name: Verify administration dry run
         run: node tools/delivery-governance/src/github-admin.mjs
       - name: Detect application contract

@@ -1,0 +1,14 @@
+{
+  "name": "@erc-chart/renderer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React shell, chart-slot composition, UI state, and views",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/electron-main" },
+    { "path": "./packages/preload" },
+    { "path": "./packages/chart-core" },
+    { "path": "./packages/provider-sdk" },
+    { "path": "./packages/indicator-sdk" },
+    { "path": "./packages/storage" },
+    { "path": "./packages/data-service" },
+    { "path": "./packages/provider-runtime" },
+    { "path": "./packages/indicator-runtime" },
+    { "path": "./packages/renderer" },
+    { "path": "./packages/testing" },
+    { "path": "./apps/desktop" }
+  ]
+}

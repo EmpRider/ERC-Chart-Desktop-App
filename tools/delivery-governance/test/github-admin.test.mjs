@@ -47,17 +47,37 @@ test("apply patches settings and creates or updates rulesets", async () => {
     }
     return response(options.method === "POST" ? 201 : 200, {});
   };
-  await reconcileRepository({ apply: true, token: "token-value", fetchImpl, logger: { log() {} } });
+  await reconcileRepository({
+    apply: true,
+    token: "token-value",
+    fetchImpl,
+    logger: { log: () => undefined },
+  });
   assert.deepEqual(JSON.parse(calls[0].options.body), repositorySettings);
   assert.deepEqual(JSON.parse(calls[1].options.body), workflowPermissions);
-  assert.ok(calls.some(({ url, options }) => url.endsWith("/rulesets/9") && options.method === "PUT"));
-  assert.ok(calls.some(({ url, options }) => url.endsWith("/rulesets") && options.method === "POST"));
+  assert.ok(
+    calls.some(
+      ({ url, options }) =>
+        url.endsWith("/rulesets/9") && options.method === "PUT",
+    ),
+  );
+  assert.ok(
+    calls.some(
+      ({ url, options }) =>
+        url.endsWith("/rulesets") && options.method === "POST",
+    ),
+  );
 });
 
 test("missing apply token exits before any request", async () => {
   let calls = 0;
   await assert.rejects(
-    reconcileRepository({ apply: true, fetchImpl: async () => { calls += 1; } }),
+    reconcileRepository({
+      apply: true,
+      fetchImpl: async () => {
+        calls += 1;
+      },
+    }),
     /ERC_CHART_GITHUB_ADMIN_TOKEN/,
   );
   assert.equal(calls, 0);
@@ -73,7 +93,7 @@ test("a failed request stops later writes", async () => {
         calls += 1;
         return response(403, { message: "forbidden" });
       },
-      logger: { log() {} },
+      logger: { log: () => undefined },
     }),
     /failed with 403/,
   );

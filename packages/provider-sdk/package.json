@@ -1,0 +1,14 @@
+{
+  "name": "@erc-chart/provider-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider manifest and adapter authoring API",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

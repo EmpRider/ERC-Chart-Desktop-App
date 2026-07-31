@@ -1,0 +1,14 @@
+{
+  "name": "@erc-chart/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SQLite, workspace persistence, and migration APIs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}
