@@ -11,8 +11,7 @@ mode removes an impossible self-approval requirement; it does not create a
 review bypass.
 
 Missing, stale, cancelled, skipped, summary-only, or failed evidence never
-satisfies a gate. The process is fail-closed and there is no administrator
-bypass.
+satisfies a gate. The process is fail-closed. There is no administrator bypass.
 
 ## Enforced GitHub Evidence
 
@@ -70,7 +69,7 @@ review evidence and requires the applicable sequence to run again.
 
 ## Review Capacity
 
-Code Review AI has a monthly allocation of eight first-pass epic reviews plus two re-reviews.
+Code Review AI quota is eight first-pass epic reviews plus two re-reviews.
 It must never be intentionally invoked on task pull requests. The two re-reviews
 remain reserved for coherent fixes after initial epic review.
 
