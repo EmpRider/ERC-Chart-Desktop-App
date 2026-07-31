@@ -75,11 +75,11 @@ A fix commit returns the sequence to step 4.
 9. Recheck the machine-enforced merge contract and merge with a merge commit using
    expected-head locking.
 
-After any code or governance commit made after Qodo or Code Review AI evidence,
-return to step 4. Rerun affected machine checks and request fresh manual reviews
-on the stable head when capacity is available. When a provider is unavailable,
-record the approved unavailability explicitly instead of treating stale evidence
-as current.
+After any code or governance commit made after CodeRabbit, Qodo, or Code Review AI evidence,
+return to step 4. Rerun affected machine checks, including CodeRabbit, and request
+fresh manual reviews on the stable head when capacity is available. When a provider
+is unavailable, record the approved unavailability explicitly instead of treating
+stale evidence as current.
 
 ## Review Capacity
 
