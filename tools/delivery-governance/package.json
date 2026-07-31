@@ -1,0 +1,23 @@
+{
+  "name": "@erc-chart/delivery-governance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.18.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "validate:repository": "node src/cli.mjs repository ../..",
+    "validate:pr": "node src/cli.mjs pull-request ../..",
+    "lint:markdown": "markdownlint-cli2 \"../../**/*.md\" \"!../../tools/delivery-governance/node_modules/**\""
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "smol-toml": "1.7.1",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.2"
+  }
+}
