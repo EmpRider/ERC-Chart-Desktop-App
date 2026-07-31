@@ -28,11 +28,20 @@ test("review runbook distinguishes machine gates from manual AI evidence", async
     "GitHub rulesets do not enforce Qodo or Code Review AI",
     "manual, non-blocking review evidence",
     "machine-enforced merge contract",
-    "return to step 4",
-    "request fresh manual reviews",
-    "record the approved unavailability explicitly",
   ];
   for (const phrase of required) assert.ok(runbook.includes(phrase), phrase);
+
+  const restartRule = runbook.match(
+    /After any code or governance commit[\s\S]*?as current\./,
+  )?.[0];
+  assert.ok(restartRule, "post-evidence restart rule");
+  for (const phrase of [
+    "After any code or governance commit made after CodeRabbit, Qodo, or Code Review AI evidence",
+    "return to step 4",
+    "including CodeRabbit",
+    "fresh manual reviews",
+    "record the approved unavailability explicitly",
+  ]) assert.ok(restartRule.includes(phrase), phrase);
 });
 
 test("application contract declares every stable script and handoff", async () => {
