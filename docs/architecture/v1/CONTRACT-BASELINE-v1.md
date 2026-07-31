@@ -16,7 +16,7 @@ This document freezes names, ownership, dependency direction, and version identi
 ECDD-54 must create or preserve these logical units. A unit may initially contain only configuration, contracts, or test fixtures, but its public responsibility must remain stable.
 
 | Unit | Responsibility | May depend on |
-|---|---|---|
+| --- | --- | --- |
 | `apps/desktop` | Electron application composition and packaging entry | public APIs from application packages |
 | `packages/contracts` | pure versioned data shapes, error codes, capability identifiers, and validators | no application package |
 | `packages/electron-main` | lifecycle, privileged APIs, process supervision, protocols, security policy | `contracts`, SDK public types where required |
@@ -49,7 +49,7 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 ## State ownership
 
 | State | Sole owner |
-|---|---|
+| --- | --- |
 | Application/window lifecycle | `packages/electron-main` |
 | Privileged protocol and IPC authorization | `packages/electron-main` |
 | Renderer bridge surface | `packages/preload` |
@@ -67,7 +67,7 @@ A second owner may keep a read-only projection, but it must not become an indepe
 The following identifiers are the initial compatibility versions. Package semantic versions are separate and do not replace these contract versions.
 
 | Contract family | Identifier | Initial version | Owner |
-|---|---|---:|---|
+| --- | --- | ---: | --- |
 | Host API | `hostApiVersion` | `1` | application composition |
 | IPC | `ipcContractVersion` | `1` | Electron main/preload |
 | Provider | `providerContractVersion` | `1` | provider SDK/runtime |
