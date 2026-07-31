@@ -6,21 +6,44 @@
   "additionalProperties": false,
   "required": [
     "calibratedAt",
-    "codingAuthor",
-    "independentApprover",
+    "maintainer",
     "taskPullRequest",
+    "taskHeadSha",
     "epicPullRequest",
-    "qodoTrialEndsOn",
+    "epicHeadSha",
+    "qodoCapacity",
     "reviewers",
     "assertions"
   ],
   "properties": {
     "calibratedAt": { "type": "string", "format": "date-time" },
-    "codingAuthor": { "type": "string", "minLength": 1 },
-    "independentApprover": { "const": "EmpRider" },
+    "maintainer": { "const": "EmpRider" },
     "taskPullRequest": { "type": "integer", "minimum": 1 },
+    "taskHeadSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
     "epicPullRequest": { "type": "integer", "minimum": 1 },
-    "qodoTrialEndsOn": { "type": "string", "format": "date" },
+    "epicHeadSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "qodoCapacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observedAt", "displayText", "active", "exactEndsOn"],
+      "properties": {
+        "observedAt": { "type": "string", "format": "date-time" },
+        "displayText": { "const": "Day 1 of 14 · Trial" },
+        "active": { "const": true },
+        "exactEndsOn": {
+          "anyOf": [
+            { "type": "string", "format": "date" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
     "reviewers": {
       "type": "object",
       "additionalProperties": false,
@@ -44,23 +67,29 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "separateAuthor",
+        "soloMaintainer",
         "coderabbitComprehensive",
         "semgrepBlocks",
         "qodoTaskAndEpic",
         "codeReviewAiEpicOnly",
-        "staleApprovalDismissed",
+        "requiredStatusesBlock",
+        "staleBranchBlocks",
+        "unresolvedConversationBlocks",
+        "mergeMethodsEnforced",
         "directPushRejected",
         "forcePushRejected",
         "documentationMergeCreatedNoRelease"
       ],
       "properties": {
-        "separateAuthor": { "const": true },
+        "soloMaintainer": { "const": true },
         "coderabbitComprehensive": { "const": true },
         "semgrepBlocks": { "const": true },
         "qodoTaskAndEpic": { "const": true },
         "codeReviewAiEpicOnly": { "const": true },
-        "staleApprovalDismissed": { "const": true },
+        "requiredStatusesBlock": { "const": true },
+        "staleBranchBlocks": { "const": true },
+        "unresolvedConversationBlocks": { "const": true },
+        "mergeMethodsEnforced": { "const": true },
         "directPushRejected": { "const": true },
         "forcePushRejected": { "const": true },
         "documentationMergeCreatedNoRelease": { "const": true }
