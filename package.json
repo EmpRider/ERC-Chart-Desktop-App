@@ -1,0 +1,39 @@
+{
+  "name": "erc-chart-desktop-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ERC Chart Windows desktop charting application monorepo",
+  "engines": {
+    "node": "24.18.1"
+  },
+  "packageManager": "npm@11.9.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tools/*"
+  ],
+  "scripts": {
+    "format:check": "prettier --check apps packages docs/development tools/application-gates tools/workspace-boundaries package.json tsconfig.base.json tsconfig.package.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md",
+    "boundaries:check": "node tools/workspace-boundaries/src/cli.mjs",
+    "lint": "npm run boundaries:check && eslint apps packages tools/application-gates tools/workspace-boundaries eslint.config.mjs",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
+    "test:unit": "tsc -b packages/contracts --pretty false && node --test tools/delivery-governance/test/*.test.mjs packages/contracts/test/*.test.mjs",
+    "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs",
+    "build": "tsc -b --pretty false --force",
+    "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",
+    "audit:ci": "npm audit --audit-level=high --omit=optional",
+    "version:check": "node tools/workspace-boundaries/src/cli.mjs",
+    "package:win": "node tools/application-gates/src/deferred-gate.mjs ECDD-62 package:win",
+    "smoke:installer": "node tools/application-gates/src/deferred-gate.mjs ECDD-62 smoke:installer"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.1.2",
+    "eslint": "10.8.0",
+    "globals": "17.8.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0"
+  }
+}

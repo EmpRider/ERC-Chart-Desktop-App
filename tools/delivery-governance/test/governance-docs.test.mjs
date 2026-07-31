@@ -96,11 +96,11 @@ test("solo-maintainer amendment preserves the enforceable boundary", async () =>
 test("delivery workflow executes every governance verification command", async () => {
   const workflow = await read(".github/workflows/delivery-gates.yml");
   for (const command of [
-    "npm ci --prefix tools/delivery-governance --ignore-scripts",
-    "npm --prefix tools/delivery-governance test",
-    "npm --prefix tools/delivery-governance run validate:pr",
-    "npm --prefix tools/delivery-governance run validate:repository",
-    "npm --prefix tools/delivery-governance run lint:markdown",
+    "npm ci --ignore-scripts",
+    "npm --workspace @erc-chart/delivery-governance test",
+    "npm --workspace @erc-chart/delivery-governance run validate:pr",
+    "npm --workspace @erc-chart/delivery-governance run validate:repository",
+    "npm --workspace @erc-chart/delivery-governance run lint:markdown",
     "node tools/delivery-governance/src/github-admin.mjs",
   ]) assert.ok(workflow.includes(command), command);
 });

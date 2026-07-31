@@ -1,0 +1,75 @@
+{
+  "nodeVersion": "24.18.1",
+  "npmVersion": "11.9.0",
+  "requiredScripts": [
+    "format:check",
+    "lint",
+    "typecheck",
+    "test:unit",
+    "test:integration",
+    "build",
+    "test:performance",
+    "audit:ci",
+    "version:check",
+    "package:win",
+    "smoke:installer"
+  ],
+  "workspaces": {
+    "apps/desktop": [
+      "packages/contracts",
+      "packages/electron-main",
+      "packages/preload",
+      "packages/renderer",
+      "packages/chart-core",
+      "packages/data-service",
+      "packages/provider-sdk",
+      "packages/provider-runtime",
+      "packages/indicator-sdk",
+      "packages/indicator-runtime",
+      "packages/storage"
+    ],
+    "packages/contracts": [],
+    "packages/electron-main": [
+      "packages/contracts",
+      "packages/provider-sdk",
+      "packages/indicator-sdk"
+    ],
+    "packages/preload": ["packages/contracts"],
+    "packages/renderer": [
+      "packages/contracts",
+      "packages/chart-core",
+      "packages/provider-sdk",
+      "packages/indicator-sdk"
+    ],
+    "packages/chart-core": ["packages/contracts"],
+    "packages/data-service": [
+      "packages/contracts",
+      "packages/storage",
+      "packages/provider-sdk"
+    ],
+    "packages/provider-sdk": ["packages/contracts"],
+    "packages/provider-runtime": [
+      "packages/contracts",
+      "packages/provider-sdk"
+    ],
+    "packages/indicator-sdk": ["packages/contracts"],
+    "packages/indicator-runtime": [
+      "packages/contracts",
+      "packages/indicator-sdk"
+    ],
+    "packages/storage": ["packages/contracts"],
+    "packages/testing": [
+      "packages/contracts",
+      "packages/electron-main",
+      "packages/preload",
+      "packages/renderer",
+      "packages/chart-core",
+      "packages/data-service",
+      "packages/provider-sdk",
+      "packages/provider-runtime",
+      "packages/indicator-sdk",
+      "packages/indicator-runtime",
+      "packages/storage"
+    ]
+  }
+}

@@ -11,13 +11,16 @@ of this repository.
 
 ## Current status
 
-The architecture baseline is complete. Application implementation has not
-started.
+The architecture baseline is complete. The application repository now has its
+strict TypeScript monorepo foundation and frozen package boundaries; product
+features and the Electron shell are not implemented yet.
 
 - [Architecture specification](docs/architecture/v1/ERC-chart-Architecture-Specification-v1.md)
 - [Architecture decisions](docs/architecture/v1/ARCHITECTURE-DECISIONS.md)
 - [Implementation backlog](docs/architecture/v1/IMPLEMENTATION-BACKLOG.md)
 - [Reference feature catalogue](docs/architecture/v1/REFERENCE-FEATURE-CATALOG.md)
+- [Monorepo development guide](docs/development/MONOREPO.md)
 
-The first implementation milestone is **Epic 0 — Architecture validation
-spikes**.
+Development proceeds through the approved Jira backlog and task-to-epic branch
+workflow. Install the pinned Node.js version from `.nvmrc`, then run `npm ci`
+from the repository root before using the root quality commands.

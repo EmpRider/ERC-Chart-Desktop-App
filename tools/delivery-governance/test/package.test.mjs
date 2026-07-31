@@ -7,6 +7,7 @@ test("governance package pins its runtime and commands", async () => {
   assert.equal(packageJson.private, true);
   assert.equal(packageJson.type, "module");
   assert.equal(packageJson.engines.node, "24.18.1");
+  assert.ok(packageJson.scripts["lint:markdown"].includes('"!../../node_modules/**"'));
   assert.deepEqual(Object.keys(packageJson.scripts).sort(), [
     "lint:markdown",
     "test",

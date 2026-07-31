@@ -1,0 +1,14 @@
+{
+  "name": "@erc-chart/preload",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Narrow renderer bridge generated from allowlisted IPC contracts",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}
