@@ -13,6 +13,7 @@ This record is the approval addendum for `ERC-chart-Architecture-Specification-v
 - `ERC-chart-Architecture-Specification-v1.md`
 - `CONTRACT-BASELINE-v1.md`
 - `IMPLEMENTATION-BACKLOG.md`
+- readiness PR `EmpRider/ERC-Chart-Desktop-App#3`
 - ECDD-56 merged PR `EmpRider/ERC-Chart-Desktop-App#2`
 - ECDD-56 squash commit `6ce1d3e82f3104ee29339c470c1621e5c1b87bc6`
 
@@ -92,4 +93,4 @@ ECDD-56 is complete at repository level:
 
 ## Start condition
 
-After the PR containing this record and Contract Baseline v1 is squash merged into `epic/ECDD-53-repository-build`, no global pre-development blocker remains. Development starts with ECDD-54. Later spikes are enforced at the milestone gates listed above.
+After PR #3 containing this record and Contract Baseline v1 is squash merged into `epic/ECDD-53-repository-build`, no global pre-development blocker remains. Development starts with ECDD-54. The merge SHA and final current-head verification are recorded in Jira. Later spikes are enforced at the milestone gates listed above.
