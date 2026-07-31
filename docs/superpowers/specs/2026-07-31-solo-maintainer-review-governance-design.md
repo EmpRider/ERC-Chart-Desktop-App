@@ -27,7 +27,7 @@ as a required status check.
   protections.
 - Require deterministic and security checks on the current pull-request head.
 - Require CodeRabbit only through its observed stable status context.
-- Continue requesting Qodo and Code Review AI at the documented stages as manual
+- Continue requesting Qodo and Code Review AI at documented stages as manual
   review evidence.
 - Preserve the original application, installer, version, and release contracts.
 
@@ -68,9 +68,8 @@ failed evidence blocks merge.
 ### Manual Reviewer Evidence
 
 GitHub rulesets do not receive a stable pass/fail context from Qodo or Code Review
-AI under the observed integration. Their comments and review threads are manual,
-non-blocking evidence. This design does not claim that Qodo or Code Review AI
-blocks a GitHub merge.
+AI under the observed integration. Their comments are manual, non-blocking evidence.
+This design does not claim that Qodo or Code Review AI blocks a GitHub merge.
 
 The operational sequence still requests:
 
@@ -108,7 +107,7 @@ adds it to the rulesets and tests.
 4. Record Qodo and Code Review AI login, representation, head reference, and
    findings as manual evidence.
 5. Apply live rulesets and read them back before relying on enforcement.
-6. Do not infer enforcement from checked-in JSON or from runbook language.
+6. Do not infer enforcement from checked-in JSON or runbook language.
 
 ## Failure Handling
 
