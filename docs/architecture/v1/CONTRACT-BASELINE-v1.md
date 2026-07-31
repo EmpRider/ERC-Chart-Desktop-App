@@ -48,19 +48,22 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 
 ## State ownership
 
-| State | Sole owner |
-| --- | --- |
-| Application/window lifecycle | `packages/electron-main` |
-| Privileged protocol and IPC authorization | `packages/electron-main` |
-| Renderer bridge surface | `packages/preload` |
-| Transient viewport, selection, crosshair and drawings | `packages/renderer` and `packages/chart-core` |
-| Canonical normalized market-data revision | `packages/data-service` |
-| Provider connection and adapter state | provider utility process through `packages/provider-runtime` |
-| Indicator calculation state | worker through `packages/indicator-runtime` |
-| Database and workspace persistence | `packages/storage` coordinated by data service/main |
-| Provider secrets | Windows Credential Manager through main-owned bridge |
+| State | Sole mutable owner | Read-only projection |
+| --- | --- | --- |
+| Application/window lifecycle | `packages/electron-main` | none |
+| Privileged protocol and IPC authorization | `packages/electron-main` | `packages/preload` exposes an allowlisted view |
+| Renderer bridge surface | `packages/preload` | `packages/renderer` consumes the exposed API |
+| Viewport | `packages/chart-core` | `packages/renderer` observes render state |
+| Selection | `packages/renderer` | `packages/chart-core` receives selection input |
+| Crosshair | `packages/chart-core` | `packages/renderer` observes crosshair output |
+| Session drawings | `packages/renderer` | `packages/chart-core` receives immutable drawing snapshots |
+| Canonical normalized market-data revision | `packages/data-service` | consumers receive versioned projections |
+| Provider connection and adapter state | provider utility process through `packages/provider-runtime` | main/data service receive contract messages |
+| Indicator calculation state | worker through `packages/indicator-runtime` | renderer/data service receive validated outputs |
+| Database and workspace persistence | `packages/storage` coordinated by data service/main | consumers use public storage APIs |
+| Provider secrets | Windows Credential Manager through main-owned bridge | no package receives raw secret persistence access |
 
-A second owner may keep a read-only projection, but it must not become an independent source of truth.
+A projection must not mutate the source-owned state or become an independent source of truth.
 
 ## Contract families
 
