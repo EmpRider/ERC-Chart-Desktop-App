@@ -20,8 +20,7 @@ names and pull-request bodies.
 ## Level 1: Task-to-Epic
 
 1. Open the task pull request as a draft.
-2. Add a temporary non-production JavaScript fixture containing an obvious
-   injection sink.
+2. Add a temporary non-production JavaScript fixture containing an obvious injection sink.
 3. Mark the pull request ready and record that Semgrep blocks the fixture and
    CodeRabbit performs a comprehensive review.
 4. Return the pull request to draft, remove the unsafe fixture, and commit the
