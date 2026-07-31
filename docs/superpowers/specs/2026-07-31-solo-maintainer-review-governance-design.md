@@ -2,170 +2,143 @@
 
 ## Amendment Status
 
-This document is the approved solo-maintainer amendment to
-`2026-07-30-github-delivery-workflow-design.md`.
+This document amends `2026-07-30-github-delivery-workflow-design.md` only where
+that design requires an independent author or independent approval.
 
-It supersedes only the independent-author and independent-approval requirements
-in Sections 6, 7, 10, 14, and 15 of that design. All branch, application gate,
-performance, version, installer, release, release-failure, quota, and no-bypass
-rules in the original design remain unchanged.
+All branch, application gate, performance, version, installer, release,
+release-failure, quota, and no-bypass rules remain unchanged. In particular, the
+original version and release policy remains unchanged.
 
 ## Context
 
-The repository is developed, reviewed, and merged through one authenticated
-GitHub identity, `EmpRider`, including all work performed through the GitHub MCP
-connector. GitHub cannot treat the pull-request author as an independent
-approving reviewer, so mandatory Code Owner and last-push approval rules make the
-approved MCP-only workflow impossible.
+The repository is developed and merged through one authenticated GitHub identity,
+`EmpRider`, including work performed through GitHub MCP. GitHub cannot count the
+pull-request author as an independent approving reviewer, so Code Owner and
+latest-push approval requirements make the MCP-only workflow impossible.
 
-This amendment replaces independent human approval with strict current-head
-automated evidence while preserving fail-closed merge controls. It does not
-convert comment-only AI reviewers into unreliable required status checks.
+The replacement must distinguish what GitHub can enforce from what the maintainer
+can only observe manually. A comment-only provider cannot truthfully be described
+as a required status check.
 
 ## Goals
 
-- Permit `EmpRider` to author and merge pull requests without a second GitHub
-  user.
-- Keep direct deletion, force push, stale-head merge, and
-  unresolved-conversation protections.
+- Permit `EmpRider` to author and merge without a second GitHub user.
+- Preserve deletion, non-fast-forward, stale-head, conversation, and merge-method
+  protections.
 - Require deterministic and security checks on the current pull-request head.
-- Require CodeRabbit as a stable GitHub status check.
-- Keep Qodo and Code Review AI mandatory at the appropriate review level through
-  the operational runbook when they do not emit stable pass/fail contexts.
-- Preserve task-to-epic squash merges and epic-to-main merge commits.
-- Preserve the original version and release policy without modification.
+- Require CodeRabbit only through its observed stable status context.
+- Continue requesting Qodo and Code Review AI at the documented stages as manual
+  review evidence.
+- Preserve the original application, installer, version, and release contracts.
 
 ## Non-Goals
 
-- Parsing AI review comment text inside a custom workflow.
-- Treating bot comments or summary reviews as GitHub approvals.
+- Parsing AI comment text inside a custom workflow.
+- Inventing a provider status context that has not been observed.
+- Treating bot comments as GitHub approvals.
+- Claiming that manual evidence is a GitHub-enforced merge blocker.
 - Creating an administrator bypass.
-- Weakening Semgrep severity handling or deterministic validation.
-- Changing product code, application gates, installer behavior, or release
-  policy.
+- Changing product code or release behavior.
 
 ## Enforcement Model
 
-### GitHub Rulesets
+### GitHub-Enforced Merge Conditions
 
-Both `ERC main` and `ERC epic branches` remain active with empty bypass lists.
+Both active rulesets keep empty bypass lists and require:
 
-The pull-request rule changes to:
+- zero approving reviews;
+- no Code Owner review;
+- no latest-push approval;
+- resolved review conversations;
+- strict branch freshness;
+- blocked deletion and non-fast-forward updates; and
+- target-specific merge methods.
 
-- required approving review count: `0`;
-- Code Owner review: not required;
-- last-push approval: not required;
-- stale review dismissal: enabled where supported;
-- all review conversations must be resolved; and
-- target-specific merge method remains unchanged.
+Required status contexts are exactly:
 
-The required status checks become:
+```text
+Delivery gates
+semgrep-cloud-platform/scan
+CodeRabbit
+```
 
-- `Delivery gates`;
-- `semgrep-cloud-platform/scan`; and
-- `CodeRabbit`.
+These are the GitHub-enforced merge conditions. Missing, stale, cancelled, or
+failed evidence blocks merge.
 
-Strict required-status policy remains enabled so the pull-request branch must be
-current with its target before merge. A status is required only after its exact
-stable context has been observed on a current-head pull request.
+### Manual Reviewer Evidence
 
-### Runbook Reviews
+GitHub rulesets do not receive a stable pass/fail context from Qodo or Code Review
+AI under the observed integration. Their comments and review threads are manual,
+non-blocking evidence. This design does not claim that Qodo or Code Review AI
+blocks a GitHub merge.
 
-GitHub rulesets enforce only stable machine-readable pass/fail contexts. The
-review runbook enforces providers that are comment-only or review-only.
+The operational sequence still requests:
 
-Task-to-epic during active Qodo trial capacity:
+- Qodo `/agentic_review` on stable task and epic heads while capacity is
+  available; and
+- Code Review AI once on epic-to-main after earlier evidence is clear.
 
-1. `Delivery gates` passes on the current head.
-2. Semgrep passes with no new blocking finding.
-3. CodeRabbit reports success and all actionable findings are resolved.
-4. Qodo `/agentic_review` assesses the stable current head.
-5. All GitHub review conversations are resolved.
-6. The pull request is squash merged with expected-head locking.
+The maintainer considers their findings and resolves any GitHub conversations
+created by them. Conversation resolution remains enforceable even though provider
+invocation itself is not.
 
-Epic-to-main:
+A provider may become a required status later only after calibration proves an
+exact, stable, current-head pass/fail context and a reviewed governance change
+adds it to the rulesets and tests.
 
-1. `Delivery gates`, Semgrep, and CodeRabbit pass on the current head.
-2. Qodo `/agentic_review` assesses the stable current head.
-3. Code Review AI is invoked once after earlier gates are clear.
-4. All actionable findings and review conversations are resolved.
-5. The pull request is merged with a merge commit and expected-head locking.
+## Components
 
-Any code or documentation commit invalidates affected current-head evidence. The
-applicable checks and AI reviews must run again before merge.
+- `.github/rulesets/main.json`: zero human approvals plus exact stable contexts.
+- `.github/rulesets/epic.json`: equivalent task-to-epic enforcement with squash
+  merge only.
+- `docs/governance/REVIEW-RUNBOOK.md`: separates the machine contract from manual
+  provider evidence.
+- `docs/governance/CALIBRATION-PROCEDURE.md`: tests only conditions GitHub can
+  enforce and records Qodo/Code Review AI as observations.
+- Governance tests: verify exact contexts, empty bypass lists, zero approvals,
+  conversation resolution, and unchanged merge methods.
+- Calibration evidence: binds observations to task and epic head SHAs.
 
-## Components to Change
+## Calibration
 
-- `.github/rulesets/main.json`: remove mandatory human approval and add calibrated
-  stable status contexts.
-- `.github/rulesets/epic.json`: apply equivalent solo-maintainer rules for
-  task-to-epic pull requests.
-- `docs/governance/REVIEW-RUNBOOK.md`: replace independent approval steps with
-  current-head evidence rules.
-- `docs/governance/CALIBRATION-PROCEDURE.md`: replace separate-author approval
-  tests with required-status, stale-branch, unresolved-thread, and merge-method
-  tests.
-- `tools/delivery-governance` tests: verify zero approvals, no Code Owner
-  requirement, empty bypass lists, exact contexts, and unchanged merge methods.
-- Calibration evidence: remove the separate coding identity and independent
-  approver fields.
-
-## Calibration Sequence
-
-1. Keep existing rulesets active while preparing the governance pull request.
-2. Observe exact current-head status names from a real task pull request.
-3. Record the stable Semgrep, Delivery gates, and CodeRabbit contexts.
-4. Update desired-state JSON and tests with exact observed names.
-5. Edit the live rulesets without removing status, conversation, merge-method,
-   deletion, non-fast-forward, or empty-bypass protections.
-6. Merge the governance task pull request only after current-head deterministic
-   and AI evidence is clear.
-7. Validate the epic-to-main sequence when `ECDD-53` is ready for normal
-   integration.
-8. Reconcile final desired-state rulesets and read them back from GitHub.
-9. Test that missing status, stale branch state, unresolved conversation, wrong
-   merge method, deletion, and non-fast-forward updates are blocked.
+1. Observe exact current-head status names on a real pull request.
+2. Add only stable pass/fail contexts to desired-state rulesets.
+3. Test missing status, stale branch, unresolved conversation, wrong merge method,
+   deletion, and non-fast-forward rejection.
+4. Record Qodo and Code Review AI login, representation, head reference, and
+   findings as manual evidence.
+5. Apply live rulesets and read them back before relying on enforcement.
+6. Do not infer enforcement from checked-in JSON or from runbook language.
 
 ## Failure Handling
 
 - Unknown or unstable context: do not add it to a ruleset.
-- Missing required check: do not merge.
-- New blocking Semgrep finding: do not merge.
-- Actionable AI finding: fix it or record a reviewed rejection with rationale.
-- Evidence from an older head: rerun it.
+- Missing required status: do not merge.
+- Rate-limited or summary-only CodeRabbit result: do not treat it as a
+  comprehensive operational review even when a status is green.
+- Actionable manual AI finding: fix it or record a reasoned rejection.
 - Unresolved conversation: do not merge.
-- Ruleset mismatch after application: stop, correct the desired state, reapply,
-  and read it back.
-- Required Qodo epic capacity unavailable: fail closed according to review
-  capacity policy.
+- Ruleset mismatch after application: stop, correct, reapply, and read back.
+- Qodo or Code Review AI unavailable: record the absence honestly; do not claim a
+  GitHub ruleset failure.
 
 ## Verification
 
-Automated tests must prove:
+Automated tests prove:
 
-- both rulesets require zero approvals;
-- neither ruleset requires Code Owner or last-push approval;
-- bypass actor lists remain empty;
-- `Delivery gates`, `semgrep-cloud-platform/scan`, and `CodeRabbit` are required
-  with strict branch freshness;
+- approval count is zero;
+- Code Owner and latest-push approval are disabled;
+- bypass lists are empty;
+- exact required status contexts are present with strict freshness;
 - main permits merge commits only;
-- epic branches permit squash merges only;
+- epic branches permit squash only;
 - deletion and non-fast-forward updates remain blocked; and
-- repository and pull-request validators still pass.
+- repository and pull-request validators pass.
 
-Live calibration must prove:
-
-- the sole maintainer can merge after all required evidence is current;
-- a missing required status blocks merge;
-- an out-of-date branch blocks merge;
-- an unresolved conversation blocks merge;
-- a disallowed merge method is unavailable;
-- deletion and non-fast-forward updates remain rejected; and
-- Qodo and Code Review AI are invoked only at documented stages.
+Live calibration proves the machine-enforced merge contract and separately records
+manual provider evidence. The two evidence classes are never conflated.
 
 ## Rollback
 
-Rollback uses a reviewed prior desired-state ruleset with no administrator bypass.
-If solo-maintainer enforcement is unsafe or incomplete, disable merging, restore
-the previous desired-state JSON, reapply both rulesets, and verify live state
-before allowing further product work.
+Rollback restores a previously reviewed desired state, reapplies both rulesets,
+and reads back live state. Administrator bypass is not part of rollback.
