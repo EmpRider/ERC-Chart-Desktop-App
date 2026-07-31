@@ -64,6 +64,17 @@ test("calibration procedure requires two levels and solo-maintainer evidence", a
   ]) assert.ok(procedure.includes(phrase), phrase);
 });
 
+test("delivery workflow executes every governance verification command", async () => {
+  const workflow = await read(".github/workflows/delivery-gates.yml");
+  for (const command of [
+    "npm ci --prefix tools/delivery-governance --ignore-scripts",
+    "npm --prefix tools/delivery-governance test",
+    "npm --prefix tools/delivery-governance run validate:repository",
+    "npm --prefix tools/delivery-governance run lint:markdown",
+    "node tools/delivery-governance/src/github-admin.mjs",
+  ]) assert.ok(workflow.includes(command), command);
+});
+
 test("calibration evidence schema requires solo-maintainer enforcement assertions", async () => {
   const schema = JSON.parse(await read("docs/governance/calibration-evidence.schema.json"));
   assert.deepEqual(schema.properties.maintainer, { const: "EmpRider" });
