@@ -6,7 +6,11 @@
 - The same `EmpRider` identity performs branch creation, commits, pull-request
   authorship, review coordination, and merge through `@GitHub` MCP.
 - CodeRabbit, Semgrep, Qodo, and Code Review AI are installed for the repository.
-- The Qodo portal observation is recorded exactly as `Day 1 of 14 · Trial`.
+- For an active Qodo trial, record the observed numeric day in `trialDay` and use
+  the matching `displayText` form `Day N of 14 · Trial`. For example, day one is
+  recorded as `Day 1 of 14 · Trial`.
+- For inactive or unavailable Qodo capacity, set `active: false`, omit `trialDay`,
+  and record a non-empty explanatory `displayText`.
 - `exactEndsOn` remains `null` unless Qodo exposes a trustworthy date.
 - No administrator bypass or bypass actor is used.
 
