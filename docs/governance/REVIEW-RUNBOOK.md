@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This runbook is the operational source of truth for task-to-epic and
- epic-to-main pull requests.
+This runbook is the operational source of truth for task-to-epic and epic-to-main
+pull requests.
 
 Solo-maintainer mode permits `EmpRider` to author and merge a pull request only
 when every required current-head check and review condition is satisfied. The
@@ -70,9 +70,9 @@ review evidence and requires the applicable sequence to run again.
 
 ## Review Capacity
 
-Code Review AI has a monthly allocation of eight first-pass epic reviews plus
-two re-reviews. It must never be intentionally invoked on task pull requests.
-The two re-reviews remain reserved for coherent fixes after initial epic review.
+Code Review AI has a monthly allocation of eight first-pass epic reviews plus two re-reviews.
+It must never be intentionally invoked on task pull requests. The two re-reviews
+remain reserved for coherent fixes after initial epic review.
 
 Qodo task-to-epic review is required while the approved 14-day trial or another
 explicitly approved capacity rule is active. The current portal observation is
