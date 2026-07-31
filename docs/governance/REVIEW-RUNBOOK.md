@@ -87,9 +87,8 @@ reserved for coherent fixes after an initial epic review.
 For an active Qodo trial, record the observed numeric day in `trialDay` and use
 matching `displayText` in the form `Day N of 14 · Trial`. For example, day one is
 `Day 1 of 14 · Trial`. When Qodo capacity is inactive or unavailable, set
-`active: false`, omit `trialDay`, and record a non-empty explanatory
-`displayText`. Keep `exactEndsOn` as `null` unless the provider exposes a
-trustworthy date.
+`active: false`, omit `trialDay`, and record a non-empty explanatory `displayText`.
+Keep `exactEndsOn` as `null` unless the provider exposes a trustworthy date.
 
 Provider unavailability does not weaken the machine-enforced GitHub contract. It
 means the corresponding manual evidence is unavailable and must be recorded
