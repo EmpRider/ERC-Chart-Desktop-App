@@ -58,17 +58,27 @@ test("calibration procedure requires two levels and observed evidence", async ()
   ]) assert.ok(procedure.includes(phrase), phrase);
 });
 
-test("calibration evidence schema requires all approved assertions", async () => {
+test("calibration evidence schema requires solo-maintainer enforcement assertions", async () => {
   const schema = JSON.parse(await read("docs/governance/calibration-evidence.schema.json"));
-  assert.deepEqual(schema.properties.independentApprover, { const: "EmpRider" });
-  assert.deepEqual(schema.properties.assertions.properties.separateAuthor, { const: true });
-  assert.ok(schema.properties.assertions.required.includes("documentationMergeCreatedNoRelease"));
+  assert.deepEqual(schema.properties.maintainer, { const: "EmpRider" });
+  assert.equal(schema.properties.codingAuthor, undefined);
+  assert.equal(schema.properties.independentApprover, undefined);
+  assert.ok(schema.properties.assertions.required.includes("requiredStatusesBlock"));
+  assert.ok(schema.properties.assertions.required.includes("staleBranchBlocks"));
+  assert.ok(schema.properties.assertions.required.includes("unresolvedConversationBlocks"));
+  assert.ok(schema.properties.assertions.required.includes("mergeMethodsEnforced"));
+  assert.equal(schema.properties.assertions.properties.soloMaintainer.const, true);
   assert.ok(schema.properties.reviewers.required.includes("codeReviewAi"));
 });
 
-test("calibration evidence includes a representative checked example", async () => {
+test("calibration evidence includes representative solo-maintainer observations", async () => {
   const example = JSON.parse(await read("docs/governance/calibration-evidence.example.json"));
-  assert.equal(example.independentApprover, "EmpRider");
+  assert.equal(example.maintainer, "EmpRider");
+  assert.equal(example.qodoCapacity.displayText, "Day 1 of 14 · Trial");
+  assert.equal(example.qodoCapacity.active, true);
+  assert.equal(example.qodoCapacity.exactEndsOn, null);
+  assert.deepEqual(example.reviewers.coderabbit.observedContexts, ["CodeRabbit"]);
+  assert.deepEqual(example.reviewers.semgrep.observedContexts, ["semgrep-cloud-platform/scan"]);
+  assert.equal(example.assertions.requiredStatusesBlock, true);
   assert.equal(example.assertions.documentationMergeCreatedNoRelease, true);
-  assert.ok(example.reviewers.semgrep.observedContexts.length > 0);
 });
