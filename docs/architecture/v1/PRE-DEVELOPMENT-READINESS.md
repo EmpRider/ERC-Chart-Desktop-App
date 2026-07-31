@@ -20,7 +20,7 @@ This record is the approval addendum for `ERC-chart-Architecture-Specification-v
 ## Architecture approval checklist evidence
 
 | Jira | Accepted decision | Repository evidence |
-|---|---|---|
+| --- | --- | --- |
 | ECDD-2 | MVP in-scope and out-of-scope lists | Architecture sections 1–4 and 24 |
 | ECDD-3 | Electron and strict TypeScript desktop baseline | Architecture section 7 |
 | ECDD-4 | four charts per window and independent multi-instance behavior | Architecture sections 2, 4.1 and 16.4 |
@@ -49,7 +49,7 @@ The baseline is documentation-first. ECDD-54 creates the TypeScript monorepo rep
 ## Open-decision register
 
 | ID | Owner | Resolution gate | Blocks ECDD-54? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | OD-001 Final minimum PC | EmpRider | after ECDD-46 and ECDD-47 measurements; before Epic 9 performance acceptance | No |
 | OD-002 Binomo credential capture/renewal UX | EmpRider | ECDD-43; before Epic 4 provider implementation | No |
 | OD-003 Binomo instrument discovery | EmpRider | ECDD-43; before Epic 4 provider implementation | No |
@@ -65,7 +65,7 @@ The baseline is documentation-first. ECDD-54 creates the TypeScript monorepo rep
 These tasks remain mandatory but are not global pre-development blockers.
 
 | Jira | Required evidence | Resolution gate | Current disposition |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | ECDD-43 | Binomo TLS, auth, catalogue, history, live stream, timeframe and distribution feasibility | before full Epic 4 Binomo adapter implementation | milestone-deferred |
 | ECDD-44 | Windows Credential Manager bridge approach | before Epic 2 credential persistence implementation | milestone-deferred |
 | ECDD-45 | SQLite WAL from two independent ERC-chart processes | before Epic 2 shared-database acceptance | milestone-deferred |
