@@ -6,7 +6,7 @@
 
 **Authorized next implementation task:** ECDD-54 — Create TypeScript monorepo and package boundaries.
 
-This record closes the global architecture-decision gate for starting application implementation. It does not close technical spikes whose evidence is required at a later implementation milestone.
+This record is the approval addendum for `ERC-chart-Architecture-Specification-v1.md`. It supersedes that document’s `1.0 draft` review status and the unchecked section 29 checklist without rewriting the approved architecture body. This record closes the global architecture-decision gate for starting application implementation. It does not close technical spikes whose evidence is required at a later implementation milestone.
 
 ## Authoritative sources
 
