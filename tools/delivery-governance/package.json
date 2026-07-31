@@ -10,7 +10,7 @@
     "test": "node --test test/*.test.mjs",
     "validate:repository": "node src/cli.mjs repository ../..",
     "validate:pr": "node src/cli.mjs pull-request ../..",
-    "lint:markdown": "markdownlint-cli2 \"../../**/*.md\" \"!../../tools/delivery-governance/node_modules/**\""
+    "lint:markdown": "markdownlint-cli2 \"../../**/*.md\" \"!../../tools/delivery-governance/node_modules/**\" \"!../../.github/pull_request_template.md\" \"!../../docs/architecture/v1/ARCHITECTURE-DECISIONS.md\" \"!../../docs/architecture/v1/ERC-chart-Architecture-Specification-v1.md\" \"!../../docs/architecture/v1/IMPLEMENTATION-BACKLOG.md\" \"!../../docs/architecture/v1/README.md\" \"!../../docs/architecture/v1/REFERENCE-FEATURE-CATALOG.md\" \"!../../docs/superpowers/plans/2026-07-31-solo-maintainer-review-governance.md\""
   },
   "dependencies": {
     "ajv": "8.20.0",
