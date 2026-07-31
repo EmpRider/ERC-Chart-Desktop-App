@@ -1,5 +1,6 @@
 import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import ts from "typescript";
 
 const IMPORT_PATTERN =
   /(?:\bimport\s*(?:\([^)]*\)|(?:type\s+)?[^;]*?\s+from\s+)?|\bexport\s+(?:type\s+)?[^;]*?\s+from\s+)["']([^"']+)["']/g;
@@ -16,6 +17,45 @@ async function exists(filePath) {
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
+}
+
+function withoutComments(source) {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    ts.LanguageVariant.JSX,
+    source,
+  );
+  let result = "";
+  let previousEnd = 0;
+
+  for (
+    let token = scanner.scan();
+    token !== ts.SyntaxKind.EndOfFileToken;
+    token = scanner.scan()
+  ) {
+    const start = scanner.getTokenPos();
+    const end = scanner.getTextPos();
+    result += source.slice(previousEnd, start);
+    const tokenText = source.slice(start, end);
+    result +=
+      token === ts.SyntaxKind.SingleLineCommentTrivia ||
+      token === ts.SyntaxKind.MultiLineCommentTrivia
+        ? tokenText.replace(/[^\r\n]/g, " ")
+        : tokenText;
+    previousEnd = end;
+  }
+
+  return result + source.slice(previousEnd);
+}
+
+async function directoryNames(directory) {
+  if (!(await exists(directory))) return [];
+  const entries = await readdir(directory, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
 }
 
 async function sourceFiles(directory) {
@@ -94,6 +134,18 @@ export async function validateWorkspace(root, contract = undefined) {
   const errors = [];
   const manifests = new Map();
   const graph = new Map();
+
+  const approvedWorkspaces = new Set(Object.keys(contract.workspaces));
+  for (const group of ["apps", "packages"]) {
+    for (const name of await directoryNames(path.join(root, group))) {
+      const workspace = `${group}/${name}`;
+      if (!approvedWorkspaces.has(workspace)) {
+        errors.push(
+          `${workspace}: workspace is not part of the approved inventory`,
+        );
+      }
+    }
+  }
 
   const rootManifestPath = path.join(root, "package.json");
   if (!(await exists(rootManifestPath))) {
@@ -237,7 +289,14 @@ export async function validateWorkspace(root, contract = undefined) {
               (candidate) => workspacePackageName(candidate) === dependencyName,
             )
           : undefined);
-      if (dependencyWorkspace === undefined) continue;
+      if (dependencyWorkspace === undefined) {
+        if (dependencyName.startsWith("@erc-chart/")) {
+          errors.push(
+            `${workspace}/package.json: dependency ${dependencyName} does not resolve to an approved workspace`,
+          );
+        }
+        continue;
+      }
       workspaceDependencies.push(dependencyWorkspace);
       if (!allowed.has(dependencyWorkspace)) {
         errors.push(
@@ -249,7 +308,7 @@ export async function validateWorkspace(root, contract = undefined) {
 
     for (const file of await sourceFiles(path.join(root, workspace, "src"))) {
       const relativeFile = path.relative(root, file).split(path.sep).join("/");
-      const source = await readFile(file, "utf8");
+      const source = withoutComments(await readFile(file, "utf8"));
       const specifiers = [
         ...[...source.matchAll(IMPORT_PATTERN)].map((match) => match[1]),
         ...[...source.matchAll(DYNAMIC_IMPORT_PATTERN)].map(

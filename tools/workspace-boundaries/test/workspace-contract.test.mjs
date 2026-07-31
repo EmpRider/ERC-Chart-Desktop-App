@@ -122,6 +122,19 @@ test("accepts the complete approved workspace inventory", async () => {
   assert.deepEqual(errors, []);
 });
 
+test("rejects an unapproved workspace discovered by a root glob", async () => {
+  const files = validFiles();
+  files["packages/unapproved/package.json"] = manifest("@erc-chart/unapproved");
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/unapproved: workspace is not part of the approved inventory",
+    ),
+  );
+});
+
 test("rejects a manifest dependency outside the approved direction", async () => {
   const files = validFiles();
   const contractsManifest = JSON.parse(
@@ -135,6 +148,21 @@ test("rejects a manifest dependency outside the approved direction", async () =>
   assert.ok(
     errors.includes(
       "packages/contracts/package.json: dependency @erc-chart/chart-core is not allowed",
+    ),
+  );
+});
+
+test("rejects an unknown ERC Chart manifest dependency", async () => {
+  const files = validFiles();
+  const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
+  chartManifest.dependencies["@erc-chart/unapproved"] = "workspace:*";
+  files["packages/chart-core/package.json"] = JSON.stringify(chartManifest);
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/package.json: dependency @erc-chart/unapproved does not resolve to an approved workspace",
     ),
   );
 });
@@ -350,4 +378,20 @@ test("rejects an undeclared workspace package dynamic import", async () => {
       "packages/chart-core/src/index.ts: @erc-chart/indicator-sdk is not a declared workspace dependency",
     ),
   );
+});
+
+test("ignores workspace imports inside comments", async () => {
+  const files = validFiles();
+  files["packages/chart-core/src/index.ts"] = `
+// import "@erc-chart/indicator-sdk";
+/*
+ * export type { Indicator } from "@erc-chart/indicator-sdk/src/index.js";
+ * import("@erc-chart/indicator-sdk");
+ */
+export {};
+`;
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.deepEqual(errors, []);
 });
