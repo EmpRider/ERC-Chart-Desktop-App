@@ -1,39 +1,49 @@
 {
-  "calibratedAt": "2026-01-01T00:00:00Z",
-  "codingAuthor": "example-coding-bot",
-  "independentApprover": "EmpRider",
+  "calibratedAt": "2026-07-31T05:58:00Z",
+  "maintainer": "EmpRider",
   "taskPullRequest": 2,
+  "taskHeadSha": "e9bab8b4446618f07d0927b284e3d800edccc451",
   "epicPullRequest": 3,
-  "qodoTrialEndsOn": "2026-01-15",
+  "epicHeadSha": "3a99970d14cde386abe70ace3adc4b3e6a33c9e4",
+  "qodoCapacity": {
+    "observedAt": "2026-07-31T05:58:00Z",
+    "displayText": "Day 1 of 14 · Trial",
+    "active": true,
+    "trialDay": 1,
+    "exactEndsOn": null
+  },
   "reviewers": {
     "coderabbit": {
-      "login": "example-coderabbit",
-      "representation": "review",
-      "observedContexts": ["example/CodeRabbit"]
+      "login": "coderabbitai[bot]",
+      "representation": "check",
+      "observedContexts": ["CodeRabbit"]
     },
     "semgrep": {
-      "login": "example-semgrep",
+      "login": "semgrep-cloud-platform",
       "representation": "check",
-      "observedContexts": ["example/Semgrep"]
+      "observedContexts": ["semgrep-cloud-platform/scan"]
     },
     "qodo": {
-      "login": "example-qodo",
+      "login": "qodo-merge-pro[bot]",
       "representation": "review",
-      "observedContexts": ["example/Qodo"]
+      "observedContexts": []
     },
     "codeReviewAi": {
-      "login": "example-code-review-ai",
+      "login": "code-review-ai",
       "representation": "comment",
       "observedContexts": []
     }
   },
   "assertions": {
-    "separateAuthor": true,
+    "soloMaintainer": true,
     "coderabbitComprehensive": true,
     "semgrepBlocks": true,
     "qodoTaskAndEpic": true,
     "codeReviewAiEpicOnly": true,
-    "staleApprovalDismissed": true,
+    "requiredStatusesBlock": true,
+    "staleBranchBlocks": true,
+    "unresolvedConversationBlocks": true,
+    "mergeMethodsEnforced": true,
     "directPushRejected": true,
     "forcePushRejected": true,
     "documentationMergeCreatedNoRelease": true
