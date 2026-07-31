@@ -14,7 +14,7 @@
     "tools/*"
   ],
   "scripts": {
-    "format:check": "prettier --check apps packages docs/development tools/application-gates tools/workspace-boundaries package.json tsconfig.base.json tsconfig.package.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md",
+    "format:check": "prettier --check apps packages docs/development tools/application-gates tools/workspace-boundaries package.json tsconfig.base.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md",
     "boundaries:check": "node tools/workspace-boundaries/src/cli.mjs",
     "lint": "npm run boundaries:check && eslint apps packages tools/application-gates tools/workspace-boundaries eslint.config.mjs",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
