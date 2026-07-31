@@ -2,10 +2,6 @@ import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
 
-const IMPORT_PATTERN =
-  /(?:\bimport\s*(?:\([^)]*\)|(?:type\s+)?[^;]*?\s+from\s+)?|\bexport\s+(?:type\s+)?[^;]*?\s+from\s+)["']([^"']+)["']/g;
-const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-
 async function exists(filePath) {
   try {
     await access(filePath);
@@ -19,34 +15,43 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 
-function withoutComments(source) {
-  const scanner = ts.createScanner(
-    ts.ScriptTarget.Latest,
-    false,
-    ts.LanguageVariant.JSX,
+function importSpecifiers(source, fileName) {
+  const sourceFile = ts.createSourceFile(
+    fileName,
     source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
   );
-  let result = "";
-  let previousEnd = 0;
+  const specifiers = [];
 
-  for (
-    let token = scanner.scan();
-    token !== ts.SyntaxKind.EndOfFileToken;
-    token = scanner.scan()
-  ) {
-    const start = scanner.getTokenPos();
-    const end = scanner.getTextPos();
-    result += source.slice(previousEnd, start);
-    const tokenText = source.slice(start, end);
-    result +=
-      token === ts.SyntaxKind.SingleLineCommentTrivia ||
-      token === ts.SyntaxKind.MultiLineCommentTrivia
-        ? tokenText.replace(/[^\r\n]/g, " ")
-        : tokenText;
-    previousEnd = end;
+  function visit(node) {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    } else if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteralLike(node.argument.literal)
+    ) {
+      specifiers.push(node.argument.literal.text);
+    }
+
+    ts.forEachChild(node, visit);
   }
 
-  return result + source.slice(previousEnd);
+  visit(sourceFile);
+  return specifiers;
 }
 
 async function directoryNames(directory) {
@@ -135,15 +140,29 @@ export async function validateWorkspace(root, contract = undefined) {
   const manifests = new Map();
   const graph = new Map();
 
-  const approvedWorkspaces = new Set(Object.keys(contract.workspaces));
-  for (const group of ["apps", "packages"]) {
+  const approvedWorkspaces = new Set([
+    ...Object.keys(contract.workspaces),
+    ...(contract.toolWorkspaces ?? []),
+  ]);
+  for (const group of ["apps", "packages", "tools"]) {
     for (const name of await directoryNames(path.join(root, group))) {
       const workspace = `${group}/${name}`;
+      if (
+        group === "tools" &&
+        !(await exists(path.join(root, workspace, "package.json")))
+      ) {
+        continue;
+      }
       if (!approvedWorkspaces.has(workspace)) {
         errors.push(
           `${workspace}: workspace is not part of the approved inventory`,
         );
       }
+    }
+  }
+  for (const workspace of contract.toolWorkspaces ?? []) {
+    if (!(await exists(path.join(root, workspace, "package.json")))) {
+      errors.push(`${workspace}: approved workspace is missing`);
     }
   }
 
@@ -201,10 +220,20 @@ export async function validateWorkspace(root, contract = undefined) {
     const references = new Set(
       (rootTsconfig.references ?? []).map((reference) => reference.path),
     );
+    const expectedReferences = new Set(
+      Object.keys(contract.workspaces).map((workspace) => `./${workspace}`),
+    );
     for (const workspace of Object.keys(contract.workspaces).sort()) {
       const expected = `./${workspace}`;
       if (!references.has(expected)) {
         errors.push(`tsconfig.json: project reference ${expected} is required`);
+      }
+    }
+    for (const reference of [...references].sort()) {
+      if (!expectedReferences.has(reference)) {
+        errors.push(
+          `tsconfig.json: project reference ${reference} is not approved`,
+        );
       }
     }
   }
@@ -308,13 +337,8 @@ export async function validateWorkspace(root, contract = undefined) {
 
     for (const file of await sourceFiles(path.join(root, workspace, "src"))) {
       const relativeFile = path.relative(root, file).split(path.sep).join("/");
-      const source = withoutComments(await readFile(file, "utf8"));
-      const specifiers = [
-        ...[...source.matchAll(IMPORT_PATTERN)].map((match) => match[1]),
-        ...[...source.matchAll(DYNAMIC_IMPORT_PATTERN)].map(
-          (match) => match[1],
-        ),
-      ];
+      const source = await readFile(file, "utf8");
+      const specifiers = importSpecifiers(source, file);
       for (const specifier of specifiers) {
         if (specifier.startsWith(".")) {
           const resolved = path.resolve(path.dirname(file), specifier);

@@ -21,6 +21,7 @@ const contract = {
     "package:win",
     "smoke:installer",
   ],
+  toolWorkspaces: [],
   workspaces: {
     "packages/contracts": [],
     "packages/chart-core": ["packages/contracts"],
@@ -131,6 +132,22 @@ test("rejects an unapproved workspace discovered by a root glob", async () => {
   assert.ok(
     errors.includes(
       "packages/unapproved: workspace is not part of the approved inventory",
+    ),
+  );
+});
+
+test("rejects an unapproved tool workspace discovered by the root glob", async () => {
+  const files = validFiles();
+  files["tools/unapproved/package.json"] = JSON.stringify({
+    name: "@erc-chart/unapproved-tool",
+    private: true,
+  });
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "tools/unapproved: workspace is not part of the approved inventory",
     ),
   );
 });
@@ -275,6 +292,21 @@ test("rejects an approved TypeScript unit missing from root project references",
   );
 });
 
+test("rejects a root project reference outside the approved inventory", async () => {
+  const files = validFiles();
+  const rootConfig = JSON.parse(files["tsconfig.json"]);
+  rootConfig.references.push({ path: "./packages/unapproved" });
+  files["tsconfig.json"] = JSON.stringify(rootConfig);
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "tsconfig.json: project reference ./packages/unapproved is not approved",
+    ),
+  );
+});
+
 test("rejects a root toolchain version that differs from the contract", async () => {
   const files = validFiles();
   const rootManifest = JSON.parse(files["package.json"]);
@@ -389,6 +421,20 @@ test("ignores workspace imports inside comments", async () => {
  * import("@erc-chart/indicator-sdk");
  */
 export {};
+`;
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.deepEqual(errors, []);
+});
+
+test("ignores import-like text inside string and template literals", async () => {
+  const files = validFiles();
+  files["packages/chart-core/src/index.ts"] = `
+const staticExample = 'import "@erc-chart/indicator-sdk";';
+const dynamicExample = "import('@erc-chart/indicator-sdk')";
+const templateExample = \`export { value } from "@erc-chart/indicator-sdk/src/index.js";\`;
+export { staticExample, dynamicExample, templateExample };
 `;
 
   const errors = await validateWorkspace(await fixture(files), contract);

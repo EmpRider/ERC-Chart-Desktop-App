@@ -30,7 +30,8 @@ export async function validateApplicationContract(root) {
     return {
       applicationPresent: false,
       errors: [],
-      message: "Application gates: not applicable; root package.json is absent.",
+      message:
+        "Application gates: not applicable; root package.json is absent.",
     };
   }
 
@@ -45,7 +46,11 @@ export async function validateApplicationContract(root) {
     };
   }
 
-  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
+  if (
+    manifest === null ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest)
+  ) {
     return {
       applicationPresent: true,
       errors: ["package.json must contain a JSON object."],
@@ -55,7 +60,10 @@ export async function validateApplicationContract(root) {
 
   const scripts = manifest.scripts ?? {};
   const errors = [];
-  for (const script of [...REQUIRED_APPLICATION_SCRIPTS, ...REQUIRED_WINDOWS_SCRIPTS]) {
+  for (const script of [
+    ...REQUIRED_APPLICATION_SCRIPTS,
+    ...REQUIRED_WINDOWS_SCRIPTS,
+  ]) {
     if (typeof scripts[script] !== "string" || scripts[script].trim() === "") {
       errors.push(`Root package.json must define script '${script}'.`);
     }

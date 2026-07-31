@@ -20,8 +20,18 @@ const workflowPermissions = {
 
 async function loadRulesets() {
   return [
-    JSON.parse(await readFile(new URL("../../../.github/rulesets/main.json", import.meta.url), "utf8")),
-    JSON.parse(await readFile(new URL("../../../.github/rulesets/epic.json", import.meta.url), "utf8")),
+    JSON.parse(
+      await readFile(
+        new URL("../../../.github/rulesets/main.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+    JSON.parse(
+      await readFile(
+        new URL("../../../.github/rulesets/epic.json", import.meta.url),
+        "utf8",
+      ),
+    ),
   ];
 }
 
@@ -42,7 +52,9 @@ async function request(fetchImpl, token, method, url, body) {
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`${method} ${url} failed with ${response.status}: ${detail.slice(0, 300)}`);
+    throw new Error(
+      `${method} ${url} failed with ${response.status}: ${detail.slice(0, 300)}`,
+    );
   }
   if (response.status === 204) return null;
   return response.json();
@@ -58,10 +70,15 @@ export async function reconcileRepository({
   if (!apply) {
     logger.log(`DRY RUN PATCH ${API_ROOT}`);
     logger.log(`DRY RUN PUT ${API_ROOT}/actions/permissions/workflow`);
-    for (const ruleset of desiredRulesets) logger.log(`DRY RUN ruleset ${ruleset.name}`);
-    return { applied: false, rulesets: desiredRulesets.map(({ name }) => name) };
+    for (const ruleset of desiredRulesets)
+      logger.log(`DRY RUN ruleset ${ruleset.name}`);
+    return {
+      applied: false,
+      rulesets: desiredRulesets.map(({ name }) => name),
+    };
   }
-  if (!token) throw new Error("ERC_CHART_GITHUB_ADMIN_TOKEN is required with --apply.");
+  if (!token)
+    throw new Error("ERC_CHART_GITHUB_ADMIN_TOKEN is required with --apply.");
 
   await request(fetchImpl, token, "PATCH", API_ROOT, repositorySettings);
   await request(
@@ -71,21 +88,39 @@ export async function reconcileRepository({
     `${API_ROOT}/actions/permissions/workflow`,
     workflowPermissions,
   );
-  const existing = await request(fetchImpl, token, "GET", `${API_ROOT}/rulesets`);
-  const existingByName = new Map(existing.map((ruleset) => [ruleset.name, ruleset]));
+  const existing = await request(
+    fetchImpl,
+    token,
+    "GET",
+    `${API_ROOT}/rulesets`,
+  );
+  const existingByName = new Map(
+    existing.map((ruleset) => [ruleset.name, ruleset]),
+  );
   for (const desired of desiredRulesets) {
     const current = existingByName.get(desired.name);
     if (current) {
-      await request(fetchImpl, token, "PUT", `${API_ROOT}/rulesets/${current.id}`, desired);
+      await request(
+        fetchImpl,
+        token,
+        "PUT",
+        `${API_ROOT}/rulesets/${current.id}`,
+        desired,
+      );
     } else {
       await request(fetchImpl, token, "POST", `${API_ROOT}/rulesets`, desired);
     }
   }
-  logger.log(`Applied repository settings and ${desiredRulesets.length} rulesets.`);
+  logger.log(
+    `Applied repository settings and ${desiredRulesets.length} rulesets.`,
+  );
   return { applied: true, rulesets: desiredRulesets.map(({ name }) => name) };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   const apply = process.argv.includes("--apply");
   try {
     await reconcileRepository({

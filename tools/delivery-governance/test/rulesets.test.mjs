@@ -10,7 +10,9 @@ const REQUIRED_CONTEXTS = [
 ];
 
 async function ruleset(name) {
-  return JSON.parse(await readFile(new URL(`.github/rulesets/${name}.json`, root), "utf8"));
+  return JSON.parse(
+    await readFile(new URL(`.github/rulesets/${name}.json`, root), "utf8"),
+  );
 }
 
 function rule(document, type) {
@@ -19,8 +21,7 @@ function rule(document, type) {
 
 function contexts(document) {
   return rule(document, "required_status_checks")
-    .parameters.required_status_checks
-    .map(({ context }) => context)
+    .parameters.required_status_checks.map(({ context }) => context)
     .sort();
 }
 

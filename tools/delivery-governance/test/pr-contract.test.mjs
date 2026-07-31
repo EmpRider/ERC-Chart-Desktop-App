@@ -7,31 +7,68 @@ function body(jira) {
 }
 
 test("accepts task contract", () => {
-  const errors = validatePullRequestBody(body("- Issue: [ECDD-54](https://erc-chart.atlassian.net/browse/ECDD-54)\n- Parent epic: [ECDD-53](https://erc-chart.atlassian.net/browse/ECDD-53)"), { number: 22, head: "task/ECDD-54-typescript-monorepo", base: "epic/ECDD-53-shell" });
+  const errors = validatePullRequestBody(
+    body(
+      "- Issue: [ECDD-54](https://erc-chart.atlassian.net/browse/ECDD-54)\n- Parent epic: [ECDD-53](https://erc-chart.atlassian.net/browse/ECDD-53)",
+    ),
+    {
+      number: 22,
+      head: "task/ECDD-54-typescript-monorepo",
+      base: "epic/ECDD-53-shell",
+    },
+  );
   assert.deepEqual(errors, []);
 });
 
 test("accepts epic contract", () => {
-  const errors = validatePullRequestBody(body("- Epic: [ECDD-53](https://erc-chart.atlassian.net/browse/ECDD-53)"), { number: 23, head: "epic/ECDD-53-shell", base: "main" });
+  const errors = validatePullRequestBody(
+    body("- Epic: [ECDD-53](https://erc-chart.atlassian.net/browse/ECDD-53)"),
+    { number: 23, head: "epic/ECDD-53-shell", base: "main" },
+  );
   assert.deepEqual(errors, []);
 });
 
 test("accepts one-time bootstrap Jira exception", () => {
-  const errors = validatePullRequestBody(body("Not applicable — one-time bootstrap PR #1"), { number: 1, head: "bootstrap/delivery-governance", base: "main" });
+  const errors = validatePullRequestBody(
+    body("Not applicable — one-time bootstrap PR #1"),
+    { number: 1, head: "bootstrap/delivery-governance", base: "main" },
+  );
   assert.deepEqual(errors, []);
 });
 
 test("rejects unchecked acceptance criteria", () => {
-  const invalid = body("Not applicable — one-time bootstrap PR #1").replace("- [x] Required", "- [ ] Required");
-  assert.ok(validatePullRequestBody(invalid, { number: 1, head: "bootstrap/delivery-governance", base: "main" }).length > 0);
+  const invalid = body("Not applicable — one-time bootstrap PR #1").replace(
+    "- [x] Required",
+    "- [ ] Required",
+  );
+  assert.ok(
+    validatePullRequestBody(invalid, {
+      number: 1,
+      head: "bootstrap/delivery-governance",
+      base: "main",
+    }).length > 0,
+  );
 });
 
 test("rejects pull-request template instructions", () => {
   const invalid = `${body("Not applicable — one-time bootstrap PR #1")}\n<!-- Replace with linked Jira acceptance criteria and check each completed item. -->`;
-  assert.ok(validatePullRequestBody(invalid, { number: 1, head: "bootstrap/delivery-governance", base: "main" }).includes("Pull-request body still contains template instructions."));
+  assert.ok(
+    validatePullRequestBody(invalid, {
+      number: 1,
+      head: "bootstrap/delivery-governance",
+      base: "main",
+    }).includes("Pull-request body still contains template instructions."),
+  );
 });
 
 test("accepts reviewer-generated hidden comments", () => {
   const reviewed = `${body("Not applicable — one-time bootstrap PR #1")}\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->`;
-  assert.deepEqual(validatePullRequestBody(reviewed, { number: 1, head: "bootstrap/delivery-governance", base: "main" }), []);
+  assert.deepEqual(
+    validatePullRequestBody(reviewed, {
+      number: 1,
+      head: "bootstrap/delivery-governance",
+      base: "main",
+    }),
+    [],
+  );
 });

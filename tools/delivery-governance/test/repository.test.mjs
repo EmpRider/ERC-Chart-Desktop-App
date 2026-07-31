@@ -28,14 +28,18 @@ async function calibrationFixture(mutator) {
   );
   const example = JSON.parse(
     await readFile(
-      new URL("docs/governance/calibration-evidence.example.json", repositoryRoot),
+      new URL(
+        "docs/governance/calibration-evidence.example.json",
+        repositoryRoot,
+      ),
       "utf8",
     ),
   );
   mutator(example);
   return fixture({
     "docs/governance/calibration-evidence.schema.json": schema,
-    "docs/governance/calibration-evidence.example.json": JSON.stringify(example),
+    "docs/governance/calibration-evidence.example.json":
+      JSON.stringify(example),
   });
 }
 
@@ -52,30 +56,36 @@ test("valid structured files and relative links pass", async () => {
 
 test("schema examples accept valid standard format values", async () => {
   const root = await fixture({
-    "docs/architecture/v1/contracts/plugin-manifest.schema.json": JSON.stringify({
-      $schema: "https://json-schema.org/draft/2020-12/schema",
-      type: "object",
-      required: ["createdAt"],
-      properties: { createdAt: { type: "string", format: "date-time" } },
-    }),
-    "docs/architecture/v1/examples/binomo-provider.plugin.json": JSON.stringify({
-      createdAt: "2026-07-30T18:00:00Z",
-    }),
+    "docs/architecture/v1/contracts/plugin-manifest.schema.json":
+      JSON.stringify({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        required: ["createdAt"],
+        properties: { createdAt: { type: "string", format: "date-time" } },
+      }),
+    "docs/architecture/v1/examples/binomo-provider.plugin.json": JSON.stringify(
+      {
+        createdAt: "2026-07-30T18:00:00Z",
+      },
+    ),
   });
   assert.deepEqual(await validateSchemaExamples(root), []);
 });
 
 test("schema examples reject invalid standard format values", async () => {
   const root = await fixture({
-    "docs/architecture/v1/contracts/plugin-manifest.schema.json": JSON.stringify({
-      $schema: "https://json-schema.org/draft/2020-12/schema",
-      type: "object",
-      required: ["createdAt"],
-      properties: { createdAt: { type: "string", format: "date-time" } },
-    }),
-    "docs/architecture/v1/examples/binomo-provider.plugin.json": JSON.stringify({
-      createdAt: "not-a-date",
-    }),
+    "docs/architecture/v1/contracts/plugin-manifest.schema.json":
+      JSON.stringify({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        required: ["createdAt"],
+        properties: { createdAt: { type: "string", format: "date-time" } },
+      }),
+    "docs/architecture/v1/examples/binomo-provider.plugin.json": JSON.stringify(
+      {
+        createdAt: "not-a-date",
+      },
+    ),
   });
   const errors = await validateSchemaExamples(root);
   assert.ok(errors.some((error) => error.includes("does not satisfy")));
@@ -94,7 +104,9 @@ test("calibration evidence example is part of schema validation", async () => {
     }),
   });
   const errors = await validateSchemaExamples(root);
-  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+  assert.ok(
+    errors.some((error) => error.includes("calibration-evidence.example.json")),
+  );
 });
 
 test("actual calibration schema rejects missing calibrated head SHAs", async () => {
@@ -103,7 +115,9 @@ test("actual calibration schema rejects missing calibrated head SHAs", async () 
     delete example.epicHeadSha;
   });
   const errors = await validateSchemaExamples(root);
-  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+  assert.ok(
+    errors.some((error) => error.includes("calibration-evidence.example.json")),
+  );
 });
 
 test("actual calibration schema rejects malformed calibrated head SHAs", async () => {
@@ -112,7 +126,9 @@ test("actual calibration schema rejects malformed calibrated head SHAs", async (
     example.epicHeadSha = "not-a-commit";
   });
   const errors = await validateSchemaExamples(root);
-  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+  assert.ok(
+    errors.some((error) => error.includes("calibration-evidence.example.json")),
+  );
 });
 
 test("actual calibration schema rejects alternate Qodo trial day text", async () => {
@@ -120,19 +136,26 @@ test("actual calibration schema rejects alternate Qodo trial day text", async ()
     example.qodoCapacity.displayText = "Day 2 of 14 · Trial";
   });
   const errors = await validateSchemaExamples(root);
-  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+  assert.ok(
+    errors.some((error) => error.includes("calibration-evidence.example.json")),
+  );
 });
 
 test("broken relative Markdown link fails", async () => {
   const root = await fixture({ "README.md": "[Missing](docs/missing.md)\n" });
-  assert.ok((await validateRepository(root))[0].includes("broken relative link"));
+  assert.ok(
+    (await validateRepository(root))[0].includes("broken relative link"),
+  );
 });
 
 test("Markdown links cannot escape the repository root", async () => {
   const root = await fixture({});
   const outside = `${root}-outside.md`;
   await writeFile(outside, "# Outside\n");
-  await writeFile(path.join(root, "README.md"), `[Outside](../${path.basename(outside)})\n`);
+  await writeFile(
+    path.join(root, "README.md"),
+    `[Outside](../${path.basename(outside)})\n`,
+  );
   const errors = await validateRepository(root);
   assert.ok(errors.some((error) => error.includes("escapes repository root")));
 });
@@ -146,7 +169,9 @@ test("absolute Markdown links are rejected as local filesystem paths", async () 
 test("malformed Markdown percent encoding is a deterministic validation error", async () => {
   const root = await fixture({ "README.md": "[Bad](docs/bad%ZZ.md)\n" });
   const errors = await validateRepository(root);
-  assert.ok(errors.some((error) => error.includes("malformed percent-encoding")));
+  assert.ok(
+    errors.some((error) => error.includes("malformed percent-encoding")),
+  );
 });
 
 test("symlinks fail closed instead of bypassing repository scans", async () => {
@@ -155,7 +180,9 @@ test("symlinks fail closed instead of bypassing repository scans", async () => {
   await writeFile(outside, "outside\n");
   await symlink(outside, path.join(root, "linked.txt"));
   const errors = await validateRepository(root);
-  assert.ok(errors.some((error) => error === "linked.txt: symlinks are forbidden"));
+  assert.ok(
+    errors.some((error) => error === "linked.txt: symlinks are forbidden"),
+  );
 });
 
 test("oversized structured files fail before parsing", async () => {
@@ -163,7 +190,11 @@ test("oversized structured files fail before parsing", async () => {
     "large.json": JSON.stringify({ payload: "x".repeat(2_000_000) }),
   });
   const errors = await validateRepository(root);
-  assert.ok(errors.some((error) => error.includes("large.json: structured file exceeds")));
+  assert.ok(
+    errors.some((error) =>
+      error.includes("large.json: structured file exceeds"),
+    ),
+  );
 });
 
 test("root package-lock receives a bounded higher structured-file limit", async () => {
@@ -192,16 +223,25 @@ test("large root package-lock is still scanned for secrets", async () => {
   const errors = await validateRepository(root);
   assert.ok(
     errors.some(
-      (error) => error.startsWith("package-lock.json:") && error.endsWith("github-legacy-token"),
+      (error) =>
+        error.startsWith("package-lock.json:") &&
+        error.endsWith("github-legacy-token"),
     ),
   );
-  assert.equal(errors.some((error) => error.includes(token)), false);
+  assert.equal(
+    errors.some((error) => error.includes(token)),
+    false,
+  );
 });
 
 test("oversized Markdown files fail before link scanning", async () => {
-  const root = await fixture({ "large.md": `# Large\n${"x".repeat(2_000_000)}` });
+  const root = await fixture({
+    "large.md": `# Large\n${"x".repeat(2_000_000)}`,
+  });
   const errors = await validateRepository(root);
-  assert.ok(errors.some((error) => error.includes("large.md: Markdown file exceeds")));
+  assert.ok(
+    errors.some((error) => error.includes("large.md: Markdown file exceeds")),
+  );
 });
 
 test("current GitHub token families are detected without echoing values", async () => {
@@ -217,7 +257,11 @@ test("current GitHub token families are detected without echoing values", async 
   const root = await fixture({ "fixture.txt": tokens.join("\n") });
   const errors = await validateTrackedContent(root);
   assert.equal(errors.length, tokens.length);
-  for (const token of tokens) assert.equal(errors.some((error) => error.includes(token)), false);
+  for (const token of tokens)
+    assert.equal(
+      errors.some((error) => error.includes(token)),
+      false,
+    );
 });
 
 test("generated output directories and committed binaries fail", async () => {
@@ -227,9 +271,16 @@ test("generated output directories and committed binaries fail", async () => {
     "src/native.dll": "binary",
   });
   const errors = await validateRepository(root);
-  assert.ok(errors.some((error) => error === "release: generated output directory is forbidden"));
+  assert.ok(
+    errors.some(
+      (error) => error === "release: generated output directory is forbidden",
+    ),
+  );
   assert.ok(errors.some((error) => error.startsWith("src/native.dll:")));
-  assert.equal(errors.some((error) => error.includes("node_modules")), false);
+  assert.equal(
+    errors.some((error) => error.includes("node_modules")),
+    false,
+  );
 });
 
 test("quoted passwords and private keys fail", async () => {

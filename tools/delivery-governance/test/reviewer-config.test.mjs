@@ -22,12 +22,19 @@ test("CodeRabbit enforces the approved current-head review controls", async () =
   assert.equal(config.reviews.auto_review.auto_incremental_review, true);
   assert.equal(config.reviews.auto_review.auto_pause_after_reviewed_commits, 0);
   assert.deepEqual(config.reviews.auto_review.base_branches, ["^epic/.*$"]);
-  assert.equal(config.reviews.pre_merge_checks.override_requested_reviewers_only, true);
+  assert.equal(
+    config.reviews.pre_merge_checks.override_requested_reviewers_only,
+    true,
+  );
   assert.deepEqual(
     config.reviews.pre_merge_checks.custom_checks.map(({ name }) => name),
     ["Scope alignment", "Performance safety", "Simplicity"],
   );
-  assert.ok(config.reviews.pre_merge_checks.custom_checks.every(({ mode }) => mode === "error"));
+  assert.ok(
+    config.reviews.pre_merge_checks.custom_checks.every(
+      ({ mode }) => mode === "error",
+    ),
+  );
 });
 
 test("Qodo is stable-head manual only and Code Review AI is not auto-invoked", async () => {
