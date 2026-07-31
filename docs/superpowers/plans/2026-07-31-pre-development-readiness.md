@@ -49,18 +49,18 @@
 - [x] Map ECDD-43 through ECDD-52 to the correct later-epic gate.
 - [x] Supersede only the draft approval status and section 29 checklist; do not rewrite the architecture body or mark deferred spikes complete.
 - [x] State that ECDD-54 may begin after the readiness PR merges.
-- [x] Bind the record to readiness PR #3.
+- [x] Bind the record to readiness PR #4.
 
 ### Task 3: Verify Documentation and Open the Readiness PR
 
 **Files:**
-- Verify: all files changed on `task/ECDD-42-pre-development-readiness`
+- Verify: all files changed on `task/ECDD-197-pre-development-readiness`
 
 **Interfaces:**
 - Consumes: Tasks 1 and 2.
 - Produces: reviewed, current-head readiness evidence on a task PR.
 
-- [x] Open draft PR #3 to `epic/ECDD-53-repository-build`.
+- [x] Open draft PR #4 to `epic/ECDD-53-repository-build`.
 - [ ] Mark ready after document self-review.
 - [ ] Confirm Delivery gates pass on the current head.
 - [ ] Confirm `semgrep-cloud-platform/scan` and `CodeRabbit` are successful.
@@ -70,7 +70,7 @@
 ### Task 4: Update Jira Evidence
 
 **Files:**
-- Jira: ECDD-2 through ECDD-11, ECDD-42 through ECDD-52, ECDD-56, ECDD-41, ECDD-53.
+- Jira: ECDD-2 through ECDD-11, ECDD-42 through ECDD-52, ECDD-56, ECDD-197, ECDD-41, ECDD-53.
 
 **Interfaces:**
 - Consumes: merged readiness PR and repository evidence.
@@ -78,7 +78,7 @@
 
 - [ ] Add completion evidence to ECDD-2 through ECDD-11.
 - [ ] Add merged governance evidence to ECDD-56.
-- [ ] Add Contract Baseline v1 evidence to ECDD-42.
+- [ ] Add Contract Baseline v1 evidence to ECDD-42 and ECDD-197.
 - [ ] Add explicit owner and resolution gate comments to ECDD-43 through ECDD-52.
 - [ ] Add an Epic 0 summary explaining which items are accepted and which are milestone-deferred.
 - [ ] Add an Epic 1 comment authorizing ECDD-54 to start.
