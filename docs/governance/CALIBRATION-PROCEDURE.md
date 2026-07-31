@@ -10,9 +10,8 @@
 - `exactEndsOn` remains `null` unless Qodo exposes a trustworthy date.
 - No administrator bypass or bypass actor is used.
 
-Qodo and Code Review AI are calibrated as manual review evidence, not
-machine-enforced merge conditions. Only stable pass/fail contexts may be added to
-GitHub rulesets.
+Qodo and Code Review AI are manual review evidence, not machine-enforced merge conditions.
+Only stable pass/fail contexts may be added to GitHub rulesets.
 
 ## Create Calibration Work
 
@@ -23,8 +22,7 @@ returned keys in branch names and pull-request bodies.
 ## Level 1: Task-to-Epic
 
 1. Open the task pull request as a draft.
-2. Add a temporary non-production JavaScript fixture containing an obvious
-   injection sink.
+2. Add a temporary non-production JavaScript fixture containing an obvious injection sink.
 3. Mark the pull request ready and record Semgrep blocking behavior and a
    comprehensive CodeRabbit review.
 4. Return to draft, remove the unsafe fixture, and commit the safe implementation.
