@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,8 @@ import {
   validateTrackedContent,
 } from "../src/repository.mjs";
 
+const repositoryRoot = new URL("../../../", import.meta.url);
+
 async function fixture(files) {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-governance-"));
   for (const [name, content] of Object.entries(files)) {
@@ -17,6 +19,24 @@ async function fixture(files) {
     await writeFile(file, content);
   }
   return root;
+}
+
+async function calibrationFixture(mutator) {
+  const schema = await readFile(
+    new URL("docs/governance/calibration-evidence.schema.json", repositoryRoot),
+    "utf8",
+  );
+  const example = JSON.parse(
+    await readFile(
+      new URL("docs/governance/calibration-evidence.example.json", repositoryRoot),
+      "utf8",
+    ),
+  );
+  mutator(example);
+  return fixture({
+    "docs/governance/calibration-evidence.schema.json": schema,
+    "docs/governance/calibration-evidence.example.json": JSON.stringify(example),
+  });
 }
 
 test("valid structured files and relative links pass", async () => {
@@ -72,6 +92,32 @@ test("calibration evidence example is part of schema validation", async () => {
     "docs/governance/calibration-evidence.example.json": JSON.stringify({
       maintainer: "wrong-user",
     }),
+  });
+  const errors = await validateSchemaExamples(root);
+  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+});
+
+test("actual calibration schema rejects missing calibrated head SHAs", async () => {
+  const root = await calibrationFixture((example) => {
+    delete example.taskHeadSha;
+    delete example.epicHeadSha;
+  });
+  const errors = await validateSchemaExamples(root);
+  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+});
+
+test("actual calibration schema rejects malformed calibrated head SHAs", async () => {
+  const root = await calibrationFixture((example) => {
+    example.taskHeadSha = "ABC123";
+    example.epicHeadSha = "not-a-commit";
+  });
+  const errors = await validateSchemaExamples(root);
+  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+});
+
+test("actual calibration schema rejects alternate Qodo trial day text", async () => {
+  const root = await calibrationFixture((example) => {
+    example.qodoCapacity.displayText = "Day 2 of 14 · Trial";
   });
   const errors = await validateSchemaExamples(root);
   assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
