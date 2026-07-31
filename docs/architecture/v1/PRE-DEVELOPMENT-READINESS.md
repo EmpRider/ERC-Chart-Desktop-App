@@ -2,11 +2,11 @@
 
 ## Decision
 
-**Status:** Ready after this record is squash merged into `epic/ECDD-53-repository-build`.
+**Status:** Ready only after all conditions in [Start condition](#start-condition) are complete.
 
-**Authorized next implementation task:** ECDD-54 — Create TypeScript monorepo and package boundaries.
+**Authorized next implementation task:** ECDD-54 — Create TypeScript monorepo and package boundaries, after the start condition is satisfied.
 
-This record is the approval addendum for `ERC-chart-Architecture-Specification-v1.md`. It supersedes that document’s `1.0 draft` review status and the unchecked section 29 checklist without rewriting the approved architecture body. This record closes the global architecture-decision gate for starting application implementation. It does not close technical spikes whose evidence is required at a later implementation milestone.
+This record is the approval addendum for `ERC-chart-Architecture-Specification-v1.md`. It supersedes that document’s `1.0 draft` review status and the unchecked section 29 checklist without rewriting the approved architecture body. This record closes the global architecture-decision gate for starting application implementation only after the repository and Jira evidence below are complete. It does not close technical spikes whose evidence is required at a later implementation milestone.
 
 ## Authoritative sources
 
@@ -93,4 +93,11 @@ ECDD-56 is complete at repository level:
 
 ## Start condition
 
-After PR #4 containing this record and Contract Baseline v1 is squash merged into `epic/ECDD-53-repository-build`, no global pre-development blocker remains. Development starts with ECDD-54. The merge SHA and final current-head verification are recorded in Jira. Later spikes are enforced at the milestone gates listed above.
+ECDD-54 may start only after all of the following are true:
+
+1. PR #4 containing this record and Contract Baseline v1 is squash merged into `epic/ECDD-53-repository-build`.
+2. Final current-head Delivery gates and required review contexts pass for that merge.
+3. Jira contains the architecture acceptance, governance completion, deferred-gate, and ECDD-54 authorization evidence required by the approved design.
+4. The approved architecture and linked Jira acceptance criteria have been rechecked against the merged repository state.
+
+When all four conditions are satisfied, no global pre-development blocker remains and development starts with ECDD-54. Later spikes remain enforced at the milestone gates listed above.
