@@ -53,14 +53,14 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 | Application/window lifecycle | `packages/electron-main` | none |
 | Privileged protocol and IPC authorization | `packages/electron-main` | `packages/preload` exposes an allowlisted view |
 | Renderer bridge surface | `packages/preload` | `packages/renderer` consumes the exposed API |
-| Viewport | `packages/chart-core` | `packages/renderer` observes render state |
+| Viewport | `packages/renderer` | `packages/chart-core` receives immutable viewport input |
 | Selection | `packages/renderer` | `packages/chart-core` receives selection input |
 | Crosshair | `packages/chart-core` | `packages/renderer` observes crosshair output |
 | Session drawings | `packages/renderer` | `packages/chart-core` receives immutable drawing snapshots |
 | Canonical normalized market-data revision | `packages/data-service` | consumers receive versioned projections |
 | Provider connection and adapter state | provider utility process through `packages/provider-runtime` | main/data service receive contract messages |
 | Indicator calculation state | worker through `packages/indicator-runtime` | renderer/data service receive validated outputs |
-| Database and workspace persistence | `packages/storage` coordinated by data service/main | consumers use public storage APIs |
+| Database and workspace persistence | `packages/storage` | `packages/data-service` and `packages/electron-main` issue commands through the public storage API and do not write persistence directly |
 | Provider secrets | Windows Credential Manager through main-owned bridge | no package receives raw secret persistence access |
 
 A projection must not mutate the source-owned state or become an independent source of truth.
