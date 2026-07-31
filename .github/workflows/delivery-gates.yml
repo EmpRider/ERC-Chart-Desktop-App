@@ -67,6 +67,10 @@ jobs:
         run: npm --prefix tools/delivery-governance run validate:pr
       - name: Validate repository
         run: npm --prefix tools/delivery-governance run validate:repository
+      - name: Lint Markdown
+        run: npm --prefix tools/delivery-governance run lint:markdown
+      - name: Verify administration dry run
+        run: node tools/delivery-governance/src/github-admin.mjs
       - name: Detect application contract
         id: application
         shell: bash
