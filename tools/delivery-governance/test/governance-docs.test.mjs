@@ -28,6 +28,9 @@ test("review runbook distinguishes machine gates from manual AI evidence", async
     "GitHub rulesets do not enforce Qodo or Code Review AI",
     "manual, non-blocking review evidence",
     "machine-enforced merge contract",
+    "return to step 4",
+    "request fresh manual reviews",
+    "record the approved unavailability explicitly",
   ];
   for (const phrase of required) assert.ok(runbook.includes(phrase), phrase);
 });
