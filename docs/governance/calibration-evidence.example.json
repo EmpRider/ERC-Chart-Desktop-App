@@ -9,6 +9,7 @@
     "observedAt": "2026-07-31T05:58:00Z",
     "displayText": "Day 1 of 14 · Trial",
     "active": true,
+    "trialDay": 1,
     "exactEndsOn": null
   },
   "reviewers": {
