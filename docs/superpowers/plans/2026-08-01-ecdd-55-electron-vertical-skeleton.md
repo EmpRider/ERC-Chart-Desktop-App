@@ -230,6 +230,9 @@ Commit: `ECDD-55: implement secure Electron lifecycle`
 
 **Interfaces:**
 
+> Historical ECDD-55 interface: ECDD-59 replaces `renderDevelopmentShell` with
+> the React `ApplicationShell` and `RuntimeApplicationShell` entry points.
+
 - Consumes: fixed runtime-info channel and validator.
 - Produces: `createErcChartBridge(invoke)`, `installBridge(expose, invoke)`, `renderDevelopmentShell(document, bridge)`, `preload.cjs`, `renderer.js`, copied HTML/CSS.
 

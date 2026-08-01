@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import {
   RuntimeApplicationShell,
   type RendererBridge,
@@ -11,8 +12,15 @@ declare global {
   }
 }
 
+export function mountRuntimeShell(
+  root: HTMLElement,
+  bridge: RendererBridge | undefined,
+): Root {
+  const reactRoot = createRoot(root);
+  reactRoot.render(createElement(RuntimeApplicationShell, { bridge }));
+  return reactRoot;
+}
+
 const root = document.getElementById("app");
 if (root === null) throw new Error("Renderer root unavailable.");
-createRoot(root).render(
-  createElement(RuntimeApplicationShell, { bridge: window.ercChart }),
-);
+export const runtimeRoot: Root = mountRuntimeShell(root, window.ercChart);

@@ -95,9 +95,15 @@ export interface RuntimeApplicationShellProps {
 export function RuntimeApplicationShell({
   bridge,
 }: RuntimeApplicationShellProps): JSX.Element {
-  const [connection, setConnection] = useState(connectingShellState);
+  const [connection, setConnection] = useState(() =>
+    bridge === undefined ? unavailableShellState : connectingShellState,
+  );
 
   useEffect(() => {
+    if (bridge === undefined) {
+      setConnection(unavailableShellState);
+      return;
+    }
     let active = true;
     void resolveShellState(bridge).then((state) => {
       if (active) setConnection(state);

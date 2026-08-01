@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   ApplicationShell,
+  RuntimeApplicationShell,
   connectingShellState,
   resolveShellState,
 } from "../dist/index.js";
@@ -68,4 +69,14 @@ test("fails closed without exposing bridge errors", async () => {
     assert.match(markup, /data-status="unavailable"/);
     assert.equal(markup.includes("private path"), false);
   }
+});
+
+test("fails closed on the initial render when the preload bridge is missing", () => {
+  const markup = renderToStaticMarkup(
+    createElement(RuntimeApplicationShell, { bridge: undefined }),
+  );
+
+  assert.match(markup, /data-status="unavailable"/);
+  assert.match(markup, /Shell unavailable/);
+  assert.doesNotMatch(markup, /Connecting secure bridge/);
 });
