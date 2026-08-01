@@ -12,6 +12,7 @@ import {
   installedExecutablePath,
   installerArtifactName,
   isReleaseAssetNameConflict,
+  packageIdentityName,
   packagedElectronArguments,
   releaseTag,
   validateInstallationDirectoryName,
@@ -20,6 +21,7 @@ import {
 
 test("defines Development Version 1 release identity", () => {
   assert.equal(applicationVersion, "0.1.0-dev.1");
+  assert.equal(packageIdentityName, "erc-chart-desktop-app");
   assert.equal(releaseTag(applicationVersion), "v0.1.0-dev.1");
   assert.equal(
     installerArtifactName(applicationVersion),
