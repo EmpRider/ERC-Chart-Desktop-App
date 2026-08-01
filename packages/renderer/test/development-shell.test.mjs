@@ -7,13 +7,23 @@ import {
   ApplicationShell,
   RuntimeApplicationShell,
   connectingShellState,
+  createInitialWorkspace,
   resolveShellState,
+  workspaceReducer,
 } from "../dist/index.js";
 
-test("renders the semantic dark application shell without deferred controls", () => {
-  const markup = renderToStaticMarkup(
-    createElement(ApplicationShell, { connection: connectingShellState }),
+function renderShell(connection, workspace = createInitialWorkspace()) {
+  return renderToStaticMarkup(
+    createElement(ApplicationShell, {
+      connection,
+      workspace,
+      onWorkspaceAction: () => undefined,
+    }),
   );
+}
+
+test("renders the semantic dark application shell without deferred controls", () => {
+  const markup = renderShell(connectingShellState);
 
   assert.match(markup, /<header/);
   assert.match(markup, /<main/);
@@ -22,7 +32,7 @@ test("renders the semantic dark application shell without deferred controls", ()
   assert.match(markup, /Desktop workspace/);
   assert.match(markup, /Workspace ready/);
   assert.match(markup, /Connecting secure bridge/);
-  assert.doesNotMatch(markup, /tab|layout|settings|provider/i);
+  assert.doesNotMatch(markup, /settings|provider/i);
 });
 
 test("resolves and renders a connected secure bridge", async () => {
@@ -32,9 +42,7 @@ test("resolves and renders a connected secure bridge", async () => {
       applicationName: "ERC Chart",
     }),
   });
-  const markup = renderToStaticMarkup(
-    createElement(ApplicationShell, { connection: state }),
-  );
+  const markup = renderShell(state);
 
   assert.deepEqual(state, {
     kind: "connected",
@@ -57,9 +65,7 @@ test("fails closed without exposing bridge errors", async () => {
     },
   ]) {
     const state = await resolveShellState(bridge);
-    const markup = renderToStaticMarkup(
-      createElement(ApplicationShell, { connection: state }),
-    );
+    const markup = renderShell(state);
 
     assert.deepEqual(state, {
       kind: "unavailable",
@@ -79,4 +85,25 @@ test("fails closed on the initial render when the preload bridge is missing", ()
   assert.match(markup, /data-status="unavailable"/);
   assert.match(markup, /Shell unavailable/);
   assert.doesNotMatch(markup, /Connecting secure bridge/);
+});
+
+test("renders accessible tabs and exact one-to-four layout state", () => {
+  const initial = createInitialWorkspace();
+  const added = workspaceReducer(initial, { type: "add-tab" });
+  const four = workspaceReducer(added, {
+    type: "set-layout",
+    tabId: "tab-2",
+    layoutSize: 4,
+  });
+  const markup = renderShell(connectingShellState, four);
+
+  assert.match(markup, /role="tablist"/);
+  assert.match(markup, /role="tab"[^>]*aria-selected="true"[^>]*>Chart 2/);
+  assert.match(markup, /aria-label="Add chart tab"/);
+  assert.match(
+    markup,
+    /aria-label="Use four chart layout"[^>]*aria-pressed="true"/,
+  );
+  assert.equal((markup.match(/data-chart-slot=/g) ?? []).length, 4);
+  assert.match(markup, /data-layout="4"/);
 });
