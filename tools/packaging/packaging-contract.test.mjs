@@ -5,6 +5,7 @@ import { electronFusePolicy } from "../../packages/electron-main/dist/index.js";
 import builderConfiguration from "./electron-builder.config.mjs";
 import {
   applicationVersion,
+  assertReleaseTargetsCommit,
   assertPackagedVersion,
   checksumLine,
   installedExecutablePath,
@@ -79,4 +80,20 @@ test("writes a conventional SHA-256 checksum line", () => {
   );
   assert.throws(() => checksumLine("not-a-digest", "setup.exe"), /SHA-256/);
   assert.throws(() => checksumLine("a".repeat(64), "../setup.exe"), /filename/);
+});
+
+test("rejects an existing release that targets another commit", () => {
+  const commitSha = "a".repeat(40);
+
+  assert.doesNotThrow(() =>
+    assertReleaseTargetsCommit({ target_commitish: commitSha }, commitSha),
+  );
+  assert.throws(
+    () =>
+      assertReleaseTargetsCommit(
+        { target_commitish: "b".repeat(40) },
+        commitSha,
+      ),
+    /different commit/i,
+  );
 });

@@ -45,6 +45,12 @@ export function assertPackagedVersion(version) {
   }
 }
 
+export function assertReleaseTargetsCommit(release, commitSha) {
+  if (release.target_commitish !== commitSha) {
+    throw new Error("Existing release targets a different commit.");
+  }
+}
+
 export function checksumLine(digest, fileName) {
   if (!/^[a-f0-9]{64}$/i.test(digest)) {
     throw new Error("Invalid SHA-256 digest.");

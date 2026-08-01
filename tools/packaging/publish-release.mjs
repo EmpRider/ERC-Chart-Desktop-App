@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   applicationVersion,
+  assertReleaseTargetsCommit,
   installerArtifactName,
   releaseTag,
 } from "./packaging-contract.mjs";
@@ -49,6 +50,9 @@ if (![200, 404].includes(tagResponse.status)) {
   throw new Error(`Git tag lookup failed (${tagResponse.status}).`);
 }
 
+if (matchingRelease !== undefined) {
+  assertReleaseTargetsCommit(matchingRelease, commitSha);
+}
 if (matchingRelease !== undefined && matchingRelease.draft !== true) {
   console.log(`${tag} is already published; no release is required.`);
   process.exit(0);
@@ -56,13 +60,6 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-if (
-  matchingRelease !== undefined &&
-  matchingRelease.target_commitish !== commitSha
-) {
-  throw new Error("Existing draft targets a different commit.");
-}
-
 const notes = `# Development Version 1\n\nEpic: ECDD-53\n\nThis unsigned pre-release contains the reviewed Epic 1 secure desktop shell. It includes the custom renderer protocol, desktop trust boundaries, React tabs and one-to-four chart layouts, concurrent-instance proof, and the x64 per-user NSIS installer.\n\nKnown limitations: chart rendering, data-provider connectivity, persistence, plugins, and production code signing are delivered by later epics. Automatic updates are disabled.\n`;
 const release =
   matchingRelease ??
