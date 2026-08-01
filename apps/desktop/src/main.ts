@@ -55,6 +55,9 @@ function isSmokeResult(value: unknown): value is SmokeResult {
 
 const paths = resolveDesktopArtifacts(import.meta.url);
 const smokeMode = nodeProcess.argv.includes("--erc-chart-smoke");
+const reportSmokeStage = (stage: string): void => {
+  if (smokeMode) console.log(`ERC_CHART_SMOKE_STAGE ${stage}`);
+};
 let resolveController: (
   controller: DesktopApplicationController,
 ) => void = (): void => undefined;
@@ -83,9 +86,11 @@ const dataUtility = createUtilitySupervisor({
 });
 
 function createWindow(options: SecureWindowOptions): BrowserWindow {
+  reportSmokeStage("window-created");
   const window = new BrowserWindow(options);
   if (smokeMode) {
     window.webContents.once("did-finish-load", () => {
+      reportSmokeStage("renderer-loaded");
       void (async (): Promise<void> => {
         const result: unknown = await window.webContents.executeJavaScript(`
           new Promise((resolve) => {
@@ -115,9 +120,11 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
           });
         `);
         if (!isSmokeResult(result)) {
+          reportSmokeStage("renderer-invalid");
           app.exit(1);
           return;
         }
+        reportSmokeStage("renderer-ready");
         const controller = await controllerReady;
         console.log("ERC_CHART_SMOKE_READY");
         await controller.shutdown();
@@ -129,12 +136,17 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
 }
 
 try {
+  reportSmokeStage("artifacts-validating");
   await validateDesktopArtifacts(paths);
+  reportSmokeStage("artifacts-valid");
   const controller = await startDesktopApplication(
     {
       app: {
         platform: nodeProcess.platform,
-        whenReady: async (): Promise<void> => app.whenReady(),
+        whenReady: async (): Promise<void> => {
+          await app.whenReady();
+          reportSmokeStage("app-ready");
+        },
         onActivate: (handler): void => {
           app.on("activate", handler);
         },
@@ -148,7 +160,14 @@ try {
         return (): void => ipcMain.removeHandler(runtimeInfoChannel);
       },
       createWindow,
-      dataUtility,
+      dataUtility: {
+        start: async (entryPath, args): Promise<void> => {
+          await dataUtility.start(entryPath, args);
+          reportSmokeStage("data-utility-ready");
+        },
+        shutdown: (): Promise<void> => dataUtility.shutdown(),
+        getStatus: () => dataUtility.getStatus(),
+      },
     },
     paths,
   );

@@ -13,6 +13,13 @@ function describeStderr(stderr) {
     : `Electron stderr (last ${maximumDiagnosticCharacters} characters):\n${diagnostic}`;
 }
 
+function describeStdout(stdout) {
+  const diagnostic = stdout.trim();
+  return diagnostic.length === 0
+    ? "Electron stdout was empty."
+    : `Electron stdout (last ${maximumDiagnosticCharacters} characters):\n${diagnostic}`;
+}
+
 export function createElectronArguments({ platform, userDataPath, entryPath }) {
   const args = [];
   if (platform === "linux") args.push("--no-sandbox");
@@ -31,6 +38,7 @@ export function runElectronProcess({
   return new Promise((resolve, reject) => {
     let ready = false;
     let finished = false;
+    let stdout = "";
     let stderr = "";
     const child = spawn(executable, args, {
       cwd,
@@ -44,13 +52,14 @@ export function runElectronProcess({
       child.kill();
       reject(
         new Error(
-          `Electron smoke test timed out after ${timeoutMs} ms. ${describeStderr(stderr)}`,
+          `Electron smoke test timed out after ${timeoutMs} ms. ${describeStdout(stdout)} ${describeStderr(stderr)}`,
         ),
       );
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      stdout = appendDiagnostic(stdout, chunk);
       if (chunk.includes(readyMarker)) ready = true;
     });
     child.stderr.setEncoding("utf8");
@@ -75,7 +84,7 @@ export function runElectronProcess({
       }
       reject(
         new Error(
-          `Electron smoke test did not reach ready state (exit code ${String(code)}, signal ${signal ?? "none"}). ${describeStderr(stderr)}`,
+          `Electron smoke test did not reach ready state (exit code ${String(code)}, signal ${signal ?? "none"}). ${describeStdout(stdout)} ${describeStderr(stderr)}`,
         ),
       );
     });

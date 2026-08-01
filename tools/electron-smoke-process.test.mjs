@@ -54,3 +54,20 @@ test("reports the Electron exit status and bounded stderr when readiness fails",
     },
   );
 });
+
+test("reports the last Electron stdout stage when the process times out", async () => {
+  await assert.rejects(
+    runElectronProcess({
+      executable: process.execPath,
+      args: [
+        "-e",
+        "console.log('ERC_CHART_SMOKE_STAGE app-ready'); setInterval(() => {}, 1000);",
+      ],
+      cwd: process.cwd(),
+      env: process.env,
+      timeoutMs: 500,
+      readyMarker: "ERC_CHART_SMOKE_READY",
+    }),
+    /ERC_CHART_SMOKE_STAGE app-ready/,
+  );
+});
