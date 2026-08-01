@@ -51,6 +51,7 @@ export function runElectronProcess({
   return new Promise((resolve, reject) => {
     let ready = false;
     let finished = false;
+    let timedOut = false;
     let stdout = "";
     let stderr = "";
     const child = spawnProcess(executable, args, {
@@ -61,13 +62,8 @@ export function runElectronProcess({
 
     const timeout = setTimeout(() => {
       if (finished) return;
-      finished = true;
+      timedOut = true;
       child.kill();
-      reject(
-        new Error(
-          `Electron smoke test timed out after ${timeoutMs} ms. ${describeStdout(stdout)} ${describeStderr(stderr)}`,
-        ),
-      );
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
@@ -80,7 +76,7 @@ export function runElectronProcess({
       stderr = appendDiagnostic(stderr, chunk);
     });
     child.on("error", (error) => {
-      if (finished) return;
+      if (finished || timedOut) return;
       finished = true;
       clearTimeout(timeout);
       reject(
@@ -91,6 +87,14 @@ export function runElectronProcess({
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
+      if (timedOut) {
+        reject(
+          new Error(
+            `Electron smoke test timed out after ${timeoutMs} ms. ${describeStdout(stdout)} ${describeStderr(stderr)}`,
+          ),
+        );
+        return;
+      }
       if (code === 0 && ready) {
         resolve();
         return;

@@ -61,6 +61,41 @@ test("reports the last Electron stdout stage when the process times out", async 
   );
 });
 
+test("does not settle a timed-out process until the child closes", async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let killed = false;
+  child.kill = () => {
+    killed = true;
+  };
+  let settled = false;
+
+  const result = runElectronProcess({
+    executable: "unused",
+    args: [],
+    cwd: process.cwd(),
+    env: process.env,
+    timeoutMs: 10,
+    readyMarker: "ERC_CHART_SMOKE_READY",
+    spawnProcess: () => child,
+  });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(killed, true);
+  assert.equal(settled, false);
+  child.emit("close", null, "SIGTERM");
+  await assert.rejects(result, /timed out after 10 ms/);
+});
+
 test("recognizes a ready marker split across stdout chunks", async () => {
   await runElectronProcess({
     executable: process.execPath,
