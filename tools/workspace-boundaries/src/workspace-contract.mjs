@@ -23,12 +23,21 @@ async function readJson(filePath) {
 }
 
 function importSpecifiers(source, fileName) {
+  const extension = path.extname(fileName).toLowerCase();
+  const scriptKind =
+    extension === ".tsx"
+      ? ts.ScriptKind.TSX
+      : extension === ".jsx"
+        ? ts.ScriptKind.JSX
+        : [".js", ".mjs", ".cjs"].includes(extension)
+          ? ts.ScriptKind.JS
+          : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(
     fileName,
     source,
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.TSX,
+    scriptKind,
   );
   const specifiers = [];
   let hasNonLiteralDynamicImport = false;
@@ -62,7 +71,11 @@ function importSpecifiers(source, fileName) {
   }
 
   visit(sourceFile);
-  return { hasNonLiteralDynamicImport, specifiers };
+  return {
+    hasNonLiteralDynamicImport,
+    hasParseErrors: (sourceFile.parseDiagnostics ?? []).length > 0,
+    specifiers,
+  };
 }
 
 async function directoryNames(directory) {
@@ -82,7 +95,7 @@ async function sourceFiles(directory) {
   for (const entry of entries) {
     const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) files.push(...(await sourceFiles(absolute)));
-    else if (entry.isFile() && /\.[cm]?tsx?$/.test(entry.name))
+    else if (entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name))
       files.push(absolute);
   }
   return files;
@@ -172,8 +185,11 @@ export async function validateWorkspace(root, contract = undefined) {
     }
   }
   for (const workspace of contract.toolWorkspaces ?? []) {
-    if (!(await exists(path.join(root, workspace, "package.json")))) {
+    const manifestPath = path.join(root, workspace, "package.json");
+    if (!(await exists(manifestPath))) {
       errors.push(`${workspace}: approved workspace is missing`);
+    } else {
+      manifests.set(workspace, await readJson(manifestPath));
     }
   }
 
@@ -317,7 +333,7 @@ export async function validateWorkspace(root, contract = undefined) {
   );
 
   for (const [workspace, manifest] of manifests) {
-    const allowed = new Set(contract.workspaces[workspace]);
+    const allowed = new Set(contract.workspaces[workspace] ?? []);
     const dependencies = Object.fromEntries(
       DEPENDENCY_FIELDS.flatMap((field) =>
         Object.entries(manifest[field] ?? {}),
@@ -353,10 +369,12 @@ export async function validateWorkspace(root, contract = undefined) {
     for (const file of await sourceFiles(path.join(root, workspace, "src"))) {
       const relativeFile = path.relative(root, file).split(path.sep).join("/");
       const source = await readFile(file, "utf8");
-      const { hasNonLiteralDynamicImport, specifiers } = importSpecifiers(
-        source,
-        file,
-      );
+      const { hasNonLiteralDynamicImport, hasParseErrors, specifiers } =
+        importSpecifiers(source, file);
+      if (hasParseErrors) {
+        errors.push(`${relativeFile}: source contains invalid syntax`);
+        continue;
+      }
       if (hasNonLiteralDynamicImport) {
         errors.push(`${relativeFile}: non-literal dynamic import is forbidden`);
       }
