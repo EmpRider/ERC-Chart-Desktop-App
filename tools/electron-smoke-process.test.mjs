@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   createElectronArguments,
+  runIndependentElectronProcesses,
   runElectronProcess,
 } from "./electron-smoke-process.mjs";
 
@@ -96,4 +97,65 @@ test("waits for stdio to close before evaluating the ready marker", async () => 
   child.emit("close", 0, null);
 
   await result;
+});
+
+test("starts two independent Electron processes before either completes", async () => {
+  const started = [];
+  const releases = [];
+  const running = runIndependentElectronProcesses({
+    processes: [{ instance: 1 }, { instance: 2 }],
+    runProcess: async (configuration) =>
+      new Promise((resolve) => {
+        started.push(configuration.instance);
+        releases.push(resolve);
+      }),
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(started, [1, 2]);
+  for (const release of releases) release();
+  await running;
+});
+
+test("fails when either independent Electron process fails", async () => {
+  const started = [];
+
+  await assert.rejects(
+    runIndependentElectronProcesses({
+      processes: [{ instance: 1 }, { instance: 2 }],
+      runProcess: async (configuration) => {
+        started.push(configuration.instance);
+        if (configuration.instance === 2) throw new Error("instance failed");
+      },
+    }),
+    new Error("instance failed"),
+  );
+  assert.deepEqual(started, [1, 2]);
+});
+
+test("waits for every independent process to settle before rejecting", async () => {
+  let releaseFirst;
+  let settled = false;
+  const running = runIndependentElectronProcesses({
+    processes: [{ instance: 1 }, { instance: 2 }],
+    runProcess: async (configuration) => {
+      if (configuration.instance === 2) throw new Error("instance failed");
+      return new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+    },
+  });
+  void running.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  releaseFirst();
+  await assert.rejects(running, new Error("instance failed"));
 });

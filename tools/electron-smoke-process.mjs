@@ -24,6 +24,21 @@ export function createElectronArguments({ userDataPath, entryPath }) {
   return [`--user-data-dir=${userDataPath}`, entryPath, "--erc-chart-smoke"];
 }
 
+export async function runIndependentElectronProcesses({
+  processes,
+  runProcess = runElectronProcess,
+}) {
+  if (!Array.isArray(processes) || processes.length < 2) {
+    throw new Error("Multi-instance smoke requires at least two processes.");
+  }
+
+  const results = await Promise.allSettled(
+    processes.map((configuration) => runProcess(configuration)),
+  );
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
+}
+
 export function runElectronProcess({
   executable,
   args,

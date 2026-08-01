@@ -62,20 +62,21 @@ rule. The same validation is part of `npm run lint` and CI.
 
 ## Root Commands
 
-| Command                    | Purpose                                                           |
-| -------------------------- | ----------------------------------------------------------------- |
-| `npm run format:check`     | Verify formatting without changing files                          |
-| `npm run lint`             | Validate package boundaries and lint source/configuration files   |
-| `npm run typecheck`        | Type-check every TypeScript project and contract type fixture     |
-| `npm run test:unit`        | Run deterministic contract and governance unit tests              |
-| `npm run test:integration` | Exercise workspace rules against real filesystem fixtures         |
-| `npm run build`            | Build every declared TypeScript project without packaging         |
-| `npm run build:runtime`    | Build TypeScript plus preload, renderer, and static runtime files |
-| `npm start`                | Build and launch the Electron development shell                   |
-| `npm run smoke:electron`   | Boot Electron and verify the secure renderer bridge               |
-| `npm run test:performance` | Report the honest ECDD-54 scaffold performance disposition        |
-| `npm run audit:ci`         | Fail on high or critical dependency vulnerabilities               |
-| `npm run version:check`    | Revalidate pinned versions and package consistency                |
+| Command                        | Purpose                                                           |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `npm run format:check`         | Verify formatting without changing files                          |
+| `npm run lint`                 | Validate package boundaries and lint source/configuration files   |
+| `npm run typecheck`            | Type-check every TypeScript project and contract type fixture     |
+| `npm run test:unit`            | Run deterministic contract and governance unit tests              |
+| `npm run test:integration`     | Exercise workspace rules against real filesystem fixtures         |
+| `npm run build`                | Build every declared TypeScript project without packaging         |
+| `npm run build:runtime`        | Build TypeScript plus preload, renderer, and static runtime files |
+| `npm start`                    | Build and launch the Electron development shell                   |
+| `npm run smoke:electron`       | Boot Electron and verify the secure renderer bridge               |
+| `npm run smoke:multi-instance` | Boot two Electron processes concurrently with isolated profiles   |
+| `npm run test:performance`     | Report the honest ECDD-54 scaffold performance disposition        |
+| `npm run audit:ci`             | Fail on high or critical dependency vulnerabilities               |
+| `npm run version:check`        | Revalidate pinned versions and package consistency                |
 
 `package:win` and `smoke:installer` are present for the stable CI command
 contract but deliberately fail with an ECDD-62 deferral message. ECDD-54 does
