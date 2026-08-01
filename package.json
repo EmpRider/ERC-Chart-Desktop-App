@@ -1,6 +1,6 @@
 {
   "name": "erc-chart-desktop-app",
-  "version": "0.0.0",
+  "version": "0.1.0-dev.1",
   "private": true,
   "type": "module",
   "description": "ERC Chart Windows desktop charting application monorepo",
@@ -14,24 +14,34 @@
     "tools/*"
   ],
   "scripts": {
-    "format:check": "prettier --check apps packages docs/development tools/application-gates tools/delivery-governance tools/workspace-boundaries package.json tsconfig.base.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md",
+    "format:check": "prettier --check apps packages docs/development tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries .github/workflows package.json tsconfig.base.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md",
     "boundaries:check": "node tools/workspace-boundaries/src/cli.mjs",
-    "lint": "npm run boundaries:check && eslint apps packages tools/application-gates tools/delivery-governance tools/workspace-boundaries eslint.config.mjs",
+    "lint": "npm run boundaries:check && eslint apps packages tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries eslint.config.mjs",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
-    "test:unit": "tsc -b packages/contracts --pretty false && node --test tools/delivery-governance/test/*.test.mjs packages/contracts/test/*.test.mjs",
-    "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs",
+    "test:unit": "npm run build && node --test tools/delivery-governance/test/*.test.mjs apps/desktop/test/*.test.mjs packages/contracts/test/*.test.mjs packages/data-service/test/*.test.mjs packages/electron-main/test/*.test.mjs packages/indicator-sdk/test/*.test.mjs packages/preload/test/*.test.mjs packages/provider-runtime/test/*.test.mjs packages/provider-sdk/test/*.test.mjs packages/renderer/test/*.test.mjs",
+    "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/packaging/*.test.mjs tools/*.test.mjs",
     "build": "tsc -b --pretty false --force",
+    "build:runtime": "npm run build && node tools/build-runtime.mjs",
+    "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
+    "smoke:electron": "npm run build:runtime && node tools/electron-smoke.mjs",
+    "smoke:multi-instance": "npm run build:runtime && node tools/electron-multi-instance.mjs",
     "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",
     "audit:ci": "npm audit --audit-level=high --omit=optional",
     "version:check": "node tools/workspace-boundaries/src/cli.mjs",
-    "package:win": "node tools/application-gates/src/deferred-gate.mjs ECDD-62 package:win",
-    "smoke:installer": "node tools/application-gates/src/deferred-gate.mjs ECDD-62 smoke:installer"
+    "package:win": "npm run build:runtime && node tools/packaging/prepare-package.mjs && electron-builder --config tools/packaging/electron-builder.config.mjs --win nsis --x64 --publish never",
+    "smoke:installer": "node tools/packaging/installer-smoke.mjs",
+    "checksum:installer": "node tools/packaging/write-checksum.mjs"
   },
   "devDependencies": {
+    "@electron/asar": "4.2.1",
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.2",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.1",
     "eslint": "10.8.0",
     "globals": "17.8.0",
+    "linkedom": "0.18.13",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0"
