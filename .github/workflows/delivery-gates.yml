@@ -104,6 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node node_modules/electron/install.js
           sandbox_path="node_modules/electron/dist/chrome-sandbox"
           sudo chown root:root "$sandbox_path"
           sudo chmod 4755 "$sandbox_path"
