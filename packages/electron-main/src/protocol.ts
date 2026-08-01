@@ -10,7 +10,6 @@ export interface RendererSchemeRegistration {
     readonly standard: true;
     readonly secure: true;
     readonly supportFetchAPI: true;
-    readonly codeCache: true;
   };
 }
 
@@ -20,7 +19,6 @@ export const rendererSchemeRegistration: RendererSchemeRegistration = {
     standard: true,
     secure: true,
     supportFetchAPI: true,
-    codeCache: true,
   },
 };
 

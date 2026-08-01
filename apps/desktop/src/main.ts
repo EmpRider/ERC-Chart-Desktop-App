@@ -10,18 +10,18 @@ import {
 } from "electron";
 import {
   createUtilitySupervisor,
-  rendererSchemeRegistration,
   startDesktopApplication,
   type DesktopApplicationController,
   type SecureWindowOptions,
   type UtilityChild,
 } from "@erc-chart/electron-main";
 import { runtimeInfoChannel } from "@erc-chart/contracts";
-import { finishDesktopSmoke, launchDesktopMain } from "./launcher.js";
+import {
+  finishDesktopSmoke,
+  launchDesktopMainWithProtocol,
+} from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
-
-protocol.registerSchemesAsPrivileged([rendererSchemeRegistration]);
 
 interface SmokeResult {
   readonly ready: boolean;
@@ -210,7 +210,11 @@ async function startDesktopMain(): Promise<void> {
   });
 }
 
-launchDesktopMain(startDesktopMain, (error) => {
-  console.error("ERC Chart failed to start.", error);
-  app.exit(1);
-});
+launchDesktopMainWithProtocol(
+  (schemes) => protocol.registerSchemesAsPrivileged(schemes),
+  startDesktopMain,
+  (error) => {
+    console.error("ERC Chart failed to start.", error);
+    app.exit(1);
+  },
+);

@@ -14,7 +14,6 @@ test("declares the renderer scheme as standard and secure", () => {
       standard: true,
       secure: true,
       supportFetchAPI: true,
-      codeCache: true,
     },
   });
 });
