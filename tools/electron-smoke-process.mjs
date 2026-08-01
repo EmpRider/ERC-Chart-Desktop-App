@@ -13,6 +13,13 @@ function describeStderr(stderr) {
     : `Electron stderr (last ${maximumDiagnosticCharacters} characters):\n${diagnostic}`;
 }
 
+export function createElectronArguments({ platform, userDataPath, entryPath }) {
+  const args = [];
+  if (platform === "linux") args.push("--no-sandbox");
+  args.push(`--user-data-dir=${userDataPath}`, entryPath, "--erc-chart-smoke");
+  return args;
+}
+
 export function runElectronProcess({
   executable,
   args,

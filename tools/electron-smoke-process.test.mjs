@@ -1,6 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runElectronProcess } from "./electron-smoke-process.mjs";
+import {
+  createElectronArguments,
+  runElectronProcess,
+} from "./electron-smoke-process.mjs";
+
+test("disables the unavailable Chromium SUID sandbox only for Linux smoke runs", () => {
+  assert.deepEqual(
+    createElectronArguments({
+      platform: "linux",
+      userDataPath: "/tmp/profile",
+      entryPath: "/repo/main.js",
+    }),
+    [
+      "--no-sandbox",
+      "--user-data-dir=/tmp/profile",
+      "/repo/main.js",
+      "--erc-chart-smoke",
+    ],
+  );
+  assert.deepEqual(
+    createElectronArguments({
+      platform: "win32",
+      userDataPath: "C:\\profile",
+      entryPath: "C:\\repo\\main.js",
+    }),
+    ["--user-data-dir=C:\\profile", "C:\\repo\\main.js", "--erc-chart-smoke"],
+  );
+});
 
 test("reports the Electron exit status and bounded stderr when readiness fails", async () => {
   const stderr = `boot failed: ${"x".repeat(10_000)}:root cause`;
