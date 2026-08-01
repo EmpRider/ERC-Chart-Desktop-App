@@ -14,6 +14,7 @@ import {
   isReleaseAssetNameConflict,
   packagedElectronArguments,
   releaseTag,
+  validateInstallationDirectoryName,
   validateReleaseVersion,
 } from "./packaging-contract.mjs";
 
@@ -65,6 +66,19 @@ test("resolves the installed executable beneath LOCALAPPDATA", () => {
     ),
   );
   assert.throws(() => installedExecutablePath(""), /LOCALAPPDATA/);
+});
+
+test("rejects Windows-reserved installation directory names", () => {
+  assert.equal(
+    validateInstallationDirectoryName("erc-chart-desktop-app"),
+    "erc-chart-desktop-app",
+  );
+  for (const name of ["con", "PrN", "AUX", "nul", "CoM9", "lPt1"]) {
+    assert.throws(
+      () => validateInstallationDirectoryName(name),
+      /installation directory/i,
+    );
+  }
 });
 
 test("creates packaged smoke arguments without a development entry path", () => {
