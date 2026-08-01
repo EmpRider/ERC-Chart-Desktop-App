@@ -21,7 +21,7 @@
     "test:unit": "tsc -b packages/contracts --pretty false && node --test tools/delivery-governance/test/*.test.mjs packages/contracts/test/*.test.mjs",
     "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs",
     "build": "tsc -b --pretty false --force",
-    "build:runtime": "node tools/build-runtime.mjs",
+    "build:runtime": "npm run build && node tools/build-runtime.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/index.js",
     "smoke:electron": "node tools/electron-smoke.mjs",
     "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",
