@@ -1,5 +1,11 @@
 import { isRuntimeInfo, type RuntimeInfo } from "@erc-chart/contracts";
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useState, useSyncExternalStore, type JSX } from "react";
+import {
+  createWorkspaceStore,
+  type LayoutSize,
+  type WorkspaceAction,
+  type WorkspaceState,
+} from "./workspace.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
@@ -43,11 +49,26 @@ export async function resolveShellState(
 
 export interface ApplicationShellProps {
   readonly connection: ShellConnectionState;
+  readonly workspace: WorkspaceState;
+  readonly onWorkspaceAction: (action: WorkspaceAction) => void;
 }
 
 export function ApplicationShell({
   connection,
+  workspace,
+  onWorkspaceAction,
 }: ApplicationShellProps): JSX.Element {
+  const activeTab =
+    workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ??
+    workspace.tabs[0];
+  if (activeTab === undefined) throw new Error("Workspace unavailable.");
+  const layoutNames: Readonly<Record<LayoutSize, string>> = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+  };
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -68,15 +89,87 @@ export function ApplicationShell({
       </header>
 
       <main className="workspace">
-        <section className="workspace-empty" aria-labelledby="workspace-title">
-          <div className="pulse-orbit" aria-hidden="true">
-            <span />
+        <nav className="tab-strip" aria-label="Chart workspaces">
+          <div className="tab-list" role="tablist">
+            {workspace.tabs.map((tab) => (
+              <div className="tab-item" key={tab.id}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab.id === workspace.activeTabId}
+                  onClick={() =>
+                    onWorkspaceAction({ type: "select-tab", tabId: tab.id })
+                  }
+                >
+                  {tab.title}
+                </button>
+                {workspace.tabs.length > 1 ? (
+                  <button
+                    type="button"
+                    className="tab-close"
+                    aria-label={`Close ${tab.title}`}
+                    onClick={() =>
+                      onWorkspaceAction({ type: "close-tab", tabId: tab.id })
+                    }
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+            ))}
           </div>
-          <p className="eyebrow">Secure desktop shell</p>
-          <h2 id="workspace-title">Workspace ready</h2>
-          <p className="workspace-copy">
-            Your local charting environment is prepared for the next stage.
-          </p>
+          <button
+            type="button"
+            className="add-tab"
+            aria-label="Add chart tab"
+            onClick={() => onWorkspaceAction({ type: "add-tab" })}
+          >
+            +
+          </button>
+        </nav>
+
+        <div className="workspace-toolbar">
+          <div
+            className="layout-selector"
+            role="group"
+            aria-label="Chart layout"
+          >
+            {([1, 2, 3, 4] as const).map((layoutSize) => (
+              <button
+                type="button"
+                key={layoutSize}
+                aria-label={`Use ${layoutNames[layoutSize]} chart layout`}
+                aria-pressed={activeTab.layoutSize === layoutSize}
+                onClick={() =>
+                  onWorkspaceAction({
+                    type: "set-layout",
+                    tabId: activeTab.id,
+                    layoutSize,
+                  })
+                }
+              >
+                {layoutSize}
+              </button>
+            ))}
+          </div>
+          <span>{activeTab.layoutSize} visible</span>
+        </div>
+
+        <section
+          className="chart-grid"
+          data-layout={activeTab.layoutSize}
+          aria-label={`${activeTab.title} charts`}
+        >
+          {activeTab.slots.map((slot, index) => (
+            <article className="chart-slot" data-chart-slot key={slot.id}>
+              <div className="slot-number" aria-hidden="true">
+                {index + 1}
+              </div>
+              <p className="eyebrow">Secure desktop shell</p>
+              <h2>{index === 0 ? "Workspace ready" : `Chart ${index + 1}`}</h2>
+              <p className="workspace-copy">Awaiting market data</p>
+            </article>
+          ))}
         </section>
       </main>
 
@@ -92,11 +185,18 @@ export interface RuntimeApplicationShellProps {
   readonly bridge: RendererBridge | undefined;
 }
 
+const runtimeWorkspaceStore = createWorkspaceStore();
+
 export function RuntimeApplicationShell({
   bridge,
 }: RuntimeApplicationShellProps): JSX.Element {
   const [connection, setConnection] = useState(() =>
     bridge === undefined ? unavailableShellState : connectingShellState,
+  );
+  const workspace = useSyncExternalStore(
+    runtimeWorkspaceStore.subscribe,
+    runtimeWorkspaceStore.getSnapshot,
+    runtimeWorkspaceStore.getSnapshot,
   );
 
   useEffect(() => {
@@ -113,5 +213,11 @@ export function RuntimeApplicationShell({
     };
   }, [bridge]);
 
-  return <ApplicationShell connection={connection} />;
+  return (
+    <ApplicationShell
+      connection={connection}
+      workspace={workspace}
+      onWorkspaceAction={runtimeWorkspaceStore.dispatch}
+    />
+  );
 }

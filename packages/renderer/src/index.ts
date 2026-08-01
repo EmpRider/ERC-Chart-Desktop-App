@@ -10,3 +10,16 @@ export type {
   RuntimeApplicationShellProps,
   ShellConnectionState,
 } from "./development-shell.js";
+export {
+  createInitialWorkspace,
+  createWorkspaceStore,
+  workspaceReducer,
+} from "./workspace.js";
+export type {
+  ChartSlot,
+  LayoutSize,
+  WorkspaceAction,
+  WorkspaceState,
+  WorkspaceStore,
+  WorkspaceTab,
+} from "./workspace.js";
