@@ -102,8 +102,7 @@ On Linux, the Electron smoke command requires a display server. CI runs it
 under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
-ECDD-55 does not create an installer, tag, or GitHub release. After all Epic 1
-tasks and installer automation pass the approved reviews, Development Version
-1 will be published as application `0.1.0-dev.1`, immutable tag
-`v0.1.0-dev.1`, with the Windows `.exe` and `.sha256` assets. Stable `v0.1.0`
-remains a later release.
+The main-branch release workflow publishes Development Version 1 as application
+`0.1.0-dev.1` and immutable prerelease tag `v0.1.0-dev.1`, with the Windows
+`.exe` and `.sha256` assets. The release remains unsigned, automatic updates are
+disabled, and stable `v0.1.0` remains a later release.

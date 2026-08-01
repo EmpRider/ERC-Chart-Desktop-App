@@ -11,9 +11,12 @@ of this repository.
 
 ## Current status
 
-The architecture baseline is complete. The application repository now has its
-strict TypeScript monorepo foundation and frozen package boundaries; product
-features and the Electron shell are not implemented yet.
+Epic 1's secure desktop foundation is complete. The repository includes the
+strict TypeScript monorepo, sandboxed Electron shell, privileged `erc-app://`
+renderer protocol, React tabs and one-to-four chart layouts, isolated utility
+processes, multi-instance smoke coverage, and an unsigned x64 per-user Windows
+installer pipeline. Live charts, market-data providers, persistence, plugins,
+automatic updates, and production signing remain later-epic work.
 
 - [Architecture specification](docs/architecture/v1/ERC-chart-Architecture-Specification-v1.md)
 - [Architecture decisions](docs/architecture/v1/ARCHITECTURE-DECISIONS.md)
