@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runWorkspaceValidation } from "../src/cli.mjs";
 import { validateWorkspace } from "../src/workspace-contract.mjs";
 
 const contract = {
@@ -478,6 +479,104 @@ export const loadContracts = async () => import(moduleName);
     ),
   );
 });
+
+test("parses TypeScript assertions with the file's script kind", async () => {
+  const files = validFiles();
+  files["packages/chart-core/src/index.ts"] =
+    "const value = <number>1; export { value };\n";
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.deepEqual(errors, []);
+});
+
+test("fails closed when a workspace source cannot be parsed", async () => {
+  const files = validFiles();
+  files["packages/chart-core/src/index.ts"] = "import {\n";
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/src/index.ts: source contains invalid syntax",
+    ),
+  );
+});
+
+test("validates JavaScript workspace imports", async () => {
+  const files = validFiles();
+  files["packages/chart-core/src/runtime.mjs"] =
+    'import "@erc-chart/indicator-sdk";\n';
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/src/runtime.mjs: @erc-chart/indicator-sdk is not a declared workspace dependency",
+    ),
+  );
+});
+
+test("validates tool workspace imports", async () => {
+  const files = validFiles();
+  files["tools/check/package.json"] = manifest("@erc-chart/check");
+  files["tools/check/src/index.mjs"] = 'import "@erc-chart/contracts";\n';
+  const toolContract = {
+    ...contract,
+    toolWorkspaces: ["tools/check"],
+  };
+
+  const errors = await validateWorkspace(await fixture(files), toolContract);
+
+  assert.ok(
+    errors.includes(
+      "tools/check/src/index.mjs: @erc-chart/contracts is not a declared workspace dependency",
+    ),
+  );
+});
+
+test("reports validation exceptions without an unhandled rejection", async () => {
+  const stdout = [];
+  const stderr = [];
+
+  const exitCode = await runWorkspaceValidation({
+    root: "/fixture",
+    validate: async () => {
+      throw new SyntaxError("invalid package.json");
+    },
+    stdout: (message) => stdout.push(message),
+    stderr: (message) => stderr.push(message),
+  });
+
+  assert.equal(exitCode, 1);
+  assert.deepEqual(stdout, []);
+  assert.deepEqual(stderr, [
+    "Workspace boundaries: validation failed: invalid package.json",
+  ]);
+});
+
+for (const [file, expected] of [
+  ["package.json", "package.json: root workspace manifest is required"],
+  ["package-lock.json", "package-lock.json: root lockfile is required"],
+  ["tsconfig.json", "tsconfig.json: root project references are required"],
+  [
+    "packages/contracts/tsconfig.json",
+    "packages/contracts/tsconfig.json: TypeScript configuration is required",
+  ],
+  [
+    "packages/contracts/src/index.ts",
+    "packages/contracts/src/index.ts: public entry point is required",
+  ],
+]) {
+  test(`rejects a missing required file: ${file}`, async () => {
+    const files = validFiles();
+    assert.equal(Reflect.deleteProperty(files, file), true);
+
+    const errors = await validateWorkspace(await fixture(files), contract);
+
+    assert.ok(errors.includes(expected));
+  });
+}
 
 test("ignores workspace imports inside comments", async () => {
   const files = validFiles();
