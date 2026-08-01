@@ -25,7 +25,11 @@ export async function installRendererProtocol(
   await adapters.handle(rendererProtocolScheme, async (request) => {
     const assetUrl = resolveRendererAssetUrl(request.url, rootPath);
     if (assetUrl === undefined) return new Response(null, { status: 404 });
-    return adapters.fetch(assetUrl);
+    try {
+      return await adapters.fetch(assetUrl);
+    } catch {
+      return new Response(null, { status: 404 });
+    }
   });
 
   let installed = true;
