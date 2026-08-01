@@ -56,10 +56,20 @@ export function createUtilitySupervisor(
   };
 
   const removeListeners = (): void => {
-    removeMessage();
-    removeExit();
+    const removeCurrentMessage = removeMessage;
+    const removeCurrentExit = removeExit;
     removeMessage = (): void => undefined;
     removeExit = (): void => undefined;
+    try {
+      removeCurrentMessage();
+    } catch {
+      // Listener cleanup cannot leave the supervisor in a transitional state.
+    }
+    try {
+      removeCurrentExit();
+    } catch {
+      // Listener cleanup cannot leave the supervisor in a transitional state.
+    }
   };
 
   const failStart = (error: Error, terminate: boolean): void => {
@@ -81,6 +91,7 @@ export function createUtilitySupervisor(
     child = undefined;
     resolveShutdown?.();
     resolveShutdown = undefined;
+    shutdownPromise = undefined;
   };
 
   const onMessage = (message: unknown): void => {
@@ -168,12 +179,26 @@ export function createUtilitySupervisor(
     shutdownPromise = new Promise<void>((resolve) => {
       resolveShutdown = resolve;
     });
-    child?.postMessage({
-      type: "shutdown",
-      contractVersion: ipcContractVersion,
-    });
+    try {
+      child?.postMessage({
+        type: "shutdown",
+        contractVersion: ipcContractVersion,
+      });
+    } catch {
+      try {
+        child?.kill();
+      } catch {
+        // The supervisor still completes if process termination reports failure.
+      }
+      finishStopped();
+      return shutdownPromise ?? Promise.resolve();
+    }
     timer = options.scheduler.setTimeout(() => {
-      child?.kill();
+      try {
+        child?.kill();
+      } catch {
+        // The supervisor still completes if forced termination reports failure.
+      }
       finishStopped();
     }, options.shutdownTimeoutMs);
     return shutdownPromise;
