@@ -1,7 +1,7 @@
 import { rendererEntryUrl } from "./protocol.js";
 
 export const rendererContentSecurityPolicy =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
 export interface DesktopIpcSender {
   readonly url: string;
