@@ -5,7 +5,7 @@ export const applicationVersion = validateReleaseVersion(
   applicationManifest.version,
 );
 export const productName = "ERC Chart";
-const installationDirectoryName = validateInstallationDirectoryName(
+export const packageIdentityName = validateInstallationDirectoryName(
   applicationManifest.name,
 );
 
@@ -47,7 +47,7 @@ export function installedExecutablePath(localAppData) {
   return path.join(
     localAppData,
     "Programs",
-    installationDirectoryName,
+    packageIdentityName,
     `${productName}.exe`,
   );
 }
