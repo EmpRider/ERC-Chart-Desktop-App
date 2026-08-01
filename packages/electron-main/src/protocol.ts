@@ -23,10 +23,31 @@ export const rendererSchemeRegistration: RendererSchemeRegistration = {
 };
 
 function rawPathname(requestUrl: string): string | undefined {
-  const match = /^erc-app:\/\/app(?<pathname>\/[^?#]*)?(?:[?#]|$)/u.exec(
-    requestUrl,
+  const authorityStart = requestUrl.indexOf("://");
+  if (authorityStart === -1) return undefined;
+  const contentStart = authorityStart + 3;
+  const pathnameStart = requestUrl.indexOf("/", contentStart);
+  const queryStart = requestUrl.indexOf("?", contentStart);
+  const fragmentStart = requestUrl.indexOf("#", contentStart);
+  const suffixStarts = [queryStart, fragmentStart].filter(
+    (index) => index !== -1,
   );
-  return match?.groups?.pathname ?? "/";
+  const firstSuffix =
+    suffixStarts.length === 0 ? -1 : Math.min(...suffixStarts);
+  if (
+    pathnameStart === -1 ||
+    (firstSuffix !== -1 && firstSuffix < pathnameStart)
+  ) {
+    return "/";
+  }
+  const pathnameSuffixes = suffixStarts.filter(
+    (index) => index > pathnameStart,
+  );
+  const pathnameEnd =
+    pathnameSuffixes.length === 0
+      ? requestUrl.length
+      : Math.min(...pathnameSuffixes);
+  return requestUrl.slice(pathnameStart, pathnameEnd);
 }
 
 export function resolveRendererAssetUrl(
@@ -39,7 +60,13 @@ export function resolveRendererAssetUrl(
   } catch {
     return undefined;
   }
-  if (url.protocol !== `${rendererProtocolScheme}:` || url.host !== "app") {
+  if (
+    url.protocol !== `${rendererProtocolScheme}:` ||
+    url.hostname.toLowerCase() !== "app" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
     return undefined;
   }
 
