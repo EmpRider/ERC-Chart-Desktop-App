@@ -138,3 +138,22 @@ test("shuts down the data utility and IPC registration idempotently", async () =
     1,
   );
 });
+
+test("cleans partial startup and redacts the original failure", async () => {
+  const fixture = createFixture();
+  fixture.adapters.dataUtility.start = async () => {
+    throw new Error("private path /runtime/data.js");
+  };
+
+  await assert.rejects(
+    startDesktopApplication(fixture.adapters, paths),
+    new Error("Desktop application failed to start."),
+  );
+
+  assert.equal(fixture.getShutdownCount(), 1);
+  assert.equal(
+    fixture.events.filter((event) => event === "ipc:remove").length,
+    1,
+  );
+  assert.equal(fixture.windows.length, 0);
+});

@@ -24,6 +24,7 @@
 ### Task 1: Freeze Delivery Metadata and Runtime Dependencies
 
 **Files:**
+
 - Modify: `docs/superpowers/specs/2026-08-01-ecdd-55-electron-vertical-skeleton-design.md`
 - Create: `docs/superpowers/plans/2026-08-01-ecdd-55-electron-vertical-skeleton.md`
 - Modify: `package.json`
@@ -32,6 +33,7 @@
 - Modify: `tools/workspace-boundaries/test/workspace-contract.test.mjs`
 
 **Interfaces:**
+
 - Consumes: ECDD-54 root scripts and exact workspace inventory.
 - Produces: pinned Electron/build/test dependencies and required `start`, `build:runtime`, and `smoke:electron` script contracts.
 
@@ -64,6 +66,7 @@ Commit: `ECDD-55: pin Electron skeleton toolchain`
 ### Task 2: Add Runtime, Utility, and SDK Contract Surfaces
 
 **Files:**
+
 - Create: `packages/contracts/src/runtime.ts`
 - Create: `packages/contracts/src/utility-process.ts`
 - Modify: `packages/contracts/src/index.ts`
@@ -77,6 +80,7 @@ Commit: `ECDD-55: pin Electron skeleton toolchain`
 - Create: `packages/indicator-sdk/test/indicator-sdk.types.ts`
 
 **Interfaces:**
+
 - Consumes: `ContractVersion`, `CompatibilityRange`, `Candle`, `Tick`, branded identifiers, and existing v1 version constants from `@erc-chart/contracts`.
 - Produces: `RuntimeInfo`, `runtimeInfoChannel`, `isRuntimeInfo`, `UtilityControlMessage`, `UtilityStatusMessage`, `isUtilityControlMessage`, `isUtilityStatusMessage`, provider adapter contracts, indicator lifecycle/plot contracts, and inert `SignalCandidate`.
 
@@ -115,6 +119,7 @@ Commit: `ECDD-55: define skeleton boundary contracts`
 ### Task 3: Implement Data and Provider Utility Lifecycles
 
 **Files:**
+
 - Create: `packages/data-service/src/utility-entry.ts`
 - Create: `packages/data-service/src/utility-runtime.ts`
 - Modify: `packages/data-service/src/index.ts`
@@ -127,6 +132,7 @@ Commit: `ECDD-55: define skeleton boundary contracts`
 - Modify: `packages/provider-runtime/package.json`
 
 **Interfaces:**
+
 - Consumes: `UtilityControlMessage` and `UtilityStatusMessage`.
 - Produces: `createUtilityRuntime(port)` for deterministic lifecycle behavior; launchable built `utility-entry.js` files; `ProviderLaunchRequest` keyed by a non-empty provider profile ID.
 
@@ -159,6 +165,7 @@ Commit: `ECDD-55: add utility process lifecycles`
 ### Task 4: Implement Secure Electron Main Lifecycle and Supervision
 
 **Files:**
+
 - Create: `packages/electron-main/src/window.ts`
 - Create: `packages/electron-main/src/utility-supervisor.ts`
 - Create: `packages/electron-main/src/application.ts`
@@ -169,6 +176,7 @@ Commit: `ECDD-55: add utility process lifecycles`
 - Modify: `packages/electron-main/package.json`
 
 **Interfaces:**
+
 - Consumes: Electron-like narrow adapters, `RuntimeInfo`, fixed IPC channel, renderer/preload/utility artifact paths.
 - Produces: `secureWindowOptions(paths)`, `createUtilitySupervisor(adapter, options)`, and `startDesktopApplication(adapters, paths)`.
 
@@ -205,6 +213,7 @@ Commit: `ECDD-55: implement secure Electron lifecycle`
 ### Task 5: Implement the Narrow Preload and Dummy Renderer
 
 **Files:**
+
 - Create: `packages/preload/src/bridge.ts`
 - Create: `packages/preload/src/runtime-entry.ts`
 - Modify: `packages/preload/src/index.ts`
@@ -220,6 +229,7 @@ Commit: `ECDD-55: implement secure Electron lifecycle`
 - Modify: `packages/renderer/package.json`
 
 **Interfaces:**
+
 - Consumes: fixed runtime-info channel and validator.
 - Produces: `createErcChartBridge(invoke)`, `installBridge(expose, invoke)`, `renderDevelopmentShell(document, bridge)`, `preload.cjs`, `renderer.js`, copied HTML/CSS.
 
@@ -256,6 +266,7 @@ Commit: `ECDD-55: add sandboxed preload and dummy renderer`
 ### Task 6: Compose the Executable Desktop and Prove Boot
 
 **Files:**
+
 - Modify: `apps/desktop/src/index.ts`
 - Create: `apps/desktop/src/paths.ts`
 - Create: `apps/desktop/test/paths.test.mjs`
@@ -265,6 +276,7 @@ Commit: `ECDD-55: add sandboxed preload and dummy renderer`
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Consumes: built Electron main API and generated runtime artifacts.
 - Produces: executable desktop composition entry, deterministic smoke-ready signal, `npm start`, and `npm run smoke:electron`.
 
@@ -303,6 +315,7 @@ Commit: `ECDD-55: compose bootable development shell`
 ### Task 7: Integrate Repository Gates and Delivery Evidence
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `tsconfig.tests.json`
 - Modify: `eslint.config.mjs` only if new runtime globals require a scoped override
@@ -311,6 +324,7 @@ Commit: `ECDD-55: compose bootable development shell`
 - Modify: tests under changed packages as required by actual gate findings
 
 **Interfaces:**
+
 - Consumes: all ECDD-55 runtime packages and existing delivery governance.
 - Produces: one deterministic local/CI verification sequence and current documentation for building/running the skeleton.
 

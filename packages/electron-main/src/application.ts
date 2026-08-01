@@ -68,9 +68,19 @@ export async function startDesktopApplication(
     if (adapters.app.platform !== "darwin") adapters.app.quit();
   });
 
-  await adapters.app.whenReady();
-  await adapters.dataUtility.start(paths.dataUtilityPath, []);
-  await openWindow();
+  try {
+    await adapters.app.whenReady();
+    await adapters.dataUtility.start(paths.dataUtilityPath, []);
+    await openWindow();
+  } catch {
+    try {
+      await adapters.dataUtility.shutdown();
+    } catch {
+      // Cleanup failure must not expose the original startup error.
+    }
+    removeRuntimeInfoHandler();
+    throw new Error("Desktop application failed to start.");
+  }
 
   return {
     shutdown: async (): Promise<void> => {

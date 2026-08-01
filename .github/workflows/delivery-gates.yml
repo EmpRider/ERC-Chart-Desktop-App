@@ -105,6 +105,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:integration
+      - name: Smoke Electron development shell
+        run: xvfb-run -a npm run smoke:electron
       - run: npm run build
       - run: npm run test:performance
       - run: npm run audit:ci
