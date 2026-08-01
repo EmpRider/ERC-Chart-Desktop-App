@@ -25,7 +25,7 @@ function createScheduler() {
   };
 }
 
-function createChild() {
+function createChild({ postMessageError } = {}) {
   const messageListeners = new Set();
   const exitListeners = new Set();
   const posted = [];
@@ -33,6 +33,7 @@ function createChild() {
   return {
     child: {
       postMessage(message) {
+        if (postMessageError !== undefined) throw postMessageError;
         posted.push(message);
       },
       kill() {
@@ -60,9 +61,9 @@ function createChild() {
   };
 }
 
-function createFixture() {
+function createFixture({ childOptions } = {}) {
   const timerFixture = createScheduler();
-  const childFixture = createChild();
+  const childFixture = createChild(childOptions);
   const unavailable = [];
   const spawnCalls = [];
   const supervisor = createUtilitySupervisor({
@@ -186,6 +187,24 @@ test("forces termination when utility shutdown misses its deadline", async () =>
   const stopped = fixture.supervisor.shutdown();
   fixture.runNext();
   await stopped;
+
+  assert.equal(fixture.supervisor.getStatus(), "stopped");
+  assert.equal(fixture.getKillCount(), 1);
+});
+
+test("finishes shutdown when posting the control message throws", async () => {
+  const fixture = createFixture({
+    childOptions: { postMessageError: new Error("closed IPC channel") },
+  });
+  const started = fixture.supervisor.start("/runtime/data.js", []);
+  fixture.emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+
+  await fixture.supervisor.shutdown();
+  await fixture.supervisor.shutdown();
 
   assert.equal(fixture.supervisor.getStatus(), "stopped");
   assert.equal(fixture.getKillCount(), 1);
