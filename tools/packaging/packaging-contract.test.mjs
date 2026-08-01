@@ -5,6 +5,7 @@ import { electronFusePolicy } from "../../packages/electron-main/dist/index.js";
 import builderConfiguration from "./electron-builder.config.mjs";
 import {
   applicationVersion,
+  assertReleaseAssetUploaded,
   assertReleaseTargetsCommit,
   assertPackagedVersion,
   checksumLine,
@@ -111,4 +112,12 @@ test("recognizes only GitHub's existing-asset name conflict", () => {
     false,
   );
   assert.equal(isReleaseAssetNameConflict(undefined), false);
+});
+
+test("rejects an upload response without a created release asset", () => {
+  assert.doesNotThrow(() => assertReleaseAssetUploaded({ id: 42 }));
+  assert.throws(
+    () => assertReleaseAssetUploaded({ errors: [{ code: "invalid" }] }),
+    /upload was rejected/i,
+  );
 });

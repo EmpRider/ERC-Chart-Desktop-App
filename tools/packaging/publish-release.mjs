@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   applicationVersion,
+  assertReleaseAssetUploaded,
   assertReleaseTargetsCommit,
   installerArtifactName,
   isReleaseAssetNameConflict,
@@ -113,6 +114,8 @@ for (const { assetName, bytes, priorAsset } of assets) {
       [204],
     );
     await uploadAsset(assetName, bytes, [201]);
+  } else {
+    assertReleaseAssetUploaded(upload);
   }
 }
 

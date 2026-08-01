@@ -58,6 +58,12 @@ export function isReleaseAssetNameConflict(response) {
   );
 }
 
+export function assertReleaseAssetUploaded(response) {
+  if (!Number.isSafeInteger(response?.id) || response.id <= 0) {
+    throw new Error("Release asset upload was rejected.");
+  }
+}
+
 export function checksumLine(digest, fileName) {
   if (!/^[a-f0-9]{64}$/i.test(digest)) {
     throw new Error("Invalid SHA-256 digest.");
