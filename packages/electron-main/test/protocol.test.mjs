@@ -27,6 +27,10 @@ test("resolves renderer assets only beneath the configured root", () => {
     ),
     pathToFileURL(path.join(rendererRoot, "assets", "renderer.js")).href,
   );
+  assert.equal(
+    resolveRendererAssetUrl("ERC-APP://APP/index.html", rendererRoot),
+    pathToFileURL(path.join(rendererRoot, "index.html")).href,
+  );
 });
 
 test("rejects requests outside the renderer protocol boundary", () => {
