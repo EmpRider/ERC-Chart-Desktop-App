@@ -2,7 +2,11 @@ import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { applicationVersion, productName } from "./packaging-contract.mjs";
+import {
+  applicationVersion,
+  packageIdentityName,
+  productName,
+} from "./packaging-contract.mjs";
 
 function assertContained(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
@@ -59,7 +63,7 @@ export async function preparePackage({ root, outputRoot }) {
     path.join(outputRoot, "package.json"),
     `${JSON.stringify(
       {
-        name: "erc-chart-desktop-app",
+        name: packageIdentityName,
         version: applicationVersion,
         description: `${productName} development shell`,
         author: "EmpRider",

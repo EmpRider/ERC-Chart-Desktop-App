@@ -5,6 +5,21 @@ export const applicationVersion = validateReleaseVersion(
   applicationManifest.version,
 );
 export const productName = "ERC Chart";
+export const packageIdentityName = validateInstallationDirectoryName(
+  applicationManifest.name,
+);
+
+export function validateInstallationDirectoryName(name) {
+  const windowsReservedName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+  if (
+    typeof name !== "string" ||
+    !/^[a-z0-9][a-z0-9-]*$/.test(name) ||
+    windowsReservedName.test(name)
+  ) {
+    throw new Error("Invalid installation directory name.");
+  }
+  return name;
+}
 
 export function validateReleaseVersion(version) {
   if (
@@ -29,7 +44,12 @@ export function installedExecutablePath(localAppData) {
   if (typeof localAppData !== "string" || localAppData.trim() === "") {
     throw new Error("LOCALAPPDATA is required.");
   }
-  return path.join(localAppData, "Programs", productName, `${productName}.exe`);
+  return path.join(
+    localAppData,
+    "Programs",
+    packageIdentityName,
+    `${productName}.exe`,
+  );
 }
 
 export function packagedElectronArguments(userDataPath) {

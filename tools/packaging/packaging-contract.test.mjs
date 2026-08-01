@@ -12,13 +12,16 @@ import {
   installedExecutablePath,
   installerArtifactName,
   isReleaseAssetNameConflict,
+  packageIdentityName,
   packagedElectronArguments,
   releaseTag,
+  validateInstallationDirectoryName,
   validateReleaseVersion,
 } from "./packaging-contract.mjs";
 
 test("defines Development Version 1 release identity", () => {
   assert.equal(applicationVersion, "0.1.0-dev.1");
+  assert.equal(packageIdentityName, "erc-chart-desktop-app");
   assert.equal(releaseTag(applicationVersion), "v0.1.0-dev.1");
   assert.equal(
     installerArtifactName(applicationVersion),
@@ -57,9 +60,27 @@ test("resolves the installed executable beneath LOCALAPPDATA", () => {
 
   assert.equal(
     executablePath,
-    path.join(localAppData, "Programs", "ERC Chart", "ERC Chart.exe"),
+    path.join(
+      localAppData,
+      "Programs",
+      "erc-chart-desktop-app",
+      "ERC Chart.exe",
+    ),
   );
   assert.throws(() => installedExecutablePath(""), /LOCALAPPDATA/);
+});
+
+test("rejects Windows-reserved installation directory names", () => {
+  assert.equal(
+    validateInstallationDirectoryName("erc-chart-desktop-app"),
+    "erc-chart-desktop-app",
+  );
+  for (const name of ["con", "PrN", "AUX", "nul", "CoM9", "lPt1"]) {
+    assert.throws(
+      () => validateInstallationDirectoryName(name),
+      /installation directory/i,
+    );
+  }
 });
 
 test("creates packaged smoke arguments without a development entry path", () => {
