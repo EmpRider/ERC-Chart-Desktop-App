@@ -62,18 +62,48 @@ rule. The same validation is part of `npm run lint` and CI.
 
 ## Root Commands
 
-| Command                    | Purpose                                                         |
-| -------------------------- | --------------------------------------------------------------- |
-| `npm run format:check`     | Verify formatting without changing files                        |
-| `npm run lint`             | Validate package boundaries and lint source/configuration files |
-| `npm run typecheck`        | Type-check every TypeScript project and contract type fixture   |
-| `npm run test:unit`        | Run deterministic contract and governance unit tests            |
-| `npm run test:integration` | Exercise workspace rules against real filesystem fixtures       |
-| `npm run build`            | Build every declared TypeScript project without packaging       |
-| `npm run test:performance` | Report the honest ECDD-54 scaffold performance disposition      |
-| `npm run audit:ci`         | Fail on high or critical dependency vulnerabilities             |
-| `npm run version:check`    | Revalidate pinned versions and package consistency              |
+| Command                        | Purpose                                                           |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `npm run format:check`         | Verify formatting without changing files                          |
+| `npm run lint`                 | Validate package boundaries and lint source/configuration files   |
+| `npm run typecheck`            | Type-check every TypeScript project and contract type fixture     |
+| `npm run test:unit`            | Run deterministic contract and governance unit tests              |
+| `npm run test:integration`     | Exercise workspace rules against real filesystem fixtures         |
+| `npm run build`                | Build every declared TypeScript project without packaging         |
+| `npm run build:runtime`        | Build TypeScript plus preload, renderer, and static runtime files |
+| `npm start`                    | Build and launch the Electron development shell                   |
+| `npm run smoke:electron`       | Boot Electron and verify the secure renderer bridge               |
+| `npm run smoke:multi-instance` | Boot two Electron processes concurrently with isolated profiles   |
+| `npm run package:win`          | Build the unsigned x64 per-user NSIS installer on Windows         |
+| `npm run smoke:installer`      | Install, smoke two packaged instances, and uninstall on Windows   |
+| `npm run checksum:installer`   | Write the installer's conventional SHA-256 sidecar                |
+| `npm run test:performance`     | Report the honest ECDD-54 scaffold performance disposition        |
+| `npm run audit:ci`             | Fail on high or critical dependency vulnerabilities               |
+| `npm run version:check`        | Revalidate pinned versions and package consistency                |
 
-`package:win` and `smoke:installer` are present for the stable CI command
-contract but deliberately fail with an ECDD-62 deferral message. ECDD-54 does
-not build or claim an installer.
+ECDD-62 activates `package:win` and `smoke:installer` on Windows. The installer
+is an unsigned Development Version 1 build; production code signing remains a
+later release decision. Packaging never publishes update metadata and the app
+does not include an automatic-update client.
+
+## Electron Development Shell
+
+ECDD-55 adds the minimal executable process skeleton. `npm start` launches one
+Electron instance, starts the data utility process, installs the narrow
+`window.ercChart.getRuntimeInfo()` bridge, and renders deterministic dummy
+content. The provider utility entry and SDK contracts are present, but no
+provider is launched or connected at startup.
+
+The renderer is sandboxed and has Node integration disabled. The preload is a
+single CommonJS bundle because sandboxed preload scripts cannot load arbitrary
+ES modules. The renderer receives no raw Electron or generic IPC API.
+
+On Linux, the Electron smoke command requires a display server. CI runs it
+under `xvfb-run`; a local headless environment without X11/Wayland reports the
+missing display instead of hanging.
+
+ECDD-55 does not create an installer, tag, or GitHub release. After all Epic 1
+tasks and installer automation pass the approved reviews, Development Version
+1 will be published as application `0.1.0-dev.1`, immutable tag
+`v0.1.0-dev.1`, with the Windows `.exe` and `.sha256` assets. Stable `v0.1.0`
+remains a later release.

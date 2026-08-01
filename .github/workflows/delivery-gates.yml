@@ -100,11 +100,24 @@ jobs:
           node-version: 24.18.1
           package-manager-cache: false
       - run: npm ci
+      - name: Configure Chromium SUID sandbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          sandbox_path="node_modules/electron/dist/chrome-sandbox"
+          sudo chown root:root "$sandbox_path"
+          sudo chmod 4755 "$sandbox_path"
+          test "$(stat -c '%U:%G %a' "$sandbox_path")" = "root:root 4755"
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:integration
+      - name: Smoke Electron development shell
+        run: xvfb-run -a npm run smoke:electron
+      - name: Smoke two independent Electron instances
+        run: xvfb-run -a npm run smoke:multi-instance
       - run: npm run build
       - run: npm run test:performance
       - run: npm run audit:ci
@@ -134,6 +147,7 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:integration
       - run: npm run build
+      - run: npm run smoke:multi-instance
       - run: npm run test:performance
       - run: npm run audit:ci
       - run: npm run version:check
