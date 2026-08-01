@@ -1,41 +1,50 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ipcContractVersion } from "@erc-chart/contracts";
-import { parseHTML } from "linkedom";
-import { renderDevelopmentShell } from "../dist/index.js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  ApplicationShell,
+  connectingShellState,
+  resolveShellState,
+} from "../dist/index.js";
 
-function createDocument() {
-  return parseHTML('<!doctype html><main id="app"></main>').document;
-}
+test("renders the semantic dark application shell without deferred controls", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ApplicationShell, { connection: connectingShellState }),
+  );
 
-test("renders deterministic dummy content and a connected bridge state", async () => {
-  const document = createDocument();
-  const rendering = renderDevelopmentShell(document, {
+  assert.match(markup, /<header/);
+  assert.match(markup, /<main/);
+  assert.match(markup, /<footer/);
+  assert.match(markup, /<h1[^>]*>ERC Chart<\/h1>/);
+  assert.match(markup, /Desktop workspace/);
+  assert.match(markup, /Workspace ready/);
+  assert.match(markup, /Connecting secure bridge/);
+  assert.doesNotMatch(markup, /tab|layout|settings|provider/i);
+});
+
+test("resolves and renders a connected secure bridge", async () => {
+  const state = await resolveShellState({
     getRuntimeInfo: async () => ({
       ipcContractVersion,
       applicationName: "ERC Chart",
     }),
   });
-
-  assert.equal(document.querySelector("h1")?.textContent, "ERC Chart");
-  assert.equal(
-    document.querySelector("[data-milestone]")?.textContent,
-    "Development shell",
-  );
-  assert.equal(
-    document.querySelector("[data-status]")?.textContent,
-    "Connecting secure bridge",
+  const markup = renderToStaticMarkup(
+    createElement(ApplicationShell, { connection: state }),
   );
 
-  await rendering;
-
-  assert.equal(
-    document.querySelector("[data-status]")?.textContent,
-    "Secure bridge connected",
-  );
+  assert.deepEqual(state, {
+    kind: "connected",
+    label: "Secure bridge connected",
+    message: "Desktop runtime verified",
+  });
+  assert.match(markup, /data-status="connected"/);
+  assert.match(markup, /Secure bridge connected/);
 });
 
-test("renders a safe unavailable state for missing or rejected bridges", async () => {
+test("fails closed without exposing bridge errors", async () => {
   for (const bridge of [
     undefined,
     { getRuntimeInfo: async () => Promise.reject(new Error("private path")) },
@@ -46,25 +55,17 @@ test("renders a safe unavailable state for missing or rejected bridges", async (
       }),
     },
   ]) {
-    const document = createDocument();
-    await renderDevelopmentShell(document, bridge);
-    assert.equal(
-      document.querySelector("[data-status]")?.textContent,
-      "Shell unavailable",
+    const state = await resolveShellState(bridge);
+    const markup = renderToStaticMarkup(
+      createElement(ApplicationShell, { connection: state }),
     );
-    assert.equal(
-      document.querySelector("[data-message]")?.textContent,
-      "The secure application bridge could not be reached.",
-    );
-    assert.equal(document.body.textContent.includes("private path"), false);
+
+    assert.deepEqual(state, {
+      kind: "unavailable",
+      label: "Shell unavailable",
+      message: "The secure application bridge could not be reached.",
+    });
+    assert.match(markup, /data-status="unavailable"/);
+    assert.equal(markup.includes("private path"), false);
   }
-});
-
-test("fails safely when the required renderer root is absent", async () => {
-  const { document } = parseHTML("<!doctype html><body></body>");
-
-  await assert.rejects(
-    renderDevelopmentShell(document, undefined),
-    new Error("Renderer root unavailable."),
-  );
 });

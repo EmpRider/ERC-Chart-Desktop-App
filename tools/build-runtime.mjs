@@ -36,7 +36,7 @@ export async function buildRuntime({ root, outputRoot }) {
     logLevel: "silent",
   });
   await build({
-    entryPoints: [path.join(root, "packages/renderer/src/runtime-entry.ts")],
+    entryPoints: [path.join(root, "packages/renderer/src/runtime-entry.tsx")],
     outfile: path.join(outputRoot, "renderer.js"),
     bundle: true,
     format: "esm",
