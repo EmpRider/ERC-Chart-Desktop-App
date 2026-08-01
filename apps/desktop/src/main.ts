@@ -3,11 +3,14 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  net,
+  protocol,
   utilityProcess,
   type UtilityProcess,
 } from "electron";
 import {
   createUtilitySupervisor,
+  rendererSchemeRegistration,
   startDesktopApplication,
   type DesktopApplicationController,
   type SecureWindowOptions,
@@ -16,6 +19,9 @@ import {
 import { runtimeInfoChannel } from "@erc-chart/contracts";
 import { finishDesktopSmoke, launchDesktopMain } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
+import { installRendererProtocol } from "./protocol.js";
+
+protocol.registerSchemesAsPrivileged([rendererSchemeRegistration]);
 
 interface SmokeResult {
   readonly ready: boolean;
@@ -170,6 +176,15 @@ async function startDesktopMain(): Promise<void> {
         ipcMain.handle(runtimeInfoChannel, handler);
         return (): void => ipcMain.removeHandler(runtimeInfoChannel);
       },
+      registerRendererProtocol: (rootPath): Promise<() => void> =>
+        installRendererProtocol(
+          {
+            handle: (scheme, handler): void => protocol.handle(scheme, handler),
+            unhandle: (scheme): void => protocol.unhandle(scheme),
+            fetch: (url): Promise<Response> => net.fetch(url),
+          },
+          rootPath,
+        ),
       createWindow,
       dataUtility: {
         start: async (entryPath, args): Promise<void> => {

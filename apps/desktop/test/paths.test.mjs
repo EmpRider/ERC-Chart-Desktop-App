@@ -24,14 +24,8 @@ test("resolves runtime artifacts independently of the working directory", () => 
       "runtime",
       "preload.cjs",
     ),
-    rendererHtmlPath: path.join(
-      root,
-      "apps",
-      "desktop",
-      "dist",
-      "runtime",
-      "index.html",
-    ),
+    rendererRootPath: path.join(root, "apps", "desktop", "dist", "runtime"),
+    rendererEntryUrl: "erc-app://app/index.html",
     dataUtilityPath: path.join(
       root,
       "packages",
@@ -54,13 +48,19 @@ test("validates every required artifact without exposing its path", async (t) =>
   t.after(() => rm(root, { recursive: true, force: true }));
   const paths = {
     preloadPath: path.join(root, "preload.cjs"),
-    rendererHtmlPath: path.join(root, "index.html"),
+    rendererRootPath: root,
+    rendererEntryUrl: "erc-app://app/index.html",
     dataUtilityPath: path.join(root, "data.js"),
     providerUtilityPath: path.join(root, "provider", "entry.js"),
   };
   await mkdir(path.dirname(paths.providerUtilityPath), { recursive: true });
   await Promise.all(
-    Object.values(paths).map((filePath) => writeFile(filePath, "")),
+    [
+      paths.preloadPath,
+      path.join(paths.rendererRootPath, "index.html"),
+      paths.dataUtilityPath,
+      paths.providerUtilityPath,
+    ].map((filePath) => writeFile(filePath, "")),
   );
 
   await validateDesktopArtifacts(paths);
