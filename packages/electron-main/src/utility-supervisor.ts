@@ -120,9 +120,26 @@ export function createUtilitySupervisor(
       return Promise.reject(new Error("Utility has already been started."));
     }
     status = "starting";
-    child = options.spawn(entryPath, args);
-    removeMessage = child.onMessage(onMessage);
-    removeExit = child.onExit(onExit);
+    try {
+      child = options.spawn(entryPath, args);
+      removeMessage = child.onMessage(onMessage);
+      removeExit = child.onExit(onExit);
+    } catch {
+      try {
+        removeListeners();
+      } catch {
+        removeMessage = (): void => undefined;
+        removeExit = (): void => undefined;
+      }
+      try {
+        child?.kill();
+      } catch {
+        // The supervisor still resets its own state if child cleanup fails.
+      }
+      child = undefined;
+      status = "failed";
+      return Promise.reject(new Error("Utility process could not start."));
+    }
 
     const started = new Promise<void>((resolve, reject) => {
       resolveStart = resolve;

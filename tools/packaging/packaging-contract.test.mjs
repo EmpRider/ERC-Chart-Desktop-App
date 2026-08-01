@@ -10,6 +10,7 @@ import {
   checksumLine,
   installedExecutablePath,
   installerArtifactName,
+  isReleaseAssetNameConflict,
   packagedElectronArguments,
   releaseTag,
   validateReleaseVersion,
@@ -96,4 +97,18 @@ test("rejects an existing release that targets another commit", () => {
       ),
     /different commit/i,
   );
+});
+
+test("recognizes only GitHub's existing-asset name conflict", () => {
+  assert.equal(
+    isReleaseAssetNameConflict({
+      errors: [{ resource: "ReleaseAsset", code: "already_exists" }],
+    }),
+    true,
+  );
+  assert.equal(
+    isReleaseAssetNameConflict({ errors: [{ code: "invalid" }] }),
+    false,
+  );
+  assert.equal(isReleaseAssetNameConflict(undefined), false);
 });

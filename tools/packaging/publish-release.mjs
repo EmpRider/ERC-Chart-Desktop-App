@@ -4,6 +4,7 @@ import {
   applicationVersion,
   assertReleaseTargetsCommit,
   installerArtifactName,
+  isReleaseAssetNameConflict,
   releaseTag,
 } from "./packaging-contract.mjs";
 
@@ -82,25 +83,37 @@ const release =
 
 const root = path.resolve(import.meta.dirname, "../..");
 const installerName = installerArtifactName(applicationVersion);
-for (const assetName of [installerName, `${installerName}.sha256`]) {
-  const priorAsset = release.assets.find((asset) => asset.name === assetName);
-  if (priorAsset !== undefined) {
-    await request(
-      `${apiRoot}/releases/assets/${priorAsset.id}`,
-      { method: "DELETE" },
-      [204],
-    );
-  }
-  const bytes = await readFile(path.join(root, "release", assetName));
-  await request(
+const assets = await Promise.all(
+  [installerName, `${installerName}.sha256`].map(async (assetName) => ({
+    assetName,
+    bytes: await readFile(path.join(root, "release", assetName)),
+    priorAsset: release.assets.find((asset) => asset.name === assetName),
+  })),
+);
+const uploadAsset = (assetName, bytes, acceptedStatuses) =>
+  request(
     `https://uploads.github.com/repos/${owner}/${repo}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream" },
       body: bytes,
     },
-    [201],
+    acceptedStatuses,
   );
+
+for (const { assetName, bytes, priorAsset } of assets) {
+  const upload = await uploadAsset(assetName, bytes, [201, 422]);
+  if (isReleaseAssetNameConflict(upload)) {
+    if (priorAsset === undefined) {
+      throw new Error(`Release asset ${assetName} conflicts unexpectedly.`);
+    }
+    await request(
+      `${apiRoot}/releases/assets/${priorAsset.id}`,
+      { method: "DELETE" },
+      [204],
+    );
+    await uploadAsset(assetName, bytes, [201]);
+  }
 }
 
 const published = await request(`${apiRoot}/releases/${release.id}`, {

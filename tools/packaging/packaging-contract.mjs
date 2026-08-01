@@ -51,6 +51,13 @@ export function assertReleaseTargetsCommit(release, commitSha) {
   }
 }
 
+export function isReleaseAssetNameConflict(response) {
+  return (
+    Array.isArray(response?.errors) &&
+    response.errors.some((error) => error?.code === "already_exists")
+  );
+}
+
 export function checksumLine(digest, fileName) {
   if (!/^[a-f0-9]{64}$/i.test(digest)) {
     throw new Error("Invalid SHA-256 digest.");

@@ -114,6 +114,26 @@ test("fails and terminates a utility that misses the ready deadline", async () =
   assert.equal(fixture.getKillCount(), 1);
 });
 
+test("returns a rejected promise and safe state when spawn throws", async () => {
+  const timerFixture = createScheduler();
+  const supervisor = createUtilitySupervisor({
+    spawn() {
+      throw new Error("sensitive spawn failure");
+    },
+    scheduler: timerFixture.scheduler,
+    startupTimeoutMs: 5_000,
+    shutdownTimeoutMs: 2_000,
+    onUnavailable: () => undefined,
+  });
+
+  const started = supervisor.start("/runtime/missing.js");
+
+  await assert.rejects(started, new Error("Utility process could not start."));
+  assert.equal(supervisor.getStatus(), "failed");
+  await supervisor.shutdown();
+  assert.equal(supervisor.getStatus(), "stopped");
+});
+
 test("reports an unexpected exit without owning renderer shutdown", async () => {
   const fixture = createFixture();
   const started = fixture.supervisor.start("/runtime/data.js", []);
