@@ -21,6 +21,9 @@
     "test:unit": "tsc -b packages/contracts --pretty false && node --test tools/delivery-governance/test/*.test.mjs packages/contracts/test/*.test.mjs",
     "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs",
     "build": "tsc -b --pretty false --force",
+    "build:runtime": "node tools/build-runtime.mjs",
+    "start": "npm run build:runtime && electron apps/desktop/dist/index.js",
+    "smoke:electron": "node tools/electron-smoke.mjs",
     "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",
     "audit:ci": "npm audit --audit-level=high --omit=optional",
     "version:check": "node tools/workspace-boundaries/src/cli.mjs",
@@ -30,8 +33,11 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.2",
+    "electron": "43.2.0",
+    "esbuild": "0.28.1",
     "eslint": "10.8.0",
     "globals": "17.8.0",
+    "linkedom": "0.18.13",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0"
