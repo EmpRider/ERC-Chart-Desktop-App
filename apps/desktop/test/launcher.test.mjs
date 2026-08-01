@@ -1,6 +1,57 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { finishDesktopSmoke, launchDesktopMain } from "../dist/launcher.js";
+import {
+  finishDesktopSmoke,
+  launchDesktopMain,
+  launchDesktopMainWithProtocol,
+} from "../dist/launcher.js";
+
+test("registers the privileged renderer scheme before desktop readiness", async () => {
+  const events = [];
+
+  launchDesktopMainWithProtocol(
+    (schemes) => events.push(["scheme", schemes]),
+    async () => {
+      events.push(["app", "ready"]);
+    },
+    (error) => events.push(["failure", error]),
+  );
+  await Promise.resolve();
+
+  assert.deepEqual(events, [
+    [
+      "scheme",
+      [
+        {
+          scheme: "erc-app",
+          privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true,
+          },
+        },
+      ],
+    ],
+    ["app", "ready"],
+  ]);
+});
+
+test("routes synchronous scheme registration failures without starting desktop boot", () => {
+  const expected = new Error("scheme registration failed");
+  const events = [];
+
+  launchDesktopMainWithProtocol(
+    () => {
+      throw expected;
+    },
+    async () => {
+      events.push("app:ready");
+    },
+    (error) => events.push(error),
+  );
+
+  assert.deepEqual(events, [expected]);
+});
 
 test("launches asynchronous desktop boot without blocking module evaluation", async () => {
   let finishBoot;

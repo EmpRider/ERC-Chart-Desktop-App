@@ -3,13 +3,14 @@ import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
 
 export interface DesktopArtifactPaths {
   readonly preloadPath: string;
-  readonly rendererHtmlPath: string;
+  readonly rendererRootPath: string;
+  readonly rendererEntryUrl: string;
   readonly dataUtilityPath: string;
   readonly providerUtilityPath: string;
 }
 
 export interface DesktopWindow {
-  readonly loadFile: (filePath: string) => Promise<void>;
+  readonly loadURL: (url: string) => Promise<void>;
   readonly show: () => void;
   readonly destroy: () => void;
   readonly isDestroyed: () => boolean;
@@ -28,6 +29,7 @@ export interface DesktopApplicationAdapters {
   readonly registerRuntimeInfoHandler: (
     handler: () => RuntimeInfo,
   ) => () => void;
+  readonly registerRendererProtocol: (rootPath: string) => Promise<() => void>;
   readonly createWindow: (options: SecureWindowOptions) => DesktopWindow;
   readonly dataUtility: {
     readonly start: (
@@ -48,6 +50,7 @@ export async function startDesktopApplication(
 ): Promise<DesktopApplicationController> {
   let currentWindow: DesktopWindow | undefined;
   let stopped = false;
+  let removeRendererProtocol: (() => void) | undefined;
 
   const removeRuntimeInfoHandler = adapters.registerRuntimeInfoHandler(
     (): RuntimeInfo => ({
@@ -62,7 +65,7 @@ export async function startDesktopApplication(
     );
     currentWindow = window;
     try {
-      await window.loadFile(paths.rendererHtmlPath);
+      await window.loadURL(paths.rendererEntryUrl);
       window.show();
     } catch (error) {
       window.destroy();
@@ -86,11 +89,19 @@ export async function startDesktopApplication(
 
   try {
     await adapters.app.whenReady();
+    removeRendererProtocol = await adapters.registerRendererProtocol(
+      paths.rendererRootPath,
+    );
     await adapters.dataUtility.start(paths.dataUtilityPath, []);
     await openWindow();
   } catch {
     try {
       await adapters.dataUtility.shutdown();
+    } catch {
+      // Cleanup failure must not expose the original startup error.
+    }
+    try {
+      removeRendererProtocol?.();
     } catch {
       // Cleanup failure must not expose the original startup error.
     }
@@ -105,7 +116,11 @@ export async function startDesktopApplication(
       try {
         await adapters.dataUtility.shutdown();
       } finally {
-        removeRuntimeInfoHandler();
+        try {
+          removeRendererProtocol?.();
+        } finally {
+          removeRuntimeInfoHandler();
+        }
       }
     },
   };

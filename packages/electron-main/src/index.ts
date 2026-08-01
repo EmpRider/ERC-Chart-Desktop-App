@@ -1,6 +1,13 @@
 export { startDesktopApplication } from "./application.js";
 export { secureWindowOptions } from "./window.js";
 export { createUtilitySupervisor } from "./utility-supervisor.js";
+export {
+  rendererEntryUrl,
+  rendererProtocolScheme,
+  rendererSchemeRegistration,
+  resolveRendererAssetUrl,
+} from "./protocol.js";
+export type { RendererSchemeRegistration } from "./protocol.js";
 export type {
   DesktopAppAdapter,
   DesktopApplicationAdapters,

@@ -10,7 +10,7 @@ function createFixture(platform = "win32") {
   let runtimeInfoHandler;
   let shutdownCount = 0;
   let quitCount = 0;
-  let loadFileError;
+  let loadUrlError;
   let shutdownError;
 
   const adapters = {
@@ -34,15 +34,19 @@ function createFixture(platform = "win32") {
       runtimeInfoHandler = handler;
       return () => events.push("ipc:remove");
     },
+    async registerRendererProtocol(rootPath) {
+      events.push(`protocol:register:${rootPath}`);
+      return () => events.push("protocol:remove");
+    },
     createWindow(options) {
       events.push("window:create");
       const window = {
         destroyed: false,
         options,
         shown: false,
-        async loadFile(filePath) {
-          events.push(`window:load:${filePath}`);
-          if (loadFileError !== undefined) throw loadFileError;
+        async loadURL(url) {
+          events.push(`window:load:${url}`);
+          if (loadUrlError !== undefined) throw loadUrlError;
         },
         show() {
           this.shown = true;
@@ -78,8 +82,8 @@ function createFixture(platform = "win32") {
     getRuntimeInfoHandler: () => runtimeInfoHandler,
     getShutdownCount: () => shutdownCount,
     getQuitCount: () => quitCount,
-    setLoadFileError: (error) => {
-      loadFileError = error;
+    setLoadUrlError: (error) => {
+      loadUrlError = error;
     },
     setShutdownError: (error) => {
       shutdownError = error;
@@ -89,7 +93,8 @@ function createFixture(platform = "win32") {
 
 const paths = {
   preloadPath: "/runtime/preload.cjs",
-  rendererHtmlPath: "/runtime/index.html",
+  rendererRootPath: "/runtime",
+  rendererEntryUrl: "erc-app://app/index.html",
   dataUtilityPath: "/runtime/data-utility.js",
   providerUtilityPath: "/runtime/provider-utility.js",
 };
@@ -102,9 +107,10 @@ test("registers fixed IPC before loading one secure window", async () => {
   assert.deepEqual(fixture.events, [
     "ipc:register",
     "app:ready",
+    "protocol:register:/runtime",
     "data:start:/runtime/data-utility.js:0",
     "window:create",
-    "window:load:/runtime/index.html",
+    "window:load:erc-app://app/index.html",
     "window:show",
   ]);
   assert.deepEqual(fixture.getRuntimeInfoHandler()(), {
@@ -150,6 +156,10 @@ test("shuts down the data utility and IPC registration idempotently", async () =
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,
   );
+  assert.equal(
+    fixture.events.filter((event) => event === "protocol:remove").length,
+    1,
+  );
 });
 
 test("cleans partial startup and redacts the original failure", async () => {
@@ -168,12 +178,16 @@ test("cleans partial startup and redacts the original failure", async () => {
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,
   );
+  assert.equal(
+    fixture.events.filter((event) => event === "protocol:remove").length,
+    1,
+  );
   assert.equal(fixture.windows.length, 0);
 });
 
 test("cleans a failed initial window load without exposing partial UI", async () => {
   const fixture = createFixture();
-  fixture.setLoadFileError(new Error("private path /runtime/index.html"));
+  fixture.setLoadUrlError(new Error("private path /runtime/index.html"));
 
   await assert.rejects(
     startDesktopApplication(fixture.adapters, paths),
@@ -194,7 +208,7 @@ test("contains failed activation loads and permits a later retry", async () => {
   const fixture = createFixture();
   const controller = await startDesktopApplication(fixture.adapters, paths);
   fixture.windows[0].destroyed = true;
-  fixture.setLoadFileError(new Error("activation load failed"));
+  fixture.setLoadUrlError(new Error("activation load failed"));
 
   await assert.doesNotReject(fixture.handlers.activate());
 
@@ -202,7 +216,7 @@ test("contains failed activation loads and permits a later retry", async () => {
   assert.equal(fixture.windows[1].shown, false);
   assert.equal(fixture.windows[1].destroyed, true);
 
-  fixture.setLoadFileError(undefined);
+  fixture.setLoadUrlError(undefined);
   await fixture.handlers.activate();
 
   assert.equal(fixture.windows.length, 3);

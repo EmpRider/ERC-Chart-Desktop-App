@@ -3,6 +3,8 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  net,
+  protocol,
   utilityProcess,
   type UtilityProcess,
 } from "electron";
@@ -14,8 +16,12 @@ import {
   type UtilityChild,
 } from "@erc-chart/electron-main";
 import { runtimeInfoChannel } from "@erc-chart/contracts";
-import { finishDesktopSmoke, launchDesktopMain } from "./launcher.js";
+import {
+  finishDesktopSmoke,
+  launchDesktopMainWithProtocol,
+} from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
+import { installRendererProtocol } from "./protocol.js";
 
 interface SmokeResult {
   readonly ready: boolean;
@@ -170,6 +176,15 @@ async function startDesktopMain(): Promise<void> {
         ipcMain.handle(runtimeInfoChannel, handler);
         return (): void => ipcMain.removeHandler(runtimeInfoChannel);
       },
+      registerRendererProtocol: (rootPath): Promise<() => void> =>
+        installRendererProtocol(
+          {
+            handle: (scheme, handler): void => protocol.handle(scheme, handler),
+            unhandle: (scheme): void => protocol.unhandle(scheme),
+            fetch: (url): Promise<Response> => net.fetch(url),
+          },
+          rootPath,
+        ),
       createWindow,
       dataUtility: {
         start: async (entryPath, args): Promise<void> => {
@@ -195,7 +210,11 @@ async function startDesktopMain(): Promise<void> {
   });
 }
 
-launchDesktopMain(startDesktopMain, (error) => {
-  console.error("ERC Chart failed to start.", error);
-  app.exit(1);
-});
+launchDesktopMainWithProtocol(
+  (schemes) => protocol.registerSchemesAsPrivileged(schemes),
+  startDesktopMain,
+  (error) => {
+    console.error("ERC Chart failed to start.", error);
+    app.exit(1);
+  },
+);
