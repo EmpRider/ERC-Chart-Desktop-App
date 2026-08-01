@@ -52,3 +52,25 @@ test("serves contained assets and rejects invalid renderer requests", async () =
     "unhandle:erc-app",
   ]);
 });
+
+test("returns a controlled response when renderer asset fetch fails", async () => {
+  let handler;
+  await installRendererProtocol(
+    {
+      handle(_scheme, nextHandler) {
+        handler = nextHandler;
+      },
+      unhandle() {
+        return undefined;
+      },
+      async fetch() {
+        throw new Error("sensitive filesystem failure");
+      },
+    },
+    path.resolve("/application/runtime"),
+  );
+
+  const response = await handler({ url: "erc-app://app/missing.js" });
+
+  assert.equal(response.status, 404);
+});
