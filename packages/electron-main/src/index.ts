@@ -7,6 +7,13 @@ export {
   rendererSchemeRegistration,
   resolveRendererAssetUrl,
 } from "./protocol.js";
+export {
+  assertTrustedIpcSender,
+  electronFusePolicy,
+  isTrustedRendererDocument,
+  rendererContentSecurityPolicy,
+} from "./security.js";
+export type { DesktopIpcSender } from "./security.js";
 export type { RendererSchemeRegistration } from "./protocol.js";
 export type {
   DesktopAppAdapter,

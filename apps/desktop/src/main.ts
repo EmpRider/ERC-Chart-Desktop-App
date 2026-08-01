@@ -22,6 +22,7 @@ import {
 } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
+import { installWindowSecurity } from "./window-security.js";
 
 interface SmokeResult {
   readonly ready: boolean;
@@ -95,6 +96,16 @@ const dataUtility = createUtilitySupervisor({
 function createWindow(options: SecureWindowOptions): BrowserWindow {
   reportSmokeStage("window-created");
   const window = new BrowserWindow(options);
+  installWindowSecurity({
+    onWillNavigate: (handler): void => {
+      window.webContents.on("will-navigate", (event, url) =>
+        handler(event, url),
+      );
+    },
+    setWindowOpenHandler: (handler): void => {
+      window.webContents.setWindowOpenHandler(handler);
+    },
+  });
   if (smokeMode) {
     window.webContents.once("did-finish-load", () => {
       reportSmokeStage("renderer-loaded");
@@ -173,7 +184,17 @@ async function startDesktopMain(): Promise<void> {
         quit: (): void => app.quit(),
       },
       registerRuntimeInfoHandler: (handler): (() => void) => {
-        ipcMain.handle(runtimeInfoChannel, handler);
+        ipcMain.handle(runtimeInfoChannel, (event) => {
+          const senderFrame = event.senderFrame;
+          return handler(
+            senderFrame === null
+              ? undefined
+              : {
+                  url: senderFrame.url,
+                  isMainFrame: senderFrame.parent === null,
+                },
+          );
+        });
         return (): void => ipcMain.removeHandler(runtimeInfoChannel);
       },
       registerRendererProtocol: (rootPath): Promise<() => void> =>

@@ -1,4 +1,5 @@
 import { ipcContractVersion, type RuntimeInfo } from "@erc-chart/contracts";
+import { assertTrustedIpcSender, type DesktopIpcSender } from "./security.js";
 import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
 
 export interface DesktopArtifactPaths {
@@ -27,7 +28,7 @@ export interface DesktopAppAdapter {
 export interface DesktopApplicationAdapters {
   readonly app: DesktopAppAdapter;
   readonly registerRuntimeInfoHandler: (
-    handler: () => RuntimeInfo,
+    handler: (sender: DesktopIpcSender | undefined) => RuntimeInfo,
   ) => () => void;
   readonly registerRendererProtocol: (rootPath: string) => Promise<() => void>;
   readonly createWindow: (options: SecureWindowOptions) => DesktopWindow;
@@ -53,10 +54,13 @@ export async function startDesktopApplication(
   let removeRendererProtocol: (() => void) | undefined;
 
   const removeRuntimeInfoHandler = adapters.registerRuntimeInfoHandler(
-    (): RuntimeInfo => ({
-      ipcContractVersion,
-      applicationName: "ERC Chart",
-    }),
+    (sender): RuntimeInfo => {
+      assertTrustedIpcSender(sender);
+      return {
+        ipcContractVersion,
+        applicationName: "ERC Chart",
+      };
+    },
   );
 
   const openWindow = async (): Promise<void> => {
