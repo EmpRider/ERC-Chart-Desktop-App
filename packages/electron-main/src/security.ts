@@ -13,6 +13,7 @@ export function isTrustedRendererDocument(url: string): boolean {
     const candidate = new URL(url);
     const expected = new URL(rendererEntryUrl);
     return (
+      candidate.href === expected.href &&
       candidate.protocol === expected.protocol &&
       candidate.hostname === expected.hostname &&
       candidate.port === "" &&

@@ -15,7 +15,7 @@ The custom protocol itself remains owned by ECDD-57. Shell visuals, layout contr
 
 The static entry document declares a CSP before loading any resource:
 
-`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`
+`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`
 
 The current renderer uses only same-origin script and CSS. It has no network requirement, inline script, eval, forms, plugins, or remote fonts. The policy therefore fails closed without allowances that a future feature might need.
 

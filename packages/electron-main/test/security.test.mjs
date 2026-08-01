@@ -24,6 +24,8 @@ test("trusts only the canonical renderer document", () => {
     "erc-app://app/other.html",
     "erc-app://app/index.html?debug=true",
     "erc-app://app/index.html#fragment",
+    "erc-app://app/index.html?",
+    "erc-app://app/index.html#",
     "erc-app://user@app/index.html",
     "not a url",
   ]) {
