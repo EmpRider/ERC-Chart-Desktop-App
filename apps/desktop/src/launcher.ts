@@ -15,7 +15,12 @@ export function launchDesktopMainWithProtocol(
   start: () => Promise<void>,
   onFailure: (error: unknown) => void,
 ): void {
-  registerSchemes([rendererSchemeRegistration]);
+  try {
+    registerSchemes([rendererSchemeRegistration]);
+  } catch (error) {
+    onFailure(error);
+    return;
+  }
   launchDesktopMain(start, onFailure);
 }
 

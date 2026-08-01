@@ -36,6 +36,23 @@ test("registers the privileged renderer scheme before desktop readiness", async 
   ]);
 });
 
+test("routes synchronous scheme registration failures without starting desktop boot", () => {
+  const expected = new Error("scheme registration failed");
+  const events = [];
+
+  launchDesktopMainWithProtocol(
+    () => {
+      throw expected;
+    },
+    async () => {
+      events.push("app:ready");
+    },
+    (error) => events.push(error),
+  );
+
+  assert.deepEqual(events, [expected]);
+});
+
 test("launches asynchronous desktop boot without blocking module evaluation", async () => {
   let finishBoot;
   const bootFinished = new Promise((resolve) => {
