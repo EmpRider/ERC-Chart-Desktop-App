@@ -74,13 +74,17 @@ rule. The same validation is part of `npm run lint` and CI.
 | `npm start`                    | Build and launch the Electron development shell                   |
 | `npm run smoke:electron`       | Boot Electron and verify the secure renderer bridge               |
 | `npm run smoke:multi-instance` | Boot two Electron processes concurrently with isolated profiles   |
+| `npm run package:win`          | Build the unsigned x64 per-user NSIS installer on Windows         |
+| `npm run smoke:installer`      | Install, smoke two packaged instances, and uninstall on Windows   |
+| `npm run checksum:installer`   | Write the installer's conventional SHA-256 sidecar                |
 | `npm run test:performance`     | Report the honest ECDD-54 scaffold performance disposition        |
 | `npm run audit:ci`             | Fail on high or critical dependency vulnerabilities               |
 | `npm run version:check`        | Revalidate pinned versions and package consistency                |
 
-`package:win` and `smoke:installer` are present for the stable CI command
-contract but deliberately fail with an ECDD-62 deferral message. ECDD-54 does
-not build or claim an installer, and ECDD-55 preserves that deferral.
+ECDD-62 activates `package:win` and `smoke:installer` on Windows. The installer
+is an unsigned Development Version 1 build; production code signing remains a
+later release decision. Packaging never publishes update metadata and the app
+does not include an automatic-update client.
 
 ## Electron Development Shell
 
