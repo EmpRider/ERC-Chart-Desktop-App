@@ -19,7 +19,7 @@
     "lint": "npm run boundaries:check && eslint apps packages tools/*.mjs tools/application-gates tools/delivery-governance tools/workspace-boundaries eslint.config.mjs",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
     "test:unit": "npm run build && node --test tools/delivery-governance/test/*.test.mjs apps/desktop/test/*.test.mjs packages/contracts/test/*.test.mjs packages/data-service/test/*.test.mjs packages/electron-main/test/*.test.mjs packages/indicator-sdk/test/*.test.mjs packages/preload/test/*.test.mjs packages/provider-runtime/test/*.test.mjs packages/provider-sdk/test/*.test.mjs packages/renderer/test/*.test.mjs",
-    "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/runtime-build.test.mjs",
+    "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/*.test.mjs",
     "build": "tsc -b --pretty false --force",
     "build:runtime": "npm run build && node tools/build-runtime.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
