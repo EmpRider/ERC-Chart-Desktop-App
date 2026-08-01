@@ -13,11 +13,7 @@ test("keeps the Chromium sandbox enabled for smoke runs", () => {
       userDataPath: "/tmp/profile",
       entryPath: "/repo/main.js",
     }),
-    [
-      "--user-data-dir=/tmp/profile",
-      "/repo/main.js",
-      "--erc-chart-smoke",
-    ],
+    ["--user-data-dir=/tmp/profile", "/repo/main.js", "--erc-chart-smoke"],
   );
 });
 
