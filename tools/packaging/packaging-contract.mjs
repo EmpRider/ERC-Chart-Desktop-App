@@ -9,8 +9,13 @@ export const installationDirectoryName = validateInstallationDirectoryName(
   applicationManifest.name,
 );
 
-function validateInstallationDirectoryName(name) {
-  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+export function validateInstallationDirectoryName(name) {
+  const windowsReservedName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+  if (
+    typeof name !== "string" ||
+    !/^[a-z0-9][a-z0-9-]*$/.test(name) ||
+    windowsReservedName.test(name)
+  ) {
     throw new Error("Invalid installation directory name.");
   }
   return name;
