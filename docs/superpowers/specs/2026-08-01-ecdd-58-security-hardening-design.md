@@ -47,4 +47,3 @@ ECDD-58 exports and tests one immutable policy whose keys map directly to electr
 ## Failure behavior and verification
 
 Security denials do not open external URLs and do not expose private values. Unauthorized IPC rejects with a constant message. Tests cover the positive canonical case and negative malformed, external, subframe, and alternate local cases. The existing sandbox-enabled Electron smoke must still load the renderer under the CSP.
-

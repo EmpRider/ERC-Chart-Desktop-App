@@ -36,4 +36,3 @@
 - Run format, lint, typecheck, all unit/integration tests, runtime build, performance, audit, version, and diff checks.
 - Run sandbox-enabled Electron smoke in CI.
 - Publish a task-to-epic PR, address current-head CodeRabbit and Qodo findings, and squash-merge only after all required gates pass.
-
