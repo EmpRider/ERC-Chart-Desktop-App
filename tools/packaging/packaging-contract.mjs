@@ -5,7 +5,7 @@ export const applicationVersion = validateReleaseVersion(
   applicationManifest.version,
 );
 export const productName = "ERC Chart";
-export const installationDirectoryName = validateInstallationDirectoryName(
+const installationDirectoryName = validateInstallationDirectoryName(
   applicationManifest.name,
 );
 
