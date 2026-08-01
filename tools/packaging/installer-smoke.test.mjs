@@ -34,6 +34,27 @@ test("waits for a timed-out installer command to close", async () => {
   await assert.rejects(result, /timed out after 10 ms/);
 });
 
+test("forces termination and rejects when a timed-out command never closes", async () => {
+  const child = new EventEmitter();
+  child.stderr = new PassThrough();
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal ?? "SIGTERM");
+  };
+
+  await assert.rejects(
+    runCommand({
+      executable: "unused",
+      args: [],
+      timeoutMs: 10,
+      terminationGraceMs: 10,
+      spawnProcess: () => child,
+    }),
+    /did not close within 10 ms/,
+  );
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
 test("cleans a partial installer profile set", async () => {
   let creation = 0;
   const removed = [];

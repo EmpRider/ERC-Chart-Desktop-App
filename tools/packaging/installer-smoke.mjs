@@ -19,12 +19,14 @@ export function runCommand({
   executable,
   args,
   timeoutMs,
+  terminationGraceMs = 5_000,
   spawnProcess = spawn,
 }) {
   return new Promise((resolve, reject) => {
     let diagnostic = "";
     let finished = false;
     let timedOut = false;
+    let terminationTimeout;
     const child = spawnProcess(executable, args, {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
@@ -33,6 +35,16 @@ export function runCommand({
       if (finished) return;
       timedOut = true;
       child.kill();
+      terminationTimeout = setTimeout(() => {
+        if (finished) return;
+        child.kill("SIGKILL");
+        finished = true;
+        reject(
+          new Error(
+            `Installer command timed out after ${timeoutMs} ms and did not close within ${terminationGraceMs} ms.`,
+          ),
+        );
+      }, terminationGraceMs);
     }, timeoutMs);
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
@@ -42,12 +54,14 @@ export function runCommand({
       if (finished || timedOut) return;
       finished = true;
       clearTimeout(timeout);
+      clearTimeout(terminationTimeout);
       reject(new Error(`Installer command could not start: ${error.message}`));
     });
     child.on("close", (code, signal) => {
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
+      clearTimeout(terminationTimeout);
       if (timedOut) {
         reject(new Error(`Installer command timed out after ${timeoutMs} ms.`));
         return;
