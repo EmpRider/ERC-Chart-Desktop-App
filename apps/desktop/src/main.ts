@@ -14,6 +14,7 @@ import {
   type UtilityChild,
 } from "@erc-chart/electron-main";
 import { runtimeInfoChannel } from "@erc-chart/contracts";
+import { launchDesktopMain } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 
 interface SmokeResult {
@@ -135,7 +136,7 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
   return window;
 }
 
-try {
+async function startDesktopMain(): Promise<void> {
   reportSmokeStage("artifacts-validating");
   await validateDesktopArtifacts(paths);
   reportSmokeStage("artifacts-valid");
@@ -183,7 +184,9 @@ try {
       .then(() => app.quit())
       .catch(() => app.exit(1));
   });
-} catch {
+}
+
+launchDesktopMain(startDesktopMain, () => {
   console.error("ERC Chart failed to start.");
   app.exit(1);
-}
+});
