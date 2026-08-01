@@ -14,7 +14,12 @@ Distinct user-data directories prevent Chromium profile locking from obscuring t
 
 ## Failure behavior
 
-The harness waits for both outcomes and fails if either process cannot start, times out, exits non-zero, or misses the readiness marker. Existing bounded stdout/stderr diagnostics are reused; temporary profiles are removed in a `finally` block.
+The harness uses `Promise.allSettled` to wait for both outcomes and then rethrows
+the first failure if either process cannot start, times out, exits non-zero, or
+misses the readiness marker. A timed-out runner settles only after the child
+closes. Existing bounded stdout/stderr diagnostics are reused; every
+successfully created temporary profile is removed after all runners settle,
+without masking the original smoke failure if cleanup also fails.
 
 ## CI and verification
 

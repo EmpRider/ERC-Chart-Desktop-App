@@ -5,15 +5,17 @@
 ## 1. Concurrent runner contract
 
 - Write a test that records two process runners starting before either completes.
-- Write success and one-instance failure tests.
-- Implement the smallest `Promise.all` orchestration over the existing bounded process runner.
+- Write success, one-instance failure, and rejection-aggregation tests.
+- Use `Promise.allSettled` over the bounded process runners, then rethrow the
+  first rejection only after every runner settles.
 
 ## 2. Executable harness
 
 - Create two independent temporary user-data directories.
 - Launch the same Electron entry twice with the current sandbox-enabled arguments.
 - Reuse readiness, timeout, exit, and bounded diagnostic behavior.
-- Remove both profiles on every outcome.
+- Collect profiles as each creation succeeds, remove every collected profile
+  on every outcome, and preserve the original smoke failure if cleanup fails.
 
 ## 3. Delivery gate
 
