@@ -20,6 +20,7 @@ function createPort() {
     receive(message) {
       for (const listener of listeners) listener(message);
     },
+    getListenerCount: () => listeners.size,
   };
 }
 
@@ -44,4 +45,5 @@ test("reports ready and stops exactly once on a valid shutdown", () => {
     { type: "ready", contractVersion: ipcContractVersion },
     { type: "stopped", contractVersion: ipcContractVersion },
   ]);
+  assert.equal(fixture.getListenerCount(), 0);
 });

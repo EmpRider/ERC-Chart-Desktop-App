@@ -1,6 +1,5 @@
 import { ipcContractVersion, type RuntimeInfo } from "@erc-chart/contracts";
 import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
-import type { UtilitySupervisor } from "./utility-supervisor.js";
 
 export interface DesktopArtifactPaths {
   readonly preloadPath: string;
@@ -29,7 +28,13 @@ export interface DesktopApplicationAdapters {
     handler: () => RuntimeInfo,
   ) => () => void;
   readonly createWindow: (options: SecureWindowOptions) => DesktopWindow;
-  readonly dataUtility: UtilitySupervisor;
+  readonly dataUtility: {
+    readonly start: (
+      entryPath: string,
+      args?: readonly string[],
+    ) => Promise<void>;
+    readonly shutdown: () => Promise<void>;
+  };
 }
 
 export interface DesktopApplicationController {
@@ -61,7 +66,11 @@ export async function startDesktopApplication(
 
   adapters.app.onActivate(async (): Promise<void> => {
     if (currentWindow === undefined || currentWindow.isDestroyed()) {
-      await openWindow();
+      try {
+        await openWindow();
+      } catch {
+        currentWindow = undefined;
+      }
     }
   });
   adapters.app.onWindowAllClosed((): void => {
@@ -86,8 +95,11 @@ export async function startDesktopApplication(
     shutdown: async (): Promise<void> => {
       if (stopped) return;
       stopped = true;
-      await adapters.dataUtility.shutdown();
-      removeRuntimeInfoHandler();
+      try {
+        await adapters.dataUtility.shutdown();
+      } finally {
+        removeRuntimeInfoHandler();
+      }
     },
   };
 }

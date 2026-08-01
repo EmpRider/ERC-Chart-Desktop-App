@@ -10,6 +10,8 @@ function createFixture(platform = "win32") {
   let runtimeInfoHandler;
   let shutdownCount = 0;
   let quitCount = 0;
+  let loadFileError;
+  let shutdownError;
 
   const adapters = {
     app: {
@@ -37,10 +39,13 @@ function createFixture(platform = "win32") {
       const window = {
         destroyed: false,
         options,
+        shown: false,
         async loadFile(filePath) {
           events.push(`window:load:${filePath}`);
+          if (loadFileError !== undefined) throw loadFileError;
         },
         show() {
+          this.shown = true;
           events.push("window:show");
         },
         isDestroyed() {
@@ -56,9 +61,7 @@ function createFixture(platform = "win32") {
       },
       async shutdown() {
         shutdownCount += 1;
-      },
-      getStatus() {
-        return "ready";
+        if (shutdownError !== undefined) throw shutdownError;
       },
     },
   };
@@ -71,6 +74,12 @@ function createFixture(platform = "win32") {
     getRuntimeInfoHandler: () => runtimeInfoHandler,
     getShutdownCount: () => shutdownCount,
     getQuitCount: () => quitCount,
+    setLoadFileError: (error) => {
+      loadFileError = error;
+    },
+    setShutdownError: (error) => {
+      shutdownError = error;
+    },
   };
 }
 
@@ -156,4 +165,58 @@ test("cleans partial startup and redacts the original failure", async () => {
     1,
   );
   assert.equal(fixture.windows.length, 0);
+});
+
+test("cleans a failed initial window load without exposing partial UI", async () => {
+  const fixture = createFixture();
+  fixture.setLoadFileError(new Error("private path /runtime/index.html"));
+
+  await assert.rejects(
+    startDesktopApplication(fixture.adapters, paths),
+    new Error("Desktop application failed to start."),
+  );
+
+  assert.equal(fixture.getShutdownCount(), 1);
+  assert.equal(
+    fixture.events.filter((event) => event === "ipc:remove").length,
+    1,
+  );
+  assert.equal(fixture.windows.length, 1);
+  assert.equal(fixture.windows[0].shown, false);
+});
+
+test("contains failed activation loads and permits a later retry", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  fixture.windows[0].destroyed = true;
+  fixture.setLoadFileError(new Error("activation load failed"));
+
+  await assert.doesNotReject(fixture.handlers.activate());
+
+  assert.equal(fixture.windows.length, 2);
+  assert.equal(fixture.windows[1].shown, false);
+
+  fixture.setLoadFileError(undefined);
+  await fixture.handlers.activate();
+
+  assert.equal(fixture.windows.length, 3);
+  assert.equal(fixture.windows[2].shown, true);
+  await controller.shutdown();
+});
+
+test("removes IPC registration when utility shutdown rejects", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  fixture.setShutdownError(new Error("utility shutdown failed"));
+
+  await assert.rejects(
+    controller.shutdown(),
+    new Error("utility shutdown failed"),
+  );
+
+  assert.equal(fixture.getShutdownCount(), 1);
+  assert.equal(
+    fixture.events.filter((event) => event === "ipc:remove").length,
+    1,
+  );
 });

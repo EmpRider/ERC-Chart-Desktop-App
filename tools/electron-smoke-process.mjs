@@ -60,7 +60,7 @@ export function runElectronProcess({
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout = appendDiagnostic(stdout, chunk);
-      if (chunk.includes(readyMarker)) ready = true;
+      if (stdout.includes(readyMarker)) ready = true;
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {

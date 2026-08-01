@@ -2,9 +2,18 @@ import type { InstrumentId, TimeframeId } from "@erc-chart/contracts";
 import {
   indicatorSdkVersion,
   type IndicatorDefinition,
+  type IndicatorInputDefinition,
   type IndicatorInstance,
   type SignalCandidate,
 } from "../src/index.js";
+
+// @ts-expect-error boolean inputs cannot use string defaults
+export const invalidInput: IndicatorInputDefinition = {
+  key: "enabled",
+  label: "Enabled",
+  type: "boolean",
+  defaultValue: "yes",
+};
 
 export const definition = {
   id: "fixture-indicator",

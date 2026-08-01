@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,4 +23,18 @@ test("builds sandbox preload, browser renderer, and static assets", async () => 
   assert.match(html, /<main id="app"><\/main>/);
   assert.match(html, /<script type="module" src="\.\/renderer\.js"><\/script>/);
   assert.match(styles, /color-scheme: dark/);
+});
+
+test("rejects an output directory that contains the repository root", async (t) => {
+  const outputRoot = await mkdtemp(
+    path.join(os.tmpdir(), "erc-unsafe-output-"),
+  );
+  const root = path.join(outputRoot, "repository");
+  await mkdir(root);
+  t.after(() => rm(outputRoot, { recursive: true, force: true }));
+
+  await assert.rejects(
+    buildRuntime({ root, outputRoot }),
+    new Error("Runtime output directory is unsafe."),
+  );
 });

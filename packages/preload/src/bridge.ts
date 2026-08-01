@@ -18,11 +18,15 @@ export type BridgeExpose = (key: "ercChart", api: ErcChartBridge) => void;
 export function createErcChartBridge(invoke: BridgeInvoke): ErcChartBridge {
   return {
     getRuntimeInfo: async (): Promise<RuntimeInfo> => {
-      const result = await invoke(runtimeInfoChannel);
-      if (!isRuntimeInfo(result)) {
+      try {
+        const result = await invoke(runtimeInfoChannel);
+        if (!isRuntimeInfo(result)) {
+          throw new Error("Runtime information unavailable.");
+        }
+        return result;
+      } catch {
         throw new Error("Runtime information unavailable.");
       }
-      return result;
     },
   };
 }

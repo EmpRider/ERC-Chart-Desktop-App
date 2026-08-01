@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { launchDesktopMain } from "../dist/launcher.js";
+import { finishDesktopSmoke, launchDesktopMain } from "../dist/launcher.js";
 
 test("launches asynchronous desktop boot without blocking module evaluation", async () => {
   let finishBoot;
@@ -29,4 +29,40 @@ test("routes an asynchronous desktop boot rejection to the failure handler", asy
   });
 
   assert.equal(await handled, expected);
+});
+
+test("shuts down the desktop before reporting a smoke exit", async () => {
+  const events = [];
+
+  await finishDesktopSmoke(
+    Promise.resolve({
+      async shutdown() {
+        events.push("shutdown");
+      },
+    }),
+    1,
+    (exitCode) => events.push(`exit:${exitCode}`),
+  );
+
+  assert.deepEqual(events, ["shutdown", "exit:1"]);
+});
+
+test("reports the smoke exit even when shutdown rejects", async () => {
+  const events = [];
+
+  await assert.rejects(
+    finishDesktopSmoke(
+      Promise.resolve({
+        async shutdown() {
+          events.push("shutdown");
+          throw new Error("shutdown failed");
+        },
+      }),
+      1,
+      (exitCode) => events.push(`exit:${exitCode}`),
+    ),
+    new Error("shutdown failed"),
+  );
+
+  assert.deepEqual(events, ["shutdown", "exit:1"]);
 });

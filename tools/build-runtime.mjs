@@ -6,8 +6,14 @@ import { build } from "esbuild";
 function assertSafeOutput(root, outputRoot) {
   const resolvedRoot = path.resolve(root);
   const resolvedOutput = path.resolve(outputRoot);
+  const relativeRoot = path.relative(resolvedOutput, resolvedRoot);
+  const outputContainsRoot =
+    relativeRoot === "" ||
+    (relativeRoot !== ".." &&
+      !relativeRoot.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativeRoot));
   if (
-    resolvedOutput === resolvedRoot ||
+    outputContainsRoot ||
     resolvedOutput === path.parse(resolvedOutput).root
   ) {
     throw new Error("Runtime output directory is unsafe.");

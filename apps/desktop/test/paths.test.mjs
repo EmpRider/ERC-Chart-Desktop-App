@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,13 +10,14 @@ import {
 } from "../dist/index.js";
 
 test("resolves runtime artifacts independently of the working directory", () => {
+  const root = path.resolve("/project");
   const moduleUrl = pathToFileURL(
-    path.join("/project", "apps", "desktop", "dist", "index.js"),
+    path.join(root, "apps", "desktop", "dist", "index.js"),
   ).href;
 
   assert.deepEqual(resolveDesktopArtifacts(moduleUrl), {
     preloadPath: path.join(
-      "/project",
+      root,
       "apps",
       "desktop",
       "dist",
@@ -24,7 +25,7 @@ test("resolves runtime artifacts independently of the working directory", () => 
       "preload.cjs",
     ),
     rendererHtmlPath: path.join(
-      "/project",
+      root,
       "apps",
       "desktop",
       "dist",
@@ -32,14 +33,14 @@ test("resolves runtime artifacts independently of the working directory", () => 
       "index.html",
     ),
     dataUtilityPath: path.join(
-      "/project",
+      root,
       "packages",
       "data-service",
       "dist",
       "utility-entry.js",
     ),
     providerUtilityPath: path.join(
-      "/project",
+      root,
       "packages",
       "provider-runtime",
       "dist",
@@ -48,8 +49,9 @@ test("resolves runtime artifacts independently of the working directory", () => 
   });
 });
 
-test("validates every required artifact without exposing its path", async () => {
+test("validates every required artifact without exposing its path", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-artifacts-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const paths = {
     preloadPath: path.join(root, "preload.cjs"),
     rendererHtmlPath: path.join(root, "index.html"),
@@ -62,7 +64,6 @@ test("validates every required artifact without exposing its path", async () => 
   );
 
   await validateDesktopArtifacts(paths);
-  await writeFile(paths.preloadPath, "present");
   await assert.rejects(
     validateDesktopArtifacts({ ...paths, dataUtilityPath: `${root}/missing` }),
     new Error("Required desktop artifact is unavailable."),

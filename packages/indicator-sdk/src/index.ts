@@ -15,12 +15,17 @@ export const indicatorSdkVersion: ContractVersion = indicatorContractVersion;
 export type IndicatorInputValue = boolean | number | string;
 export type IndicatorInputKind = "boolean" | "number" | "string";
 
-export interface IndicatorInputDefinition {
+interface IndicatorInputMetadata {
   readonly key: string;
   readonly label: string;
-  readonly type: IndicatorInputKind;
-  readonly defaultValue: IndicatorInputValue;
 }
+
+export type IndicatorInputDefinition = IndicatorInputMetadata &
+  (
+    | { readonly type: "boolean"; readonly defaultValue: boolean }
+    | { readonly type: "number"; readonly defaultValue: number }
+    | { readonly type: "string"; readonly defaultValue: string }
+  );
 
 export interface IndicatorOutputDefinition {
   readonly key: string;

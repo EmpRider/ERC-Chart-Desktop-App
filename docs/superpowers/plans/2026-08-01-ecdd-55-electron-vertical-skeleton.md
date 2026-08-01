@@ -86,7 +86,7 @@ Commit: `ECDD-55: pin Electron skeleton toolchain`
 
 - [ ] **Step 1: Write failing runtime and utility validator tests**
 
-Test literal valid messages and malformed values. A validator must reject wrong versions, extra application names, unknown utility message types, and non-string safe error codes without throwing.
+Test literal valid messages and malformed values. A validator must reject wrong versions, extra application names, unknown utility message types, and non-string error-code values without throwing.
 
 - [ ] **Step 2: Verify RED**
 
@@ -290,7 +290,7 @@ Validate required artifacts before starting Electron and return one safe startup
 
 - [ ] **Step 3: Write the boot smoke harness before enabling the entry**
 
-The harness builds artifacts, starts Electron with an isolated temporary user-data directory and smoke flag, waits a bounded time for the renderer's `Secure bridge connected` marker, requests clean shutdown, and exits non-zero on timeout, renderer failure, child leakage, or unsafe Node globals.
+The harness builds artifacts, starts Electron with an isolated temporary user-data directory and smoke flag, and waits a bounded time for `ERC_CHART_SMOKE_READY`. The main process emits that marker only after the renderer reaches `Secure bridge connected` and verifies that Node globals remain unavailable. It then requests clean shutdown and exits non-zero on timeout, renderer failure, child leakage, or unsafe Node globals.
 
 - [ ] **Step 4: Verify RED**
 

@@ -71,3 +71,17 @@ test("reports the last Electron stdout stage when the process times out", async 
     /ERC_CHART_SMOKE_STAGE app-ready/,
   );
 });
+
+test("recognizes a ready marker split across stdout chunks", async () => {
+  await runElectronProcess({
+    executable: process.execPath,
+    args: [
+      "-e",
+      "process.stdout.write('ERC_CHART_'); setTimeout(() => { process.stdout.write('SMOKE_READY'); setTimeout(() => process.exit(0), 50); }, 50);",
+    ],
+    cwd: process.cwd(),
+    env: process.env,
+    timeoutMs: 5_000,
+    readyMarker: "ERC_CHART_SMOKE_READY",
+  });
+});

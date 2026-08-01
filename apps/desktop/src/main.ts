@@ -14,7 +14,7 @@ import {
   type UtilityChild,
 } from "@erc-chart/electron-main";
 import { runtimeInfoChannel } from "@erc-chart/contracts";
-import { launchDesktopMain } from "./launcher.js";
+import { finishDesktopSmoke, launchDesktopMain } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 
 interface SmokeResult {
@@ -122,7 +122,13 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
         `);
         if (!isSmokeResult(result)) {
           reportSmokeStage("renderer-invalid");
-          app.exit(1);
+          try {
+            await finishDesktopSmoke(controllerReady, 1, (exitCode) =>
+              app.exit(exitCode),
+            );
+          } catch {
+            // The helper exits in a finally block after bounded cleanup.
+          }
           return;
         }
         reportSmokeStage("renderer-ready");
@@ -130,7 +136,11 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
         console.log("ERC_CHART_SMOKE_READY");
         await controller.shutdown();
         app.exit(0);
-      })().catch(() => app.exit(1));
+      })().catch(() => {
+        void finishDesktopSmoke(controllerReady, 1, (exitCode) =>
+          app.exit(exitCode),
+        ).catch(() => undefined);
+      });
     });
   }
   return window;
@@ -167,7 +177,6 @@ async function startDesktopMain(): Promise<void> {
           reportSmokeStage("data-utility-ready");
         },
         shutdown: (): Promise<void> => dataUtility.shutdown(),
-        getStatus: () => dataUtility.getStatus(),
       },
     },
     paths,
@@ -186,7 +195,7 @@ async function startDesktopMain(): Promise<void> {
   });
 }
 
-launchDesktopMain(startDesktopMain, () => {
-  console.error("ERC Chart failed to start.");
+launchDesktopMain(startDesktopMain, (error) => {
+  console.error("ERC Chart failed to start.", error);
   app.exit(1);
 });

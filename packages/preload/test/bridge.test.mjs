@@ -33,6 +33,17 @@ test("rejects malformed runtime information with a safe error", async () => {
   );
 });
 
+test("redacts rejected IPC errors before they reach the renderer", async () => {
+  const bridge = createErcChartBridge(async () => {
+    throw new Error("private path C:\\Users\\fixture\\runtime.json");
+  });
+
+  await assert.rejects(
+    bridge.getRuntimeInfo(),
+    new Error("Runtime information unavailable."),
+  );
+});
+
 test("installs one application-specific global", () => {
   const exposures = [];
   installBridge(

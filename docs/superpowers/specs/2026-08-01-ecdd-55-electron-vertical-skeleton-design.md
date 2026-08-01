@@ -23,7 +23,7 @@ features assigned to later Epic 1 tasks.
 
 - Build from the ECDD-54 monorepo on `task/ECDD-55-electron-skeleton`, targeting
   `epic/ECDD-53-repository-build`.
-- Use a current supported Electron release and strict TypeScript.
+- Use Electron 43.2.0 and strict TypeScript.
 - The renderer uses `nodeIntegration: false`,
   `nodeIntegrationInWorker: false`, `contextIsolation: true`, `sandbox: true`,
   and `webSecurity: true`.
