@@ -24,6 +24,7 @@
     "build:runtime": "npm run build && node tools/build-runtime.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
     "smoke:electron": "npm run build:runtime && node tools/electron-smoke.mjs",
+    "smoke:multi-instance": "npm run build:runtime && node tools/electron-multi-instance.mjs",
     "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",
     "audit:ci": "npm audit --audit-level=high --omit=optional",
     "version:check": "node tools/workspace-boundaries/src/cli.mjs",

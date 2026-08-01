@@ -24,6 +24,21 @@ export function createElectronArguments({ userDataPath, entryPath }) {
   return [`--user-data-dir=${userDataPath}`, entryPath, "--erc-chart-smoke"];
 }
 
+export async function runIndependentElectronProcesses({
+  processes,
+  runProcess = runElectronProcess,
+}) {
+  if (!Array.isArray(processes) || processes.length < 2) {
+    throw new Error("Multi-instance smoke requires at least two processes.");
+  }
+
+  const results = await Promise.allSettled(
+    processes.map((configuration) => runProcess(configuration)),
+  );
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
+}
+
 export function runElectronProcess({
   executable,
   args,
@@ -36,6 +51,7 @@ export function runElectronProcess({
   return new Promise((resolve, reject) => {
     let ready = false;
     let finished = false;
+    let timedOut = false;
     let stdout = "";
     let stderr = "";
     const child = spawnProcess(executable, args, {
@@ -46,13 +62,8 @@ export function runElectronProcess({
 
     const timeout = setTimeout(() => {
       if (finished) return;
-      finished = true;
+      timedOut = true;
       child.kill();
-      reject(
-        new Error(
-          `Electron smoke test timed out after ${timeoutMs} ms. ${describeStdout(stdout)} ${describeStderr(stderr)}`,
-        ),
-      );
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
@@ -65,7 +76,7 @@ export function runElectronProcess({
       stderr = appendDiagnostic(stderr, chunk);
     });
     child.on("error", (error) => {
-      if (finished) return;
+      if (finished || timedOut) return;
       finished = true;
       clearTimeout(timeout);
       reject(
@@ -76,6 +87,14 @@ export function runElectronProcess({
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
+      if (timedOut) {
+        reject(
+          new Error(
+            `Electron smoke test timed out after ${timeoutMs} ms. ${describeStdout(stdout)} ${describeStderr(stderr)}`,
+          ),
+        );
+        return;
+      }
       if (code === 0 && ready) {
         resolve();
         return;

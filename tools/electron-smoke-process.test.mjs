@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   createElectronArguments,
+  runIndependentElectronProcesses,
   runElectronProcess,
 } from "./electron-smoke-process.mjs";
 
@@ -60,6 +61,41 @@ test("reports the last Electron stdout stage when the process times out", async 
   );
 });
 
+test("does not settle a timed-out process until the child closes", async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let killed = false;
+  child.kill = () => {
+    killed = true;
+  };
+  let settled = false;
+
+  const result = runElectronProcess({
+    executable: "unused",
+    args: [],
+    cwd: process.cwd(),
+    env: process.env,
+    timeoutMs: 10,
+    readyMarker: "ERC_CHART_SMOKE_READY",
+    spawnProcess: () => child,
+  });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(killed, true);
+  assert.equal(settled, false);
+  child.emit("close", null, "SIGTERM");
+  await assert.rejects(result, /timed out after 10 ms/);
+});
+
 test("recognizes a ready marker split across stdout chunks", async () => {
   await runElectronProcess({
     executable: process.execPath,
@@ -96,4 +132,65 @@ test("waits for stdio to close before evaluating the ready marker", async () => 
   child.emit("close", 0, null);
 
   await result;
+});
+
+test("starts two independent Electron processes before either completes", async () => {
+  const started = [];
+  const releases = [];
+  const running = runIndependentElectronProcesses({
+    processes: [{ instance: 1 }, { instance: 2 }],
+    runProcess: async (configuration) =>
+      new Promise((resolve) => {
+        started.push(configuration.instance);
+        releases.push(resolve);
+      }),
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(started, [1, 2]);
+  for (const release of releases) release();
+  await running;
+});
+
+test("fails when either independent Electron process fails", async () => {
+  const started = [];
+
+  await assert.rejects(
+    runIndependentElectronProcesses({
+      processes: [{ instance: 1 }, { instance: 2 }],
+      runProcess: async (configuration) => {
+        started.push(configuration.instance);
+        if (configuration.instance === 2) throw new Error("instance failed");
+      },
+    }),
+    new Error("instance failed"),
+  );
+  assert.deepEqual(started, [1, 2]);
+});
+
+test("waits for every independent process to settle before rejecting", async () => {
+  let releaseFirst;
+  let settled = false;
+  const running = runIndependentElectronProcesses({
+    processes: [{ instance: 1 }, { instance: 2 }],
+    runProcess: async (configuration) => {
+      if (configuration.instance === 2) throw new Error("instance failed");
+      return new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+    },
+  });
+  void running.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  releaseFirst();
+  await assert.rejects(running, new Error("instance failed"));
 });
