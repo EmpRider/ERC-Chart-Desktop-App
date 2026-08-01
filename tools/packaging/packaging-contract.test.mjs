@@ -57,7 +57,12 @@ test("resolves the installed executable beneath LOCALAPPDATA", () => {
 
   assert.equal(
     executablePath,
-    path.join(localAppData, "Programs", "ERC Chart", "ERC Chart.exe"),
+    path.join(
+      localAppData,
+      "Programs",
+      "erc-chart-desktop-app",
+      "ERC Chart.exe",
+    ),
   );
   assert.throws(() => installedExecutablePath(""), /LOCALAPPDATA/);
 });
