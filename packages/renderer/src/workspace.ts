@@ -24,7 +24,7 @@ export type WorkspaceAction =
   | {
       readonly type: "set-layout";
       readonly tabId: string;
-      readonly layoutSize: number;
+      readonly layoutSize: LayoutSize;
     };
 
 function createTab(tabNumber: number): WorkspaceTab {
@@ -127,7 +127,7 @@ export function createWorkspaceStore(
       const next = workspaceReducer(state, action);
       if (next === state) return;
       state = next;
-      for (const listener of listeners) listener();
+      for (const listener of [...listeners]) listener();
     },
   };
 }

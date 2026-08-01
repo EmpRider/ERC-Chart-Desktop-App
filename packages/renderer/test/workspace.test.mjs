@@ -107,3 +107,20 @@ test("notifies store subscribers only for state changes", () => {
   assert.equal(snapshots[0].activeTabId, "tab-2");
   assert.equal(store.getSnapshot().activeTabId, "tab-3");
 });
+
+test("notifies the subscriber snapshot when listeners mutate subscriptions", () => {
+  const store = createWorkspaceStore();
+  const calls = [];
+  let unsubscribeSecond = () => undefined;
+
+  store.subscribe(() => {
+    calls.push("first");
+    unsubscribeSecond();
+    store.subscribe(() => calls.push("late"));
+  });
+  unsubscribeSecond = store.subscribe(() => calls.push("second"));
+
+  store.dispatch({ type: "add-tab" });
+
+  assert.deepEqual(calls, ["first", "second"]);
+});
