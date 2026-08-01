@@ -16,7 +16,6 @@ const userDataPath = await mkdtemp(
   path.join(os.tmpdir(), "erc-electron-smoke-"),
 );
 const electronArguments = createElectronArguments({
-  platform: process.platform,
   userDataPath,
   entryPath,
 });

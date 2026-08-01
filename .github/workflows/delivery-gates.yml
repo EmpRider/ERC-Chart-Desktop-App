@@ -100,6 +100,14 @@ jobs:
           node-version: 24.18.1
           package-manager-cache: false
       - run: npm ci
+      - name: Configure Chromium SUID sandbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          sandbox_path="node_modules/electron/dist/chrome-sandbox"
+          sudo chown root:root "$sandbox_path"
+          sudo chmod 4755 "$sandbox_path"
+          test "$(stat -c '%U:%G %a' "$sandbox_path")" = "root:root 4755"
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck

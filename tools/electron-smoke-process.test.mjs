@@ -7,27 +7,17 @@ import {
   runElectronProcess,
 } from "./electron-smoke-process.mjs";
 
-test("disables the unavailable Chromium SUID sandbox only for Linux smoke runs", () => {
+test("keeps the Chromium sandbox enabled for smoke runs", () => {
   assert.deepEqual(
     createElectronArguments({
-      platform: "linux",
       userDataPath: "/tmp/profile",
       entryPath: "/repo/main.js",
     }),
     [
-      "--no-sandbox",
       "--user-data-dir=/tmp/profile",
       "/repo/main.js",
       "--erc-chart-smoke",
     ],
-  );
-  assert.deepEqual(
-    createElectronArguments({
-      platform: "win32",
-      userDataPath: "C:\\profile",
-      entryPath: "C:\\repo\\main.js",
-    }),
-    ["--user-data-dir=C:\\profile", "C:\\repo\\main.js", "--erc-chart-smoke"],
   );
 });
 
