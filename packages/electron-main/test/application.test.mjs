@@ -113,10 +113,24 @@ test("registers fixed IPC before loading one secure window", async () => {
     "window:load:erc-app://app/index.html",
     "window:show",
   ]);
-  assert.deepEqual(fixture.getRuntimeInfoHandler()(), {
-    ipcContractVersion,
-    applicationName: "ERC Chart",
-  });
+  assert.deepEqual(
+    fixture.getRuntimeInfoHandler()({
+      url: "erc-app://app/index.html",
+      isMainFrame: true,
+    }),
+    {
+      ipcContractVersion,
+      applicationName: "ERC Chart",
+    },
+  );
+  assert.throws(
+    () =>
+      fixture.getRuntimeInfoHandler()({
+        url: "https://example.com/",
+        isMainFrame: true,
+      }),
+    new Error("Unauthorized IPC sender."),
+  );
   assert.deepEqual(fixture.windows[0].options.webPreferences, {
     preload: "/runtime/preload.cjs",
     nodeIntegration: false,
