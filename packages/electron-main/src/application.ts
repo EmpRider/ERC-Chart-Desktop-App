@@ -11,6 +11,7 @@ export interface DesktopArtifactPaths {
 export interface DesktopWindow {
   readonly loadFile: (filePath: string) => Promise<void>;
   readonly show: () => void;
+  readonly destroy: () => void;
   readonly isDestroyed: () => boolean;
 }
 
@@ -60,8 +61,14 @@ export async function startDesktopApplication(
       secureWindowOptions(paths.preloadPath),
     );
     currentWindow = window;
-    await window.loadFile(paths.rendererHtmlPath);
-    window.show();
+    try {
+      await window.loadFile(paths.rendererHtmlPath);
+      window.show();
+    } catch (error) {
+      window.destroy();
+      if (currentWindow === window) currentWindow = undefined;
+      throw error;
+    }
   };
 
   adapters.app.onActivate(async (): Promise<void> => {

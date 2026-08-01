@@ -48,6 +48,10 @@ function createFixture(platform = "win32") {
           this.shown = true;
           events.push("window:show");
         },
+        destroy() {
+          this.destroyed = true;
+          events.push("window:destroy");
+        },
         isDestroyed() {
           return this.destroyed;
         },
@@ -183,6 +187,7 @@ test("cleans a failed initial window load without exposing partial UI", async ()
   );
   assert.equal(fixture.windows.length, 1);
   assert.equal(fixture.windows[0].shown, false);
+  assert.equal(fixture.windows[0].destroyed, true);
 });
 
 test("contains failed activation loads and permits a later retry", async () => {
@@ -195,6 +200,7 @@ test("contains failed activation loads and permits a later retry", async () => {
 
   assert.equal(fixture.windows.length, 2);
   assert.equal(fixture.windows[1].shown, false);
+  assert.equal(fixture.windows[1].destroyed, true);
 
   fixture.setLoadFileError(undefined);
   await fixture.handlers.activate();

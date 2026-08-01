@@ -5,9 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { buildRuntime } from "./build-runtime.mjs";
 
-test("builds sandbox preload, browser renderer, and static assets", async () => {
+test("builds sandbox preload, browser renderer, and static assets", async (t) => {
   const root = path.resolve(import.meta.dirname, "..");
   const outputRoot = await mkdtemp(path.join(os.tmpdir(), "erc-runtime-"));
+  t.after(() => rm(outputRoot, { recursive: true, force: true }));
 
   await buildRuntime({ root, outputRoot });
 

@@ -34,13 +34,14 @@ export function runElectronProcess({
   env,
   timeoutMs,
   readyMarker,
+  spawnProcess = spawn,
 }) {
   return new Promise((resolve, reject) => {
     let ready = false;
     let finished = false;
     let stdout = "";
     let stderr = "";
-    const child = spawn(executable, args, {
+    const child = spawnProcess(executable, args, {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -74,7 +75,7 @@ export function runElectronProcess({
         new Error(`Electron smoke process could not start: ${error.message}`),
       );
     });
-    child.on("exit", (code, signal) => {
+    child.on("close", (code, signal) => {
       if (finished) return;
       finished = true;
       clearTimeout(timeout);

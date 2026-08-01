@@ -37,6 +37,13 @@ test("reports ready and stops exactly once on a valid shutdown", () => {
 
   fixture.receive({
     type: "shutdown",
+    contractVersion: ipcContractVersion + 1,
+  });
+  assert.equal(fixture.sent.length, 1);
+  assert.equal(fixture.getListenerCount(), 1);
+
+  fixture.receive({
+    type: "shutdown",
     contractVersion: ipcContractVersion,
   });
   runtime.shutdown();

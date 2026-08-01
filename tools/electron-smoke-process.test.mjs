@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   createElectronArguments,
@@ -84,4 +86,28 @@ test("recognizes a ready marker split across stdout chunks", async () => {
     timeoutMs: 5_000,
     readyMarker: "ERC_CHART_SMOKE_READY",
   });
+});
+
+test("waits for stdio to close before evaluating the ready marker", async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => undefined;
+
+  const result = runElectronProcess({
+    executable: "unused",
+    args: [],
+    cwd: process.cwd(),
+    env: process.env,
+    timeoutMs: 5_000,
+    readyMarker: "ERC_CHART_SMOKE_READY",
+    spawnProcess: () => child,
+  });
+
+  child.emit("exit", 0, null);
+  child.stdout.end("ERC_CHART_SMOKE_READY");
+  child.stderr.end();
+  child.emit("close", 0, null);
+
+  await result;
 });

@@ -66,3 +66,18 @@ test("reports the smoke exit even when shutdown rejects", async () => {
 
   assert.deepEqual(events, ["shutdown", "exit:1"]);
 });
+
+test("reports the smoke exit when the controller fails to start", async () => {
+  const events = [];
+
+  await assert.rejects(
+    finishDesktopSmoke(
+      Promise.reject(new Error("startup failed")),
+      1,
+      (exitCode) => events.push(`exit:${exitCode}`),
+    ),
+    new Error("startup failed"),
+  );
+
+  assert.deepEqual(events, ["exit:1"]);
+});

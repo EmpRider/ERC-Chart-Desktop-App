@@ -48,6 +48,13 @@ test("reports ready without connecting and stops idempotently", () => {
 
   fixture.receive({
     type: "shutdown",
+    contractVersion: ipcContractVersion + 1,
+  });
+  assert.equal(fixture.sent.length, 1);
+  assert.equal(fixture.getListenerCount(), 1);
+
+  fixture.receive({
+    type: "shutdown",
     contractVersion: ipcContractVersion,
   });
   runtime.shutdown();
