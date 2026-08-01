@@ -129,6 +129,9 @@ the bridge.
 
 ### Dummy renderer
 
+> Historical ECDD-55 boundary: ECDD-59 supersedes this dummy renderer with the
+> React `ApplicationShell` and `RuntimeApplicationShell` entry points.
+
 `packages/renderer` owns a browser-only `renderDevelopmentShell` function and a
 minimal document entry. It renders deterministic content into a required root
 element:
