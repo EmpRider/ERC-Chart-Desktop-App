@@ -246,7 +246,10 @@ test("renders one enabled add control and no close control initially", () => {
   const markup = renderShell(connectingShellState);
 
   assert.match(markup, />Add workspace<\/button>/);
-  assert.doesNotMatch(markup, /Add workspace<\/button>[^]*disabled/);
+  assert.doesNotMatch(
+    markup,
+    /<button\\b(?=[^>]*\\bclass="workspace-add")[^>]*\\bdisabled(?:=|\\s|>)/,
+  );
   assert.doesNotMatch(markup, /Close workspace/);
   assert.doesNotMatch(markup, /Use (?:one|two|three|four) chart layout/);
 });
@@ -335,8 +338,7 @@ Inside each chart-slot article, before the slot number, render a close button on
     >
       ×
     </button>
-  ) : null;
-}
+  ) : null}
 ```
 
 - [ ] **Step 4: Style enabled, disabled, focus, and close states**
