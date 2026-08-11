@@ -36,32 +36,35 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Verify master release source
         shell: pwsh
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
         run: |
-          if ("${{ github.ref }}" -ne "refs/heads/master") {
+          if ($env:RELEASE_REF -ne "refs/heads/master") {
             throw "Releases must run from the master branch."
           }
-          if ((git rev-parse HEAD) -ne "${{ github.sha }}") {
+          $headSha = git rev-parse HEAD
+          if ($headSha -ne $env:RELEASE_SHA) {
             throw "Release checkout does not match the triggering commit."
           }
           git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor origin/main HEAD
-          if ($LASTEXITCODE -ne 0) {
-            throw "The release source does not contain the current main branch."
+          $mainSha = git rev-parse origin/main
+          if ($headSha -ne $mainSha) {
+            throw "The release source is not the exact current main commit."
           }
       - name: Resolve semantic release identity
         id: release
         shell: pwsh
         run: |
-          $manifest = Get-Content package.json -Raw | ConvertFrom-Json
-          $version = [string]$manifest.version
-          $semver = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$'
-          if ($version -notmatch $semver) {
-            throw "package.json version is not valid semantic versioning."
+          $metadataJson = node --input-type=module -e 'import { applicationVersion, installerArtifactName, releaseTag } from "./tools/packaging/packaging-contract.mjs"; console.log(JSON.stringify({ version: applicationVersion, tag: releaseTag(applicationVersion), installer: installerArtifactName(applicationVersion) }));'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release identity validation failed."
           }
-          "artifact=erc-chart-windows-v$version" >> $env:GITHUB_OUTPUT
-          "installer=ERC-Chart-Setup-$version.exe" >> $env:GITHUB_OUTPUT
-          "tag=v$version" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
+          $metadata = $metadataJson | ConvertFrom-Json
+          "artifact=erc-chart-windows-$($metadata.tag)" >> $env:GITHUB_OUTPUT
+          "installer=$($metadata.installer)" >> $env:GITHUB_OUTPUT
+          "tag=$($metadata.tag)" >> $env:GITHUB_OUTPUT
+          "version=$($metadata.version)" >> $env:GITHUB_OUTPUT
       - name: Install locked dependencies
         run: npm ci
       - name: Validate repository governance
@@ -106,17 +109,22 @@ jobs:
           compression-level: 0
       - name: Summarize verified candidate
         shell: pwsh
+        env:
+          RELEASE_INSTALLER: ${{ steps.release.outputs.installer }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           "### Verified Windows release candidate" >> $env:GITHUB_STEP_SUMMARY
-          "- Tag: ``${{ steps.release.outputs.tag }}``" >> $env:GITHUB_STEP_SUMMARY
-          "- Installer: ``${{ steps.release.outputs.installer }}``" >> $env:GITHUB_STEP_SUMMARY
-          "- Source: ``${{ github.sha }}`` on ``master``" >> $env:GITHUB_STEP_SUMMARY
+          "- Tag: ``$env:RELEASE_TAG``" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: ``$env:RELEASE_INSTALLER``" >> $env:GITHUB_STEP_SUMMARY
+          "- Source: ``$env:RELEASE_SHA`` on ``master``" >> $env:GITHUB_STEP_SUMMARY
 
   publish:
     name: Publish GitHub Release
     needs: build-and-test
     runs-on: windows-latest
     permissions:
+      # The publish job alone creates the immutable tag and uploads release assets.
       contents: write
     steps:
       - name: Check out exact release source
@@ -137,8 +145,10 @@ jobs:
           path: release
       - name: Verify downloaded release candidate
         shell: pwsh
+        env:
+          RELEASE_INSTALLER: ${{ needs.build-and-test.outputs.installer }}
         run: |
-          $installer = "${{ needs.build-and-test.outputs.installer }}"
+          $installer = $env:RELEASE_INSTALLER
           $checksumPath = Join-Path release "$installer.sha256"
           $checksumParts = (Get-Content $checksumPath -Raw).Trim() -split '\s+', 2
           if ($checksumParts.Count -ne 2 -or $checksumParts[1] -ne $installer) {
@@ -154,7 +164,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Summarize published release
         shell: pwsh
+        env:
+          RELEASE_INSTALLER: ${{ needs.build-and-test.outputs.installer }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.build-and-test.outputs.tag }}
         run: |
           "### Published GitHub Release" >> $env:GITHUB_STEP_SUMMARY
-          "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.build-and-test.outputs.tag }}" >> $env:GITHUB_STEP_SUMMARY
-          "- Installer: ``${{ needs.build-and-test.outputs.installer }}``" >> $env:GITHUB_STEP_SUMMARY
+          "- Release: $env:RELEASE_URL" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: ``$env:RELEASE_INSTALLER``" >> $env:GITHUB_STEP_SUMMARY
