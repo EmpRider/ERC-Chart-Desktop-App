@@ -189,7 +189,8 @@ textarea {
 
 .tab-item button,
 .add-tab,
-.layout-selector button {
+.workspace-add,
+.workspace-close {
   border: 0;
   background: transparent;
   color: #8594a8;
@@ -225,10 +226,12 @@ textarea {
 
 .tab-item button:hover,
 .add-tab:hover,
-.layout-selector button:hover,
+.workspace-add:not(:disabled):hover,
+.workspace-close:hover,
 .tab-item button:focus-visible,
 .add-tab:focus-visible,
-.layout-selector button:focus-visible {
+.workspace-add:focus-visible,
+.workspace-close:focus-visible {
   color: #9fe2ff;
   outline: 1px solid #4186a8;
   outline-offset: -1px;
@@ -237,7 +240,7 @@ textarea {
 .workspace-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 1rem;
 }
 
@@ -246,26 +249,47 @@ textarea {
   font-size: 0.64rem;
 }
 
-.layout-selector {
-  display: flex;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  border: 1px solid #1a2739;
+.workspace-add {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #1d2b40;
   border-radius: 0.5rem;
-  background: #09101a;
+  background: #0a111c;
+  color: #8998ac;
+  font-size: 0.72rem;
+  font-weight: 650;
 }
 
-.layout-selector button {
+.workspace-add > span {
+  font-size: 1rem;
+  line-height: 0;
+}
+
+.workspace-add:disabled {
+  border-color: #172235;
+  color: #58677b;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.workspace-close {
+  position: absolute;
+  z-index: 1;
+  top: 0.7rem;
+  right: 0.7rem;
+  display: grid;
   width: 1.8rem;
-  height: 1.55rem;
-  border-radius: 0.3rem;
-  font-size: 0.66rem;
-  font-weight: 700;
-}
-
-.layout-selector [aria-pressed="true"] {
-  background: #15354a;
-  color: #8fddff;
+  height: 1.8rem;
+  place-items: center;
+  border: 1px solid #24344a;
+  border-radius: 0.4rem;
+  background: #0a111c;
+  color: #8998ac;
+  cursor: pointer;
+  font-size: 0.9rem;
 }
 
 .chart-grid {

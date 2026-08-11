@@ -63,7 +63,7 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Development Version 1\n\nEpic: ECDD-53\n\nThis unsigned pre-release contains the reviewed Epic 1 secure desktop shell. It includes the custom renderer protocol, desktop trust boundaries, React tabs and one-to-four chart layouts, concurrent-instance proof, and the x64 per-user NSIS installer.\n\nKnown limitations: chart rendering, data-provider connectivity, persistence, plugins, and production code signing are delivered by later epics. Automatic updates are disabled.\n`;
+const curatedNotes = `# Development Version 2\n\nEpic: ECDD-67 (development checkpoint)\n\nThis unsigned prerelease advances the reviewed Epic 2 workspace experience. Each chart tab retains one permanent workspace, can add workspaces one at a time up to four, can close only added workspaces, and preserves the identities of surviving workspaces. The public renderer contract now also exposes the workspace limit.\n\nIt retains the reviewed secure desktop shell, custom renderer protocol, desktop trust boundaries, concurrent-instance behavior, and x64 per-user NSIS installer from Development Version 1.\n\nKnown limitations: chart rendering, data-provider connectivity, workspace persistence, database and credential integration, plugins, and production code signing are delivered by later work. Automatic updates are disabled. Epic 2 remains in development; stable v0.2.0 is not part of this checkpoint.\n`;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
   {

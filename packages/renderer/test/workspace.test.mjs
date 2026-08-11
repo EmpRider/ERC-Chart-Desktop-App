@@ -3,10 +3,12 @@ import test from "node:test";
 import {
   createInitialWorkspace,
   createWorkspaceStore,
+  maximumWorkspaces,
   workspaceReducer,
 } from "../dist/index.js";
 
 test("creates one active tab with one stable chart slot", () => {
+  assert.equal(maximumWorkspaces, 4);
   assert.deepEqual(createInitialWorkspace(), {
     tabs: [
       {
@@ -14,6 +16,7 @@ test("creates one active tab with one stable chart slot", () => {
         title: "Chart 1",
         layoutSize: 1,
         slots: [{ id: "tab-1-chart-1" }],
+        nextWorkspaceNumber: 2,
       },
     ],
     activeTabId: "tab-1",
@@ -46,27 +49,77 @@ test("adds, selects, and closes tabs deterministically", () => {
   assert.equal(closed.activeTabId, "tab-2");
 });
 
-test("supports one-to-four slots while preserving stable IDs", () => {
+test("adds workspaces one at a time and stops at four", () => {
   const initial = createInitialWorkspace();
-  const four = workspaceReducer(initial, {
-    type: "set-layout",
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
     tabId: "tab-1",
-    layoutSize: 4,
+  });
+  assert.notEqual(two, undefined);
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const completed = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
   });
 
   assert.deepEqual(
-    four.tabs[0].slots.map((slot) => slot.id),
+    completed.tabs[0].slots.map((slot) => slot.id),
     ["tab-1-chart-1", "tab-1-chart-2", "tab-1-chart-3", "tab-1-chart-4"],
   );
+  assert.equal(two.tabs[0].layoutSize, 2);
+  assert.equal(completed.tabs[0].layoutSize, 4);
+  assert.equal(completed.tabs[0].nextWorkspaceNumber, 5);
+  assert.equal(
+    workspaceReducer(completed, {
+      type: "add-workspace",
+      tabId: "tab-1",
+    }),
+    completed,
+  );
+});
 
-  const two = workspaceReducer(four, {
-    type: "set-layout",
+test("removes only added workspaces and never reuses a workspace ID", () => {
+  const initial = createInitialWorkspace();
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
     tabId: "tab-1",
-    layoutSize: 2,
+  });
+  assert.notEqual(two, undefined);
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const removed = workspaceReducer(three, {
+    type: "remove-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+  });
+
+  assert.deepEqual(
+    removed.tabs[0].slots.map((slot) => slot.id),
+    ["tab-1-chart-1", "tab-1-chart-3"],
+  );
+  assert.equal(removed.tabs[0].layoutSize, 2);
+  assert.equal(removed.tabs[0].nextWorkspaceNumber, 4);
+  assert.equal(
+    workspaceReducer(removed, {
+      type: "remove-workspace",
+      tabId: "tab-1",
+      workspaceId: "tab-1-chart-1",
+    }),
+    removed,
+  );
+
+  const addedAgain = workspaceReducer(removed, {
+    type: "add-workspace",
+    tabId: "tab-1",
   });
   assert.deepEqual(
-    two.tabs[0].slots.map((slot) => slot.id),
-    ["tab-1-chart-1", "tab-1-chart-2"],
+    addedAgain.tabs[0].slots.map((slot) => slot.id),
+    ["tab-1-chart-1", "tab-1-chart-3", "tab-1-chart-4"],
   );
 });
 
@@ -82,10 +135,14 @@ test("rejects invalid actions and always retains one tab", () => {
     initial,
   );
   assert.equal(
+    workspaceReducer(initial, { type: "add-workspace", tabId: "missing" }),
+    initial,
+  );
+  assert.equal(
     workspaceReducer(initial, {
-      type: "set-layout",
+      type: "remove-workspace",
       tabId: "tab-1",
-      layoutSize: 5,
+      workspaceId: "missing",
     }),
     initial,
   );
@@ -123,4 +180,35 @@ test("notifies the subscriber snapshot when listeners mutate subscriptions", () 
   store.dispatch({ type: "add-tab" });
 
   assert.deepEqual(calls, ["first", "second"]);
+});
+
+test("does not notify subscribers when the workspace maximum is reached", () => {
+  const maximum = {
+    tabs: [
+      {
+        id: "tab-1",
+        title: "Chart 1",
+        layoutSize: 4,
+        slots: [
+          { id: "tab-1-chart-1" },
+          { id: "tab-1-chart-2" },
+          { id: "tab-1-chart-3" },
+          { id: "tab-1-chart-4" },
+        ],
+        nextWorkspaceNumber: 5,
+      },
+    ],
+    activeTabId: "tab-1",
+    nextTabNumber: 2,
+  };
+  const store = createWorkspaceStore(maximum);
+  let notifications = 0;
+  store.subscribe(() => {
+    notifications += 1;
+  });
+
+  store.dispatch({ type: "add-workspace", tabId: "tab-1" });
+
+  assert.equal(store.getSnapshot(), maximum);
+  assert.equal(notifications, 0);
 });
