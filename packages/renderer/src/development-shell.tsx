@@ -2,7 +2,7 @@ import { isRuntimeInfo, type RuntimeInfo } from "@erc-chart/contracts";
 import { useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
   createWorkspaceStore,
-  type LayoutSize,
+  maximumWorkspaces,
   type WorkspaceAction,
   type WorkspaceState,
 } from "./workspace.js";
@@ -62,12 +62,7 @@ export function ApplicationShell({
     workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ??
     workspace.tabs[0];
   if (activeTab === undefined) throw new Error("Workspace unavailable.");
-  const layoutNames: Readonly<Record<LayoutSize, string>> = {
-    1: "one",
-    2: "two",
-    3: "three",
-    4: "four",
-  };
+  const workspaceLimitReached = activeTab.layoutSize === maximumWorkspaces;
 
   return (
     <div className="app-shell">
@@ -129,30 +124,29 @@ export function ApplicationShell({
         </nav>
 
         <div className="workspace-toolbar">
-          <div
-            className="layout-selector"
-            role="group"
-            aria-label="Chart layout"
+          <button
+            type="button"
+            className="workspace-add"
+            disabled={workspaceLimitReached}
+            title={workspaceLimitReached ? "Maximum 4 workspaces" : undefined}
+            aria-label={
+              workspaceLimitReached
+                ? "Add workspace. Maximum 4 workspaces"
+                : "Add workspace"
+            }
+            onClick={() =>
+              onWorkspaceAction({
+                type: "add-workspace",
+                tabId: activeTab.id,
+              })
+            }
           >
-            {([1, 2, 3, 4] as const).map((layoutSize) => (
-              <button
-                type="button"
-                key={layoutSize}
-                aria-label={`Use ${layoutNames[layoutSize]} chart layout`}
-                aria-pressed={activeTab.layoutSize === layoutSize}
-                onClick={() =>
-                  onWorkspaceAction({
-                    type: "set-layout",
-                    tabId: activeTab.id,
-                    layoutSize,
-                  })
-                }
-              >
-                {layoutSize}
-              </button>
-            ))}
-          </div>
-          <span>{activeTab.layoutSize} visible</span>
+            <span aria-hidden="true">+</span>
+            Add workspace
+          </button>
+          {workspaceLimitReached ? (
+            <span role="status">Maximum 4 workspaces</span>
+          ) : null}
         </div>
 
         <section
@@ -162,6 +156,22 @@ export function ApplicationShell({
         >
           {activeTab.slots.map((slot, index) => (
             <article className="chart-slot" data-chart-slot key={slot.id}>
+              {index > 0 ? (
+                <button
+                  type="button"
+                  className="workspace-close"
+                  aria-label={`Close workspace ${index + 1}`}
+                  onClick={() =>
+                    onWorkspaceAction({
+                      type: "remove-workspace",
+                      tabId: activeTab.id,
+                      workspaceId: slot.id,
+                    })
+                  }
+                >
+                  ×
+                </button>
+              ) : null}
               <div className="slot-number" aria-hidden="true">
                 {index + 1}
               </div>
