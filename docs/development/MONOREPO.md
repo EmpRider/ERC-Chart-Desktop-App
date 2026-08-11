@@ -81,8 +81,8 @@ rule. The same validation is part of `npm run lint` and CI.
 | `npm run audit:ci`             | Fail on high or critical dependency vulnerabilities               |
 | `npm run version:check`        | Revalidate pinned versions and package consistency                |
 
-ECDD-62 activates `package:win` and `smoke:installer` on Windows. The installer
-is an unsigned Development Version 1 build; production code signing remains a
+ECDD-62 activates `package:win` and `smoke:installer` on Windows. Development
+installers are unsigned prerelease builds; production code signing remains a
 later release decision. Packaging never publishes update metadata and the app
 does not include an automatic-update client.
 
@@ -102,8 +102,9 @@ On Linux, the Electron smoke command requires a display server. CI runs it
 under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
-The `master` release workflow publishes Development Version 1 after the reviewed
-`main` commit is promoted to `master`. It uses application `0.1.0-dev.1` and
-immutable prerelease tag `v0.1.0-dev.1`, with the Windows `.exe` and `.sha256`
-assets. The release remains unsigned, automatic updates are disabled, and stable
-`v0.1.0` remains a later release.
+The `master` release workflow publishes a development checkpoint only after its
+reviewed `main` commit is promoted exactly to `master`. Development Version 2
+uses application `0.1.0-dev.2` and immutable prerelease tag `v0.1.0-dev.2`, with
+the Windows `.exe` and `.sha256` assets. The prior Development Version 1 release
+at `v0.1.0-dev.1` remains immutable. Releases remain unsigned, automatic updates
+are disabled, and stable Epic 2 release `v0.2.0` remains later work.
