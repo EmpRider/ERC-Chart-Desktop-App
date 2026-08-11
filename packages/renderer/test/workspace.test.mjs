@@ -3,10 +3,12 @@ import test from "node:test";
 import {
   createInitialWorkspace,
   createWorkspaceStore,
+  maximumWorkspaces,
   workspaceReducer,
 } from "../dist/index.js";
 
 test("creates one active tab with one stable chart slot", () => {
+  assert.equal(maximumWorkspaces, 4);
   assert.deepEqual(createInitialWorkspace(), {
     tabs: [
       {

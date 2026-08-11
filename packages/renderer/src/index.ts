@@ -13,6 +13,7 @@ export type {
 export {
   createInitialWorkspace,
   createWorkspaceStore,
+  maximumWorkspaces,
   workspaceReducer,
 } from "./workspace.js";
 export type {
