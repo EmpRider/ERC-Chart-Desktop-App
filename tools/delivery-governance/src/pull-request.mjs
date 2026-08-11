@@ -4,8 +4,7 @@ import { validatePullRequestBody } from "./pr-contract.mjs";
 
 function changedFilesFrom(environment) {
   if (typeof environment.PR_CHANGED_FILES !== "string") return null;
-  const files = environment.PR_CHANGED_FILES
-    .split(/\r?\n/)
+  const files = environment.PR_CHANGED_FILES.split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean);
   return files.length > 0 ? files : null;
@@ -13,7 +12,8 @@ function changedFilesFrom(environment) {
 
 export function contextFromEvent(event, environment = process.env) {
   const pullRequest = event.pull_request;
-  if (!pullRequest) throw new Error("GitHub event does not contain a pull_request object.");
+  if (!pullRequest)
+    throw new Error("GitHub event does not contain a pull_request object.");
   return {
     number: pullRequest.number ?? event.number,
     title: pullRequest.title ?? "",
@@ -27,7 +27,11 @@ export function contextFromEvent(event, environment = process.env) {
   };
 }
 
-export async function validatePullRequestEvent(_root, event, environment = process.env) {
+export async function validatePullRequestEvent(
+  _root,
+  event,
+  environment = process.env,
+) {
   const context = contextFromEvent(event, environment);
   return [
     ...validateBranchPolicy(context),

@@ -1,0 +1,17 @@
+{
+  "name": "@erc-chart/data-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Canonical market-data state, candle building, cache coordination, and revisions",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@erc-chart/contracts": "0.0.0"
+  }
+}

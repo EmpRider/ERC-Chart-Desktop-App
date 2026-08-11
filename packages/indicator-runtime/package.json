@@ -1,0 +1,14 @@
+{
+  "name": "@erc-chart/indicator-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Worker lifecycle, dependency graph, budgets, and output validation",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

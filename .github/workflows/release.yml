@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    name: Build and verify Windows release
+    runs-on: windows-latest
+    outputs:
+      artifact: ${{ steps.release.outputs.artifact }}
+      installer: ${{ steps.release.outputs.installer }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify master release source
+        shell: pwsh
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          if ($env:RELEASE_REF -ne "refs/heads/master") {
+            throw "Releases must run from the master branch."
+          }
+          $headSha = git rev-parse HEAD
+          if ($headSha -ne $env:RELEASE_SHA) {
+            throw "Release checkout does not match the triggering commit."
+          }
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          $mainSha = git rev-parse origin/main
+          if ($headSha -ne $mainSha) {
+            throw "The release source is not the exact current main commit."
+          }
+      - name: Resolve semantic release identity
+        id: release
+        shell: pwsh
+        run: |
+          $metadataJson = node --input-type=module -e 'import { applicationVersion, installerArtifactName, releaseTag } from "./tools/packaging/packaging-contract.mjs"; console.log(JSON.stringify({ version: applicationVersion, tag: releaseTag(applicationVersion), installer: installerArtifactName(applicationVersion) }));'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release identity validation failed."
+          }
+          $metadata = $metadataJson | ConvertFrom-Json
+          "artifact=erc-chart-windows-$($metadata.tag)" >> $env:GITHUB_OUTPUT
+          "installer=$($metadata.installer)" >> $env:GITHUB_OUTPUT
+          "tag=$($metadata.tag)" >> $env:GITHUB_OUTPUT
+          "version=$($metadata.version)" >> $env:GITHUB_OUTPUT
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Validate repository governance
+        run: npm --workspace @erc-chart/delivery-governance run validate:repository
+      - name: Lint Markdown
+        run: npm --workspace @erc-chart/delivery-governance run lint:markdown
+      - name: Check formatting
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npm run typecheck
+      - name: Run unit tests
+        run: npm run test:unit
+      - name: Run integration tests
+        run: npm run test:integration
+      - name: Build production runtime (Release mode)
+        run: npm run build:runtime
+      - name: Smoke-test independent instances
+        run: npm run smoke:multi-instance
+      - name: Run performance gates
+        run: npm run test:performance
+      - name: Audit production dependencies
+        run: npm run audit:ci
+      - name: Verify workspace and release version
+        run: npm run version:check
+      - name: Build bundled x64 NSIS installer
+        run: npm run package:win
+      - name: Install, launch, and uninstall packaged application
+        run: npm run smoke:installer
+      - name: Generate SHA-256 checksum
+        run: npm run checksum:installer
+      - name: Upload verified Windows release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.release.outputs.artifact }}
+          path: |
+            release/${{ steps.release.outputs.installer }}
+            release/${{ steps.release.outputs.installer }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Summarize verified candidate
+        shell: pwsh
+        env:
+          RELEASE_INSTALLER: ${{ steps.release.outputs.installer }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          "### Verified Windows release candidate" >> $env:GITHUB_STEP_SUMMARY
+          "- Tag: ``$env:RELEASE_TAG``" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: ``$env:RELEASE_INSTALLER``" >> $env:GITHUB_STEP_SUMMARY
+          "- Source: ``$env:RELEASE_SHA`` on ``master``" >> $env:GITHUB_STEP_SUMMARY
+
+  publish:
+    name: Publish GitHub Release
+    needs: build-and-test
+    runs-on: windows-latest
+    permissions:
+      # The publish job alone creates the immutable tag and uploads release assets.
+      contents: write
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          package-manager-cache: false
+      - name: Download verified Windows release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.build-and-test.outputs.artifact }}
+          path: release
+      - name: Verify downloaded release candidate
+        shell: pwsh
+        env:
+          RELEASE_INSTALLER: ${{ needs.build-and-test.outputs.installer }}
+        run: |
+          $installer = $env:RELEASE_INSTALLER
+          $checksumPath = Join-Path release "$installer.sha256"
+          $checksumParts = (Get-Content $checksumPath -Raw).Trim() -split '\s+', 2
+          if ($checksumParts.Count -ne 2 -or $checksumParts[1] -ne $installer) {
+            throw "Checksum file does not identify the expected installer."
+          }
+          $actual = (Get-FileHash (Join-Path release $installer) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $checksumParts[0].ToLowerInvariant()) {
+            throw "Downloaded installer checksum verification failed."
+          }
+      - name: Create immutable tag and publish generated release notes
+        run: node tools/packaging/publish-release.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Summarize published release
+        shell: pwsh
+        env:
+          RELEASE_INSTALLER: ${{ needs.build-and-test.outputs.installer }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.build-and-test.outputs.tag }}
+        run: |
+          "### Published GitHub Release" >> $env:GITHUB_STEP_SUMMARY
+          "- Release: $env:RELEASE_URL" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: ``$env:RELEASE_INSTALLER``" >> $env:GITHUB_STEP_SUMMARY

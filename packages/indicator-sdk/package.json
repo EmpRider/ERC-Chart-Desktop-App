@@ -1,0 +1,17 @@
+{
+  "name": "@erc-chart/indicator-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Indicator manifest, inputs, outputs, and plot authoring API",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@erc-chart/contracts": "0.0.0"
+  }
+}

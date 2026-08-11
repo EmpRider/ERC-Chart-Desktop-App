@@ -41,12 +41,16 @@ test("review runbook distinguishes machine gates from manual AI evidence", async
     "including CodeRabbit",
     "fresh manual reviews",
     "record the approved unavailability explicitly",
-  ]) assert.ok(restartRule.includes(phrase), phrase);
+  ])
+    assert.ok(restartRule.includes(phrase), phrase);
 });
 
 test("application contract declares every stable script and handoff", async () => {
   const contract = await read("docs/governance/APPLICATION-GATE-CONTRACT.md");
-  for (const script of [...REQUIRED_APPLICATION_SCRIPTS, ...REQUIRED_WINDOWS_SCRIPTS]) {
+  for (const script of [
+    ...REQUIRED_APPLICATION_SCRIPTS,
+    ...REQUIRED_WINDOWS_SCRIPTS,
+  ]) {
     assert.ok(contract.includes(`\`${script}\``), script);
   }
   for (const phrase of [
@@ -57,7 +61,8 @@ test("application contract declares every stable script and handoff", async () =
     "tag creation",
     "GitHub Release publication",
     "single root `package-lock.json`",
-  ]) assert.ok(contract.includes(phrase), phrase);
+  ])
+    assert.ok(contract.includes(phrase), phrase);
 });
 
 test("calibration procedure requires two levels and honest provider evidence", async () => {
@@ -78,7 +83,8 @@ test("calibration procedure requires two levels and honest provider evidence", a
     "Day 1 of 14 · Trial",
     "manual review evidence",
     "not machine-enforced merge conditions",
-  ]) assert.ok(procedure.includes(phrase), phrase);
+  ])
+    assert.ok(procedure.includes(phrase), phrase);
 });
 
 test("solo-maintainer amendment preserves the enforceable boundary", async () => {
@@ -90,42 +96,65 @@ test("solo-maintainer amendment preserves the enforceable boundary", async () =>
     "manual, non-blocking evidence",
     "does not claim that Qodo or Code Review AI blocks a GitHub merge",
     "original version and release policy remains unchanged",
-  ]) assert.ok(design.includes(phrase), phrase);
+  ])
+    assert.ok(design.includes(phrase), phrase);
 });
 
 test("delivery workflow executes every governance verification command", async () => {
   const workflow = await read(".github/workflows/delivery-gates.yml");
   for (const command of [
-    "npm ci --prefix tools/delivery-governance --ignore-scripts",
-    "npm --prefix tools/delivery-governance test",
-    "npm --prefix tools/delivery-governance run validate:pr",
-    "npm --prefix tools/delivery-governance run validate:repository",
-    "npm --prefix tools/delivery-governance run lint:markdown",
+    "npm ci --ignore-scripts",
+    "npm --workspace @erc-chart/delivery-governance test",
+    "npm --workspace @erc-chart/delivery-governance run validate:pr",
+    "npm --workspace @erc-chart/delivery-governance run validate:repository",
+    "npm --workspace @erc-chart/delivery-governance run lint:markdown",
     "node tools/delivery-governance/src/github-admin.mjs",
-  ]) assert.ok(workflow.includes(command), command);
+  ])
+    assert.ok(workflow.includes(command), command);
 });
 
 test("calibration evidence schema requires solo-maintainer enforcement assertions", async () => {
-  const schema = JSON.parse(await read("docs/governance/calibration-evidence.schema.json"));
+  const schema = JSON.parse(
+    await read("docs/governance/calibration-evidence.schema.json"),
+  );
   assert.deepEqual(schema.properties.maintainer, { const: "EmpRider" });
   assert.equal(schema.properties.codingAuthor, undefined);
   assert.equal(schema.properties.independentApprover, undefined);
-  assert.ok(schema.properties.assertions.required.includes("requiredStatusesBlock"));
-  assert.ok(schema.properties.assertions.required.includes("staleBranchBlocks"));
-  assert.ok(schema.properties.assertions.required.includes("unresolvedConversationBlocks"));
-  assert.ok(schema.properties.assertions.required.includes("mergeMethodsEnforced"));
-  assert.equal(schema.properties.assertions.properties.soloMaintainer.const, true);
+  assert.ok(
+    schema.properties.assertions.required.includes("requiredStatusesBlock"),
+  );
+  assert.ok(
+    schema.properties.assertions.required.includes("staleBranchBlocks"),
+  );
+  assert.ok(
+    schema.properties.assertions.required.includes(
+      "unresolvedConversationBlocks",
+    ),
+  );
+  assert.ok(
+    schema.properties.assertions.required.includes("mergeMethodsEnforced"),
+  );
+  assert.equal(
+    schema.properties.assertions.properties.soloMaintainer.const,
+    true,
+  );
   assert.ok(schema.properties.reviewers.required.includes("codeReviewAi"));
 });
 
 test("calibration evidence includes representative solo-maintainer observations", async () => {
-  const example = JSON.parse(await read("docs/governance/calibration-evidence.example.json"));
+  const example = JSON.parse(
+    await read("docs/governance/calibration-evidence.example.json"),
+  );
   assert.equal(example.maintainer, "EmpRider");
   assert.equal(example.qodoCapacity.displayText, "Day 1 of 14 · Trial");
   assert.equal(example.qodoCapacity.active, true);
   assert.equal(example.qodoCapacity.exactEndsOn, null);
-  assert.deepEqual(example.reviewers.coderabbit.observedContexts, ["CodeRabbit"]);
-  assert.deepEqual(example.reviewers.semgrep.observedContexts, ["semgrep-cloud-platform/scan"]);
+  assert.deepEqual(example.reviewers.coderabbit.observedContexts, [
+    "CodeRabbit",
+  ]);
+  assert.deepEqual(example.reviewers.semgrep.observedContexts, [
+    "semgrep-cloud-platform/scan",
+  ]);
   assert.equal(example.assertions.requiredStatusesBlock, true);
   assert.equal(example.assertions.documentationMergeCreatedNoRelease, true);
 });

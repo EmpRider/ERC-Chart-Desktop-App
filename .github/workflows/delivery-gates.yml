@@ -36,7 +36,7 @@ jobs:
           node-version: 24.18.1
           package-manager-cache: false
       - name: Install governance dependencies
-        run: npm ci --prefix tools/delivery-governance --ignore-scripts
+        run: npm ci --ignore-scripts
       - name: Build pull-request context
         id: context
         shell: bash
@@ -59,16 +59,16 @@ jobs:
             echo EOF
           } >> "$GITHUB_OUTPUT"
       - name: Test governance tool
-        run: npm --prefix tools/delivery-governance test
+        run: npm --workspace @erc-chart/delivery-governance test
       - name: Validate pull-request contract
         env:
           PR_BASE_IS_ANCESTOR: ${{ steps.context.outputs.base_is_ancestor }}
           PR_CHANGED_FILES: ${{ steps.context.outputs.changed_files }}
-        run: npm --prefix tools/delivery-governance run validate:pr
+        run: npm --workspace @erc-chart/delivery-governance run validate:pr
       - name: Validate repository
-        run: npm --prefix tools/delivery-governance run validate:repository
+        run: npm --workspace @erc-chart/delivery-governance run validate:repository
       - name: Lint Markdown
-        run: npm --prefix tools/delivery-governance run lint:markdown
+        run: npm --workspace @erc-chart/delivery-governance run lint:markdown
       - name: Verify administration dry run
         run: node tools/delivery-governance/src/github-admin.mjs
       - name: Detect application contract
@@ -100,11 +100,24 @@ jobs:
           node-version: 24.18.1
           package-manager-cache: false
       - run: npm ci
+      - name: Configure Chromium SUID sandbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          sandbox_path="node_modules/electron/dist/chrome-sandbox"
+          sudo chown root:root "$sandbox_path"
+          sudo chmod 4755 "$sandbox_path"
+          test "$(stat -c '%U:%G %a' "$sandbox_path")" = "root:root 4755"
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:integration
+      - name: Smoke Electron development shell
+        run: xvfb-run -a npm run smoke:electron
+      - name: Smoke two independent Electron instances
+        run: xvfb-run -a npm run smoke:multi-instance
       - run: npm run build
       - run: npm run test:performance
       - run: npm run audit:ci
@@ -134,6 +147,7 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:integration
       - run: npm run build
+      - run: npm run smoke:multi-instance
       - run: npm run test:performance
       - run: npm run audit:ci
       - run: npm run version:check

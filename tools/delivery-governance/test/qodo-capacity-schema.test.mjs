@@ -15,7 +15,10 @@ async function calibrationFixture(mutator) {
   );
   const example = JSON.parse(
     await readFile(
-      new URL("docs/governance/calibration-evidence.example.json", repositoryRoot),
+      new URL(
+        "docs/governance/calibration-evidence.example.json",
+        repositoryRoot,
+      ),
       "utf8",
     ),
   );
@@ -23,7 +26,10 @@ async function calibrationFixture(mutator) {
 
   const directory = path.join(root, "docs/governance");
   await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, "calibration-evidence.schema.json"), schema);
+  await writeFile(
+    path.join(directory, "calibration-evidence.schema.json"),
+    schema,
+  );
   await writeFile(
     path.join(directory, "calibration-evidence.example.json"),
     JSON.stringify(example),
@@ -57,5 +63,7 @@ test("Qodo capacity rejects mismatched trial day evidence", async () => {
     capacity.displayText = "Day 2 of 14 · Trial";
   });
   const errors = await validateSchemaExamples(root);
-  assert.ok(errors.some((error) => error.includes("calibration-evidence.example.json")));
+  assert.ok(
+    errors.some((error) => error.includes("calibration-evidence.example.json")),
+  );
 });

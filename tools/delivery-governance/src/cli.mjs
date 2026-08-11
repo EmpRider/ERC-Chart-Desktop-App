@@ -8,14 +8,18 @@ async function repository(root) {
 
 async function pullRequest(root) {
   const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (!eventPath) throw new Error("GITHUB_EVENT_PATH is required for pull-request validation.");
+  if (!eventPath)
+    throw new Error(
+      "GITHUB_EVENT_PATH is required for pull-request validation.",
+    );
   const event = JSON.parse(await readFile(eventPath, "utf8"));
   const { validatePullRequestEvent } = await import("./pull-request.mjs");
   return validatePullRequestEvent(root, event);
 }
 
 async function applicationContract(root) {
-  const { validateApplicationContract } = await import("./application-contract.mjs");
+  const { validateApplicationContract } =
+    await import("./application-contract.mjs");
   const result = await validateApplicationContract(root);
   return result.errors;
 }

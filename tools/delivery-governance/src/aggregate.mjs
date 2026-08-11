@@ -12,26 +12,36 @@ export function aggregateResults({
   applicationPresent,
   epicToMain,
 }) {
-  if (governance !== "success") return fail(`Delivery gates failed: Governance result is '${governance}'.`);
+  if (governance !== "success")
+    return fail(`Delivery gates failed: Governance result is '${governance}'.`);
 
   if (!applicationPresent) {
     if (applicationLinux !== "skipped" || applicationWindows !== "skipped") {
-      return fail("Delivery gates failed: application jobs must be skipped when root package.json is absent.");
+      return fail(
+        "Delivery gates failed: application jobs must be skipped when root package.json is absent.",
+      );
     }
     return {
       ok: true,
-      summary: "Delivery gates passed. Application gates are not applicable because root package.json is absent.",
+      summary:
+        "Delivery gates passed. Application gates are not applicable because root package.json is absent.",
     };
   }
 
   if (applicationLinux !== "success") {
-    return fail(`Delivery gates failed: Application / Linux result is '${applicationLinux}'.`);
+    return fail(
+      `Delivery gates failed: Application / Linux result is '${applicationLinux}'.`,
+    );
   }
   if (epicToMain && applicationWindows !== "success") {
-    return fail(`Delivery gates failed: Application / Windows result is '${applicationWindows}'.`);
+    return fail(
+      `Delivery gates failed: Application / Windows result is '${applicationWindows}'.`,
+    );
   }
   if (!epicToMain && applicationWindows !== "skipped") {
-    return fail("Delivery gates failed: Application / Windows must be skipped for task-to-epic pull requests.");
+    return fail(
+      "Delivery gates failed: Application / Windows must be skipped for task-to-epic pull requests.",
+    );
   }
   return {
     ok: true,
@@ -51,7 +61,10 @@ export function aggregateFromEnvironment(environment) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   const result = aggregateFromEnvironment(process.env);
   console.log(result.summary);
   if (!result.ok) process.exitCode = 1;

@@ -1,0 +1,8 @@
+.git
+.npmrc
+.nvmrc
+.prettierignore
+node_modules
+dist
+coverage
+docs/architecture/v1/contracts/

@@ -1,0 +1,17 @@
+{
+  "name": "@erc-chart/provider-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Validated provider loading and utility-process protocol",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@erc-chart/contracts": "0.0.0"
+  }
+}

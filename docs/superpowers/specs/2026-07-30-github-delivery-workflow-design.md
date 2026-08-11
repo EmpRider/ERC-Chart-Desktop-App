@@ -74,9 +74,10 @@ complex solutions satisfy the same requirement.
 
 ### 4.1 Permanent branch
 
-`main` is the only permanent integration branch and the source of all release
-builds. It must remain releasable after the Epic 1 packaging pipeline becomes
-active.
+`main` is the permanent integration branch. `master` is the release-only branch:
+after an epic merge passes its required checks, that exact `main` history is
+promoted to `master` without accepting independent product development. Release
+builds and immutable tags are created only from `master`.
 
 ### 4.2 Epic branches
 
@@ -492,27 +493,31 @@ the latest release or does not match the declared milestone.
 
 ## 12. Release workflow
 
-Release automation is introduced by ECDD-62. Its event is a push to `main`, with
-no path filter. Before doing build work, it verifies that the application manifest
-exists and that its version has no matching release tag. A pre-Epic-1 commit or a
-merge that does not introduce a new version exits successfully with an explicit
-"no release required" result. Because the bootstrap exception is one-time and all
-later `main` changes arrive through epic pull requests, a new application version
-is published only from a reviewed epic merge.
+Release automation is introduced by ECDD-62. Its events are a push to `master`
+and a manual dispatch on `master`, with no path filter. Before doing build work,
+it verifies that the checked-out commit contains the current `main` history, the
+application manifest exists, and the version is valid semantic versioning. A
+version with an existing release at the same commit exits successfully; an
+existing tag or release at another commit fails closed. A new application
+version is therefore published only after reviewed `main` history is promoted to
+the release branch.
 
-The release job:
+The release workflow:
 
-1. checks out the exact merged `main` commit;
+1. checks out the exact `master` commit and verifies its `main` ancestry;
 2. reads and validates the application version;
 3. verifies that the matching `vX.Y.Z` tag and release do not already exist;
-4. installs locked dependencies on the `windows-2025` GitHub-hosted runner;
+4. installs locked dependencies with the npm cache on `windows-latest`;
 5. runs the complete quality, security, and Windows packaging gates;
 6. performs installer smoke validation;
 7. verifies the installer product version and expected filename;
 8. creates a SHA-256 checksum;
-9. creates a draft GitHub Release targeting the exact tested commit;
-10. uploads the installer and checksum;
-11. publishes the release only after both assets are present.
+9. hands the installer and checksum to a separate write-scoped publish job;
+10. verifies the downloaded checksum and creates a draft GitHub Release targeting
+    the exact tested commit;
+11. generates commit and pull-request release notes;
+12. uploads the installer and checksum;
+13. publishes the release only after both assets are present.
 
 The published assets are exactly:
 
