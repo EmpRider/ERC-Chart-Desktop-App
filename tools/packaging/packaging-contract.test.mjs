@@ -9,6 +9,7 @@ import {
   assertReleaseTargetsCommit,
   assertPackagedVersion,
   checksumLine,
+  composeReleaseNotes,
   installedExecutablePath,
   installerArtifactName,
   isReleaseAssetNameConflict,
@@ -30,7 +31,15 @@ test("defines Development Version 1 release identity", () => {
 });
 
 test("rejects versions outside the exact release-safe SemVer subset", () => {
-  for (const value of ["", "v0.1.0", "0.1", "0.1.0/evil", "01.1.0"]) {
+  for (const value of [
+    "",
+    "v0.1.0",
+    "0.1",
+    "0.1.0/evil",
+    "01.1.0",
+    "0.1.0-01",
+    "0.1.0-alpha.01",
+  ]) {
     assert.throws(() => validateReleaseVersion(value), /release version/i);
   }
 });
@@ -119,6 +128,26 @@ test("rejects an existing release that targets another commit", () => {
       ),
     /different commit/i,
   );
+});
+
+test("preserves curated release context and appends generated changes", () => {
+  assert.equal(
+    composeReleaseNotes(
+      "# Development Version 1\n\nUnsigned prerelease.\n",
+      "## What's Changed\n\n* Add the secure shell by @EmpRider in #21\n",
+    ),
+    "# Development Version 1\n\nUnsigned prerelease.\n\n## What's Changed\n\n* Add the secure shell by @EmpRider in #21\n",
+  );
+  assert.equal(
+    composeReleaseNotes("Release context\n", ""),
+    "Release context\n",
+  );
+  for (const curated of ["", " \n\t "]) {
+    assert.throws(
+      () => composeReleaseNotes(curated, "Generated changes"),
+      /curated release notes/i,
+    );
+  }
 });
 
 test("recognizes only GitHub's existing-asset name conflict", () => {

@@ -23,7 +23,7 @@ export function validateInstallationDirectoryName(name) {
 
 export function validateReleaseVersion(version) {
   if (
-    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$/.test(
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/.test(
       version,
     )
   ) {
@@ -69,6 +69,13 @@ export function assertReleaseTargetsCommit(release, commitSha) {
   if (release.target_commitish !== commitSha) {
     throw new Error("Existing release targets a different commit.");
   }
+}
+
+export function composeReleaseNotes(curatedNotes, generatedNotes) {
+  const curated = curatedNotes.trim();
+  const generated = generatedNotes.trim();
+  if (curated === "") throw new Error("Curated release notes are required.");
+  return `${curated}${generated === "" ? "" : `\n\n${generated}`}\n`;
 }
 
 export function isReleaseAssetNameConflict(response) {

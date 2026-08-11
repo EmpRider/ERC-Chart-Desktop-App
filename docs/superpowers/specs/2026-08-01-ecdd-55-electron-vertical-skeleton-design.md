@@ -272,9 +272,10 @@ Windows packaging/release automation.
 When all Epic 1 exit criteria pass, the epic-to-`main` pull request uses
 Delivery Gates, Semgrep, CodeRabbit, stable-head Qodo evidence when available,
 and Code Review AI. The reviewed merge sets application version
-`0.1.0-dev.1`, and the release workflow publishes the exact tested `main`
-commit as a GitHub pre-release named Development Version 1 under immutable Git
-tag `v0.1.0-dev.1`, with:
+`0.1.0-dev.1`; after that history is promoted to the release-only `master`
+branch, the release workflow publishes its exact tested commit as a GitHub
+pre-release named Development Version 1 under immutable Git tag
+`v0.1.0-dev.1`, with:
 
 ```text
 ERC-Chart-Setup-0.1.0-dev.1.exe
