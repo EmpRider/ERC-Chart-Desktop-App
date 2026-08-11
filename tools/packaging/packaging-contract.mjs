@@ -71,6 +71,13 @@ export function assertReleaseTargetsCommit(release, commitSha) {
   }
 }
 
+export function composeReleaseNotes(curatedNotes, generatedNotes) {
+  const curated = curatedNotes.trim();
+  const generated = generatedNotes.trim();
+  if (curated === "") throw new Error("Curated release notes are required.");
+  return `${curated}${generated === "" ? "" : `\n\n${generated}`}\n`;
+}
+
 export function isReleaseAssetNameConflict(response) {
   return (
     Array.isArray(response?.errors) &&

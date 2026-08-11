@@ -6,8 +6,8 @@
    configuration with the ECDD-58 fuse policy.
 3. Replace the deferred package and installer-smoke commands with real Windows
    implementations and document the commands and unsigned limitation.
-4. Add the serialized least-privilege `main` release workflow, exact SHA and
-   version collision checks, checksum creation, draft upload, and final
-   pre-release publication.
+4. Add the serialized least-privilege `master` release workflow, exact SHA and
+   version collision checks, checksum creation, artifact handoff, generated
+   notes, draft upload, and final pre-release publication.
 5. Run formatting, lint, typecheck, unit/integration tests, build, audit, version
    checks, and the canonical Windows package/smoke jobs through GitHub Actions.

@@ -102,7 +102,8 @@ On Linux, the Electron smoke command requires a display server. CI runs it
 under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
-The main-branch release workflow publishes Development Version 1 as application
-`0.1.0-dev.1` and immutable prerelease tag `v0.1.0-dev.1`, with the Windows
-`.exe` and `.sha256` assets. The release remains unsigned, automatic updates are
-disabled, and stable `v0.1.0` remains a later release.
+The `master` release workflow publishes Development Version 1 after the reviewed
+`main` commit is promoted to `master`. It uses application `0.1.0-dev.1` and
+immutable prerelease tag `v0.1.0-dev.1`, with the Windows `.exe` and `.sha256`
+assets. The release remains unsigned, automatic updates are disabled, and stable
+`v0.1.0` remains a later release.

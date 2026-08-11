@@ -40,13 +40,15 @@ Windows job performs the actual package and installer smoke.
 
 ## Release transaction
 
-A serialized Windows workflow runs only after a push to `main`. It verifies the
-exact checked-out SHA, a valid unreleased application version, all quality and
-security gates, packaging, installer smoke, filename, and SHA-256 before it
-creates a draft GitHub pre-release targeting that SHA. It uploads both assets
-and publishes the draft only after both are present. Failures before draft
-creation produce no tag or release; failures after that point leave an auditable
-draft and never move an existing tag.
+A serialized Windows workflow runs after the reviewed `main` commit is promoted
+to `master`, or through a manual dispatch on `master`. A read-only build job on
+`windows-latest` verifies the exact checked-out SHA, valid semantic version,
+quality and security gates, packaging, installed-app smoke, filename, and
+SHA-256, then uploads an Actions artifact. A separate write-scoped job verifies
+the downloaded checksum, creates a draft GitHub pre-release targeting that SHA,
+adds generated commit and pull-request notes, uploads both assets, and publishes
+only after both are present. Failures before draft creation produce no tag or
+release; later failures leave an auditable draft and never move an existing tag.
 
 Release notes identify ECDD-53, Development Version 1 limitations, unsigned
 status, and disabled automatic updates.

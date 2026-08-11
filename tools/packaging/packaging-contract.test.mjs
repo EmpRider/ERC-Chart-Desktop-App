@@ -9,6 +9,7 @@ import {
   assertReleaseTargetsCommit,
   assertPackagedVersion,
   checksumLine,
+  composeReleaseNotes,
   installedExecutablePath,
   installerArtifactName,
   isReleaseAssetNameConflict,
@@ -118,6 +119,20 @@ test("rejects an existing release that targets another commit", () => {
         commitSha,
       ),
     /different commit/i,
+  );
+});
+
+test("preserves curated release context and appends generated changes", () => {
+  assert.equal(
+    composeReleaseNotes(
+      "# Development Version 1\n\nUnsigned prerelease.\n",
+      "## What's Changed\n\n* Add the secure shell by @EmpRider in #21\n",
+    ),
+    "# Development Version 1\n\nUnsigned prerelease.\n\n## What's Changed\n\n* Add the secure shell by @EmpRider in #21\n",
+  );
+  assert.equal(
+    composeReleaseNotes("Release context\n", ""),
+    "Release context\n",
   );
 });
 

@@ -3,52 +3,158 @@ name: Release
 on:
   push:
     branches:
-      - main
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.repository }}
+  group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  windows-release:
-    name: Windows release
-    runs-on: windows-2025
-    permissions:
-      contents: write
+  build-and-test:
+    name: Build and verify Windows release
+    runs-on: windows-latest
+    outputs:
+      artifact: ${{ steps.release.outputs.artifact }}
+      installer: ${{ steps.release.outputs.installer }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24.18.1
-          package-manager-cache: false
-      - name: Verify exact release source
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify master release source
         shell: pwsh
         run: |
+          if ("${{ github.ref }}" -ne "refs/heads/master") {
+            throw "Releases must run from the master branch."
+          }
           if ((git rev-parse HEAD) -ne "${{ github.sha }}") {
             throw "Release checkout does not match the triggering commit."
           }
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:unit
-      - run: npm run test:integration
-      - run: npm run build
-      - run: npm run smoke:multi-instance
-      - run: npm run test:performance
-      - run: npm run audit:ci
-      - run: npm run version:check
-      - run: npm run package:win
-      - run: npm run smoke:installer
-      - run: npm run checksum:installer
-      - name: Publish verified draft transaction
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "The release source does not contain the current main branch."
+          }
+      - name: Resolve semantic release identity
+        id: release
+        shell: pwsh
+        run: |
+          $manifest = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = [string]$manifest.version
+          $semver = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$'
+          if ($version -notmatch $semver) {
+            throw "package.json version is not valid semantic versioning."
+          }
+          "artifact=erc-chart-windows-v$version" >> $env:GITHUB_OUTPUT
+          "installer=ERC-Chart-Setup-$version.exe" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Validate repository governance
+        run: npm --workspace @erc-chart/delivery-governance run validate:repository
+      - name: Lint Markdown
+        run: npm --workspace @erc-chart/delivery-governance run lint:markdown
+      - name: Check formatting
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npm run typecheck
+      - name: Run unit tests
+        run: npm run test:unit
+      - name: Run integration tests
+        run: npm run test:integration
+      - name: Build production runtime (Release mode)
+        run: npm run build:runtime
+      - name: Smoke-test independent instances
+        run: npm run smoke:multi-instance
+      - name: Run performance gates
+        run: npm run test:performance
+      - name: Audit production dependencies
+        run: npm run audit:ci
+      - name: Verify workspace and release version
+        run: npm run version:check
+      - name: Build bundled x64 NSIS installer
+        run: npm run package:win
+      - name: Install, launch, and uninstall packaged application
+        run: npm run smoke:installer
+      - name: Generate SHA-256 checksum
+        run: npm run checksum:installer
+      - name: Upload verified Windows release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.release.outputs.artifact }}
+          path: |
+            release/${{ steps.release.outputs.installer }}
+            release/${{ steps.release.outputs.installer }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Summarize verified candidate
+        shell: pwsh
+        run: |
+          "### Verified Windows release candidate" >> $env:GITHUB_STEP_SUMMARY
+          "- Tag: ``${{ steps.release.outputs.tag }}``" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: ``${{ steps.release.outputs.installer }}``" >> $env:GITHUB_STEP_SUMMARY
+          "- Source: ``${{ github.sha }}`` on ``master``" >> $env:GITHUB_STEP_SUMMARY
+
+  publish:
+    name: Publish GitHub Release
+    needs: build-and-test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.18.1
+          package-manager-cache: false
+      - name: Download verified Windows release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.build-and-test.outputs.artifact }}
+          path: release
+      - name: Verify downloaded release candidate
+        shell: pwsh
+        run: |
+          $installer = "${{ needs.build-and-test.outputs.installer }}"
+          $checksumPath = Join-Path release "$installer.sha256"
+          $checksumParts = (Get-Content $checksumPath -Raw).Trim() -split '\s+', 2
+          if ($checksumParts.Count -ne 2 -or $checksumParts[1] -ne $installer) {
+            throw "Checksum file does not identify the expected installer."
+          }
+          $actual = (Get-FileHash (Join-Path release $installer) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $checksumParts[0].ToLowerInvariant()) {
+            throw "Downloaded installer checksum verification failed."
+          }
+      - name: Create immutable tag and publish generated release notes
         run: node tools/packaging/publish-release.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      - name: Summarize published release
+        shell: pwsh
+        run: |
+          "### Published GitHub Release" >> $env:GITHUB_STEP_SUMMARY
+          "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.build-and-test.outputs.tag }}" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: ``${{ needs.build-and-test.outputs.installer }}``" >> $env:GITHUB_STEP_SUMMARY
