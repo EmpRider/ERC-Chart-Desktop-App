@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ipcContractVersion } from "@erc-chart/contracts";
-import { createElement } from "react";
+import { parseHTML } from "linkedom";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   ApplicationShell,
@@ -20,6 +22,39 @@ function renderShell(connection, workspace = createInitialWorkspace()) {
       onWorkspaceAction: () => undefined,
     }),
   );
+}
+
+async function mountShell(t, workspace, onWorkspaceAction) {
+  const { document, window } = parseHTML(
+    '<!doctype html><html><body><main id="test-root"></main></body></html>',
+  );
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.document = document;
+  globalThis.window = window;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.getElementById("test-root");
+  assert.ok(container);
+  const root = createRoot(container);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  });
+
+  await act(async () => {
+    root.render(
+      createElement(ApplicationShell, {
+        connection: connectingShellState,
+        workspace,
+        onWorkspaceAction,
+      }),
+    );
+  });
+
+  return document;
 }
 
 test("renders the semantic dark application shell without deferred controls", () => {
@@ -87,23 +122,146 @@ test("fails closed on the initial render when the preload bridge is missing", ()
   assert.doesNotMatch(markup, /Connecting secure bridge/);
 });
 
-test("renders accessible tabs and exact one-to-four layout state", () => {
+test("renders accessible chart tabs and one enabled workspace add control", () => {
+  const markup = renderShell(connectingShellState);
+  const { document } = parseHTML(markup);
+  const addWorkspace = document.querySelector(".workspace-add");
+
+  assert.ok(addWorkspace);
+  assert.equal(addWorkspace.getAttribute("aria-label"), "Add workspace");
+  assert.equal(addWorkspace.hasAttribute("disabled"), false);
+  assert.equal(addWorkspace.getAttribute("title"), null);
+  assert.equal(document.querySelectorAll(".workspace-close").length, 0);
+  assert.equal(document.querySelector(".layout-selector"), null);
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 1);
+  assert.ok(document.querySelector('[role="tablist"]'));
+  assert.ok(document.querySelector('[role="tab"][aria-selected="true"]'));
+});
+
+test("disables workspace addition at four and exposes the maximum hint", () => {
   const initial = createInitialWorkspace();
-  const added = workspaceReducer(initial, { type: "add-tab" });
-  const four = workspaceReducer(added, {
-    type: "set-layout",
-    tabId: "tab-2",
-    layoutSize: 4,
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const four = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
   });
   const markup = renderShell(connectingShellState, four);
+  const { document } = parseHTML(markup);
+  const addWorkspace = document.querySelector(".workspace-add");
+  const chartSlots = document.querySelectorAll("[data-chart-slot]");
 
-  assert.match(markup, /role="tablist"/);
-  assert.match(markup, /role="tab"[^>]*aria-selected="true"[^>]*>Chart 2/);
-  assert.match(markup, /aria-label="Add chart tab"/);
-  assert.match(
-    markup,
-    /aria-label="Use four chart layout"[^>]*aria-pressed="true"/,
+  assert.ok(addWorkspace);
+  assert.equal(addWorkspace.hasAttribute("disabled"), true);
+  assert.equal(addWorkspace.getAttribute("title"), "Maximum 4 workspaces");
+  assert.equal(
+    addWorkspace.getAttribute("aria-label"),
+    "Add workspace. Maximum 4 workspaces",
   );
-  assert.equal((markup.match(/data-chart-slot=/g) ?? []).length, 4);
-  assert.match(markup, /data-layout="4"/);
+  assert.match(
+    document.querySelector('.workspace-toolbar [role="status"]')?.textContent ??
+      "",
+    /Maximum 4 workspaces/,
+  );
+  assert.equal(chartSlots.length, 4);
+  assert.equal(document.querySelectorAll(".workspace-close").length, 3);
+  assert.equal(chartSlots[0]?.querySelector(".workspace-close"), null);
+  assert.equal(
+    document.querySelector(".chart-grid")?.getAttribute("data-layout"),
+    "4",
+  );
+});
+
+test("re-enables addition after an added workspace is removed", () => {
+  const initial = createInitialWorkspace();
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const four = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const maximumMarkup = renderShell(connectingShellState, four);
+  const maximumDocument = parseHTML(maximumMarkup).document;
+  const maximumAdd = maximumDocument.querySelector(".workspace-add");
+
+  assert.ok(maximumAdd);
+  assert.equal(maximumAdd.hasAttribute("disabled"), true);
+  assert.equal(maximumAdd.getAttribute("title"), "Maximum 4 workspaces");
+
+  const removed = workspaceReducer(four, {
+    type: "remove-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-3",
+  });
+  const markup = renderShell(connectingShellState, removed);
+  const { document } = parseHTML(markup);
+  const addWorkspace = document.querySelector(".workspace-add");
+  const closeWorkspace = document.querySelector(".workspace-close");
+
+  assert.ok(addWorkspace);
+  assert.equal(addWorkspace.hasAttribute("disabled"), false);
+  assert.equal(addWorkspace.getAttribute("title"), null);
+  assert.equal(addWorkspace.getAttribute("aria-label"), "Add workspace");
+  assert.equal(
+    document.querySelector('.workspace-toolbar [role="status"]'),
+    null,
+  );
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 3);
+  assert.equal(document.querySelectorAll(".workspace-close").length, 2);
+  assert.equal(closeWorkspace?.getAttribute("aria-label"), "Close workspace 2");
+});
+
+test("dispatches the exact add workspace action", async (t) => {
+  const actions = [];
+  const document = await mountShell(t, createInitialWorkspace(), (action) => {
+    actions.push(action);
+  });
+  const addWorkspace = document.querySelector(".workspace-add");
+
+  assert.ok(addWorkspace);
+  await act(async () => addWorkspace.click());
+  assert.deepEqual(actions, [{ type: "add-workspace", tabId: "tab-1" }]);
+});
+
+test("dispatches the exact close action for an arbitrary workspace", async (t) => {
+  const initial = createInitialWorkspace();
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const four = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const actions = [];
+  const document = await mountShell(t, four, (action) => {
+    actions.push(action);
+  });
+  const closeWorkspaces = document.querySelectorAll(".workspace-close");
+
+  assert.equal(closeWorkspaces.length, 3);
+  await act(async () => closeWorkspaces[1]?.click());
+  assert.deepEqual(actions, [
+    {
+      type: "remove-workspace",
+      tabId: "tab-1",
+      workspaceId: "tab-1-chart-3",
+    },
+  ]);
 });

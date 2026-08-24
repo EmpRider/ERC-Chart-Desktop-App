@@ -1,5 +1,7 @@
 export type LayoutSize = 1 | 2 | 3 | 4;
 
+export const maximumWorkspaces = 4 as const;
+
 export interface ChartSlot {
   readonly id: string;
 }
@@ -9,6 +11,7 @@ export interface WorkspaceTab {
   readonly title: string;
   readonly layoutSize: LayoutSize;
   readonly slots: readonly ChartSlot[];
+  readonly nextWorkspaceNumber: number;
 }
 
 export interface WorkspaceState {
@@ -21,10 +24,11 @@ export type WorkspaceAction =
   | { readonly type: "add-tab" }
   | { readonly type: "select-tab"; readonly tabId: string }
   | { readonly type: "close-tab"; readonly tabId: string }
+  | { readonly type: "add-workspace"; readonly tabId: string }
   | {
-      readonly type: "set-layout";
+      readonly type: "remove-workspace";
       readonly tabId: string;
-      readonly layoutSize: LayoutSize;
+      readonly workspaceId: string;
     };
 
 function createTab(tabNumber: number): WorkspaceTab {
@@ -34,6 +38,7 @@ function createTab(tabNumber: number): WorkspaceTab {
     title: `Chart ${tabNumber}`,
     layoutSize: 1,
     slots: [{ id: `${id}-chart-1` }],
+    nextWorkspaceNumber: 2,
   };
 }
 
@@ -45,18 +50,29 @@ export function createInitialWorkspace(): WorkspaceState {
   };
 }
 
-function isLayoutSize(value: number): value is LayoutSize {
-  return Number.isInteger(value) && value >= 1 && value <= 4;
+function incrementLayoutSize(layoutSize: LayoutSize): LayoutSize | undefined {
+  switch (layoutSize) {
+    case 1:
+      return 2;
+    case 2:
+      return 3;
+    case 3:
+      return 4;
+    case 4:
+      return undefined;
+  }
 }
 
-function resizeTab(tab: WorkspaceTab, layoutSize: LayoutSize): WorkspaceTab {
-  if (tab.layoutSize === layoutSize) return tab;
-  const slots = Array.from({ length: layoutSize }, (_, index) =>
-    tab.slots[index] === undefined
-      ? { id: `${tab.id}-chart-${index + 1}` }
-      : tab.slots[index],
-  );
-  return { ...tab, layoutSize, slots };
+function decrementLayoutSize(layoutSize: LayoutSize): LayoutSize | undefined {
+  switch (layoutSize) {
+    case 4:
+      return 3;
+    case 3:
+      return 2;
+    case 2:
+    case 1:
+      return 1;
+  }
 }
 
 export function workspaceReducer(
@@ -89,16 +105,45 @@ export function workspaceReducer(
       if (replacement === undefined) return state;
       return { ...state, tabs, activeTabId: replacement.id };
     }
-    case "set-layout": {
-      if (!isLayoutSize(action.layoutSize)) return state;
+    case "add-workspace": {
       const index = state.tabs.findIndex((tab) => tab.id === action.tabId);
       if (index === -1) return state;
       const current = state.tabs[index];
       if (current === undefined) return state;
-      const resized = resizeTab(current, action.layoutSize);
-      if (resized === current) return state;
+      const layoutSize = incrementLayoutSize(current.layoutSize);
+      if (layoutSize === undefined) return state;
+      const workspaceNumber = current.nextWorkspaceNumber;
+      const updated = {
+        ...current,
+        layoutSize,
+        slots: [
+          ...current.slots,
+          { id: `${current.id}-chart-${workspaceNumber}` },
+        ],
+        nextWorkspaceNumber: workspaceNumber + 1,
+      };
       const tabs = [...state.tabs];
-      tabs[index] = resized;
+      tabs[index] = updated;
+      return { ...state, tabs };
+    }
+    case "remove-workspace": {
+      const tabIndex = state.tabs.findIndex((tab) => tab.id === action.tabId);
+      if (tabIndex === -1) return state;
+      const current = state.tabs[tabIndex];
+      if (current === undefined) return state;
+      const workspaceIndex = current.slots.findIndex(
+        (slot) => slot.id === action.workspaceId,
+      );
+      if (workspaceIndex <= 0) return state;
+      const layoutSize = decrementLayoutSize(current.layoutSize);
+      if (layoutSize === undefined) return state;
+      const updated = {
+        ...current,
+        layoutSize,
+        slots: current.slots.filter((slot) => slot.id !== action.workspaceId),
+      };
+      const tabs = [...state.tabs];
+      tabs[tabIndex] = updated;
       return { ...state, tabs };
     }
   }
