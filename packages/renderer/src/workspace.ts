@@ -63,7 +63,7 @@ function incrementLayoutSize(layoutSize: LayoutSize): LayoutSize | undefined {
   }
 }
 
-function decrementLayoutSize(layoutSize: LayoutSize): LayoutSize {
+function decrementLayoutSize(layoutSize: LayoutSize): LayoutSize | undefined {
   switch (layoutSize) {
     case 4:
       return 3;
@@ -135,9 +135,11 @@ export function workspaceReducer(
         (slot) => slot.id === action.workspaceId,
       );
       if (workspaceIndex <= 0) return state;
+      const layoutSize = decrementLayoutSize(current.layoutSize);
+      if (layoutSize === undefined) return state;
       const updated = {
         ...current,
-        layoutSize: decrementLayoutSize(current.layoutSize),
+        layoutSize,
         slots: current.slots.filter((slot) => slot.id !== action.workspaceId),
       };
       const tabs = [...state.tabs];

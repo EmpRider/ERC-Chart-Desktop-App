@@ -123,6 +123,32 @@ test("removes only added workspaces and never reuses a workspace ID", () => {
   );
 });
 
+test("fails closed when removal sees a malformed runtime layout size", () => {
+  const malformed = {
+    tabs: [
+      {
+        id: "tab-1",
+        title: "Chart 1",
+        // Runtime state may bypass TypeScript's closed LayoutSize domain.
+        layoutSize: 5,
+        slots: [{ id: "tab-1-chart-1" }, { id: "tab-1-chart-2" }],
+        nextWorkspaceNumber: 3,
+      },
+    ],
+    activeTabId: "tab-1",
+    nextTabNumber: 2,
+  };
+
+  assert.equal(
+    workspaceReducer(malformed, {
+      type: "remove-workspace",
+      tabId: "tab-1",
+      workspaceId: "tab-1-chart-2",
+    }),
+    malformed,
+  );
+});
+
 test("rejects invalid actions and always retains one tab", () => {
   const initial = createInitialWorkspace();
 
