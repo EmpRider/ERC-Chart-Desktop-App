@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
 
 permissions:
@@ -34,14 +34,14 @@ jobs:
           node-version: 24.18.1
           cache: npm
           cache-dependency-path: package-lock.json
-      - name: Verify master release source
+      - name: Verify main release source
         shell: pwsh
         env:
           RELEASE_REF: ${{ github.ref }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          if ($env:RELEASE_REF -ne "refs/heads/master") {
-            throw "Releases must run from the master branch."
+          if ($env:RELEASE_REF -ne "refs/heads/main") {
+            throw "Releases must run from the main branch."
           }
           $headSha = git rev-parse HEAD
           if ($headSha -ne $env:RELEASE_SHA) {
@@ -117,7 +117,7 @@ jobs:
           "### Verified Windows release candidate" >> $env:GITHUB_STEP_SUMMARY
           "- Tag: ``$env:RELEASE_TAG``" >> $env:GITHUB_STEP_SUMMARY
           "- Installer: ``$env:RELEASE_INSTALLER``" >> $env:GITHUB_STEP_SUMMARY
-          "- Source: ``$env:RELEASE_SHA`` on ``master``" >> $env:GITHUB_STEP_SUMMARY
+          "- Source: ``$env:RELEASE_SHA`` on ``main``" >> $env:GITHUB_STEP_SUMMARY
 
   publish:
     name: Publish GitHub Release
