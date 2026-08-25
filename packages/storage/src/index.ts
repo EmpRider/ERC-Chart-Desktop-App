@@ -112,6 +112,190 @@ const migrations = [
   `,
 ] as const;
 
+export interface StoredCandle {
+  readonly feedId: string;
+  readonly instrumentId: string;
+  readonly timeframeSec: number;
+  readonly openTimeMs: number;
+  readonly open: number;
+  readonly high: number;
+  readonly low: number;
+  readonly close: number;
+  readonly volume?: number;
+  readonly revision: number;
+}
+
+export interface CandleSeriesKey {
+  readonly feedId: string;
+  readonly instrumentId: string;
+  readonly timeframeSec: number;
+}
+
+interface CandleRow {
+  readonly feed_id: string;
+  readonly instrument_id: string;
+  readonly timeframe_sec: number;
+  readonly open_time_ms: number;
+  readonly open: number;
+  readonly high: number;
+  readonly low: number;
+  readonly close: number;
+  readonly volume: number | null;
+  readonly revision: number;
+}
+
+function requireFiniteNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new Error(`${field} must be a finite number.`);
+  return value;
+}
+
+function requireNonnegativeInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0)
+    throw new Error(`${field} must be a non-negative integer.`);
+  return value as number;
+}
+
+function validateSeriesKey(
+  input: CandleSeriesKey,
+  rejectExtraFields = true,
+): CandleSeriesKey {
+  if (input === null || typeof input !== "object")
+    throw new Error("Candle series key must be an object.");
+  if (rejectExtraFields)
+    assertFields(
+      input,
+      ["feedId", "instrumentId", "timeframeSec"],
+      "candle series key",
+    );
+  return {
+    feedId: requireProfileText(input.feedId, "feedId", 128),
+    instrumentId: requireProfileText(input.instrumentId, "instrumentId", 128),
+    timeframeSec: requirePositiveInteger(input.timeframeSec, "timeframeSec"),
+  };
+}
+
+function validateCandle(input: StoredCandle): StoredCandle {
+  if (input === null || typeof input !== "object")
+    throw new Error("Candle must be an object.");
+  assertFields(
+    input,
+    [
+      "feedId",
+      "instrumentId",
+      "timeframeSec",
+      "openTimeMs",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "revision",
+    ],
+    "candle",
+  );
+  const candle = {
+    ...validateSeriesKey(input, false),
+    openTimeMs: requireNonnegativeInteger(input.openTimeMs, "openTimeMs"),
+    open: requireFiniteNumber(input.open, "open"),
+    high: requireFiniteNumber(input.high, "high"),
+    low: requireFiniteNumber(input.low, "low"),
+    close: requireFiniteNumber(input.close, "close"),
+    ...(input.volume === undefined
+      ? {}
+      : { volume: requireFiniteNumber(input.volume, "volume") }),
+    revision: requireNonnegativeInteger(input.revision, "revision"),
+  };
+  if (
+    candle.high < candle.open ||
+    candle.high < candle.close ||
+    candle.low > candle.open ||
+    candle.low > candle.close
+  )
+    throw new Error("Candle high and low must contain open and close.");
+  return candle;
+}
+
+function toStoredCandle(row: CandleRow): StoredCandle {
+  return {
+    feedId: row.feed_id,
+    instrumentId: row.instrument_id,
+    timeframeSec: row.timeframe_sec,
+    openTimeMs: row.open_time_ms,
+    open: row.open,
+    high: row.high,
+    low: row.low,
+    close: row.close,
+    ...(row.volume === null ? {} : { volume: row.volume }),
+    revision: row.revision,
+  };
+}
+
+export function upsertCandles(
+  database: DatabaseSync,
+  candles: readonly StoredCandle[],
+): number {
+  if (!Array.isArray(candles)) throw new Error("Candles must be an array.");
+  const checked = candles.map(validateCandle);
+  if (checked.length === 0) return 0;
+  return withTransaction(database, () => {
+    const statement = database.prepare(`
+      INSERT INTO candles
+        (feed_id, instrument_id, timeframe_sec, open_time_ms, open, high, low, close, volume, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(feed_id, instrument_id, timeframe_sec, open_time_ms) DO UPDATE SET
+        open = excluded.open,
+        high = excluded.high,
+        low = excluded.low,
+        close = excluded.close,
+        volume = excluded.volume,
+        revision = excluded.revision
+    `);
+    let changes = 0;
+    for (const candle of checked) {
+      changes += Number(
+        statement.run(
+          candle.feedId,
+          candle.instrumentId,
+          candle.timeframeSec,
+          candle.openTimeMs,
+          candle.open,
+          candle.high,
+          candle.low,
+          candle.close,
+          candle.volume ?? null,
+          candle.revision,
+        ).changes,
+      );
+    }
+    return changes;
+  });
+}
+
+export function getCandles(
+  database: DatabaseSync,
+  key: CandleSeriesKey,
+): readonly StoredCandle[] {
+  const checked = validateSeriesKey(key);
+  return (
+    database
+      .prepare(
+        `
+        SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
+          open, high, low, close, volume, revision
+        FROM candles
+        WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+        ORDER BY open_time_ms
+      `,
+      )
+      .all(
+        checked.feedId,
+        checked.instrumentId,
+        checked.timeframeSec,
+      ) as unknown as CandleRow[]
+  ).map(toStoredCandle);
+}
+
 export interface ProviderProfile {
   readonly id: string;
   readonly providerId: string;
