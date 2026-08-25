@@ -4,7 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { openStorageDatabase } from "../dist/index.js";
+import {
+  createProviderProfile,
+  deleteProviderProfile,
+  getProviderProfile,
+  listProviderProfiles,
+  openStorageDatabase,
+  updateProviderProfile,
+} from "../dist/index.js";
 
 const expectedTables = [
   "app_settings",
@@ -112,6 +119,127 @@ test("rolls back and closes the database when a migration fails", async () => {
 
       assert.deepEqual(tables, ["diagnostic_events", "schema_migrations"]);
       assert.deepEqual(migrations, []);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("creates, reads, lists, updates, and deletes provider metadata", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const created = createProviderProfile(database, {
+        id: "primary",
+        providerId: "binomo",
+        displayName: "Primary account",
+        credentialReference: "ERC-chart/provider/binomo/primary",
+      });
+      assert.equal(created.createdAtMs, created.updatedAtMs);
+      assert.deepEqual(getProviderProfile(database, "primary"), created);
+      assert.deepEqual(listProviderProfiles(database), [created]);
+
+      const updated = updateProviderProfile(database, "primary", {
+        displayName: "Renamed account",
+      });
+      assert.equal(updated.displayName, "Renamed account");
+      assert.equal(updated.createdAtMs, created.createdAtMs);
+      assert.ok(updated.updatedAtMs >= created.updatedAtMs);
+
+      assert.equal(deleteProviderProfile(database, "primary"), true);
+      assert.equal(deleteProviderProfile(database, "primary"), false);
+      assert.equal(getProviderProfile(database, "primary"), undefined);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects raw secret-like provider profile fields without persisting them", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      for (const secretField of ["authtoken", "device_id", "password"]) {
+        assert.throws(
+          () =>
+            createProviderProfile(database, {
+              id: "unsafe",
+              providerId: "binomo",
+              displayName: "Unsafe account",
+              credentialReference: "ERC-chart/provider/binomo/unsafe",
+              [secretField]: "raw-secret",
+            }),
+          new RegExp(`Unsupported provider profile field: ${secretField}`),
+        );
+      }
+      assert.throws(
+        () =>
+          updateProviderProfile(database, "unsafe", {
+            displayName: "Unsafe account",
+            authtoken: "raw-secret",
+          }),
+        /Unsupported provider profile update field: authtoken/,
+      );
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM provider_profiles")
+          .get().count,
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("requires an opaque credential reference matching provider and profile", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: "primary",
+            providerId: "binomo",
+            displayName: "Primary account",
+            credentialReference: "raw-secret-value",
+          }),
+        /credentialReference/,
+      );
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: "primary",
+            providerId: "binomo",
+            displayName: "Primary account",
+            credentialReference: "ERC-chart/provider/other/primary",
+          }),
+        /credentialReference/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects invalid metadata and missing updates", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: " ",
+            providerId: "binomo",
+            displayName: "Primary account",
+            credentialReference: "ERC-chart/provider/binomo/primary",
+          }),
+        /id/,
+      );
+      assert.throws(
+        () => updateProviderProfile(database, "missing", { displayName: "X" }),
+        /Provider profile not found: missing/,
+      );
     } finally {
       database.close();
     }

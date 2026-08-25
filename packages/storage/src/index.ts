@@ -98,6 +98,199 @@ const migrations = [
   `,
 ] as const;
 
+export interface ProviderProfile {
+  readonly id: string;
+  readonly providerId: string;
+  readonly displayName: string;
+  readonly credentialReference: string;
+  readonly createdAtMs: number;
+  readonly updatedAtMs: number;
+}
+
+export interface CreateProviderProfileInput {
+  readonly id: string;
+  readonly providerId: string;
+  readonly displayName: string;
+  readonly credentialReference: string;
+}
+
+export interface UpdateProviderProfileInput {
+  readonly displayName: string;
+}
+
+interface ProviderProfileRow {
+  readonly id: string;
+  readonly provider_id: string;
+  readonly display_name: string;
+  readonly credential_target: string;
+  readonly created_at_ms: number;
+  readonly updated_at_ms: number;
+}
+
+const profileSelect = `
+  SELECT id, provider_id, display_name, credential_target, created_at_ms, updated_at_ms
+  FROM provider_profiles
+`;
+
+function assertFields(
+  value: object,
+  allowedFields: readonly string[],
+  label: string,
+): void {
+  const unsupported = Object.keys(value).find(
+    (field) => !allowedFields.includes(field),
+  );
+  if (unsupported !== undefined)
+    throw new Error(`Unsupported ${label} field: ${unsupported}.`);
+}
+
+function requireProfileText(
+  value: unknown,
+  field: string,
+  maximumLength: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    value.length === 0 ||
+    value.length > maximumLength
+  )
+    throw new Error(
+      `${field} must be a non-empty, trimmed string of at most ${maximumLength} characters.`,
+    );
+  return value;
+}
+
+function validateProfileIdentity(id: unknown, providerId: unknown) {
+  const validSegment = /^[A-Za-z0-9._-]+$/;
+  const checkedId = requireProfileText(id, "id", 128);
+  const checkedProviderId = requireProfileText(providerId, "providerId", 128);
+  if (!validSegment.test(checkedId))
+    throw new Error("id contains unsupported characters.");
+  if (!validSegment.test(checkedProviderId))
+    throw new Error("providerId contains unsupported characters.");
+  return { id: checkedId, providerId: checkedProviderId };
+}
+
+function validateCredentialReference(
+  value: unknown,
+  providerId: string,
+  profileId: string,
+): string {
+  const reference = requireProfileText(value, "credentialReference", 320);
+  if (reference !== `ERC-chart/provider/${providerId}/${profileId}`)
+    throw new Error(
+      "credentialReference must be the opaque target for this provider profile.",
+    );
+  return reference;
+}
+
+function toProviderProfile(row: ProviderProfileRow): ProviderProfile {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    displayName: row.display_name,
+    credentialReference: row.credential_target,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+export function createProviderProfile(
+  database: DatabaseSync,
+  input: CreateProviderProfileInput,
+): ProviderProfile {
+  if (input === null || typeof input !== "object")
+    throw new Error("Provider profile input must be an object.");
+  assertFields(
+    input,
+    ["id", "providerId", "displayName", "credentialReference"],
+    "provider profile",
+  );
+  const { id, providerId } = validateProfileIdentity(
+    input.id,
+    input.providerId,
+  );
+  const displayName = requireProfileText(input.displayName, "displayName", 256);
+  const credentialReference = validateCredentialReference(
+    input.credentialReference,
+    providerId,
+    id,
+  );
+  const now = Date.now();
+  database
+    .prepare(
+      `INSERT INTO provider_profiles
+        (id, provider_id, display_name, credential_target, created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(id, providerId, displayName, credentialReference, now, now);
+  return {
+    id,
+    providerId,
+    displayName,
+    credentialReference,
+    createdAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+export function getProviderProfile(
+  database: DatabaseSync,
+  id: string,
+): ProviderProfile | undefined {
+  const checkedId = requireProfileText(id, "id", 128);
+  const row = database
+    .prepare(`${profileSelect} WHERE id = ?`)
+    .get(checkedId) as ProviderProfileRow | undefined;
+  return row === undefined ? undefined : toProviderProfile(row);
+}
+
+export function listProviderProfiles(
+  database: DatabaseSync,
+): readonly ProviderProfile[] {
+  return (
+    database
+      .prepare(`${profileSelect} ORDER BY id`)
+      .all() as unknown as ProviderProfileRow[]
+  ).map(toProviderProfile);
+}
+
+export function updateProviderProfile(
+  database: DatabaseSync,
+  id: string,
+  input: UpdateProviderProfileInput,
+): ProviderProfile {
+  if (input === null || typeof input !== "object")
+    throw new Error("Provider profile update must be an object.");
+  assertFields(input, ["displayName"], "provider profile update");
+  const checkedId = requireProfileText(id, "id", 128);
+  const displayName = requireProfileText(input.displayName, "displayName", 256);
+  const result = database
+    .prepare(
+      "UPDATE provider_profiles SET display_name = ?, updated_at_ms = ? WHERE id = ?",
+    )
+    .run(displayName, Date.now(), checkedId);
+  if (result.changes === 0)
+    throw new Error(`Provider profile not found: ${checkedId}.`);
+  const profile = getProviderProfile(database, checkedId);
+  if (profile === undefined)
+    throw new Error(`Provider profile disappeared after update: ${checkedId}.`);
+  return profile;
+}
+
+export function deleteProviderProfile(
+  database: DatabaseSync,
+  id: string,
+): boolean {
+  const checkedId = requireProfileText(id, "id", 128);
+  return (
+    database
+      .prepare("DELETE FROM provider_profiles WHERE id = ?")
+      .run(checkedId).changes > 0
+  );
+}
+
 export async function openStorageDatabase(
   databasePath: string,
 ): Promise<DatabaseSync> {
