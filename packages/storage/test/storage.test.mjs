@@ -17,11 +17,13 @@ import {
   listAppSettings,
   listPlugins,
   listProviderProfiles,
+  loadWorkspace,
   openStorageDatabase,
   parseWorkspaceV1,
   putAppSetting,
   putPlugin,
   recoverStorageDatabase,
+  saveWorkspace,
   serializeWorkspaceV1,
   StorageDatabaseCorruptionError,
   updateProviderProfile,
@@ -185,6 +187,114 @@ async function withDatabase(run) {
     await rm(directory, { recursive: true, force: true });
   }
 }
+
+test("persists and restores workspace tabs, layouts, charts, and indicators", async () => {
+  await withDatabase(async (databasePath) => {
+    const workspace = {
+      ...validWorkspace,
+      activeTabId: "tab-secondary",
+      tabs: [
+        validWorkspace.tabs[0],
+        {
+          id: "tab-secondary",
+          title: "Secondary",
+          layout: "split-vertical",
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              id: "chart-2",
+              instrumentId: "EURUSD",
+              timeframeSeconds: 300,
+              chartType: "line",
+            },
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              id: "chart-3",
+              instrumentId: "GBPUSD",
+              timeframeSeconds: 900,
+              chartType: "area",
+              indicators: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(
+        saveWorkspace(database, workspace, "desktop-instance-1"),
+        workspace,
+      );
+    } finally {
+      database.close();
+    }
+
+    const reopened = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(loadWorkspace(reopened, workspace.id), workspace);
+      const stored = reopened
+        .prepare(
+          "SELECT schema_version, name, instance_id, document_json FROM workspaces WHERE id = ?",
+        )
+        .get(workspace.id);
+      assert.deepEqual(
+        {
+          schemaVersion: stored.schema_version,
+          name: stored.name,
+          instanceId: stored.instance_id,
+          document: JSON.parse(stored.document_json),
+        },
+        {
+          schemaVersion: 1,
+          name: workspace.name,
+          instanceId: "desktop-instance-1",
+          document: workspace,
+        },
+      );
+      assert.equal(stored.document_json.includes('"drawings"'), false);
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+test("workspace persistence rejects drawings and malformed stored documents", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          saveWorkspace(
+            database,
+            { ...validWorkspace, drawings: [{ id: "drawing-1" }] },
+            "desktop-instance-1",
+          ),
+        /Invalid workspace v1/,
+      );
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM workspaces").get()
+          .count,
+        0,
+      );
+
+      database
+        .prepare(
+          `INSERT INTO workspaces
+            (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+           VALUES (?, 1, ?, ?, ?, 0, 0)`,
+        )
+        .run("malformed", "Malformed", '{"schemaVersion":1}', "instance");
+      assert.throws(
+        () => loadWorkspace(database, "malformed"),
+        /Invalid workspace v1/,
+      );
+      assert.equal(loadWorkspace(database, "missing"), undefined);
+    } finally {
+      database.close();
+    }
+  });
+});
 
 test("creates the versioned SQLite schema and records its migration", async () => {
   await withDatabase(async (databasePath) => {
