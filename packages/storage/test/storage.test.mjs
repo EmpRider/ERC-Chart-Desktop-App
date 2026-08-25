@@ -6,11 +6,19 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
   createProviderProfile,
+  deleteAppSetting,
+  deletePlugin,
   deleteProviderProfile,
+  getAppSetting,
+  getPlugin,
   getProviderProfile,
+  listAppSettings,
+  listPlugins,
   listProviderProfiles,
   openStorageDatabase,
   parseWorkspaceV1,
+  putAppSetting,
+  putPlugin,
   recoverStorageDatabase,
   serializeWorkspaceV1,
   StorageDatabaseCorruptionError,
@@ -488,6 +496,143 @@ test("rejects invalid metadata and missing updates", async () => {
       assert.throws(
         () => updateProviderProfile(database, "missing", { displayName: "X" }),
         /Provider profile not found: missing/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("persists versioned app settings with last-writer-wins updates", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const first = putAppSetting(database, {
+        key: "developer-mode",
+        schemaVersion: 1,
+        value: { enabled: false },
+      });
+      assert.deepEqual(getAppSetting(database, "developer-mode"), first);
+
+      const updated = putAppSetting(database, {
+        key: "developer-mode",
+        schemaVersion: 2,
+        value: { enabled: true, acceptedWarning: true },
+      });
+      assert.equal(updated.schemaVersion, 2);
+      assert.ok(updated.updatedAtMs >= first.updatedAtMs);
+      assert.deepEqual(listAppSettings(database), [updated]);
+      assert.equal(deleteAppSetting(database, "developer-mode"), true);
+      assert.equal(deleteAppSetting(database, "developer-mode"), false);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("persists plugin versions, permissions, and deterministic registry order", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const mutablePermissions = ["network:binomo.com", "credentials:profile"];
+      const newer = putPlugin(database, {
+        pluginId: "erc.provider.binomo",
+        version: "2.0.0",
+        kind: "provider",
+        trust: "signed",
+        status: "active",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"b".repeat(64)}`,
+        permissions: mutablePermissions,
+      });
+      const older = putPlugin(database, {
+        pluginId: "erc.provider.binomo",
+        version: "1.0.0",
+        kind: "provider",
+        trust: "signed",
+        status: "disabled",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"a".repeat(64)}`,
+        permissions: [],
+      });
+
+      assert.deepEqual(mutablePermissions, [
+        "network:binomo.com",
+        "credentials:profile",
+      ]);
+      assert.deepEqual(
+        getPlugin(database, newer.pluginId, newer.version),
+        newer,
+      );
+      assert.deepEqual(listPlugins(database), [older, newer]);
+
+      const disabled = putPlugin(database, {
+        ...newer,
+        status: "disabled",
+        permissions: ["network:binomo.com"],
+      });
+      assert.equal(disabled.status, "disabled");
+      assert.deepEqual(disabled.permissions, ["network:binomo.com"]);
+      assert.equal(deletePlugin(database, newer.pluginId, newer.version), true);
+      assert.equal(
+        getPlugin(database, newer.pluginId, newer.version),
+        undefined,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects malformed settings and plugin registry records", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          putAppSetting(database, {
+            key: "bad",
+            schemaVersion: 1,
+            value: { unsafe: undefined },
+          }),
+        /JSON-compatible/,
+      );
+      assert.throws(
+        () =>
+          putAppSetting(database, {
+            key: "sparse",
+            schemaVersion: 1,
+            value: Array(1),
+          }),
+        /JSON-compatible/,
+      );
+      assert.throws(
+        () =>
+          putPlugin(database, {
+            pluginId: "bad id",
+            version: "1.0.0",
+            kind: "provider",
+            trust: "signed",
+            status: "active",
+            manifest: {},
+            integrityHash: `sha256:${"a".repeat(64)}`,
+            permissions: [],
+          }),
+        /pluginId/,
+      );
+      assert.throws(
+        () =>
+          putPlugin(database, {
+            pluginId: "erc.provider.binomo",
+            version: "1.0.0",
+            kind: "provider",
+            trust: "signed",
+            status: "active",
+            manifest: {},
+            integrityHash: `sha256:${"a".repeat(64)}`,
+            permissions: ["network:binomo.com", "network:binomo.com"],
+          }),
+        /permissions must be unique/,
       );
     } finally {
       database.close();

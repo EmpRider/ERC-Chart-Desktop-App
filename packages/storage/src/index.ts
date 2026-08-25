@@ -305,6 +305,428 @@ export function deleteProviderProfile(
   );
 }
 
+export interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
+
+export type JsonValue =
+  null | boolean | number | string | readonly JsonValue[] | JsonObject;
+
+export interface AppSetting {
+  readonly key: string;
+  readonly schemaVersion: number;
+  readonly value: JsonValue;
+  readonly updatedAtMs: number;
+}
+
+export interface PutAppSettingInput {
+  readonly key: string;
+  readonly schemaVersion: number;
+  readonly value: JsonValue;
+}
+
+export type PluginKind = "provider" | "indicator";
+export type PluginTrust = "bundled" | "signed" | "unsigned";
+export type PluginStatus = "active" | "disabled" | "incompatible";
+
+export interface PluginRegistryEntry {
+  readonly pluginId: string;
+  readonly version: string;
+  readonly kind: PluginKind;
+  readonly trust: PluginTrust;
+  readonly status: PluginStatus;
+  readonly manifest: JsonObject;
+  readonly integrityHash: string;
+  readonly permissions: readonly string[];
+}
+
+export type PutPluginInput = PluginRegistryEntry;
+
+interface AppSettingRow {
+  readonly key: string;
+  readonly schema_version: number;
+  readonly value_json: string;
+  readonly updated_at_ms: number;
+}
+
+interface PluginRow {
+  readonly plugin_id: string;
+  readonly version: string;
+  readonly kind: string;
+  readonly trust: string;
+  readonly status: string;
+  readonly manifest_json: string;
+  readonly integrity_hash: string;
+}
+
+const settingSelect =
+  "SELECT key, schema_version, value_json, updated_at_ms FROM app_settings";
+const pluginSelect = `
+  SELECT plugin_id, version, kind, trust, status, manifest_json, integrity_hash
+  FROM plugins
+`;
+
+function cloneJson(
+  value: unknown,
+  label: string,
+  seen = new WeakSet(),
+): JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "object")
+    throw new Error(`${label} must be JSON-compatible.`);
+  if (seen.has(value)) throw new Error(`${label} must be JSON-compatible.`);
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (
+        Object.keys(value).length !== value.length ||
+        !value.every((_, index) => Object.hasOwn(value, index))
+      )
+        throw new Error(`${label} must be JSON-compatible.`);
+      return value.map((item) => cloneJson(item, label, seen));
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null)
+      throw new Error(`${label} must be JSON-compatible.`);
+    const copy: Record<string, JsonValue> = {};
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string")
+        throw new Error(`${label} must be JSON-compatible.`);
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !("value" in descriptor)
+      )
+        throw new Error(`${label} must be JSON-compatible.`);
+      copy[key] = cloneJson(descriptor.value, label, seen);
+    }
+    return copy;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function serializeJson(value: unknown, label: string): string {
+  return JSON.stringify(cloneJson(value, label));
+}
+
+function parseJson(json: string, label: string): JsonValue {
+  try {
+    return cloneJson(JSON.parse(json), label);
+  } catch (error) {
+    throw new Error(`Stored ${label} is not valid JSON.`, { cause: error });
+  }
+}
+
+function requirePositiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1)
+    throw new Error(`${field} must be a positive integer.`);
+  return value as number;
+}
+
+function requireRegistryText(
+  value: unknown,
+  field: string,
+  pattern: RegExp,
+  maximumLength: number,
+): string {
+  const text = requireProfileText(value, field, maximumLength);
+  if (!pattern.test(text)) throw new Error(`${field} has an invalid format.`);
+  return text;
+}
+
+function toAppSetting(row: AppSettingRow): AppSetting {
+  return {
+    key: row.key,
+    schemaVersion: row.schema_version,
+    value: parseJson(row.value_json, "app setting value"),
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+export function putAppSetting(
+  database: DatabaseSync,
+  input: PutAppSettingInput,
+): AppSetting {
+  if (input === null || typeof input !== "object")
+    throw new Error("App setting input must be an object.");
+  assertFields(input, ["key", "schemaVersion", "value"], "app setting");
+  const key = requireRegistryText(
+    input.key,
+    "key",
+    /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/,
+    128,
+  );
+  const schemaVersion = requirePositiveInteger(
+    input.schemaVersion,
+    "schemaVersion",
+  );
+  const valueJson = serializeJson(input.value, "App setting value");
+  const updatedAtMs = Date.now();
+  database
+    .prepare(
+      `INSERT INTO app_settings (key, schema_version, value_json, updated_at_ms)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         schema_version = excluded.schema_version,
+         value_json = excluded.value_json,
+         updated_at_ms = excluded.updated_at_ms`,
+    )
+    .run(key, schemaVersion, valueJson, updatedAtMs);
+  return {
+    key,
+    schemaVersion,
+    value: parseJson(valueJson, "app setting value"),
+    updatedAtMs,
+  };
+}
+
+export function getAppSetting(
+  database: DatabaseSync,
+  key: string,
+): AppSetting | undefined {
+  const checkedKey = requireProfileText(key, "key", 128);
+  const row = database
+    .prepare(`${settingSelect} WHERE key = ?`)
+    .get(checkedKey) as AppSettingRow | undefined;
+  return row === undefined ? undefined : toAppSetting(row);
+}
+
+export function listAppSettings(database: DatabaseSync): readonly AppSetting[] {
+  return (
+    database
+      .prepare(`${settingSelect} ORDER BY key`)
+      .all() as unknown as AppSettingRow[]
+  ).map(toAppSetting);
+}
+
+export function deleteAppSetting(database: DatabaseSync, key: string): boolean {
+  const checkedKey = requireProfileText(key, "key", 128);
+  return (
+    database.prepare("DELETE FROM app_settings WHERE key = ?").run(checkedKey)
+      .changes > 0
+  );
+}
+
+function validatePlugin(input: PutPluginInput): {
+  readonly pluginId: string;
+  readonly version: string;
+  readonly kind: PluginKind;
+  readonly trust: PluginTrust;
+  readonly status: PluginStatus;
+  readonly manifestJson: string;
+  readonly integrityHash: string;
+  readonly permissions: readonly string[];
+} {
+  assertFields(
+    input,
+    [
+      "pluginId",
+      "version",
+      "kind",
+      "trust",
+      "status",
+      "manifest",
+      "integrityHash",
+      "permissions",
+    ],
+    "plugin",
+  );
+  const pluginId = requireRegistryText(
+    input.pluginId,
+    "pluginId",
+    /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/,
+    128,
+  );
+  const version = requireRegistryText(
+    input.version,
+    "version",
+    /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/,
+    128,
+  );
+  if (input.kind !== "provider" && input.kind !== "indicator")
+    throw new Error("kind must be provider or indicator.");
+  if (!["bundled", "signed", "unsigned"].includes(input.trust))
+    throw new Error("trust has an invalid value.");
+  if (!["active", "disabled", "incompatible"].includes(input.status))
+    throw new Error("status has an invalid value.");
+  const manifestJson = serializeJson(input.manifest, "Plugin manifest");
+  const manifest = parseJson(manifestJson, "plugin manifest");
+  if (
+    manifest === null ||
+    Array.isArray(manifest) ||
+    typeof manifest !== "object"
+  )
+    throw new Error("Plugin manifest must be an object.");
+  const integrityHash = requireRegistryText(
+    input.integrityHash,
+    "integrityHash",
+    /^sha256:[a-f0-9]{64}$/,
+    71,
+  );
+  if (!Array.isArray(input.permissions))
+    throw new Error("permissions must be an array.");
+  const permissionValues = input.permissions.map((permission) =>
+    requireRegistryText(
+      permission,
+      "permission",
+      /^[A-Za-z0-9*.-]+(?::[A-Za-z0-9*.-]+)*$/,
+      256,
+    ),
+  );
+  if (new Set(permissionValues).size !== permissionValues.length)
+    throw new Error("permissions must be unique.");
+  const permissions = permissionValues.toSorted();
+  return {
+    pluginId,
+    version,
+    kind: input.kind,
+    trust: input.trust,
+    status: input.status,
+    manifestJson,
+    integrityHash,
+    permissions,
+  };
+}
+
+function pluginPermissions(
+  database: DatabaseSync,
+  pluginId: string,
+  version: string,
+): readonly string[] {
+  return (
+    database
+      .prepare(
+        `SELECT permission FROM plugin_permissions
+         WHERE plugin_id = ? AND version = ? ORDER BY permission`,
+      )
+      .all(pluginId, version) as unknown as { readonly permission: string }[]
+  ).map(({ permission }) => permission);
+}
+
+function toPlugin(database: DatabaseSync, row: PluginRow): PluginRegistryEntry {
+  const manifest = parseJson(row.manifest_json, "plugin manifest");
+  if (
+    manifest === null ||
+    Array.isArray(manifest) ||
+    typeof manifest !== "object"
+  )
+    throw new Error("Stored plugin manifest is not an object.");
+  const plugin = validatePlugin({
+    pluginId: row.plugin_id,
+    version: row.version,
+    kind: row.kind as PluginKind,
+    trust: row.trust as PluginTrust,
+    status: row.status as PluginStatus,
+    manifest: manifest as JsonObject,
+    integrityHash: row.integrity_hash,
+    permissions: pluginPermissions(database, row.plugin_id, row.version),
+  });
+  return {
+    pluginId: plugin.pluginId,
+    version: plugin.version,
+    kind: plugin.kind,
+    trust: plugin.trust,
+    status: plugin.status,
+    manifest: manifest as JsonObject,
+    integrityHash: plugin.integrityHash,
+    permissions: plugin.permissions,
+  };
+}
+
+export function putPlugin(
+  database: DatabaseSync,
+  input: PutPluginInput,
+): PluginRegistryEntry {
+  if (input === null || typeof input !== "object")
+    throw new Error("Plugin input must be an object.");
+  const plugin = validatePlugin(input);
+  withTransaction(database, () => {
+    database
+      .prepare(
+        `INSERT INTO plugins
+          (plugin_id, version, kind, trust, status, manifest_json, integrity_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(plugin_id, version) DO UPDATE SET
+           kind = excluded.kind,
+           trust = excluded.trust,
+           status = excluded.status,
+           manifest_json = excluded.manifest_json,
+           integrity_hash = excluded.integrity_hash`,
+      )
+      .run(
+        plugin.pluginId,
+        plugin.version,
+        plugin.kind,
+        plugin.trust,
+        plugin.status,
+        plugin.manifestJson,
+        plugin.integrityHash,
+      );
+    database
+      .prepare(
+        "DELETE FROM plugin_permissions WHERE plugin_id = ? AND version = ?",
+      )
+      .run(plugin.pluginId, plugin.version);
+    const insertPermission = database.prepare(
+      `INSERT INTO plugin_permissions
+        (plugin_id, version, permission, granted_at_ms) VALUES (?, ?, ?, ?)`,
+    );
+    const grantedAtMs = Date.now();
+    for (const permission of plugin.permissions)
+      insertPermission.run(
+        plugin.pluginId,
+        plugin.version,
+        permission,
+        grantedAtMs,
+      );
+  });
+  const stored = getPlugin(database, plugin.pluginId, plugin.version);
+  if (stored === undefined)
+    throw new Error("Plugin disappeared after persistence.");
+  return stored;
+}
+
+export function getPlugin(
+  database: DatabaseSync,
+  pluginId: string,
+  version: string,
+): PluginRegistryEntry | undefined {
+  const checkedPluginId = requireProfileText(pluginId, "pluginId", 128);
+  const checkedVersion = requireProfileText(version, "version", 128);
+  const row = database
+    .prepare(`${pluginSelect} WHERE plugin_id = ? AND version = ?`)
+    .get(checkedPluginId, checkedVersion) as PluginRow | undefined;
+  return row === undefined ? undefined : toPlugin(database, row);
+}
+
+export function listPlugins(
+  database: DatabaseSync,
+): readonly PluginRegistryEntry[] {
+  return (
+    database
+      .prepare(`${pluginSelect} ORDER BY plugin_id, version`)
+      .all() as unknown as PluginRow[]
+  ).map((row) => toPlugin(database, row));
+}
+
+export function deletePlugin(
+  database: DatabaseSync,
+  pluginId: string,
+  version: string,
+): boolean {
+  const checkedPluginId = requireProfileText(pluginId, "pluginId", 128);
+  const checkedVersion = requireProfileText(version, "version", 128);
+  return (
+    database
+      .prepare("DELETE FROM plugins WHERE plugin_id = ? AND version = ?")
+      .run(checkedPluginId, checkedVersion).changes > 0
+  );
+}
+
 export function withTransaction<T>(database: DatabaseSync, run: () => T): T {
   database.exec("BEGIN IMMEDIATE");
   try {
