@@ -2,6 +2,20 @@ import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+export {
+  parseWorkspaceV1,
+  serializeWorkspaceV1,
+  validateWorkspaceV1,
+} from "./workspace-v1.js";
+export type {
+  WorkspaceChartSlot,
+  WorkspaceIndicator,
+  WorkspaceIndicatorInput,
+  WorkspaceTab,
+  WorkspaceV1,
+  WorkspaceViewport,
+} from "./workspace-v1.js";
+
 const migrations = [
   `
   CREATE TABLE provider_profiles (
