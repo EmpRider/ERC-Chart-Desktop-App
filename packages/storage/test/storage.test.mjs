@@ -1,4 +1,5 @@
 ﻿import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import {
   deletePlugin,
   deleteProviderProfile,
   getAppSetting,
+  getCandles,
   getPlugin,
   getProviderProfile,
   listAppSettings,
@@ -23,6 +25,7 @@ import {
   serializeWorkspaceV1,
   StorageDatabaseCorruptionError,
   updateProviderProfile,
+  upsertCandles,
   validateWorkspaceV1,
   withTransaction,
 } from "../dist/index.js";
@@ -655,5 +658,175 @@ test("rejects a database created by a newer application version", async () => {
 
     const reopened = new DatabaseSync(databasePath);
     reopened.close();
+  });
+});
+
+const candleWorker = `
+  import { getCandles, openStorageDatabase, upsertCandles } from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};
+  const database = await openStorageDatabase(process.env.ERC_TEST_DATABASE);
+  try {
+    const offset = Number(process.env.ERC_TEST_OFFSET);
+    for (let index = 0; index < 40; index += 1) {
+      const open = offset + index + 1;
+      upsertCandles(database, [{
+        feedId: "feed-main",
+        instrumentId: "EURUSD",
+        timeframeSec: 60,
+        openTimeMs: (offset + index) * 60_000,
+        open,
+        high: open + 1,
+        low: open - 1,
+        close: open + 0.5,
+        volume: index,
+        revision: 1,
+      }]);
+      getCandles(database, {
+        feedId: "feed-main",
+        instrumentId: "EURUSD",
+        timeframeSec: 60,
+      });
+    }
+  } finally {
+    database.close();
+  }
+`;
+
+function runCandleWorker(databasePath, offset) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", candleWorker],
+      {
+        env: {
+          ...process.env,
+          ERC_TEST_DATABASE: databasePath,
+          ERC_TEST_OFFSET: String(offset),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else
+        reject(new Error(`Candle worker exited ${code ?? signal}: ${stderr}`));
+    });
+  });
+}
+
+test("upserts and reads a validated candle series", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      upsertCandles(database, [
+        {
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+          openTimeMs: 60_000,
+          open: 2,
+          high: 3,
+          low: 1,
+          close: 2.5,
+          revision: 1,
+        },
+        {
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+          openTimeMs: 0,
+          open: 1,
+          high: 2,
+          low: 0.5,
+          close: 1.5,
+          volume: 10,
+          revision: 1,
+        },
+      ]);
+      upsertCandles(database, [
+        {
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+          openTimeMs: 0,
+          open: 3,
+          high: 4,
+          low: 2,
+          close: 3.5,
+          volume: 20,
+          revision: 2,
+        },
+      ]);
+
+      const candles = getCandles(database, {
+        feedId: "feed-main",
+        instrumentId: "EURUSD",
+        timeframeSec: 60,
+      });
+      assert.deepEqual(
+        candles.map(({ openTimeMs, open, volume, revision }) => ({
+          openTimeMs,
+          open,
+          volume,
+          revision,
+        })),
+        [
+          { openTimeMs: 0, open: 3, volume: 20, revision: 2 },
+          { openTimeMs: 60_000, open: 2, volume: undefined, revision: 1 },
+        ],
+      );
+      assert.throws(
+        () =>
+          upsertCandles(database, [
+            {
+              feedId: "feed-main",
+              instrumentId: "EURUSD",
+              timeframeSec: 0,
+              openTimeMs: 0,
+              open: 1,
+              high: 2,
+              low: 0,
+              close: 1,
+              revision: 1,
+            },
+          ]),
+        /timeframeSec/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("two processes concurrently read and upsert candles without corruption", async () => {
+  await withDatabase(async (databasePath) => {
+    const setup = await openStorageDatabase(databasePath);
+    setup.close();
+
+    await Promise.all([
+      runCandleWorker(databasePath, 0),
+      runCandleWorker(databasePath, 40),
+    ]);
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.equal(
+        database.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+      assert.equal(
+        getCandles(database, {
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+        }).length,
+        80,
+      );
+    } finally {
+      database.close();
+    }
   });
 });
