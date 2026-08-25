@@ -2,6 +2,10 @@ export { startDesktopApplication } from "./application.js";
 export { secureWindowOptions } from "./window.js";
 export { createUtilitySupervisor } from "./utility-supervisor.js";
 export {
+  createWindowsGenericCredentialManager,
+  windowsCredentialTarget,
+} from "./windows-credentials.js";
+export {
   rendererEntryUrl,
   rendererProtocolScheme,
   rendererSchemeRegistration,
@@ -23,6 +27,12 @@ export type {
   DesktopWindow,
 } from "./application.js";
 export type { SecureWebPreferences, SecureWindowOptions } from "./window.js";
+export type {
+  WindowsCredentialBridgeRequest,
+  WindowsCredentialBridgeResponse,
+  WindowsGenericCredentialManager,
+  WindowsGenericCredentialManagerOptions,
+} from "./windows-credentials.js";
 export type {
   UtilityChild,
   UtilityScheduler,
