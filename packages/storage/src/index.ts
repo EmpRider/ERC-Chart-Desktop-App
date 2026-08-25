@@ -2,8 +2,6 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const currentSchemaVersion = 1;
-
 const migrations = [
   `
   CREATE TABLE provider_profiles (
@@ -119,9 +117,9 @@ export async function openStorageDatabase(
         "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations",
       )
       .get() as { version: number };
-    if (row.version > currentSchemaVersion) {
+    if (row.version > migrations.length) {
       throw new Error(
-        `Database schema version ${row.version} is newer than supported version ${currentSchemaVersion}.`,
+        `Database schema version ${row.version} is newer than supported version ${migrations.length}.`,
       );
     }
 
