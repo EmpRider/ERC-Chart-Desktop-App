@@ -1,4 +1,5 @@
 export { startDesktopApplication } from "./application.js";
+export { createLocalDiagnosticLog } from "./local-diagnostic-log.js";
 export { secureWindowOptions } from "./window.js";
 export { createUtilitySupervisor } from "./utility-supervisor.js";
 export {
@@ -18,6 +19,13 @@ export {
   rendererContentSecurityPolicy,
 } from "./security.js";
 export type { DesktopIpcSender } from "./security.js";
+export type {
+  DiagnosticEvent,
+  DiagnosticLevel,
+  DiagnosticMetadata,
+  LocalDiagnosticLog,
+  LocalDiagnosticLogOptions,
+} from "./local-diagnostic-log.js";
 export type { RendererSchemeRegistration } from "./protocol.js";
 export type {
   DesktopAppAdapter,
