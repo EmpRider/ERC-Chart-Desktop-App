@@ -7,6 +7,8 @@ const normalizedSecretKeys = new Set([
   "authorization",
   "authorizationheader",
   "authtoken",
+  "accesstoken",
+  "clientsecret",
   "cookie",
   "deviceid",
   "deviceidentifier",
@@ -116,6 +118,13 @@ function serializeEvent(event: DiagnosticEvent, now: () => Date): string {
   if (!levels.has(event.level)) throw new Error("Invalid diagnostic level.");
   if (typeof event.code !== "string" || !codePattern.test(event.code))
     throw new Error("Invalid diagnostic code.");
+  if (
+    event.metadata === null ||
+    typeof event.metadata !== "object" ||
+    Array.isArray(event.metadata) ||
+    Object.getPrototypeOf(event.metadata) !== Object.prototype
+  )
+    throw new Error("Invalid diagnostic metadata.");
   const metadata = redactValue(event.metadata);
   const metadataJson = JSON.stringify(metadata);
   if (Buffer.byteLength(metadataJson, "utf8") > maximumMetadataBytes)

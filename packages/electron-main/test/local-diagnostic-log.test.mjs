@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+const fakeApiKey = "api-key-secret";
+const fakeClientSecret = "client-secret";
+const redactedValue = "[REDACTED]";
+
 const diagnosticsModule = await import("../dist/index.js").catch(
   () => undefined,
 );
@@ -31,7 +35,9 @@ test("redacts secrets before writing structured local diagnostics", async () => 
       metadata: {
         authorization: "Bearer header-secret",
         authorizationHeader: "Basic secondary-header-secret",
-        apiKey: "api-key-secret",
+        apiKey: fakeApiKey,
+        clientSecret: fakeClientSecret,
+        accessToken: "access-token-secret",
         cookie: "session=cookie-secret",
         rawProviderFrame: "provider-frame-secret",
         endpoint:
@@ -49,6 +55,8 @@ test("redacts secrets before writing structured local diagnostics", async () => 
       "header-secret",
       "secondary-header-secret",
       "api-key-secret",
+      "client-secret",
+      "access-token-secret",
       "cookie-secret",
       "provider-frame-secret",
       "query-secret",
@@ -63,11 +71,13 @@ test("redacts secrets before writing structured local diagnostics", async () => 
       level: "error",
       code: "provider.authentication.failed",
       metadata: {
-        authorization: "[REDACTED]",
-        authorizationHeader: "[REDACTED]",
-        apiKey: "[REDACTED]",
-        cookie: "[REDACTED]",
-        rawProviderFrame: "[REDACTED]",
+        authorization: redactedValue,
+        authorizationHeader: redactedValue,
+        apiKey: redactedValue,
+        clientSecret: redactedValue,
+        accessToken: redactedValue,
+        cookie: redactedValue,
+        rawProviderFrame: redactedValue,
         endpoint:
           "https://example.test/feed?instrument=EURUSD&token=%5BREDACTED%5D&api_key=%5BREDACTED%5D",
         detail: "Authorization: [REDACTED]",
@@ -146,6 +156,12 @@ test("rejects invalid diagnostic events before writing", async () => {
       log.write({ level: "verbose", code: "bad code", metadata: {} }),
       /Invalid diagnostic level/,
     );
+    for (const metadata of [null, []]) {
+      await assert.rejects(
+        log.write({ level: "error", code: "bad.metadata", metadata }),
+        /Invalid diagnostic metadata/,
+      );
+    }
     assert.deepEqual(await readdir(directory), []);
   });
 });
