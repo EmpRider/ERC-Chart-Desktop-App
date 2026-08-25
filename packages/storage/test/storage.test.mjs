@@ -1,5 +1,5 @@
 ﻿import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,7 +10,10 @@ import {
   getProviderProfile,
   listProviderProfiles,
   openStorageDatabase,
+  recoverStorageDatabase,
+  StorageDatabaseCorruptionError,
   updateProviderProfile,
+  withTransaction,
 } from "../dist/index.js";
 
 const expectedTables = [
@@ -69,6 +72,115 @@ test("runs migrations idempotently", async () => {
           .prepare("SELECT COUNT(*) AS count FROM schema_migrations")
           .get().count,
         1,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("configures WAL, foreign keys, and a five-second busy timeout", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.equal(
+        database.prepare("PRAGMA journal_mode").get().journal_mode,
+        "wal",
+      );
+      assert.equal(
+        database.prepare("PRAGMA foreign_keys").get().foreign_keys,
+        1,
+      );
+      assert.equal(
+        database.prepare("PRAGMA busy_timeout").get().timeout,
+        5_000,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("commits successful transactions and rolls back failed transactions", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const insert = database.prepare(
+        "INSERT INTO app_settings (key, schema_version, value_json, updated_at_ms) VALUES (?, 1, '{}', 0)",
+      );
+      assert.equal(
+        withTransaction(database, () => insert.run("committed").changes),
+        1,
+      );
+      assert.throws(
+        () =>
+          withTransaction(database, () => {
+            insert.run("rolled-back");
+            throw new Error("stop");
+          }),
+        /stop/,
+      );
+      assert.throws(
+        () => withTransaction(database, () => Promise.resolve()),
+        /must be synchronous/,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.deepEqual(
+        database
+          .prepare("SELECT key FROM app_settings ORDER BY key")
+          .all()
+          .map(({ key }) => key),
+        ["committed"],
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("preserves a corrupt database before rebuilding it", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const corruptContents = Buffer.from("not a sqlite database");
+    const corruptWalContents = Buffer.from("corrupt wal");
+    const corruptShmContents = Buffer.from("corrupt shm");
+    await writeFile(databasePath, corruptContents);
+
+    const corruption = await openStorageDatabase(databasePath).then(
+      () => assert.fail("Expected corrupt database rejection."),
+      (error) => {
+        assert.ok(error instanceof StorageDatabaseCorruptionError);
+        return error;
+      },
+    );
+    assert.deepEqual(await readFile(databasePath), corruptContents);
+    await writeFile(`${databasePath}-wal`, corruptWalContents);
+    await writeFile(`${databasePath}-shm`, corruptShmContents);
+    await assert.rejects(
+      recoverStorageDatabase(new StorageDatabaseCorruptionError(databasePath)),
+      /requires a diagnosed corruption/,
+    );
+
+    const { database, quarantinePath } =
+      await recoverStorageDatabase(corruption);
+    try {
+      assert.match(quarantinePath, /\.corrupt-\d+$/);
+      assert.deepEqual(await readFile(quarantinePath), corruptContents);
+      assert.deepEqual(
+        await readFile(`${quarantinePath}-wal`),
+        corruptWalContents,
+      );
+      assert.deepEqual(
+        await readFile(`${quarantinePath}-shm`),
+        corruptShmContents,
+      );
+      assert.equal(
+        database.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+      assert.equal(
+        database.prepare("PRAGMA journal_mode").get().journal_mode,
+        "wal",
       );
     } finally {
       database.close();

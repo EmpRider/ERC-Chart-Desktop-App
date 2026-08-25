@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -291,13 +291,75 @@ export function deleteProviderProfile(
   );
 }
 
+export function withTransaction<T>(database: DatabaseSync, run: () => T): T {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const result = run();
+    if (
+      typeof result === "object" &&
+      result !== null &&
+      "then" in result &&
+      typeof result.then === "function"
+    )
+      throw new Error("Storage transactions must be synchronous.");
+    database.exec("COMMIT");
+    return result;
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export class StorageDatabaseCorruptionError extends Error {
+  constructor(
+    readonly databasePath: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Storage database is corrupt: ${databasePath}.`, options);
+    this.name = "StorageDatabaseCorruptionError";
+  }
+}
+
+const diagnosedCorruptions = new WeakSet<StorageDatabaseCorruptionError>();
+
+function isSqliteCorruption(error: unknown): boolean {
+  return (
+    error instanceof StorageDatabaseCorruptionError ||
+    (error instanceof Error &&
+      "errcode" in error &&
+      (error.errcode === 11 || error.errcode === 26))
+  );
+}
+
+function configureDatabase(database: DatabaseSync, databasePath: string): void {
+  database.exec("PRAGMA busy_timeout = 5000");
+  database.exec("PRAGMA foreign_keys = ON");
+  const result = database.prepare("PRAGMA quick_check").all() as unknown as {
+    readonly quick_check: string;
+  }[];
+  if (result.some(({ quick_check }) => quick_check !== "ok"))
+    throw new StorageDatabaseCorruptionError(databasePath);
+  database.exec("PRAGMA journal_mode = WAL");
+}
+
 export async function openStorageDatabase(
   databasePath: string,
 ): Promise<DatabaseSync> {
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
   try {
-    database.exec("PRAGMA foreign_keys = ON");
+    try {
+      configureDatabase(database, databasePath);
+    } catch (error) {
+      if (isSqliteCorruption(error)) {
+        const corruption = new StorageDatabaseCorruptionError(databasePath, {
+          cause: error,
+        });
+        diagnosedCorruptions.add(corruption);
+        throw corruption;
+      }
+      throw error;
+    }
     database.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -324,24 +386,64 @@ export async function openStorageDatabase(
       const migration = migrations[version - 1];
       if (migration === undefined)
         throw new Error(`Missing migration ${version}.`);
-      database.exec("BEGIN IMMEDIATE");
-      try {
+      withTransaction(database, () => {
         database.exec(migration);
         database
           .prepare(
             "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)",
           )
           .run(version, Date.now());
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
+      });
     }
 
     return database;
   } catch (error) {
     database.close();
+    throw error;
+  }
+}
+
+export async function recoverStorageDatabase(
+  corruption: StorageDatabaseCorruptionError,
+): Promise<{
+  readonly database: DatabaseSync;
+  readonly quarantinePath: string;
+}> {
+  if (!diagnosedCorruptions.delete(corruption))
+    throw new Error(
+      "Storage database recovery requires a diagnosed corruption.",
+    );
+  const databasePath = corruption.databasePath;
+  if (!existsSync(databasePath))
+    throw new Error(`Storage database does not exist: ${databasePath}.`);
+
+  let quarantinePath = `${databasePath}.corrupt-${Date.now()}`;
+  while (existsSync(quarantinePath)) quarantinePath += "-1";
+
+  const movedFiles: { readonly from: string; readonly to: string }[] = [];
+  try {
+    for (const suffix of ["", "-wal", "-shm"] as const) {
+      const from = `${databasePath}${suffix}`;
+      if (!existsSync(from)) continue;
+      const to = `${quarantinePath}${suffix}`;
+      renameSync(from, to);
+      movedFiles.push({ from, to });
+    }
+  } catch (error) {
+    for (const { from, to } of movedFiles.reverse()) {
+      if (existsSync(to)) renameSync(to, from);
+    }
+    throw error;
+  }
+
+  try {
+    return {
+      database: await openStorageDatabase(databasePath),
+      quarantinePath,
+    };
+  } catch (error) {
+    for (const suffix of ["", "-wal", "-shm"] as const)
+      rmSync(`${databasePath}${suffix}`, { force: true });
     throw error;
   }
 }
