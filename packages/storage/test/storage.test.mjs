@@ -10,11 +10,148 @@ import {
   getProviderProfile,
   listProviderProfiles,
   openStorageDatabase,
+  parseWorkspaceV1,
   recoverStorageDatabase,
+  serializeWorkspaceV1,
   StorageDatabaseCorruptionError,
   updateProviderProfile,
+  validateWorkspaceV1,
   withTransaction,
 } from "../dist/index.js";
+
+const validWorkspace = {
+  schemaVersion: 1,
+  id: "workspace-default",
+  name: "Default Workspace",
+  activeTabId: "tab-main",
+  tabs: [
+    {
+      id: "tab-main",
+      title: "Main",
+      layout: "grid-1",
+      chartSlots: [
+        {
+          id: "chart-1",
+          providerProfileId: "profile-binomo-main",
+          instrumentId: "Z-CRY/IDX",
+          timeframeSeconds: 60,
+          chartType: "candlestick",
+          viewport: {
+            visibleBars: 120,
+            rightOffsetBars: 0,
+            priceScaleMode: "auto",
+          },
+          indicators: [
+            {
+              instanceId: "rsi-1",
+              pluginId: "erc.rsi",
+              definitionId: "rsi",
+              enabled: true,
+              parameters: { period: 14 },
+              inputs: { source: { kind: "candles" } },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  savedAtMs: 1_785_398_400_000,
+};
+
+test("validates, serializes, and parses workspace version 1", () => {
+  assert.equal(validateWorkspaceV1(validWorkspace), true);
+  const serialized = serializeWorkspaceV1(validWorkspace);
+  assert.equal(serialized, JSON.stringify(validWorkspace));
+  assert.deepEqual(parseWorkspaceV1(serialized), validWorkspace);
+});
+
+test("rejects malformed and unsupported workspace documents", () => {
+  const sparseTabs = Array(1);
+  for (const invalid of [
+    { ...validWorkspace, tabs: sparseTabs },
+    { ...validWorkspace, drawings: [] },
+    { ...validWorkspace, savedAtMs: Number.NaN },
+    {
+      ...validWorkspace,
+      tabs: [
+        {
+          ...validWorkspace.tabs[0],
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              viewport: {
+                visibleBars: 120,
+                rightOffsetBars: 0,
+                priceScaleMode: "manual",
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...validWorkspace,
+      tabs: [
+        {
+          ...validWorkspace.tabs[0],
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              indicators: [
+                {
+                  ...validWorkspace.tabs[0].chartSlots[0].indicators[0],
+                  parameters: { createdAt: new Date(0) },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...validWorkspace,
+      tabs: [
+        {
+          ...validWorkspace.tabs[0],
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              indicators: [
+                {
+                  ...validWorkspace.tabs[0].chartSlots[0].indicators[0],
+                  parameters: { unsafe: Number.POSITIVE_INFINITY },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ]) {
+    assert.equal(validateWorkspaceV1(invalid), false);
+    assert.throws(() => serializeWorkspaceV1(invalid), /Invalid workspace v1/);
+  }
+  const hostileWorkspace = new Proxy(validWorkspace, {
+    ownKeys() {
+      throw new Error("hostile object");
+    },
+  });
+  assert.equal(validateWorkspaceV1(hostileWorkspace), false);
+  assert.throws(
+    () => serializeWorkspaceV1(hostileWorkspace),
+    /Invalid workspace v1/,
+  );
+  assert.throws(
+    () => serializeWorkspaceV1({ ...validWorkspace, schemaVersion: 2 }),
+    /Unsupported workspace schema version: 2/,
+  );
+  assert.throws(
+    () =>
+      parseWorkspaceV1(JSON.stringify({ ...validWorkspace, schemaVersion: 2 })),
+    /Unsupported workspace schema version: 2/,
+  );
+  assert.throws(() => parseWorkspaceV1("{"), /valid JSON/);
+});
 
 const expectedTables = [
   "app_settings",
