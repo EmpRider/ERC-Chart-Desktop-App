@@ -102,9 +102,9 @@ On Linux, the Electron smoke command requires a display server. CI runs it
 under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
-The `master` release workflow publishes a development checkpoint only after its
-reviewed `main` commit is promoted exactly to `master`. Development Version 2
-uses application `0.1.0-dev.2` and immutable prerelease tag `v0.1.0-dev.2`, with
-the Windows `.exe` and `.sha256` assets. The prior Development Version 1 release
-at `v0.1.0-dev.1` remains immutable. Releases remain unsigned, automatic updates
-are disabled, and stable Epic 2 release `v0.2.0` remains later work.
+The release workflow publishes only after the exact current `main` commit passes
+the complete Windows release pipeline. Epic 2 uses application `0.2.0` and
+immutable prerelease tag `v0.2.0`, with the unsigned Windows `.exe` and
+`.sha256` assets. Prior releases at `v0.1.0-dev.1` and `v0.1.0-dev.2` remain
+immutable. Automatic updates remain disabled, and production code signing
+remains a later release decision.

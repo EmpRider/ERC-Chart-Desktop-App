@@ -11,12 +11,13 @@ of this repository.
 
 ## Current status
 
-Epic 1's secure desktop foundation is complete. The repository includes the
-strict TypeScript monorepo, sandboxed Electron shell, privileged `erc-app://`
-renderer protocol, React tabs and one-to-four chart layouts, isolated utility
-processes, multi-instance smoke coverage, and an unsigned x64 per-user Windows
-installer pipeline. Live charts, market-data providers, persistence, plugins,
-automatic updates, and production signing remain later-epic work.
+Epic 2's local persistence foundation is complete. The repository includes the
+secure desktop shell from Epic 1 plus SQLite migrations and durability controls,
+provider-profile metadata, Windows Generic Credentials, versioned workspace
+serialization and restoration, persistent settings and plugin registry state,
+concurrent candle access, and redacted rotating diagnostics. Live charts,
+market-data providers, plugin execution, automatic updates, and production
+signing remain later-epic work.
 
 - [Architecture specification](docs/architecture/v1/ERC-chart-Architecture-Specification-v1.md)
 - [Architecture decisions](docs/architecture/v1/ARCHITECTURE-DECISIONS.md)
