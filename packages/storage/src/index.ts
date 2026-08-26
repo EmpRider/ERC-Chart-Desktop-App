@@ -1,6 +1,11 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  parseWorkspaceV1,
+  serializeWorkspaceV1,
+  type WorkspaceV1,
+} from "./workspace-v1.js";
 
 export {
   parseWorkspaceV1,
@@ -909,6 +914,60 @@ export function deletePlugin(
       .prepare("DELETE FROM plugins WHERE plugin_id = ? AND version = ?")
       .run(checkedPluginId, checkedVersion).changes > 0
   );
+}
+
+export function saveWorkspace(
+  database: DatabaseSync,
+  workspace: unknown,
+  instanceId: string,
+): WorkspaceV1 {
+  const documentJson = serializeWorkspaceV1(workspace);
+  const document = parseWorkspaceV1(documentJson);
+  const checkedInstanceId = requireRegistryText(
+    instanceId,
+    "instanceId",
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+    128,
+  );
+  const now = Date.now();
+  database
+    .prepare(
+      `INSERT INTO workspaces
+        (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         schema_version = excluded.schema_version,
+         name = excluded.name,
+         document_json = excluded.document_json,
+         instance_id = excluded.instance_id,
+         updated_at_ms = excluded.updated_at_ms`,
+    )
+    .run(
+      document.id,
+      document.schemaVersion,
+      document.name,
+      documentJson,
+      checkedInstanceId,
+      now,
+      now,
+    );
+  return document;
+}
+
+export function loadWorkspace(
+  database: DatabaseSync,
+  id: string,
+): WorkspaceV1 | undefined {
+  const checkedId = requireRegistryText(
+    id,
+    "id",
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+    128,
+  );
+  const row = database
+    .prepare("SELECT document_json FROM workspaces WHERE id = ?")
+    .get(checkedId) as { readonly document_json: string } | undefined;
+  return row === undefined ? undefined : parseWorkspaceV1(row.document_json);
 }
 
 export function withTransaction<T>(database: DatabaseSync, run: () => T): T {
