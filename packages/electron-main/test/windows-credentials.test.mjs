@@ -72,6 +72,34 @@ test("rejects malformed bridge responses", async () => {
   await assert.rejects(manager.delete(target), /invalid data/i);
 });
 
+test("fails closed when Credential Manager operations fail", async () => {
+  assert.ok(credentialsModule, "Windows credential module must exist");
+  const target = "ERC-chart/provider/binomo/primary";
+  const testSecret = randomBytes(12).toString("base64url");
+  const bridgeError = `Credential Manager unavailable: ${testSecret}`;
+  const manager = credentialsModule.createWindowsGenericCredentialManager({
+    platform: "win32",
+    run: async () => {
+      throw new Error(bridgeError);
+    },
+  });
+
+  for (const operation of [
+    () => manager.write(target, testSecret),
+    () => manager.read(target),
+    () => manager.delete(target),
+  ]) {
+    await assert.rejects(operation, (error) => {
+      assert.equal(
+        error.message,
+        "Windows Credential Manager operation failed.",
+      );
+      assert.doesNotMatch(error.message, new RegExp(testSecret));
+      return true;
+    });
+  }
+});
+
 test("fails closed outside Windows", async () => {
   assert.ok(credentialsModule, "Windows credential module must exist");
   let invoked = false;
