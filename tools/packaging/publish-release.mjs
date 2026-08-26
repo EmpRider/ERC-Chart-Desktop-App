@@ -63,7 +63,16 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Development Version 2\n\nEpic: ECDD-67 (development checkpoint)\n\nThis unsigned prerelease advances the reviewed Epic 2 workspace experience. Each chart tab retains one permanent workspace, can add workspaces one at a time up to four, can close only added workspaces, and preserves the identities of surviving workspaces. The public renderer contract now also exposes the workspace limit.\n\nIt retains the reviewed secure desktop shell, custom renderer protocol, desktop trust boundaries, concurrent-instance behavior, and x64 per-user NSIS installer from Development Version 1.\n\nKnown limitations: chart rendering, data-provider connectivity, workspace persistence, database and credential integration, plugins, and production code signing are delivered by later work. Automatic updates are disabled. Epic 2 remains in development; stable v0.2.0 is not part of this checkpoint.\n`;
+const curatedNotes = `# Epic 2 — Local database, workspace, and credentials
+
+Jira epic: [ECDD-67](https://erc-chart.atlassian.net/browse/ECDD-67)
+
+This unsigned Windows prerelease delivers SQLite schema migrations and durability safeguards, provider-profile metadata, Windows Generic Credential storage, workspace version 1 serialization and restoration, persistent settings and plugin registry state, concurrent candle access, redacted rotating diagnostics, and plaintext-secret containment checks.
+
+Included task pull requests: #34, #35, #36, #37, #38, #39, #40, #41, #42, #43, and #44.
+
+Known limitations: chart rendering, live market-data connectivity, plugin execution, automatic updates, and production code signing remain later work. The installer is unsigned.
+`;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
   {

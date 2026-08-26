@@ -213,7 +213,7 @@ async function runPowerShellBridge(
     const timeout = setTimeout(() => {
       child.kill();
       finishWithError();
-    }, 10_000);
+    }, 30_000);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       output += chunk;
