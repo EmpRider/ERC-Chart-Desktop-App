@@ -7,8 +7,8 @@ import { runWorkspaceValidation } from "../src/cli.mjs";
 import { validateWorkspace } from "../src/workspace-contract.mjs";
 
 const contract = {
-  nodeVersion: "24.18.1",
-  npmVersion: "11.9.0",
+  nodeVersion: "26.8.1",
+  npmVersion: "12.0.2",
   requiredScripts: [
     "format:check",
     "lint",
@@ -371,7 +371,7 @@ test("rejects a root toolchain version that differs from the contract", async ()
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
-    errors.includes("package.json: engines.node must be pinned to 24.18.1"),
+    errors.includes("package.json: engines.node must be pinned to 26.8.1"),
   );
 });
 
@@ -385,7 +385,7 @@ test("rejects a root npm version that differs from the contract", async () => {
 
   assert.ok(
     errors.includes(
-      "package.json: packageManager must be pinned to npm@11.9.0",
+      "package.json: packageManager must be pinned to npm@12.0.2",
     ),
   );
 });

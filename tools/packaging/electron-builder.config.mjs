@@ -5,7 +5,7 @@ export default {
   appId: "com.ercchart.desktop",
   productName,
   executableName: productName,
-  electronVersion: "43.2.0",
+  electronVersion: "44.0.0",
   artifactName: "ERC-Chart-Setup-${version}.${ext}",
   directories: {
     app: "out/package-app",
