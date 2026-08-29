@@ -20,7 +20,7 @@
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
     "test:unit": "npm run build && node --test tools/delivery-governance/test/*.test.mjs apps/desktop/test/*.test.mjs packages/contracts/test/*.test.mjs packages/data-service/test/*.test.mjs packages/electron-main/test/*.test.mjs packages/indicator-sdk/test/*.test.mjs packages/preload/test/*.test.mjs packages/provider-runtime/test/*.test.mjs packages/provider-sdk/test/*.test.mjs packages/renderer/test/*.test.mjs packages/storage/test/*.test.mjs",
     "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/packaging/*.test.mjs tools/*.test.mjs",
-    "build": "tsc -b --pretty false --force",
+    "build": "node node_modules/@typescript/native/bin/tsc -b --pretty false --force",
     "build:runtime": "npm run build && node tools/build-runtime.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
     "smoke:electron": "npm run build:runtime && node tools/electron-smoke.mjs",

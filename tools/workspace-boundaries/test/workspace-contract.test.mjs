@@ -88,7 +88,9 @@ function validFiles() {
     "packages/chart-core/package.json": manifest("@erc-chart/chart-core", {
       "@erc-chart/contracts": "workspace:*",
     }),
-    "packages/chart-core/tsconfig.json": "{}",
+    "packages/chart-core/tsconfig.json": JSON.stringify({
+      references: [{ path: "../contracts" }],
+    }),
     "packages/chart-core/src/index.ts": "export {};\n",
   };
 }
@@ -343,6 +345,19 @@ test("rejects an approved TypeScript unit missing from root project references",
   assert.ok(
     errors.includes(
       "tsconfig.json: project reference ./packages/chart-core is required",
+    ),
+  );
+});
+
+test("rejects a missing direct TypeScript project reference", async () => {
+  const files = validFiles();
+  files["packages/chart-core/tsconfig.json"] = "{}";
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/tsconfig.json: project reference ../contracts is required",
     ),
   );
 });

@@ -318,10 +318,30 @@ export async function validateWorkspace(root, contract = undefined) {
         `${workspace}/package.json: only the root export '.' is allowed`,
       );
     }
-    if (!(await exists(path.join(workspaceRoot, "tsconfig.json")))) {
+    const tsconfigPath = path.join(workspaceRoot, "tsconfig.json");
+    if (!(await exists(tsconfigPath))) {
       errors.push(
         `${workspace}/tsconfig.json: TypeScript configuration is required`,
       );
+    } else {
+      const tsconfig = await readJson(tsconfigPath);
+      const references = new Set(
+        (tsconfig.references ?? []).map((reference) => reference.path),
+      );
+      for (const dependency of contract.workspaces[workspace] ?? []) {
+        const expected = path
+          .relative(workspace, dependency)
+          .split(path.sep)
+          .join("/");
+        const normalizedExpected = expected.startsWith(".")
+          ? expected
+          : `./${expected}`;
+        if (!references.has(normalizedExpected)) {
+          errors.push(
+            `${workspace}/tsconfig.json: project reference ${normalizedExpected} is required`,
+          );
+        }
+      }
     }
     if (!(await exists(path.join(workspaceRoot, "src/index.ts")))) {
       errors.push(`${workspace}/src/index.ts: public entry point is required`);

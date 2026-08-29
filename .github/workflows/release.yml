@@ -140,8 +140,6 @@ jobs:
         with:
           node-version: 26.8.1
           package-manager-cache: false
-      - name: Set up pinned npm
-        run: npm install --global npm@12.0.2
       - name: Download verified Windows release candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
