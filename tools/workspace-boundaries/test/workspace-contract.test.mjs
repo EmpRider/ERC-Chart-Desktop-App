@@ -349,6 +349,36 @@ test("rejects an approved TypeScript unit missing from root project references",
   );
 });
 
+test("rejects a malformed direct TypeScript references value", async () => {
+  const files = validFiles();
+  files["packages/chart-core/tsconfig.json"] = JSON.stringify({
+    references: "../contracts",
+  });
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/tsconfig.json: references must be an array",
+    ),
+  );
+});
+
+test("rejects malformed direct TypeScript project reference entries", async () => {
+  const files = validFiles();
+  files["packages/chart-core/tsconfig.json"] = JSON.stringify({
+    references: [null, "../contracts", {}],
+  });
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/tsconfig.json: project reference ../contracts is required",
+    ),
+  );
+});
+
 test("rejects a missing direct TypeScript project reference", async () => {
   const files = validFiles();
   files["packages/chart-core/tsconfig.json"] = "{}";

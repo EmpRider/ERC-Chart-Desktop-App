@@ -325,8 +325,19 @@ export async function validateWorkspace(root, contract = undefined) {
       );
     } else {
       const tsconfig = await readJson(tsconfigPath);
+      const rawReferences = tsconfig.references;
+      if (rawReferences !== undefined && !Array.isArray(rawReferences)) {
+        errors.push(`${workspace}/tsconfig.json: references must be an array`);
+      }
       const references = new Set(
-        (tsconfig.references ?? []).map((reference) => reference.path),
+        (Array.isArray(rawReferences) ? rawReferences : [])
+          .filter(
+            (reference) =>
+              reference !== null &&
+              typeof reference === "object" &&
+              typeof reference.path === "string",
+          )
+          .map((reference) => reference.path),
       );
       for (const dependency of contract.workspaces[workspace] ?? []) {
         const expected = path
