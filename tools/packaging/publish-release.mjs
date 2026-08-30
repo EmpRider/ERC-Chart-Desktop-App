@@ -63,13 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Epic 2 — Local database, workspace, and credentials
+const curatedNotes = `# Toolchain and dependency update
 
-Jira epic: [ECDD-67](https://erc-chart.atlassian.net/browse/ECDD-67)
+This corrective release updates ERC Chart's supported runtime and development toolchain to the latest stable versions available at release time: Node.js 26.8.1, npm 12.0.2, Electron 44.0.0, TypeScript 7.0.2 native compiler, the TypeScript 6.0.2 compatibility API, React 19.2.8, and the repository's direct linting, formatting, packaging, parsing, and type packages.
 
-This unsigned Windows prerelease delivers SQLite schema migrations and durability safeguards, provider-profile metadata, Windows Generic Credential storage, workspace version 1 serialization and restoration, persistent settings and plugin registry state, concurrent candle access, redacted rotating diagnostics, and plaintext-secret containment checks.
-
-Included task pull requests: #34, #35, #36, #37, #38, #39, #40, #41, #42, #43, and #44.
+The application behavior and Epic 2 capability scope are unchanged. Compatibility fixes are limited to TypeScript project configuration, package-script policy, and malformed project-reference validation required by the upgraded tools.
 
 Known limitations: chart rendering, live market-data connectivity, plugin execution, automatic updates, and production code signing remain later work. The installer is unsigned.
 `;

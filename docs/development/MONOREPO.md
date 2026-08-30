@@ -105,8 +105,7 @@ under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
 The release workflow publishes only after the exact current `main` commit passes
-the complete Windows release pipeline. Epic 2 uses application `0.2.0` and
-immutable prerelease tag `v0.2.0`, with the unsigned Windows `.exe` and
-`.sha256` assets. Prior releases at `v0.1.0-dev.1` and `v0.1.0-dev.2` remain
-immutable. Automatic updates remain disabled, and production code signing
-remains a later release decision.
+the complete Windows release pipeline. The current application release is
+`0.2.1` with immutable prerelease tag `v0.2.1`, plus the unsigned Windows
+`.exe` and `.sha256` assets. Prior releases remain immutable. Automatic updates
+remain disabled, and production code signing remains a later release decision.
