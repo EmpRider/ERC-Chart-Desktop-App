@@ -1,6 +1,6 @@
 {
-  "nodeVersion": "24.18.1",
-  "npmVersion": "11.9.0",
+  "nodeVersion": "26.8.1",
+  "npmVersion": "12.0.2",
   "requiredScripts": [
     "format:check",
     "lint",

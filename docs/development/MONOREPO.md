@@ -2,7 +2,9 @@
 
 ## Toolchain
 
-ERC Chart uses Node.js `24.18.1`, npm `11.9.0`, and npm workspaces. The root
+ERC Chart uses Node.js `26.8.1`, npm `12.0.2`, TypeScript `7.0.2` for
+native compilation, and the official `@typescript/typescript6` compatibility API
+`6.0.2` for `typescript-eslint` and the workspace-boundary parser. The root
 `package-lock.json` is the only lockfile. Use the following clean setup:
 
 ```bash

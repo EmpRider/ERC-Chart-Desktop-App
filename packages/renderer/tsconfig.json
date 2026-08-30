@@ -6,5 +6,19 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../chart-core"
+    },
+    {
+      "path": "../provider-sdk"
+    },
+    {
+      "path": "../indicator-sdk"
+    }
+  ]
 }
