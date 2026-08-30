@@ -1,13 +1,13 @@
 {
   "name": "erc-chart-desktop-app",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "ERC Chart Windows desktop charting application monorepo",
   "engines": {
-    "node": "24.18.1"
+    "node": "26.8.1"
   },
-  "packageManager": "npm@11.9.0",
+  "packageManager": "npm@12.0.2",
   "workspaces": [
     "apps/*",
     "packages/*",
@@ -20,7 +20,7 @@
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
     "test:unit": "npm run build && node --test tools/delivery-governance/test/*.test.mjs apps/desktop/test/*.test.mjs packages/contracts/test/*.test.mjs packages/data-service/test/*.test.mjs packages/electron-main/test/*.test.mjs packages/indicator-sdk/test/*.test.mjs packages/preload/test/*.test.mjs packages/provider-runtime/test/*.test.mjs packages/provider-sdk/test/*.test.mjs packages/renderer/test/*.test.mjs packages/storage/test/*.test.mjs",
     "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/packaging/*.test.mjs tools/*.test.mjs",
-    "build": "tsc -b --pretty false --force",
+    "build": "node node_modules/@typescript/native/bin/tsc -b --pretty false --force",
     "build:runtime": "npm run build && node tools/build-runtime.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
     "smoke:electron": "npm run build:runtime && node tools/electron-smoke.mjs",
@@ -33,17 +33,22 @@
     "checksum:installer": "node tools/packaging/write-checksum.mjs"
   },
   "devDependencies": {
-    "@electron/asar": "4.2.1",
+    "@electron/asar": "4.3.0",
     "@eslint/js": "10.0.1",
-    "@types/node": "26.1.2",
-    "electron": "43.2.0",
+    "@types/node": "26.4.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "electron": "44.0.0",
     "electron-builder": "26.15.3",
-    "esbuild": "0.28.1",
-    "eslint": "10.8.0",
-    "globals": "17.8.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.9.1",
+    "globals": "17.11.0",
     "linkedom": "0.18.13",
     "prettier": "3.9.6",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.65.0"
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-eslint": "8.68.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "electron-winstaller": false
   }
 }

@@ -103,6 +103,7 @@ test("solo-maintainer amendment preserves the enforceable boundary", async () =>
 test("delivery workflow executes every governance verification command", async () => {
   const workflow = await read(".github/workflows/delivery-gates.yml");
   for (const command of [
+    "npm install --global npm@12.0.2",
     "npm ci --ignore-scripts",
     "npm --workspace @erc-chart/delivery-governance test",
     "npm --workspace @erc-chart/delivery-governance run validate:pr",

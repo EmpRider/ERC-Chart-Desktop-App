@@ -2,7 +2,9 @@
 
 ## Toolchain
 
-ERC Chart uses Node.js `24.18.1`, npm `11.9.0`, and npm workspaces. The root
+ERC Chart uses Node.js `26.8.1`, npm `12.0.2`, TypeScript `7.0.2` for
+native compilation, and the official `@typescript/typescript6` compatibility API
+`6.0.2` for `typescript-eslint` and the workspace-boundary parser. The root
 `package-lock.json` is the only lockfile. Use the following clean setup:
 
 ```bash
@@ -103,8 +105,7 @@ under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
 The release workflow publishes only after the exact current `main` commit passes
-the complete Windows release pipeline. Epic 2 uses application `0.2.0` and
-immutable prerelease tag `v0.2.0`, with the unsigned Windows `.exe` and
-`.sha256` assets. Prior releases at `v0.1.0-dev.1` and `v0.1.0-dev.2` remain
-immutable. Automatic updates remain disabled, and production code signing
-remains a later release decision.
+the complete Windows release pipeline. The current application release is
+`0.2.1` with immutable prerelease tag `v0.2.1`, plus the unsigned Windows
+`.exe` and `.sha256` assets. Prior releases remain immutable. Automatic updates
+remain disabled, and production code signing remains a later release decision.

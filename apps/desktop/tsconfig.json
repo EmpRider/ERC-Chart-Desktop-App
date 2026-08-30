@@ -6,5 +6,40 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "types": ["node", "electron"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    {
+      "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/electron-main"
+    },
+    {
+      "path": "../../packages/preload"
+    },
+    {
+      "path": "../../packages/renderer"
+    },
+    {
+      "path": "../../packages/chart-core"
+    },
+    {
+      "path": "../../packages/data-service"
+    },
+    {
+      "path": "../../packages/provider-sdk"
+    },
+    {
+      "path": "../../packages/provider-runtime"
+    },
+    {
+      "path": "../../packages/indicator-sdk"
+    },
+    {
+      "path": "../../packages/indicator-runtime"
+    },
+    {
+      "path": "../../packages/storage"
+    }
+  ]
 }

@@ -7,8 +7,8 @@ import { runWorkspaceValidation } from "../src/cli.mjs";
 import { validateWorkspace } from "../src/workspace-contract.mjs";
 
 const contract = {
-  nodeVersion: "24.18.1",
-  npmVersion: "11.9.0",
+  nodeVersion: "26.8.1",
+  npmVersion: "12.0.2",
   requiredScripts: [
     "format:check",
     "lint",
@@ -88,7 +88,9 @@ function validFiles() {
     "packages/chart-core/package.json": manifest("@erc-chart/chart-core", {
       "@erc-chart/contracts": "workspace:*",
     }),
-    "packages/chart-core/tsconfig.json": "{}",
+    "packages/chart-core/tsconfig.json": JSON.stringify({
+      references: [{ path: "../contracts" }],
+    }),
     "packages/chart-core/src/index.ts": "export {};\n",
   };
 }
@@ -347,6 +349,49 @@ test("rejects an approved TypeScript unit missing from root project references",
   );
 });
 
+test("rejects a malformed direct TypeScript references value", async () => {
+  const files = validFiles();
+  files["packages/chart-core/tsconfig.json"] = JSON.stringify({
+    references: "../contracts",
+  });
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/tsconfig.json: references must be an array",
+    ),
+  );
+});
+
+test("rejects malformed direct TypeScript project reference entries", async () => {
+  const files = validFiles();
+  files["packages/chart-core/tsconfig.json"] = JSON.stringify({
+    references: [null, "../contracts", {}],
+  });
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/tsconfig.json: project reference ../contracts is required",
+    ),
+  );
+});
+
+test("rejects a missing direct TypeScript project reference", async () => {
+  const files = validFiles();
+  files["packages/chart-core/tsconfig.json"] = "{}";
+
+  const errors = await validateWorkspace(await fixture(files), contract);
+
+  assert.ok(
+    errors.includes(
+      "packages/chart-core/tsconfig.json: project reference ../contracts is required",
+    ),
+  );
+});
+
 test("rejects a root project reference outside the approved inventory", async () => {
   const files = validFiles();
   const rootConfig = JSON.parse(files["tsconfig.json"]);
@@ -371,7 +416,7 @@ test("rejects a root toolchain version that differs from the contract", async ()
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
-    errors.includes("package.json: engines.node must be pinned to 24.18.1"),
+    errors.includes("package.json: engines.node must be pinned to 26.8.1"),
   );
 });
 
@@ -385,7 +430,7 @@ test("rejects a root npm version that differs from the contract", async () => {
 
   assert.ok(
     errors.includes(
-      "package.json: packageManager must be pinned to npm@11.9.0",
+      "package.json: packageManager must be pinned to npm@12.0.2",
     ),
   );
 });
