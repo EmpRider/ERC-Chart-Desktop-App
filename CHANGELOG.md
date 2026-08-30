@@ -2,6 +2,22 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.2.1] - 2026-08-30
+
+### Changed
+
+- Updated the supported runtime and direct development dependencies to their
+  latest stable versions, including Node.js 26.8.1, npm 12.0.2, Electron
+  44.0.0, TypeScript 7.0.2 native compilation, and React 19.2.8.
+- Updated TypeScript project configuration and package-script policy for the
+  upgraded toolchain.
+- Hardened workspace validation for malformed project references.
+
+### Corrective release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.2.0] - 2026-08-26
 
 ### Added
@@ -13,7 +29,7 @@ All notable changes to ERC Chart are documented here.
 - Workspace version 1 serialization and restoration.
 - Redacted rotating diagnostics and plaintext-secret containment checks.
 
-### Release
+### Packaging
 
 - Unsigned x64 per-user Windows installer.
 - Automatic updates and production code signing remain unavailable.

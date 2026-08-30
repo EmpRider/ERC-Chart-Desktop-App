@@ -20,13 +20,13 @@ import {
   validateReleaseVersion,
 } from "./packaging-contract.mjs";
 
-test("defines Epic 2 release identity", () => {
-  assert.equal(applicationVersion, "0.2.0");
+test("defines corrective release identity", () => {
+  assert.equal(applicationVersion, "0.2.1");
   assert.equal(packageIdentityName, "erc-chart-desktop-app");
-  assert.equal(releaseTag(applicationVersion), "v0.2.0");
+  assert.equal(releaseTag(applicationVersion), "v0.2.1");
   assert.equal(
     installerArtifactName(applicationVersion),
-    "ERC-Chart-Setup-0.2.0.exe",
+    "ERC-Chart-Setup-0.2.1.exe",
   );
 });
 
@@ -101,7 +101,7 @@ test("creates packaged smoke arguments without a development entry path", () => 
 });
 
 test("requires the packaged ASAR manifest to carry the release version", () => {
-  assert.doesNotThrow(() => assertPackagedVersion("0.2.0"));
+  assert.doesNotThrow(() => assertPackagedVersion("0.2.1"));
   assert.throws(
     () => assertPackagedVersion("0.1.0-dev.1"),
     /Packaged application/,
@@ -110,8 +110,8 @@ test("requires the packaged ASAR manifest to carry the release version", () => {
 
 test("writes a conventional SHA-256 checksum line", () => {
   assert.equal(
-    checksumLine("a".repeat(64), "ERC-Chart-Setup-0.2.0.exe"),
-    `${"a".repeat(64)}  ERC-Chart-Setup-0.2.0.exe\n`,
+    checksumLine("a".repeat(64), "ERC-Chart-Setup-0.2.1.exe"),
+    `${"a".repeat(64)}  ERC-Chart-Setup-0.2.1.exe\n`,
   );
   assert.throws(() => checksumLine("not-a-digest", "setup.exe"), /SHA-256/);
   assert.throws(() => checksumLine("a".repeat(64), "../setup.exe"), /filename/);
