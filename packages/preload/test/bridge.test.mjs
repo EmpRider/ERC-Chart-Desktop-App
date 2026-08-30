@@ -3,7 +3,7 @@ import test from "node:test";
 import { ipcContractVersion } from "@erc-chart/contracts";
 import { createErcChartBridge, installBridge } from "../dist/index.js";
 
-test("exposes only getRuntimeInfo on the fixed IPC channel", async () => {
+test("exposes only the allowlisted application bridge methods", async () => {
   const calls = [];
   const bridge = createErcChartBridge(async (...args) => {
     calls.push(args);
@@ -13,7 +13,12 @@ test("exposes only getRuntimeInfo on the fixed IPC channel", async () => {
     };
   });
 
-  assert.deepEqual(Object.keys(bridge), ["getRuntimeInfo"]);
+  assert.deepEqual(Object.keys(bridge), [
+    "getRuntimeInfo",
+    "loadWorkspace",
+    "saveWorkspace",
+    "flushWorkspace",
+  ]);
   assert.deepEqual(await bridge.getRuntimeInfo(), {
     ipcContractVersion,
     applicationName: "ERC Chart",
@@ -54,5 +59,10 @@ test("installs one application-specific global", () => {
     }),
   );
 
-  assert.deepEqual(exposures, [["ercChart", ["getRuntimeInfo"]]]);
+  assert.deepEqual(exposures, [
+    [
+      "ercChart",
+      ["getRuntimeInfo", "loadWorkspace", "saveWorkspace", "flushWorkspace"],
+    ],
+  ]);
 });
