@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@erc-chart/contracts": "0.0.0",
-    "@erc-chart/electron-main": "0.0.0"
+    "@erc-chart/electron-main": "0.0.0",
+    "@erc-chart/storage": "0.0.0"
   }
 }

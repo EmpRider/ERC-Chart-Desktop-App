@@ -85,6 +85,8 @@ jobs:
         run: npm run test:integration
       - name: Build production runtime (Release mode)
         run: npm run build:runtime
+      - name: Smoke-test workspace persistence across restart
+        run: npm run smoke:workspace-restart
       - name: Smoke-test independent instances
         run: npm run smoke:multi-instance
       - name: Run performance gates

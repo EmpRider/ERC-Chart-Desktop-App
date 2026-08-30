@@ -1,14 +1,26 @@
-import { isRuntimeInfo, type RuntimeInfo } from "@erc-chart/contracts";
+import {
+  isRuntimeInfo,
+  type PersistedWorkspace,
+  type RuntimeInfo,
+} from "@erc-chart/contracts";
 import { useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
   createWorkspaceStore,
   maximumWorkspaces,
   type WorkspaceAction,
   type WorkspaceState,
+  type WorkspaceStore,
 } from "./workspace.js";
+import {
+  fromPersistedWorkspace,
+  toPersistedWorkspace,
+} from "./workspace-persistence.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
+  readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
+  readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
+  readonly flushWorkspace: () => Promise<void>;
 }
 
 export interface ShellConnectionState {
@@ -195,39 +207,105 @@ export interface RuntimeApplicationShellProps {
   readonly bridge: RendererBridge | undefined;
 }
 
-const runtimeWorkspaceStore = createWorkspaceStore();
-
 export function RuntimeApplicationShell({
   bridge,
 }: RuntimeApplicationShellProps): JSX.Element {
   const [connection, setConnection] = useState(() =>
     bridge === undefined ? unavailableShellState : connectingShellState,
   );
-  const workspace = useSyncExternalStore(
-    runtimeWorkspaceStore.subscribe,
-    runtimeWorkspaceStore.getSnapshot,
-    runtimeWorkspaceStore.getSnapshot,
-  );
+  const [workspaceStore, setWorkspaceStore] = useState<
+    WorkspaceStore | undefined
+  >();
+  const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
 
   useEffect(() => {
     if (bridge === undefined) {
       setConnection(unavailableShellState);
+      setWorkspaceLoadFailed(true);
       return;
     }
     let active = true;
-    void resolveShellState(bridge).then((state) => {
-      if (active) setConnection(state);
-    });
+    void Promise.all([resolveShellState(bridge), bridge.loadWorkspace()])
+      .then(([state, persisted]) => {
+        if (!active) return;
+        let store: WorkspaceStore;
+        if (persisted === null) {
+          store = createWorkspaceStore();
+        } else {
+          const restored = fromPersistedWorkspace(persisted);
+          if (restored === undefined) {
+            setConnection(state);
+            setWorkspaceLoadFailed(true);
+            return;
+          }
+          store = createWorkspaceStore(restored);
+        }
+        setConnection(state);
+        setWorkspaceStore(store);
+      })
+      .catch(() => {
+        if (active) {
+          setConnection(unavailableShellState);
+          setWorkspaceLoadFailed(true);
+        }
+      });
     return (): void => {
       active = false;
     };
   }, [bridge]);
 
+  if (bridge === undefined)
+    return (
+      <ApplicationShell
+        connection={unavailableShellState}
+        workspace={createWorkspaceStore().getSnapshot()}
+        onWorkspaceAction={() => undefined}
+      />
+    );
+  if (workspaceLoadFailed)
+    return (
+      <p role="alert">Workspace unavailable. Existing data was not changed.</p>
+    );
+  if (bridge === undefined || workspaceStore === undefined)
+    return <p role="status">Restoring workspace…</p>;
+  return (
+    <HydratedRuntimeApplicationShell
+      bridge={bridge}
+      store={workspaceStore}
+      connection={connection}
+    />
+  );
+}
+
+function HydratedRuntimeApplicationShell({
+  bridge,
+  store,
+  connection,
+}: {
+  readonly bridge: RendererBridge;
+  readonly store: WorkspaceStore;
+  readonly connection: ShellConnectionState;
+}): JSX.Element {
+  const workspace = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
+  const dispatch = (action: WorkspaceAction): void => {
+    const before = store.getSnapshot();
+    store.dispatch(action);
+    const after = store.getSnapshot();
+    if (after === before) return;
+    void bridge
+      .saveWorkspace(toPersistedWorkspace(after))
+      .catch(() => undefined);
+  };
+
   return (
     <ApplicationShell
       connection={connection}
       workspace={workspace}
-      onWorkspaceAction={runtimeWorkspaceStore.dispatch}
+      onWorkspaceAction={dispatch}
     />
   );
 }

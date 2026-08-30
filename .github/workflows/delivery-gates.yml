@@ -120,6 +120,8 @@ jobs:
       - run: npm run test:integration
       - name: Smoke Electron development shell
         run: xvfb-run -a npm run smoke:electron
+      - name: Smoke workspace persistence across restart
+        run: xvfb-run -a npm run smoke:workspace-restart
       - name: Smoke two independent Electron instances
         run: xvfb-run -a npm run smoke:multi-instance
       - run: npm run build
@@ -153,6 +155,7 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:integration
       - run: npm run build
+      - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
       - run: npm run audit:ci
