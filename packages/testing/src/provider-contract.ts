@@ -281,7 +281,10 @@ function inspectCandle(
       number,
       number,
     ];
-    if (high < Math.max(open, low, close) || low > Math.min(open, high, close)) {
+    if (
+      high < Math.max(open, low, close) ||
+      low > Math.min(open, high, close)
+    ) {
       violations.push(
         failure(
           "MALFORMED_PROVIDER_VALUE",
@@ -454,7 +457,9 @@ export async function runProviderContractConformance(
     const capabilities = await subject.adapter.getCapabilities();
     violations.push(...inspectCapabilities(capabilities));
 
-    const candles = await subject.adapter.requestHistory(subject.historyRequest);
+    const candles = await subject.adapter.requestHistory(
+      subject.historyRequest,
+    );
     if (!Array.isArray(candles)) {
       violations.push(
         failure(
@@ -595,7 +600,9 @@ export function inspectProviderHistoryEnvelope(
     return report(violations);
   }
   for (const [index, candle] of value.payload.candles.entries()) {
-    violations.push(...inspectCandle(candle, `envelope.payload.candles[${index}]`));
+    violations.push(
+      ...inspectCandle(candle, `envelope.payload.candles[${index}]`),
+    );
   }
   return report(violations);
 }
