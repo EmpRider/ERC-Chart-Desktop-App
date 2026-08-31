@@ -2,6 +2,19 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.2.2] - 2026-08-31
+
+### Fixed
+
+- Persisted workspace identities, chart fields, and layout orientation across app
+  restarts.
+- Added safe validation for persisted workspace data and serialized pending saves.
+
+### Workspace persistence release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.2.1] - 2026-08-30
 
 ### Changed
