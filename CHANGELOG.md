@@ -10,7 +10,7 @@ All notable changes to ERC Chart are documented here.
   restarts.
 - Added safe validation for persisted workspace data and serialized pending saves.
 
-### Corrective release packaging
+### Workspace persistence release packaging
 
 - Unsigned x64 per-user Windows installer.
 - Automatic updates and production code signing remain unavailable.
