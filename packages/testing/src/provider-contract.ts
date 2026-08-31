@@ -622,7 +622,9 @@ export function createProviderEnvelopeCases(
         ...current,
         payload: {
           kind: "history",
-          candles: [{ ...fixture.candles[0]!, high: 98 }],
+          candles: fixture.candles.map((candle, index) =>
+            index === 0 ? { ...candle, high: 98 } : candle,
+          ),
         },
       },
       expectedAccepted: false,
