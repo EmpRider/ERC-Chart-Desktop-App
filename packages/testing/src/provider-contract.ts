@@ -70,10 +70,7 @@ export interface ProviderHistoryEnvelopePayload {
 }
 
 export type ProviderContractCaseName =
-  | "current"
-  | "malformed"
-  | "stale-generation"
-  | "unknown-version";
+  "current" | "malformed" | "stale-generation" | "unknown-version";
 
 export interface ProviderContractCase {
   readonly name: ProviderContractCaseName;
@@ -275,12 +272,7 @@ function inspectCandle(
       ),
     );
   } else {
-    const [open, high, low, close] = prices as [
-      number,
-      number,
-      number,
-      number,
-    ];
+    const [open, high, low, close] = prices as [number, number, number, number];
     if (
       high < Math.max(open, low, close) ||
       low > Math.min(open, high, close)
