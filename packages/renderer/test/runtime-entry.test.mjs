@@ -24,6 +24,15 @@ test("mounts the runtime React shell into the required application root", async 
   });
 
   await act(async () => {
+    window.ercChart = {
+      getRuntimeInfo: async () => ({
+        ipcContractVersion: 1,
+        applicationName: "ERC Chart",
+      }),
+      loadWorkspace: async () => null,
+      saveWorkspace: async () => undefined,
+      flushWorkspace: async () => undefined,
+    };
     runtimeEntry = await import(`../dist/runtime-entry.js?test=${Date.now()}`);
   });
 
@@ -32,5 +41,5 @@ test("mounts the runtime React shell into the required application root", async 
   assert.match(root.innerHTML, /<header/);
   assert.match(root.innerHTML, /<main/);
   assert.match(root.innerHTML, /<footer/);
-  assert.match(root.textContent, /Shell unavailable/);
+  assert.match(root.textContent, /Desktop workspace/);
 });

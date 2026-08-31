@@ -34,6 +34,14 @@ function createFixture(platform = "win32") {
       runtimeInfoHandler = handler;
       return () => events.push("ipc:remove");
     },
+    registerWorkspaceLoadHandler() {
+      events.push("workspace-load:register");
+      return () => events.push("workspace-load:remove");
+    },
+    registerWorkspaceSaveHandler() {
+      events.push("workspace-save:register");
+      return () => events.push("workspace-save:remove");
+    },
     async registerRendererProtocol(rootPath) {
       events.push(`protocol:register:${rootPath}`);
       return () => events.push("protocol:remove");
@@ -47,6 +55,9 @@ function createFixture(platform = "win32") {
         async loadURL(url) {
           events.push(`window:load:${url}`);
           if (loadUrlError !== undefined) throw loadUrlError;
+        },
+        async flushWorkspace() {
+          events.push("window:flush");
         },
         show() {
           this.shown = true;
@@ -70,6 +81,20 @@ function createFixture(platform = "win32") {
       async shutdown() {
         shutdownCount += 1;
         if (shutdownError !== undefined) throw shutdownError;
+      },
+    },
+    workspacePersistence: {
+      async load() {
+        return null;
+      },
+      async save() {
+        return undefined;
+      },
+      async flush() {
+        events.push("workspace:flush");
+      },
+      async close() {
+        events.push("workspace:close");
       },
     },
   };
@@ -106,6 +131,8 @@ test("registers fixed IPC before loading one secure window", async () => {
 
   assert.deepEqual(fixture.events, [
     "ipc:register",
+    "workspace-load:register",
+    "workspace-save:register",
     "app:ready",
     "protocol:register:/runtime",
     "data:start:/runtime/data-utility.js:0",

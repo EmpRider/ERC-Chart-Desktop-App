@@ -20,8 +20,18 @@ function describeStdout(stdout) {
     : `Electron stdout (last ${maximumDiagnosticCharacters} characters):\n${diagnostic}`;
 }
 
-export function createElectronArguments({ userDataPath, entryPath }) {
-  return [`--user-data-dir=${userDataPath}`, entryPath, "--erc-chart-smoke"];
+export function createElectronArguments({
+  userDataPath,
+  entryPath,
+  smokeArgument,
+}) {
+  return [
+    `--user-data-dir=${userDataPath}`,
+    entryPath,
+    "--erc-chart-smoke",
+    `--erc-chart-user-data-path=${userDataPath}`,
+    ...(smokeArgument === undefined ? [] : [smokeArgument]),
+  ];
 }
 
 export async function runIndependentElectronProcesses({

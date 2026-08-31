@@ -1,4 +1,5 @@
 import nodeProcess from "node:process";
+import path from "node:path";
 import {
   app,
   BrowserWindow,
@@ -15,7 +16,17 @@ import {
   type SecureWindowOptions,
   type UtilityChild,
 } from "@erc-chart/electron-main";
-import { runtimeInfoChannel } from "@erc-chart/contracts";
+import {
+  runtimeInfoChannel,
+  workspaceLoadChannel,
+  workspaceSaveChannel,
+  type PersistedWorkspace,
+} from "@erc-chart/contracts";
+import {
+  loadWorkspace,
+  openStorageDatabase,
+  saveWorkspace,
+} from "@erc-chart/storage";
 import {
   finishDesktopSmoke,
   launchDesktopMainWithProtocol,
@@ -62,7 +73,15 @@ function isSmokeResult(value: unknown): value is SmokeResult {
 }
 
 const paths = resolveDesktopArtifacts(import.meta.url);
+const lastWorkspaceId = "last-workspace";
+const desktopInstanceId = "desktop-main";
 const smokeMode = nodeProcess.argv.includes("--erc-chart-smoke");
+const workspaceSeedMode = nodeProcess.argv.includes(
+  "--erc-chart-workspace-seed",
+);
+const workspaceVerifyMode = nodeProcess.argv.includes(
+  "--erc-chart-workspace-verify",
+);
 const reportSmokeStage = (stage: string): void => {
   if (smokeMode) console.log(`ERC_CHART_SMOKE_STAGE ${stage}`);
 };
@@ -93,7 +112,13 @@ const dataUtility = createUtilitySupervisor({
   },
 });
 
-function createWindow(options: SecureWindowOptions): BrowserWindow {
+function createWindow(options: SecureWindowOptions): {
+  loadURL: (url: string) => Promise<void>;
+  flushWorkspace: () => Promise<void>;
+  show: () => void;
+  destroy: () => void;
+  isDestroyed: () => boolean;
+} {
   reportSmokeStage("window-created");
   const window = new BrowserWindow(options);
   installWindowSecurity({
@@ -112,9 +137,28 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
       void (async (): Promise<void> => {
         const result: unknown = await window.webContents.executeJavaScript(`
           new Promise((resolve) => {
-            const inspect = () => {
+            let processing = false;
+            const inspect = async () => {
               const status = document.querySelector('[data-status]')?.textContent;
               if (status !== 'Secure bridge connected') return false;
+              if (processing) return true;
+              processing = true;
+              const add = document.querySelector('.workspace-add');
+              if (${workspaceSeedMode ? "true" : "false"}) {
+                if (!(add instanceof HTMLButtonElement)) return false;
+                add.click();
+                await new Promise((done) => setTimeout(done, 300));
+                document.querySelector('.workspace-add')?.click();
+                await new Promise((done) => setTimeout(done, 600));
+                const slotCount = document.querySelectorAll('[data-chart-slot]').length;
+                resolve({
+                  ready: slotCount === 3,
+                  processType: typeof globalThis.process,
+                  requireType: typeof globalThis.require
+                });
+                return true;
+              }
+              if (${workspaceVerifyMode ? "true" : "false"} && document.querySelectorAll('[data-chart-slot]').length !== 3) return false;
               resolve({
                 ready: true,
                 processType: typeof globalThis.process,
@@ -122,19 +166,23 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
               });
               return true;
             };
-            if (inspect()) return;
-            const observer = new MutationObserver(() => {
-              if (inspect()) observer.disconnect();
+            void inspect().then((matched) => {
+              if (matched) return;
+              const observer = new MutationObserver(() => {
+                void inspect().then((found) => {
+                  if (found) observer.disconnect();
+                });
+              });
+              observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                characterData: true
+              });
+              setTimeout(() => {
+                observer.disconnect();
+                resolve({ ready: false });
+              }, 5000);
             });
-            observer.observe(document.documentElement, {
-              childList: true,
-              subtree: true,
-              characterData: true
-            });
-            setTimeout(() => {
-              observer.disconnect();
-              resolve({ ready: false });
-            }, 5000);
           });
         `);
         if (!isSmokeResult(result)) {
@@ -150,7 +198,17 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
         }
         reportSmokeStage("renderer-ready");
         const controller = await controllerReady;
-        console.log("ERC_CHART_SMOKE_READY");
+        console.log(
+          workspaceSeedMode
+            ? "ERC_CHART_WORKSPACE_SEEDED"
+            : workspaceVerifyMode
+              ? "ERC_CHART_WORKSPACE_RESTORED"
+              : "ERC_CHART_SMOKE_READY",
+        );
+        if (workspaceSeedMode) {
+          app.quit();
+          return;
+        }
         await controller.shutdown();
         app.exit(0);
       })().catch(() => {
@@ -160,13 +218,51 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
       });
     });
   }
-  return window;
+  return {
+    loadURL: (url: string): Promise<void> => window.loadURL(url),
+    flushWorkspace: async (): Promise<void> => {
+      if (window.isDestroyed()) return;
+      await window.webContents.executeJavaScript(
+        "globalThis.ercChart?.flushWorkspace?.()",
+      );
+    },
+    show: (): void => window.show(),
+    destroy: (): void => window.destroy(),
+    isDestroyed: (): boolean => window.isDestroyed(),
+  };
 }
 
 async function startDesktopMain(): Promise<void> {
   reportSmokeStage("artifacts-validating");
   await validateDesktopArtifacts(paths);
   reportSmokeStage("artifacts-valid");
+  const userDataSwitch = smokeMode
+    ? app.commandLine.getSwitchValue("erc-chart-user-data-path")
+    : "";
+  const userDataArgument = smokeMode
+    ? [
+        ...nodeProcess.argv,
+        ...(userDataSwitch === ""
+          ? []
+          : [`--erc-chart-user-data-path=${userDataSwitch}`]),
+      ].find((argument) => argument.startsWith("--erc-chart-user-data-path="))
+    : undefined;
+  const workspaceDatabase = await openStorageDatabase(
+    path.join(
+      userDataArgument?.slice("--erc-chart-user-data-path=".length) ??
+        app.getPath("userData"),
+      "erc-chart.sqlite",
+    ),
+  );
+  const senderFromEvent = (event: Electron.IpcMainInvokeEvent) => {
+    const senderFrame = event.senderFrame;
+    return senderFrame === null
+      ? undefined
+      : {
+          url: senderFrame.url,
+          isMainFrame: senderFrame.parent === null,
+        };
+  };
   const controller = await startDesktopApplication(
     {
       app: {
@@ -184,18 +280,22 @@ async function startDesktopMain(): Promise<void> {
         quit: (): void => app.quit(),
       },
       registerRuntimeInfoHandler: (handler): (() => void) => {
-        ipcMain.handle(runtimeInfoChannel, (event) => {
-          const senderFrame = event.senderFrame;
-          return handler(
-            senderFrame === null
-              ? undefined
-              : {
-                  url: senderFrame.url,
-                  isMainFrame: senderFrame.parent === null,
-                },
-          );
-        });
+        ipcMain.handle(runtimeInfoChannel, (event) =>
+          handler(senderFromEvent(event)),
+        );
         return (): void => ipcMain.removeHandler(runtimeInfoChannel);
+      },
+      registerWorkspaceLoadHandler: (handler): (() => void) => {
+        ipcMain.handle(workspaceLoadChannel, (event) =>
+          handler(senderFromEvent(event)),
+        );
+        return (): void => ipcMain.removeHandler(workspaceLoadChannel);
+      },
+      registerWorkspaceSaveHandler: (handler): (() => void) => {
+        ipcMain.handle(workspaceSaveChannel, (event, workspace: unknown) =>
+          handler(senderFromEvent(event), workspace).then(() => true),
+        );
+        return (): void => ipcMain.removeHandler(workspaceSaveChannel);
       },
       registerRendererProtocol: (rootPath): Promise<() => void> =>
         installRendererProtocol(
@@ -214,6 +314,17 @@ async function startDesktopMain(): Promise<void> {
         },
         shutdown: (): Promise<void> => dataUtility.shutdown(),
       },
+      workspacePersistence: {
+        load: async (): Promise<PersistedWorkspace | null> =>
+          loadWorkspace(workspaceDatabase, lastWorkspaceId) ?? null,
+        save: async (workspace): Promise<void> => {
+          saveWorkspace(workspaceDatabase, workspace, desktopInstanceId);
+        },
+        flush: async (): Promise<void> => undefined,
+        close: async (): Promise<void> => {
+          workspaceDatabase.close();
+        },
+      },
     },
     paths,
   );
@@ -221,7 +332,7 @@ async function startDesktopMain(): Promise<void> {
 
   let quitting = false;
   app.on("before-quit", (event) => {
-    if (quitting || smokeMode) return;
+    if (quitting || (smokeMode && !workspaceSeedMode)) return;
     event.preventDefault();
     quitting = true;
     void controller

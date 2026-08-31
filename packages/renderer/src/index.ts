@@ -16,6 +16,10 @@ export {
   maximumWorkspaces,
   workspaceReducer,
 } from "./workspace.js";
+export {
+  fromPersistedWorkspace,
+  toPersistedWorkspace,
+} from "./workspace-persistence.js";
 export type {
   ChartSlot,
   LayoutSize,

@@ -1,15 +1,22 @@
+import type {
+  PersistedWorkspaceChartSlot,
+  PersistedWorkspaceTab,
+} from "@erc-chart/contracts";
+
 export type LayoutSize = 1 | 2 | 3 | 4;
 
 export const maximumWorkspaces = 4 as const;
 
 export interface ChartSlot {
   readonly id: string;
+  readonly persisted?: Omit<PersistedWorkspaceChartSlot, "id">;
 }
 
 export interface WorkspaceTab {
   readonly id: string;
   readonly title: string;
   readonly layoutSize: LayoutSize;
+  readonly persistedLayout?: PersistedWorkspaceTab["layout"] | undefined;
   readonly slots: readonly ChartSlot[];
   readonly nextWorkspaceNumber: number;
 }
@@ -116,6 +123,7 @@ export function workspaceReducer(
       const updated = {
         ...current,
         layoutSize,
+        persistedLayout: undefined,
         slots: [
           ...current.slots,
           { id: `${current.id}-chart-${workspaceNumber}` },
@@ -140,6 +148,7 @@ export function workspaceReducer(
       const updated = {
         ...current,
         layoutSize,
+        persistedLayout: undefined,
         slots: current.slots.filter((slot) => slot.id !== action.workspaceId),
       };
       const tabs = [...state.tabs];

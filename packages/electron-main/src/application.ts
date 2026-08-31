@@ -1,4 +1,9 @@
-import { ipcContractVersion, type RuntimeInfo } from "@erc-chart/contracts";
+import {
+  ipcContractVersion,
+  isWorkspaceSaveRequest,
+  type PersistedWorkspace,
+  type RuntimeInfo,
+} from "@erc-chart/contracts";
 import { assertTrustedIpcSender, type DesktopIpcSender } from "./security.js";
 import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
 
@@ -12,6 +17,7 @@ export interface DesktopArtifactPaths {
 
 export interface DesktopWindow {
   readonly loadURL: (url: string) => Promise<void>;
+  readonly flushWorkspace: () => Promise<void>;
   readonly show: () => void;
   readonly destroy: () => void;
   readonly isDestroyed: () => boolean;
@@ -30,6 +36,17 @@ export interface DesktopApplicationAdapters {
   readonly registerRuntimeInfoHandler: (
     handler: (sender: DesktopIpcSender | undefined) => RuntimeInfo,
   ) => () => void;
+  readonly registerWorkspaceLoadHandler: (
+    handler: (
+      sender: DesktopIpcSender | undefined,
+    ) => Promise<PersistedWorkspace | null>,
+  ) => () => void;
+  readonly registerWorkspaceSaveHandler: (
+    handler: (
+      sender: DesktopIpcSender | undefined,
+      workspace: unknown,
+    ) => Promise<void>,
+  ) => () => void;
   readonly registerRendererProtocol: (rootPath: string) => Promise<() => void>;
   readonly createWindow: (options: SecureWindowOptions) => DesktopWindow;
   readonly dataUtility: {
@@ -38,6 +55,12 @@ export interface DesktopApplicationAdapters {
       args?: readonly string[],
     ) => Promise<void>;
     readonly shutdown: () => Promise<void>;
+  };
+  readonly workspacePersistence: {
+    readonly load: () => Promise<PersistedWorkspace | null>;
+    readonly save: (workspace: PersistedWorkspace) => Promise<void>;
+    readonly flush: () => Promise<void>;
+    readonly close: () => Promise<void>;
   };
 }
 
@@ -60,6 +83,20 @@ export async function startDesktopApplication(
         ipcContractVersion,
         applicationName: "ERC Chart",
       };
+    },
+  );
+  const removeWorkspaceLoadHandler = adapters.registerWorkspaceLoadHandler(
+    async (sender): Promise<PersistedWorkspace | null> => {
+      assertTrustedIpcSender(sender);
+      return adapters.workspacePersistence.load();
+    },
+  );
+  const removeWorkspaceSaveHandler = adapters.registerWorkspaceSaveHandler(
+    async (sender, workspace): Promise<void> => {
+      assertTrustedIpcSender(sender);
+      if (!isWorkspaceSaveRequest(workspace))
+        throw new Error("Invalid workspace save request.");
+      await adapters.workspacePersistence.save(workspace);
     },
   );
 
@@ -105,10 +142,18 @@ export async function startDesktopApplication(
       // Cleanup failure must not expose the original startup error.
     }
     try {
+      await adapters.workspacePersistence.flush();
+      await adapters.workspacePersistence.close();
+    } catch {
+      // Cleanup failure must not expose the original startup error.
+    }
+    try {
       removeRendererProtocol?.();
     } catch {
       // Cleanup failure must not expose the original startup error.
     }
+    removeWorkspaceSaveHandler();
+    removeWorkspaceLoadHandler();
     removeRuntimeInfoHandler();
     throw new Error("Desktop application failed to start.");
   }
@@ -117,15 +162,28 @@ export async function startDesktopApplication(
     shutdown: async (): Promise<void> => {
       if (stopped) return;
       stopped = true;
+      let shutdownError: unknown;
       try {
         await adapters.dataUtility.shutdown();
+      } catch (error) {
+        shutdownError = error;
+      }
+      try {
+        await currentWindow?.flushWorkspace();
+        await adapters.workspacePersistence.flush();
+        await adapters.workspacePersistence.close();
+      } catch (error) {
+        shutdownError ??= error;
       } finally {
         try {
           removeRendererProtocol?.();
         } finally {
+          removeWorkspaceSaveHandler();
+          removeWorkspaceLoadHandler();
           removeRuntimeInfoHandler();
         }
       }
+      if (shutdownError !== undefined) throw shutdownError;
     },
   };
 }

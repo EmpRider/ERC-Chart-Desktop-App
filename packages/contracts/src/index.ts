@@ -14,6 +14,21 @@ export type { CompatibilityRange, PluginKind } from "./plugins.js";
 export { isRuntimeInfo, runtimeInfoChannel } from "./runtime.js";
 export type { RuntimeInfo } from "./runtime.js";
 export {
+  isPersistedWorkspace,
+  isWorkspaceLoadResult,
+  isWorkspaceSaveRequest,
+  workspaceLoadChannel,
+  workspaceSaveChannel,
+} from "./workspace-persistence.js";
+export type {
+  PersistedWorkspace,
+  PersistedWorkspaceChartSlot,
+  PersistedWorkspaceTab,
+  WorkspaceIndicator,
+  WorkspaceIndicatorInput,
+  WorkspaceViewport,
+} from "./workspace-persistence.js";
+export {
   isUtilityControlMessage,
   isUtilityStatusMessage,
 } from "./utility-process.js";
