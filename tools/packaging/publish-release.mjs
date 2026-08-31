@@ -63,13 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Toolchain and dependency update
+const curatedNotes = `# Workspace persistence correction
 
-This corrective release updates ERC Chart's supported runtime and development toolchain to the latest stable versions available at release time: Node.js 26.8.1, npm 12.0.2, Electron 44.0.0, TypeScript 7.0.2 native compiler, the TypeScript 6.0.2 compatibility API, React 19.2.8, and the repository's direct linting, formatting, packaging, parsing, and type packages.
+This corrective release persists workspace identities, chart fields, and layout orientation across application restarts. Persisted workspace data is validated before hydration, and pending saves are serialized.
 
-The application behavior and Epic 2 capability scope are unchanged. Compatibility fixes are limited to TypeScript project configuration, package-script policy, and malformed project-reference validation required by the upgraded tools.
-
-Known limitations: chart rendering, live market-data connectivity, plugin execution, automatic updates, and production code signing remain later work. The installer is unsigned.
+Known limitations: workspace renaming, chart editing UI, provider configuration, chart rendering, live market-data connectivity, plugin execution, automatic updates, and production code signing remain later work. The installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
