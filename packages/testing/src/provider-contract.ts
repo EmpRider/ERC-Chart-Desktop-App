@@ -355,41 +355,53 @@ export function createProviderContractFixture(
   options: ProviderContractFixtureOptions = {},
 ): ProviderContractFixture {
   const calls: ProviderFixtureCall[] = [];
-  const candles: readonly Candle[] = options.candles ?? [
-    {
-      instrumentId: fixtureInstrumentId,
-      timeframeId: fixtureTimeframeId,
-      openTimeMs: 1_800_000_000_000,
-      open: 100,
-      high: 102,
-      low: 99,
-      close: 101,
-      volume: 25,
-    },
-  ];
-  const ticks: readonly Tick[] = options.ticks ?? [
-    {
-      instrumentId: fixtureInstrumentId,
-      timestampMs: 1_800_000_030_000,
-      price: 101.5,
-      volume: 2,
-    },
-  ];
-  const capabilities: ProviderCapabilities = options.capabilities ?? {
-    instruments: true,
-    nativeTimeframes: [fixtureTimeframeId],
-    liveData: true,
-    derivedTimeframes: false,
-  };
-  const metadata: ProviderPluginMetadata = options.metadata ?? {
-    id: fixtureProviderId,
-    name: "Fixture Provider",
-    providerContractVersion: providerSdkVersion,
-    hostCompatibility: {
-      minimumHostApiVersion: hostApiVersion,
-      maximumHostApiVersion: hostApiVersion,
-    },
-  };
+  const candles: readonly Candle[] =
+    options.candles !== undefined
+      ? options.candles
+      : [
+          {
+            instrumentId: fixtureInstrumentId,
+            timeframeId: fixtureTimeframeId,
+            openTimeMs: 1_800_000_000_000,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 25,
+          },
+        ];
+  const ticks: readonly Tick[] =
+    options.ticks !== undefined
+      ? options.ticks
+      : [
+          {
+            instrumentId: fixtureInstrumentId,
+            timestampMs: 1_800_000_030_000,
+            price: 101.5,
+            volume: 2,
+          },
+        ];
+  const capabilities: ProviderCapabilities =
+    options.capabilities !== undefined
+      ? options.capabilities
+      : {
+          instruments: true,
+          nativeTimeframes: [fixtureTimeframeId],
+          liveData: true,
+          derivedTimeframes: false,
+        };
+  const metadata: ProviderPluginMetadata =
+    options.metadata !== undefined
+      ? options.metadata
+      : {
+          id: fixtureProviderId,
+          name: "Fixture Provider",
+          providerContractVersion: providerSdkVersion,
+          hostCompatibility: {
+            minimumHostApiVersion: hostApiVersion,
+            maximumHostApiVersion: hostApiVersion,
+          },
+        };
   const adapter: ProviderAdapter = {
     connect: async (): Promise<void> => {
       calls.push("connect");
@@ -436,66 +448,135 @@ export function createProviderContractFixture(
   };
 }
 
+function operationFailure(path: string): ProviderContractViolation {
+  return failure(
+    "PROVIDER_OPERATION_FAILED",
+    path,
+    "Provider adapter operation failed during conformance.",
+  );
+}
+
+type CapturedOperation<T> =
+  { readonly ok: true; readonly value: T } | { readonly ok: false };
+
+async function captureOperation<T>(
+  path: string,
+  operation: () => Promise<T>,
+  violations: ProviderContractViolation[],
+): Promise<CapturedOperation<T>> {
+  try {
+    return { ok: true, value: await operation() };
+  } catch {
+    violations.push(operationFailure(path));
+    return { ok: false };
+  }
+}
+
+function inspectCandleBatch(
+  value: unknown,
+  path: string,
+  expectedInstrumentId: InstrumentId,
+  expectedTimeframeId: TimeframeId,
+): readonly ProviderContractViolation[] {
+  if (!Array.isArray(value)) {
+    return [
+      failure(
+        "MALFORMED_PROVIDER_VALUE",
+        path,
+        "Provider candles must be an array.",
+      ),
+    ];
+  }
+  return value.flatMap((candle, index) =>
+    inspectCandle(
+      candle,
+      `${path}[${index}]`,
+      expectedInstrumentId,
+      expectedTimeframeId,
+    ),
+  );
+}
+
+function inspectTickBatch(
+  value: unknown,
+  path: string,
+  expectedInstrumentId: InstrumentId,
+): readonly ProviderContractViolation[] {
+  if (!Array.isArray(value)) {
+    return [
+      failure(
+        "MALFORMED_PROVIDER_VALUE",
+        path,
+        "Provider ticks must be an array.",
+      ),
+    ];
+  }
+  return value.flatMap((tick, index) =>
+    inspectTick(tick, `${path}[${index}]`, expectedInstrumentId),
+  );
+}
+
 export async function runProviderContractConformance(
   subject: ProviderContractSubject,
 ): Promise<ProviderContractReport> {
   const violations = [...inspectMetadata(subject.metadata)];
   if (violations.length > 0) return report(violations);
 
-  let connected = false;
-  try {
-    await subject.adapter.connect();
-    connected = true;
-    const capabilities = await subject.adapter.getCapabilities();
-    violations.push(...inspectCapabilities(capabilities));
+  const connectResult = await captureOperation(
+    "adapter.connect",
+    async () => {
+      await subject.adapter.connect();
+      return true;
+    },
+    violations,
+  );
+  if (!connectResult.ok) return report(violations);
 
-    const candles = await subject.adapter.requestHistory(
-      subject.historyRequest,
+  try {
+    const capabilities = await captureOperation(
+      "adapter.getCapabilities",
+      () => subject.adapter.getCapabilities(),
+      violations,
     );
-    if (!Array.isArray(candles)) {
+    if (capabilities.ok) {
+      violations.push(...inspectCapabilities(capabilities.value));
+    }
+
+    const candles = await captureOperation(
+      "adapter.requestHistory",
+      () => subject.adapter.requestHistory(subject.historyRequest),
+      violations,
+    );
+    if (candles.ok) {
       violations.push(
-        failure(
-          "MALFORMED_PROVIDER_VALUE",
+        ...inspectCandleBatch(
+          candles.value,
           "history",
-          "Provider history must be an array.",
+          subject.historyRequest.instrumentId,
+          subject.historyRequest.timeframeId,
         ),
       );
-    } else {
-      for (const [index, candle] of candles.entries()) {
-        violations.push(
-          ...inspectCandle(
-            candle,
-            `history[${index}]`,
-            subject.historyRequest.instrumentId,
-            subject.historyRequest.timeframeId,
-          ),
-        );
-      }
     }
 
     const sink: ProviderDataSink = {
       onCandles: (batch: readonly Candle[]): void => {
-        for (const [index, candle] of batch.entries()) {
-          violations.push(
-            ...inspectCandle(
-              candle,
-              `subscription.candles[${index}]`,
-              subject.subscriptionRequest.instrumentId,
-              subject.subscriptionRequest.timeframeId,
-            ),
-          );
-        }
+        violations.push(
+          ...inspectCandleBatch(
+            batch,
+            "subscription.candles",
+            subject.subscriptionRequest.instrumentId,
+            subject.subscriptionRequest.timeframeId,
+          ),
+        );
       },
       onTicks: (batch: readonly Tick[]): void => {
-        for (const [index, tick] of batch.entries()) {
-          violations.push(
-            ...inspectTick(
-              tick,
-              `subscription.ticks[${index}]`,
-              subject.subscriptionRequest.instrumentId,
-            ),
-          );
-        }
+        violations.push(
+          ...inspectTickBatch(
+            batch,
+            "subscription.ticks",
+            subject.subscriptionRequest.instrumentId,
+          ),
+        );
       },
       onError: (code: string): void => {
         if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) {
@@ -509,33 +590,42 @@ export async function runProviderContractConformance(
         }
       },
     };
-    const subscription = await subject.adapter.subscribe(
-      subject.subscriptionRequest,
-      sink,
+    const subscription = await captureOperation(
+      "adapter.subscribe",
+      () => subject.adapter.subscribe(subject.subscriptionRequest, sink),
+      violations,
     );
-    await subscription.unsubscribe();
-  } catch {
-    violations.push(
-      failure(
-        "PROVIDER_OPERATION_FAILED",
-        "adapter",
-        "Provider adapter operation failed during conformance.",
-      ),
-    );
-  } finally {
-    if (connected) {
-      try {
-        await subject.adapter.disconnect();
-      } catch {
+    if (subscription.ok) {
+      if (!isRecord(subscription.value)) {
         violations.push(
           failure(
-            "PROVIDER_OPERATION_FAILED",
-            "adapter.disconnect",
-            "Provider disconnect failed during conformance cleanup.",
+            "MALFORMED_PROVIDER_VALUE",
+            "subscription",
+            "Provider subscription must expose an unsubscribe operation.",
           ),
+        );
+      } else if (typeof subscription.value.unsubscribe !== "function") {
+        violations.push(
+          failure(
+            "MALFORMED_PROVIDER_VALUE",
+            "subscription.unsubscribe",
+            "Provider subscription must expose an unsubscribe operation.",
+          ),
+        );
+      } else {
+        await captureOperation(
+          "adapter.unsubscribe",
+          () => subscription.value.unsubscribe(),
+          violations,
         );
       }
     }
+  } finally {
+    await captureOperation(
+      "adapter.disconnect",
+      () => subject.adapter.disconnect(),
+      violations,
+    );
   }
   return report(violations);
 }
@@ -553,12 +643,38 @@ export function inspectProviderHistoryEnvelope(
       ),
     ]);
   }
+  if (
+    typeof value.contractVersion !== "number" ||
+    !Number.isSafeInteger(value.contractVersion) ||
+    value.contractVersion < 1
+  ) {
+    return report([
+      failure(
+        "MALFORMED_PROVIDER_VALUE",
+        "envelope.contractVersion",
+        "Provider contract version must be a positive safe integer.",
+      ),
+    ]);
+  }
   if (value.contractVersion !== providerContractVersion) {
     return report([
       failure(
         "UNSUPPORTED_PROVIDER_CONTRACT",
         "envelope.contractVersion",
         `Expected provider contract ${providerContractVersion}.`,
+      ),
+    ]);
+  }
+  if (
+    typeof value.generation !== "number" ||
+    !Number.isSafeInteger(value.generation) ||
+    value.generation < 0
+  ) {
+    return report([
+      failure(
+        "MALFORMED_PROVIDER_VALUE",
+        "envelope.generation",
+        "Provider generation must be a non-negative safe integer.",
       ),
     ]);
   }
