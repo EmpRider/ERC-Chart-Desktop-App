@@ -11,7 +11,34 @@
       "path": "../contracts"
     },
     {
+      "path": "../electron-main"
+    },
+    {
+      "path": "../preload"
+    },
+    {
+      "path": "../renderer"
+    },
+    {
+      "path": "../chart-core"
+    },
+    {
+      "path": "../data-service"
+    },
+    {
       "path": "../provider-sdk"
+    },
+    {
+      "path": "../provider-runtime"
+    },
+    {
+      "path": "../indicator-sdk"
+    },
+    {
+      "path": "../indicator-runtime"
+    },
+    {
+      "path": "../storage"
     }
   ]
 }
