@@ -69,7 +69,7 @@ These tasks remain mandatory but are not global pre-development blockers.
 | ECDD-43 | Binomo TLS, auth, catalogue, history, live stream, timeframe and distribution feasibility | before full Epic 4 Binomo adapter implementation | milestone-deferred |
 | ECDD-44 | Windows Credential Manager bridge approach | before Epic 2 credential persistence implementation | milestone-deferred |
 | ECDD-45 | SQLite WAL from two independent ERC-chart processes | before Epic 2 shared-database acceptance | milestone-deferred |
-| ECDD-46 | four layered Canvas charts with synthetic 100,000-candle data | before Epic 5 chart-engine feature freeze | milestone-deferred |
+| ECDD-46 | four klinecharts instances with synthetic 100,000-candle data, required interactions, and thin presentation/overlay extensions | before Epic 5 chart-integration feature freeze | milestone-deferred |
 | ECDD-47 | twenty Node-disabled indicator workers | before Epic 7 indicator-runtime feature freeze | milestone-deferred |
 | ECDD-48 | final minimum-PC selection from measurements | after ECDD-46/ECDD-47; before Epic 9 performance acceptance | milestone-deferred |
 | ECDD-49 | viable rendering and worker performance figures | completion evidence from ECDD-46/ECDD-47 | milestone-deferred acceptance record |

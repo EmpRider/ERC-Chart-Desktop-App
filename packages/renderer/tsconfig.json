@@ -12,9 +12,6 @@
       "path": "../contracts"
     },
     {
-      "path": "../chart-core"
-    },
-    {
       "path": "../provider-sdk"
     },
     {

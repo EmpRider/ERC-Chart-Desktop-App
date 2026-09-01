@@ -38,14 +38,14 @@ The MVP is a Windows `.exe`, and all third-party authoring is JavaScript/TypeScr
 
 ### Decision
 
-Use a current supported Electron release with strict TypeScript, a React application shell, and an independent TypeScript chart engine. Build an x64 NSIS `.exe` through electron-builder.
+Use a current supported Electron release with strict TypeScript, a React application shell, and pinned klinecharts integrated through the renderer. Build an x64 NSIS `.exe` through electron-builder.
 
 ### Consequences
 
 - One language and contract model spans the application and SDK.
 - Electron/Chromium security updates become release responsibilities.
 - Memory performance must be tested under the full four-chart workload.
-- The chart engine must not import Electron or React.
+- klinecharts integration must remain inside the renderer and must not leak Electron or provider internals.
 
 ## ADR-003 — Privilege and failure boundaries
 
@@ -74,7 +74,7 @@ Use:
 
 ## ADR-004 — Custom layered Canvas 2D chart engine
 
-Status: **Proposed**
+Status: **Superseded by ADR-015**
 
 ### Context
 
@@ -90,6 +90,10 @@ Build a custom layered Canvas 2D engine from zero. Store series in typed arrays,
 - The engine can later adopt WebGL behind its renderer interface if measurements require it.
 - Accessibility and non-canvas controls remain in the React shell.
 - Renderer performance tests become a release gate.
+
+### Supersession note
+
+Superseded on 2026-08-31 by ADR-015. The custom `@erc-chart/chart-core` package is removed; klinecharts v10 replaces the entire chart rendering, interaction, and drawing layer.
 
 ## ADR-005 — Versioned, capability-declared plugin packages
 
@@ -218,7 +222,7 @@ Workspace schema version 1 stores tabs, layouts, chart configuration, viewport, 
 
 ### Consequences
 
-- Drawing undo/redo is session-only.
+- Drawing history is not part of the MVP; adding undo/redo later requires a separate product decision and bounded command model.
 - The schema reserves no ambiguous drawing field.
 - Adding drawing persistence later requires a new workspace schema version and migration.
 
@@ -274,3 +278,35 @@ Implement Binomo as a first-party TypeScript provider plugin behind the generic 
 - Protocol changes affect the adapter rather than chart core.
 - Release depends on confirming authentication, instruments, timeframes, TLS, rate limits, and permitted use.
 - The reference credential must be rotated if valid.
+
+## ADR-015 — klinecharts v10 replaces custom chart engine
+
+Status: **Accepted**
+
+### Context
+
+ADR-004 proposed building a custom layered Canvas 2D chart engine from zero as `@erc-chart/chart-core`. Before implementation began the package contained only an empty stub (`export {}`). Building a production-quality chart engine with candlestick/line/area rendering, layered canvas, pointer-anchored zoom, pan, crosshair, axis interactions, drawings, and hit testing is a large engineering effort that duplicates mature open-source work.
+
+klinecharts v10.0.3 is a lightweight, high-performance financial charting library that supplies the MVP candlestick and area presentations, Canvas 2D rendering, pointer zoom, pan, crosshair, axis interaction, built-in overlays such as `fibonacciLine`, horizontal/vertical lines, `simpleAnnotation`, and `simpleTag`, plus extension APIs for technical indicators, overlays, and figures. Rectangle and free-text drawings require small ERC-chart overlay extensions built from klinecharts figures. Line presentation uses area mode with transparent fill or, only if parity requires it, a thin presentation extension. klinecharts has no native drawing undo/redo stack.
+
+### Decision
+
+Remove the `@erc-chart/chart-core` package entirely. Use klinecharts v10 as the chart rendering, interaction, and drawing engine. The ERC-chart architecture now focuses on three integration layers:
+
+1. **SDK and plugin-based provider system** — provider SDK, provider runtime, and Binomo adapter remain unchanged.
+2. **klinecharts integration layer** — a thin adapter in `@erc-chart/renderer` that bridges klinecharts with the ERC-chart data service, provider feeds, and workspace state.
+3. **Indicator implementation** — indicator SDK and runtime feed calculation results into klinecharts through its technical indicator and overlay plugin APIs.
+
+The drawing subsystem (Epic 6) uses klinecharts built-in overlays where available plus tiny rectangle and text overlay extensions. ERC-chart does not implement a separate chart engine, coordinate renderer, or MVP drawing undo/redo stack.
+
+### Consequences
+
+- `packages/chart-core` directory and `@erc-chart/chart-core` package are removed from the monorepo, workspace map, contract baseline, and dependency rules.
+- Epic 5 scope reduces from building a chart engine to integrating and configuring klinecharts.
+- Epic 6 scope reduces from building a drawing subsystem to configuring klinecharts overlays, adding thin rectangle/text overlay definitions, and mapping session state.
+- `@erc-chart/renderer` gains a direct dependency on `klinecharts` instead of `@erc-chart/chart-core`.
+- Indicator plot rendering uses klinecharts custom technical indicator and overlay APIs instead of a custom `IndicatorPresentation` module.
+- Viewport, crosshair, and selection state ownership shifts from chart-core to the klinecharts instance, observed by the renderer.
+- The architecture no longer owns the chart rendering internals; klinecharts upstream changes become a dependency risk managed through version pinning.
+- Large-dataset performance (100,000 candles) must be validated against klinecharts rather than a custom engine.
+- Signal candidate contract and post-MVP signal features remain unchanged.

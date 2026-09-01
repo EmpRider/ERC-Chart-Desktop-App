@@ -20,9 +20,6 @@
       "path": "../renderer"
     },
     {
-      "path": "../chart-core"
-    },
-    {
       "path": "../data-service"
     },
     {

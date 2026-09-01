@@ -2,6 +2,22 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.2.3] - 2026-09-01
+
+### Architecture changes
+
+- Replaced the empty custom chart-core workspace with pinned `klinecharts` 10.0.3.
+- Aligned workspace boundaries, TypeScript references, architecture decisions,
+  implementation backlog, and drawing requirements with the klinecharts
+  integration path.
+- Retained provider and indicator SDK/runtime boundaries; chart rendering and
+  drawing implementation remain later work.
+
+### Architecture release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed
