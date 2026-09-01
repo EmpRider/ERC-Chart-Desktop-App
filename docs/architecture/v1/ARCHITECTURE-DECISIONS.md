@@ -310,3 +310,44 @@ The drawing subsystem (Epic 6) uses klinecharts built-in overlays where availabl
 - The architecture no longer owns the chart rendering internals; klinecharts upstream changes become a dependency risk managed through version pinning.
 - Large-dataset performance (100,000 candles) must be validated against klinecharts rather than a custom engine.
 - Signal candidate contract and post-MVP signal features remain unchanged.
+
+## ADR-016 — Clean indicator authoring facade and synchronized runtime configuration
+
+Status: **Accepted**
+
+### Context
+
+The indicator runtime needs internal context, canonical series, provider subscriptions, multi-timeframe acquisition, revisions, worker transport, and klinecharts integration. Exposing those details directly would make plugin code tightly coupled to ERC-chart internals and force indicator authors to manage data plumbing manually.
+
+The product owner also confirmed that klinecharts indicator settings, such as RSI length and line color, must participate in ERC-chart configuration rather than being treated as ephemeral chart-only state.
+
+### Decision
+
+Expose a clean authoring facade based on direct series aliases and `ta.*` helpers. Never expose an internal `ctx` object to indicator authors.
+
+Preferred usage includes:
+
+```ts
+ta.rsi(14);
+ta.rsi(14, open);
+ta.rsi(14, "1h");
+ta.rsi({ length: 14, value: open, tf: "1h" });
+```
+
+Omitted source defaults to `close`; omitted timeframe defaults to the active chart timeframe. Each distinct `ta.*` call is treated internally as a declarative data/calculation dependency. ERC-chart discovers required history, resolves provider-native or safely derived timeframes, subscribes to updates, reuses canonical upstream series when safe, and processes later changes incrementally and silently from the plugin author's point of view.
+
+klinecharts remains responsible for chart/indicator presentation and its native settings UI. ERC-chart remains the owner of normalized indicator-instance configuration. Changes made through klinecharts settings are translated back into ERC-chart configuration. Calculation-affecting changes increment the configuration generation and invalidate stale results; style-only changes update presentation without unnecessary history reload or recalculation.
+
+Dynamic provider configuration follows the same principle: changes are validated and applied through controlled reconnect/rebuild/resubscription paths instead of mutable hidden side effects.
+
+Detailed implementation guidance is recorded in `SDK-IMPLEMENTATION-DECISIONS.md`.
+
+### Consequences
+
+- Indicator source code remains concise and independent of provider, renderer, transport, storage, and worker internals.
+- The SDK needs overload normalization and a canonical TA-function metadata/signature registry.
+- The runtime needs an internal dependency representation for `ta.*` calls, history-requirement discovery, MTF resolution, deduplication of compatible upstream data needs, and incremental snapshot/delta processing.
+- Data revision and indicator configuration generation must be tracked separately.
+- klinecharts instances are not persistence sources of truth; workspace persistence stores normalized ERC-chart indicator configuration.
+- Calculation inputs and presentation styles must be classified so style-only edits do not create unnecessary provider/worker churn.
+- Equivalent positional and object-form TA calls must produce equivalent semantics and contract tests.
