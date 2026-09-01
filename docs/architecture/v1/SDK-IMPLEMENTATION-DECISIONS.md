@@ -382,21 +382,28 @@ This is illustrative syntax. The frozen behavior is that author code is concise,
 - process snapshot + delta updates;
 - track data revision and configuration generation separately;
 - cancel/ignore obsolete work after provider, instrument, timeframe, or configuration changes;
-- distinguish calculation invalidation from presentation-only changes.
+- distinguish calculation invalidation from presentation-only changes;
+- retain incremental calculation state for TA functions when safe so a building-bar update replaces only the current result rather than recalculating complete history;
+- distinguish a mutable building-bar update from a finalized-bar commit/append transition;
+- reject worker results that target a market-data revision or configuration generation older than the current instance state.
 
 ### Data service
 
 - expose provider-neutral series acquisition/subscription APIs suitable for chart and indicator consumers;
 - share canonical series and subscriptions where safe;
 - retain sole ownership of normalized market-data state;
-- provide deterministic building/finalized bar events and aggregation.
+- provide deterministic building/finalized bar events and aggregation;
+- apply live ticks/candle messages to the canonical building candle before publishing the same revisioned state to renderer and indicator consumers;
+- increment the series revision on every correctness-relevant live mutation;
+- never maintain a second independent candle-building truth inside the renderer or SDK runtime.
 
 ### Renderer/klinecharts adapter
 
 - map runtime indicator definitions/results into klinecharts technical-indicator APIs;
 - translate klinecharts settings edits into normalized ERC-chart config changes;
 - avoid making renderer state the persistence source of truth;
-- apply style-only changes without unnecessary worker/provider churn.
+- apply style-only changes without unnecessary worker/provider churn;
+- render price-candle and indicator updates from compatible revisions of the canonical data-service state so the visible candle and calculated indicators cannot silently diverge.
 
 ## 12. Test and acceptance scenarios
 
@@ -417,6 +424,14 @@ The implementation is incomplete until tests cover at least these cases:
 13. Provider profile configuration change reconnects/rebuilds only affected dependencies.
 14. A stale result arriving after a config or data-generation change is discarded.
 15. Plugin code cannot access `ctx`, klinecharts, Electron, Node, provider adapters, credentials, or storage internals.
+16. A live tick that changes only the current candle produces one canonical building-candle revision used by both klinecharts and the indicator runtime.
+17. Multiple ticks inside the same candle replace the current TA output point rather than append duplicate indicator points.
+18. A timeframe boundary finalizes the previous candle, commits its TA state, appends the new candle, and advances each dependency exactly once.
+19. A late result for revision `N` is discarded when revision `N+1` has already become current.
+20. Native and derived MTF dependencies continue updating independently from the chart timeframe during a live feed.
+21. Changing a calculation parameter while live data is arriving increments configuration generation, invalidates old calculation state, recalculates from already available history where possible, and then resumes incremental processing without an unnecessary provider reconnect.
+22. A presentation-only setting change during a live feed does not alter the market-data revision, restart TA dependencies, or request history.
+23. The renderer never constructs a different OHLC candle from the same live ticks than the data service publishes to indicator consumers.
 
 ## 13. Non-goals / deferred details
 
@@ -437,3 +452,266 @@ The SDK should feel like a small trading/technical-analysis language, not a thin
 Indicator authors express **what data/calculation they need**. ERC-chart decides **how to obtain, cache, update, isolate, and render it**.
 
 klinecharts remains the chart/presentation engine, including its settings workflow, while ERC-chart remains the owner of normalized plugin configuration, market data, runtime correctness, persistence, and SDK semantics.
+
+## 15. Real-time candle processing contract
+
+This section freezes how live market data flows through the data service, SDK runtime, TA dependency engine, and klinecharts. The key rule is that the current candle is mutable until finalized and that ordinary live updates are processed incrementally rather than by repeatedly rebuilding history.
+
+### 15.1 Canonical live-data flow
+
+The required ownership flow is:
+
+```text
+Provider WebSocket / live feed
+        │
+        ▼
+Provider plugin
+        │
+        │ normalized tick/candle event
+        ▼
+ERC-chart data service
+        │
+        ├─ validate and normalize
+        ├─ identify the active building candle
+        ├─ update OHLC/optional volume
+        ├─ increment canonical series revision
+        └─ detect candle finalization/boundary
+        │
+        ├──────────────► klinecharts price-series update
+        │
+        └──────────────► SDK / TA dependency engine
+                                │
+                                ├─ update direct series aliases
+                                ├─ update only affected `ta.*` dependencies
+                                ├─ update indicator instances incrementally
+                                └─ publish revision-tagged indicator results
+```
+
+The data service is the sole source of truth for the normalized candle. klinecharts and the indicator runtime consume the same canonical revision; neither builds an independent competing OHLC state.
+
+### 15.2 Building candle semantics
+
+For a chart timeframe such as `1m`, the current minute's candle remains a building candle until the provider/bar-alignment boundary indicates finalization.
+
+A new tick may change:
+
+- `high`;
+- `low`;
+- `close`;
+- optional `volume`, bid/ask-derived fields, or other provider-declared mutable fields.
+
+`open` and the candle's aligned start timestamp remain stable for that bar after creation.
+
+Example:
+
+```ts
+// before a new tick
+{
+  open: 101.80,
+  high: 102.30,
+  low: 101.60,
+  close: 102.10,
+}
+
+// tick price = 102.45
+{
+  open: 101.80,
+  high: 102.45,
+  low: 101.60,
+  close: 102.45,
+}
+```
+
+The updated candle receives a new market-data revision and is distributed to all affected consumers.
+
+### 15.3 Incremental TA behavior
+
+Given author code such as:
+
+```ts
+const rsi = ta.rsi(14);
+const ema = ta.ema(20, close);
+```
+
+initial history is calculated once when the dependency is created or invalidated. During live updates, a change to the building candle should update the current RSI/EMA output using retained incremental state or the smallest correct recalculation window.
+
+The runtime must not conceptually do this for every tick:
+
+```text
+re-download history
+→ rebuild every candle
+→ recalculate the complete RSI history
+→ recalculate the complete EMA history
+```
+
+The intended behavior is:
+
+```text
+update canonical building candle
+→ increment series revision
+→ update affected source value
+→ update affected TA state/current output
+→ publish latest revision-tagged result
+```
+
+A TA implementation may internally retain state such as previous averages, rolling sums, last processed index, or source revision. Those details are private runtime state and are never part of the public SDK API.
+
+### 15.4 Replace current point; do not append duplicates
+
+While the same source candle is building, repeated live updates replace the latest calculated indicator point for that candle index.
+
+For example, during one `1m` candle:
+
+```text
+12:30:10  RSI = 61.2
+12:30:25  RSI = 63.7
+12:30:40  RSI = 59.8
+12:30:59  RSI = 62.4
+```
+
+These values are revisions of the same current RSI point, not four new historical points.
+
+When the bar finalizes, the final value for that candle becomes committed and the next source candle receives the next indicator index.
+
+### 15.5 Finalization and next-candle transition
+
+At a timeframe boundary, ERC-chart must perform a deterministic two-part semantic transition:
+
+```text
+finalize candle at index N
+        ↓
+commit TA state/output for index N
+        ↓
+append/start building candle at index N+1
+        ↓
+continue incremental TA updates for index N+1
+```
+
+The runtime may expose internal lifecycle events equivalent to building-bar replacement and finalized-bar append, but ordinary `ta.*` users do not manually handle those events.
+
+Indicator authors who only use declarative series and TA helpers should not write subscription, mutation, finalization, or candle-boundary plumbing.
+
+### 15.6 Revision and generation correctness
+
+Market-data revision and indicator configuration generation are separate correctness dimensions.
+
+Conceptually every asynchronous indicator result belongs to:
+
+```ts
+{
+  dataRevision,
+  configGeneration,
+  result,
+}
+```
+
+If revision `983` has already become current and work for revision `982` completes later, revision `982` must be discarded.
+
+Likewise, if RSI length changes from 14 to 21 and configuration generation 8 becomes current, a result calculated under generation 7 must never render even if its source-data revision is newer than some previously rendered result.
+
+The renderer only accepts results compatible with the current data revision/configuration generation rules for that indicator instance.
+
+### 15.7 Multiple TA dependencies during a live feed
+
+Given:
+
+```ts
+const rsi = ta.rsi(14);
+const ema = ta.ema(20);
+const slowRsi = ta.rsi(14, "1h");
+```
+
+the runtime maintains three normalized dependencies. They may share canonical source data where safe, but each dependency retains its own function parameters, timeframe identity, update state, and correctness status.
+
+A live tick may therefore cause:
+
+```text
+new tick
+   │
+   ├─► chart-timeframe RSI dependency → update
+   ├─► chart-timeframe EMA dependency → update
+   └─► 1h dependency source           → maybe update its 1h building candle → update 1h RSI
+```
+
+One dependency failing, reconnecting, or waiting for history must not unnecessarily reset the others.
+
+### 15.8 Real-time MTF resolution
+
+For a dependency such as:
+
+```ts
+const rsi1h = ta.rsi(14, "1h");
+```
+
+ERC-chart resolves live data using provider capabilities.
+
+If the provider supplies a native `1h` live stream, that normalized series is used. If the provider contract declares safe derivation, ERC-chart may aggregate an allowed lower timeframe into the aligned `1h` building candle. If neither path is valid, the dependency fails with the stable unsupported-timeframe error.
+
+For derived MTF data, lower-timeframe live changes mutate only the currently affected higher-timeframe building candle. At the provider-declared alignment boundary, the higher-timeframe candle is finalized and a new one begins.
+
+The chart can remain on a different timeframe throughout this process.
+
+### 15.9 Live configuration changes
+
+A calculation-affecting change while data is live, such as:
+
+```text
+RSI length: 14 → 21
+```
+
+must produce this controlled transition:
+
+```text
+normalize updated indicator configuration
+        ↓
+increment configuration generation
+        ↓
+invalidate RSI-14 calculation state/results
+        ↓
+reuse already available canonical history when sufficient
+        ↓
+calculate RSI-21 initial state/history
+        ↓
+publish only new-generation output
+        ↓
+resume incremental live processing with RSI-21
+```
+
+Changing an indicator parameter does not itself justify reconnecting the provider or downloading history again when the required canonical series is already available.
+
+A presentation-only change such as line color, line width, line style, or visibility updates klinecharts/ERC-chart presentation state and persistence but does not invalidate market-data or TA calculation state.
+
+### 15.10 Reconnect and gap behavior
+
+A provider reconnect must preserve correctness rather than blindly continue from assumed continuity.
+
+The data service owns reconnect/gap repair. After reconnect it determines whether the canonical series requires history backfill, de-duplication, building-candle replacement, or revision reset/advance. Indicator dependencies consume the resulting canonical revision sequence.
+
+If gap repair modifies already consumed historical source bars, affected TA dependencies must recalculate from the earliest correctness-relevant changed index or from a safe checkpoint. They must not keep incremental state derived from history that is now known to be wrong.
+
+### 15.11 Public SDK simplicity
+
+Despite the internal lifecycle above, normal author code remains concise:
+
+```ts
+const rsi = ta.rsi(14);
+const ema = ta.ema(20);
+
+plot.line("rsi", rsi);
+plot.line("ema", ema);
+```
+
+The author is not responsible for:
+
+- WebSocket subscriptions;
+- provider reconnect logic;
+- candle mutation;
+- finalization detection;
+- MTF subscriptions/aggregation;
+- history warm-up;
+- rolling TA state;
+- data revision checks;
+- stale-result rejection;
+- klinecharts synchronization.
+
+Those are ERC-chart runtime responsibilities. This separation is a core SDK design requirement, not merely an implementation convenience.
