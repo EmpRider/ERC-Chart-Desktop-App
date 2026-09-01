@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parse } from "yaml";
 import {
   REQUIRED_APPLICATION_SCRIPTS,
   REQUIRED_WINDOWS_SCRIPTS,
@@ -112,6 +113,25 @@ test("delivery workflow executes every governance verification command", async (
     "node tools/delivery-governance/src/github-admin.mjs",
   ])
     assert.ok(workflow.includes(command), command);
+});
+
+test("release workflow ignores documentation and workflow-only pushes", async () => {
+  const workflow = parse(await read(".github/workflows/release.yml"));
+  assert.deepEqual(workflow.on.push.branches, ["main"]);
+  assert.deepEqual(workflow.on.push.paths, [
+    "apps/**",
+    "packages/**",
+    "tools/**",
+    "package.json",
+    "package-lock.json",
+    ".npmrc",
+    ".nvmrc",
+    "eslint.config.mjs",
+    "tsconfig.base.json",
+    "tsconfig.json",
+    "tsconfig.tests.json",
+  ]);
+  assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
 });
 
 test("calibration evidence schema requires solo-maintainer enforcement assertions", async () => {
