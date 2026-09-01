@@ -10,7 +10,27 @@ export type {
   TimeframeId,
 } from "./identifiers.js";
 export type { Candle, Tick } from "./market-data.js";
-export type { CompatibilityRange, PluginKind } from "./plugins.js";
+export {
+  inspectPluginManifest,
+  isPluginManifest,
+  pluginManifestSchema,
+} from "./plugins.js";
+export type {
+  CompatibilityRange,
+  PluginAuthoringLanguage,
+  PluginKind,
+  PluginManifest,
+  PluginManifestIntegrity,
+  PluginManifestJsonObject,
+  PluginManifestJsonValue,
+  PluginManifestPermissions,
+  PluginManifestPublisher,
+  PluginManifestReport,
+  PluginManifestSignature,
+  PluginManifestViolation,
+  PluginManifestViolationCode,
+  PluginStoragePermission,
+} from "./plugins.js";
 export { isRuntimeInfo, runtimeInfoChannel } from "./runtime.js";
 export type { RuntimeInfo } from "./runtime.js";
 export {
