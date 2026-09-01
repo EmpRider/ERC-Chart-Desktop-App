@@ -27,7 +27,7 @@
     },
     "kind": {
       "enum": [
-        "data-provider",
+        "provider",
         "indicator"
       ]
     },
