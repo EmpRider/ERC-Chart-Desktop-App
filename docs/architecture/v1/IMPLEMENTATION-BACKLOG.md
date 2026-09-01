@@ -199,6 +199,8 @@ An item is done only when:
 - canonical TA signature/metadata registry where practical so TypeScript overloads, runtime normalization, history requirements, and docs stay synchronized;
 - internal normalization of every `ta.*` invocation into a provider-neutral dependency/request representation;
 - independent, incremental, silent data handling for each distinct `ta.*` dependency;
+- ERC-chart-owned stateful TA kernels/semantics with O(1) steady-state SMA, EMA, RSI, ATR, and crossover updates plus amortized O(1) highest/lowest updates;
+- committed-versus-provisional rolling state so replacing a building candle cannot compound transient values;
 - history/warm-up requirement discovery per TA function, including composed/nested requirements;
 - provider-native MTF resolution and safely derived MTF fallback using provider-declared alignment metadata;
 - no visible-chart timeframe side effect when an indicator requests another timeframe;
@@ -207,6 +209,9 @@ An item is done only when:
 - explicit distinction between calculation-affecting inputs and presentation-only style settings;
 - normalized `IndicatorInstanceConfig` runtime model separate from immutable plugin definition metadata;
 - klinecharts settings synchronization: calculation changes increment configuration generation, style-only changes avoid unnecessary recalculation/data reload;
+- ERC-chart-owned settings Save/apply transaction using verified klinecharts override APIs without assuming a generic settings-committed callback;
+- pinned klinecharts 10.0.3 result compatibility adapter with layout validation, timestamp/index correlation, readiness handling, and stale generation/revision rejection;
+- bounded normalized indicator-result tail with O(1) latest and O(requested count) last-N access for signal processing;
 - workspace persistence/restore of normalized indicator inputs and presentation settings, including changes originating from klinecharts UI;
 - history, tick, bar, and disposal lifecycle;
 - one Node-disabled Web Worker per active instance;
@@ -234,11 +239,30 @@ An item is done only when:
 - equivalent TA dependencies share upstream data acquisition where safe;
 - different timeframe dependencies can load/fail/update independently;
 - live updates use bounded deltas rather than retransmitting/recalculating complete history when unnecessary;
+- steady-state complexity tests prove the required O(1)/amortized O(1) TA bounds; initialization, reconfiguration, and corrected-history exceptions are measured separately;
+- repeated building-candle replacement cannot mutate committed rolling state more than once;
 - unsupported MTF requests fail through a stable provider-neutral error;
 - changing an RSI length through klinecharts settings invalidates old-generation calculation output;
 - changing only an indicator line color does not trigger provider history reload or TA recalculation;
 - workspace save/restore preserves settings edited through klinecharts UI;
 - plugin code cannot access internal context, klinecharts instances, Electron/Node, provider adapters, storage, credentials, or transport internals.
+- the klinecharts result adapter rejects an unknown layout and cannot publish stale revision/configuration output;
+- latest and last-N result readers are bounded, preserve finalized/provisional semantics, and never scan full candle history during an ordinary signal evaluation.
+
+### Jira traceability
+
+| Requirement group                                                                   | Jira implementation work |
+| ----------------------------------------------------------------------------------- | ------------------------ |
+| Public declarations, normalized calculation/style settings, and settings Save/apply | `ECDD-137`               |
+| Building/finalized lifecycle and committed/provisional state                        | `ECDD-138`               |
+| Typed-array snapshots, bounded deltas, and incremental TA state                     | `ECDD-140`               |
+| Provider-authoritative multi-timeframe dependencies                                 | `ECDD-142`               |
+| Explicit cross-indicator identity and DAG validation                                | `ECDD-143`, `ECDD-149`   |
+| O(1)/amortized O(1) performance, budgets, revisions, and stale results              | `ECDD-145`, `ECDD-148`   |
+| Bounded latest/last-N reads and `SignalCandidate` semantics                         | `ECDD-146`               |
+| klinecharts result-layout/settings compatibility fixtures                           | `ECDD-147`               |
+
+`ECDD-208` records the documentation reconciliation. Completion of that task does not complete the implementation tasks above.
 
 ## Epic 8 — Workspace integration and UX hardening
 

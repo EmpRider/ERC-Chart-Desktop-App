@@ -42,14 +42,14 @@ const rsi = ta.rsi(14, close);
 The SDK should make common series identifiers directly available in the indicator authoring scope, including at minimum:
 
 ```ts
-open
-high
-low
-close
-volume
-hl2
-hlc3
-ohlc4
+open;
+high;
+low;
+close;
+volume;
+hl2;
+hlc3;
+ohlc4;
 ```
 
 Where a provider does not supply an optional field such as volume, the SDK must expose the absence deterministically rather than silently fabricate data.
@@ -61,9 +61,9 @@ Technical-analysis helpers should support concise overloads for common cases and
 Example RSI API:
 
 ```ts
-ta.rsi(14);           // length 14, default value = close, current chart timeframe
-ta.rsi(14, open);     // length 14, explicit source = open, current chart timeframe
-ta.rsi(14, "1h");    // length 14, default source = close, explicit timeframe
+ta.rsi(14); // length 14, default value = close, current chart timeframe
+ta.rsi(14, open); // length 14, explicit source = open, current chart timeframe
+ta.rsi(14, "1h"); // length 14, default source = close, explicit timeframe
 ta.rsi(14, open, "1h");
 
 ta.rsi({
@@ -134,12 +134,12 @@ The runtime should canonicalize equivalent requests into a dependency key concep
 
 ```ts
 {
-  providerProfileId,
-  instrumentId,
-  timeframeId,
-  source,
-  functionId,
-  normalizedParameters
+  (providerProfileId,
+    instrumentId,
+    timeframeId,
+    source,
+    functionId,
+    normalizedParameters);
 }
 ```
 
@@ -152,6 +152,30 @@ Each built-in TA function must declare or derive its warm-up/history requirement
 Nested calculations compose requirements. The plugin should not need to manually state `load 200 bars` merely because it calls a function whose lookback can be inferred.
 
 Dynamic or unbounded lookbacks must be rejected, capped, or explicitly declared so the runtime can preserve the 100,000-candle and execution-budget limits.
+
+### 3.5 Incremental complexity contract
+
+After warm-up, ordinary building-bar replacement and finalized-bar append updates must not scan the complete source series. The initial built-in family has these required bounds:
+
+| Helper                           | Required steady-state update bound | Required retained state                                       |
+| -------------------------------- | ---------------------------------: | ------------------------------------------------------------- |
+| `ta.sma`                         |                               O(1) | bounded ring buffer and rolling sum                           |
+| `ta.ema`                         |                               O(1) | previous committed EMA and provisional current value          |
+| `ta.rsi`                         |                               O(1) | Wilder average gain/loss state plus provisional current value |
+| `ta.atr`                         |                               O(1) | previous close and Wilder true-range average state            |
+| `ta.highest` / `ta.lowest`       |                     amortized O(1) | monotonic deque bounded by the lookback                       |
+| `ta.crossover` / `ta.crossunder` |                               O(1) | previous and current pair of values                           |
+
+`last(dependency, n)` is O(n) in the explicitly requested result count, never O(total candle history). Obtaining the latest value is O(1).
+
+The accepted non-steady-state exceptions are:
+
+- initial history/warm-up is O(N);
+- a calculation-affecting parameter, source, instrument, provider profile, or timeframe change may rebuild from available history in O(N);
+- a historical correction or gap repair is O(dirty range) from the earliest correctness-relevant index or a safe checkpoint;
+- serialization or diagnostics may inspect a bounded snapshot when explicitly requested, but ordinary signal evaluation may not do so.
+
+Mutable building-bar calculations must use provisional state derived from the last committed finalized-bar state. Replacing the same building bar must not repeatedly compound provisional values into committed rolling state. Finalization atomically promotes the provisional result/state once, and then starts the next provisional point.
 
 ## 4. Multi-timeframe behavior
 
@@ -191,6 +215,7 @@ klinecharts owns:
 
 - chart rendering;
 - pane/layout mechanics;
+- native technical-indicator calculation scheduling/result storage for indicators registered with it;
 - native technical-indicator drawing behavior;
 - native indicator parameter/style settings UI when used;
 - visual invalidation/redraw behavior.
@@ -201,6 +226,7 @@ ERC-chart owns:
 - provider profiles and dynamic provider configuration;
 - market-data acquisition and canonical series state;
 - `ta.*` authoring API;
+- the Pine-like semantics, state machines, warm-up rules, and complexity guarantees of the public `ta.*` family;
 - indicator lifecycle and dependency discovery;
 - multi-timeframe resolution;
 - incremental data scheduling;
@@ -216,7 +242,26 @@ If klinecharts already provides an appropriate technical-indicator calculation/p
 
 ERC-chart may still provide a stable `ta.*` authoring facade. The facade is not permission for plugin code to receive a raw klinecharts instance.
 
-### 5.3 Settings synchronization
+ERC-chart may reuse a vetted pure calculation primitive internally, including one supplied by klinecharts, only behind the ERC-chart TA contract. klinecharts does not provide the public composable Pine-like dependency engine, multi-timeframe resolution, signal-tail access, or steady-state complexity contract. Those remain ERC-chart responsibilities.
+
+### 5.3 Pinned klinecharts result bridge
+
+The renderer adapter, not indicator or signal plugin code, owns access to calculated klinecharts indicator results. For the pinned `klinecharts` 10.0.3 integration it must:
+
+1. retain the value returned by `createIndicator` as the chart-local indicator identity;
+2. resolve the corresponding indicator through `getIndicators({ id })` only after creation/recalculation has completed;
+3. treat `indicator.result` as untrusted dependency output and normalize it into ERC-chart `IndicatorResultPoint` records;
+4. correlate every point with the canonical candle timestamp and data revision;
+5. publish the normalized result through a bounded result store rather than exposing the klinecharts object;
+6. discard callbacks/results for a stale chart instance, data revision, or configuration generation.
+
+The adapter must not infer the result layout from the klinecharts major version. A pinned compatibility fixture records the observed 10.0.3 layout. Runtime validation supports the observed indexed-array layout and may accept a timestamp-keyed record only through an explicit tested compatibility adapter. Any unknown layout fails closed with `KLINE_INDICATOR_RESULT_INCOMPATIBLE`; it must not silently return mismatched values.
+
+Index correlation is permitted only when the result length/order is validated against the canonical candle list used for that calculation. Timestamp correlation is authoritative when timestamps are present. A missing warm-up value is represented as `null`, not by shifting later values to an earlier candle.
+
+klinecharts does not expose a universal `getIndicatorDataValues()` API, so this bridge is the single internal compatibility boundary. Upgrading klinecharts requires rerunning its result-layout, recalculation-readiness, settings-override, and stale-callback contract fixtures before changing the pin.
+
+### 5.4 Settings synchronization
 
 klinecharts allows users to edit indicator parameters and styles through its indicator settings UI. Those changes must be treated as real ERC-chart indicator configuration changes.
 
@@ -233,11 +278,11 @@ Examples include:
 Required flow:
 
 ```text
-User edits settings in klinecharts UI
+User opens the ERC-chart/klinecharts settings surface
         ↓
-klinecharts emits/returns updated indicator configuration
+ERC-chart settings controller owns Save/apply
         ↓
-ERC-chart renderer adapter normalizes the change
+controller validates and normalizes the proposed configuration
         ↓
 ERC-chart updates the indicator-instance configuration model
         ↓
@@ -250,9 +295,11 @@ style-only changes update presentation without unnecessary data reload/recalcula
 workspace autosave persists the ERC-chart-owned configuration
 ```
 
+The implementation may use klinecharts UI components or feature-click notifications to open the settings surface, and it applies presentation changes with APIs such as `overrideIndicator`. It must not depend on a generic "settings committed" event unless that event is verified in the pinned core API and covered by a compatibility test. ERC-chart's settings controller is the transaction owner.
+
 The klinecharts object must not become the sole persisted source of truth. ERC-chart persists a normalized, versioned representation so workspace restore is independent of ephemeral chart instances.
 
-### 5.4 Configuration classification
+### 5.5 Configuration classification
 
 Configuration fields should be classified as either:
 
@@ -405,6 +452,31 @@ This is illustrative syntax. The frozen behavior is that author code is concise,
 - apply style-only changes without unnecessary worker/provider churn;
 - render price-candle and indicator updates from compatible revisions of the canonical data-service state so the visible candle and calculated indicators cannot silently diverge.
 
+### Signal result access
+
+Signal processing consumes a bounded normalized result store, never a raw klinecharts result object and never a full candle scan for an ordinary evaluation.
+
+Conceptual host-only contract:
+
+```ts
+interface IndicatorResultReader {
+  latest(
+    indicatorInstanceId: string,
+    options?: { output?: string; finalizedOnly?: boolean },
+  ): IndicatorResultPoint | null;
+
+  last(
+    indicatorInstanceId: string,
+    count: number,
+    options?: { output?: string; finalizedOnly?: boolean },
+  ): readonly IndicatorResultPoint[];
+}
+```
+
+`latest` is O(1). `last` is O(count) and reads a bounded tail/ring store directly. `count` must be a positive integer within a host limit declared by the signal contract. Results remain ordered oldest-to-newest; insufficient history returns the available prefix unless the caller requests a separately defined strict count. The default is `finalizedOnly: true` for externally actionable signals; provisional evaluation must be an explicit opt-in and the emitted candidate must retain provisional/finalized state.
+
+The reader is a host/runtime service. Indicator authors continue to use direct series/TA handles, and neither indicator nor signal code receives a klinecharts instance, `indicator.result`, complete candle storage, or an internal context object.
+
 ## 12. Test and acceptance scenarios
 
 The implementation is incomplete until tests cover at least these cases:
@@ -432,6 +504,12 @@ The implementation is incomplete until tests cover at least these cases:
 21. Changing a calculation parameter while live data is arriving increments configuration generation, invalidates old calculation state, recalculates from already available history where possible, and then resumes incremental processing without an unnecessary provider reconnect.
 22. A presentation-only setting change during a live feed does not alter the market-data revision, restart TA dependencies, or request history.
 23. The renderer never constructs a different OHLC candle from the same live ticks than the data service publishes to indicator consumers.
+24. The pinned klinecharts compatibility fixture normalizes the observed 10.0.3 result layout without timestamp/index drift and rejects an unknown layout.
+25. A stale klinecharts calculation callback cannot overwrite a newer data revision or configuration generation.
+26. Signal `latest` reads the current bounded result in O(1), and `last(N)` touches at most N stored points rather than scanning all candles.
+27. Finalized-only signal reads exclude the mutable building point; provisional opt-in retains provisional state in the resulting candidate.
+28. Repeated updates to one building candle recompute from committed rolling state and do not compound provisional SMA/EMA/RSI/ATR state.
+29. Steady-state complexity fixtures verify O(1) SMA, EMA, RSI, ATR, and crossover updates plus amortized O(1) highest/lowest updates.
 
 ## 13. Non-goals / deferred details
 
@@ -439,7 +517,7 @@ This document does not freeze:
 
 - the complete initial list of built-in `ta.*` functions;
 - exact generated TypeScript overload signatures for every TA function;
-- whether selected pure TA kernels are implemented by ERC-chart, delegated to klinecharts, or shared internally, provided public semantics remain stable;
+- the internal source of a vetted pure numerical primitive, provided ERC-chart still owns the public TA semantics, retained state, complexity guarantee, MTF behavior, revisions, and tests;
 - UI visual design for the settings dialog;
 - post-MVP signal delivery and consumer plugins.
 
