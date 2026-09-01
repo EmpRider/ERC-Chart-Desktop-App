@@ -86,6 +86,13 @@ An item is done only when:
 - versioned activation, disable, uninstall, and rollback;
 - provider utility-process supervisor and MessagePort protocol;
 - permission review UI;
+- public provider-definition/registration helper or equivalent stable contract for plugin metadata, config declaration, compatibility, and adapter creation;
+- minimal provider adapter surface with `connect`, `disconnect`, `getCapabilities`, `getInstruments`, `requestHistory`, and `subscribe`, with `unsubscribe` owned by the returned subscription handle;
+- provider-neutral instrument contract and discovery flow suitable for desktop symbol/instrument selectors;
+- capability metadata that distinguishes native history/live behavior, tick-vs-candle delivery, and safe timeframe-derivation/alignment facts;
+- restricted provider host services for brokered network access, credential leases, logging, time, and status reporting without exposing Electron/Node/filesystem/database internals;
+- TypeScript provider examples covering both a tick-producing provider and a candle-producing provider;
+- explicit provider/data-service responsibility boundary that keeps storage, gap policy, canonical revisions, tick-to-candle construction, general MTF aggregation, renderer updates, and indicator distribution outside provider plugins;
 - dynamic provider-profile configuration model that distinguishes credentials, connection settings, endpoint/environment settings, provider-declared options, and capability-affecting fields;
 - controlled provider reconfigure/reconnect/restart semantics so configuration changes cannot mutate an active adapter unpredictably;
 - invalidation/resubscription hooks for chart and indicator consumers affected by provider-profile changes.
@@ -97,6 +104,11 @@ An item is done only when:
 - a provider crash does not close the renderer;
 - Production Mode cannot load unsigned packages;
 - no install/build script executes;
+- a provider can be authored and instantiated using only the public provider SDK contract without chart, storage, indicator, or renderer internals;
+- provider instrument discovery supplies normalized instruments to the application selector path;
+- tick and candle providers both normalize live events through the same provider/runtime -> Data Service boundary;
+- provider-specific history paging/timestamp behavior remains inside the adapter while cache/gap decisions remain inside Data Service;
+- provider capability metadata is sufficient for Data Service to accept native timeframes or safely derive supported timeframes without provider-owned general aggregation;
 - provider configuration changes are validated and either applied through a documented safe transition or rejected with a stable error;
 - secrets remain in Windows Credential Manager and never enter workspace/plugin configuration documents.
 
@@ -115,6 +127,9 @@ An item is done only when:
 - canonical sharing/deduplication of compatible upstream series/subscriptions while keeping consumer state isolated;
 - deterministic snapshot + building-bar replacement + finalized-bar append delta model;
 - Binomo history and live adapter;
+- Binomo-specific history chunk/paging, retry/rate-limit interpretation, and closing-time-to-opening-time normalization inside the Binomo adapter;
+- explicit instrument identity on normalized Binomo live events rather than assuming the stream contains only the visible symbol;
+- real Binomo provider transport through the provider runtime/network broker with no dependency on a Binomo browser tab or WebSocket monkey patch;
 - reconnect/backoff/heartbeat/resubscription and authentication UX;
 - instrument/timeframe selector data.
 
@@ -126,7 +141,8 @@ An item is done only when:
 - TLS validation remains enabled;
 - no browser tab/hook is needed;
 - chart and indicator consumers can share a canonical upstream series without duplicating provider subscriptions unnecessarily;
-- derived timeframe building bars update incrementally using provider-declared alignment metadata.
+- derived timeframe building bars update incrementally using provider-declared alignment metadata;
+- Binomo provider code contains no direct klinecharts, indicator-runtime, workspace, SQLite, or general MTF-aggregation dependency.
 
 ## Epic 5 — Chart integration (klinecharts)
 
