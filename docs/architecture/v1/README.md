@@ -6,7 +6,7 @@ Status: Architecture baseline for implementation planning
 
 This package defines the from-scratch architecture for **ERC-chart**, a Windows 10/11 x64 desktop charting application. The supplied Signal project is used only as a source of behavioral requirements and protocol evidence; its architecture and source code are not the implementation base.
 
-The SDK implementation decision set introduced here is maintained under Jira Epic `ECDD-79` so subsequent implementation work can trace these decisions back to the Provider SDK and plugin-installer delivery stream.
+The SDK implementation decision set introduced here is maintained under Jira Epic `ECDD-79` so subsequent implementation work can trace these decisions back to the Provider SDK and plugin-installer delivery stream. The detailed Provider SDK authoring contract is tracked by `ECDD-207` under that epic.
 
 ## Review order
 
