@@ -4,6 +4,21 @@ on:
   push:
     branches:
       - main
+    # Immutable application tags are created only for release-relevant source
+    # changes. Documentation and workflow-only merges are covered by Delivery
+    # gates and must not attempt to republish the current application version.
+    paths:
+      - apps/**
+      - packages/**
+      - tools/**
+      - package.json
+      - package-lock.json
+      - .npmrc
+      - .nvmrc
+      - eslint.config.mjs
+      - tsconfig.base.json
+      - tsconfig.json
+      - tsconfig.tests.json
   workflow_dispatch:
 
 permissions:
