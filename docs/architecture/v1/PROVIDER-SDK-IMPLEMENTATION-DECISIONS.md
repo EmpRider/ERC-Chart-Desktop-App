@@ -532,7 +532,7 @@ If provider code needs one of these to work, the provider/runtime boundary shoul
 ## 15. Mapping from the Signal Binomo userscript
 
 | Signal reference behavior | ERC-chart owner |
-|---|---|
+| --- | --- |
 | `CONFIG` provider metadata/settings | `defineProvider(...)` + provider profile config |
 | Binomo REST URL construction | Binomo provider |
 | Binomo API chunk sizing/paging | Binomo provider |
