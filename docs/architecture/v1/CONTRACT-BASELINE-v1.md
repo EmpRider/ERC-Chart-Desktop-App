@@ -21,8 +21,7 @@ ECDD-54 must create or preserve these logical units. A unit may initially contai
 | `packages/contracts` | pure versioned data shapes, error codes, capability identifiers, and validators | no application package |
 | `packages/electron-main` | lifecycle, privileged APIs, process supervision, protocols, security policy | `contracts`, SDK public types where required |
 | `packages/preload` | narrow renderer bridge generated from allowlisted IPC contracts | `contracts` only |
-| `packages/renderer` | React shell, chart-slot composition, UI state and views | `contracts`, `chart-core`, public SDK types |
-| `packages/chart-core` | framework-independent chart domain, viewport, rendering and interaction | `contracts` only |
+| `packages/renderer` | React shell, chart-slot composition, klinecharts integration, UI state and views | `contracts`, `klinecharts`, public SDK types |
 | `packages/data-service` | canonical market-data state, candle building, cache coordination and revisions | `contracts`, `storage`, provider SDK public types |
 | `packages/provider-sdk` | provider manifest and adapter authoring API | `contracts` only |
 | `packages/provider-runtime` | validated provider loading and utility-process protocol | `contracts`, `provider-sdk` |
@@ -37,14 +36,13 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 
 1. `packages/contracts` is the lowest-level shared package and imports no application package.
 2. SDK packages import only `packages/contracts` and language/runtime standard libraries.
-3. `packages/chart-core` imports no Electron, React, provider, storage, SQLite, Windows, Node privileged, or application-shell module.
-4. `packages/renderer` must not import Electron main internals, filesystem APIs, provider runtime internals, SQLite drivers, or Credential Manager code.
-5. `packages/preload` exposes only allowlisted, typed contracts and must not export raw `ipcRenderer`.
-6. Provider packages and runtime code must not import renderer or chart internals.
-7. Indicator packages and runtime code must not import renderer, provider, storage, Electron, filesystem, process, or credential internals.
-8. Storage code owns persistence implementation; consumers use its public API and do not import SQLite drivers directly.
-9. Cross-process messages use `packages/contracts`; private implementation objects never cross process boundaries.
-10. Circular package dependencies are forbidden and must fail CI.
+3. `packages/renderer` integrates klinecharts for chart rendering and must not import Electron main internals, filesystem APIs, provider runtime internals, SQLite drivers, or Credential Manager code.
+4. `packages/preload` exposes only allowlisted, typed contracts and must not export raw `ipcRenderer`.
+5. Provider packages and runtime code must not import renderer or chart internals.
+6. Indicator packages and runtime code must not import renderer, provider, storage, Electron, filesystem, process, or credential internals.
+7. Storage code owns persistence implementation; consumers use its public API and do not import SQLite drivers directly.
+8. Cross-process messages use `packages/contracts`; private implementation objects never cross process boundaries.
+9. Circular package dependencies are forbidden and must fail CI.
 
 ## State ownership
 
@@ -53,10 +51,10 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 | Application/window lifecycle | `packages/electron-main` | none |
 | Privileged protocol and IPC authorization | `packages/electron-main` | `packages/preload` exposes an allowlisted view |
 | Renderer bridge surface | `packages/preload` | `packages/renderer` consumes the exposed API |
-| Viewport | `packages/renderer` | `packages/chart-core` receives immutable viewport input |
-| Selection | `packages/renderer` | `packages/chart-core` receives selection input |
-| Crosshair | `packages/chart-core` | `packages/renderer` observes crosshair output |
-| Session drawings | `packages/renderer` | `packages/chart-core` receives immutable drawing snapshots |
+| Viewport | klinecharts instance in `packages/renderer` | `packages/renderer` observes klinecharts viewport state |
+| Selection | klinecharts instance in `packages/renderer` | `packages/renderer` observes selection state |
+| Crosshair | klinecharts instance in `packages/renderer` | `packages/renderer` observes crosshair output |
+| Session drawings | klinecharts instance in `packages/renderer` | drawings are session-only, not persisted |
 | Canonical normalized market-data revision | `packages/data-service` | consumers receive versioned projections |
 | Provider connection and adapter state | provider utility process through `packages/provider-runtime` | main/data service receive contract messages |
 | Indicator calculation state | worker through `packages/indicator-runtime` | renderer/data service receive validated outputs |

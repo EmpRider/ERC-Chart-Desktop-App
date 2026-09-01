@@ -23,7 +23,7 @@ An item is done only when:
 - Binomo test-account protocol validation;
 - confirm Windows Credential Manager bridge approach;
 - prove SQLite WAL access from two independent ERC-chart processes;
-- prototype four layered Canvas charts with synthetic 100,000-candle data;
+- prototype four klinecharts instances with synthetic 100,000-candle data, required interactions, and thin presentation/overlay extensions;
 - prototype one Node-disabled indicator worker per instance and measure 20 workers;
 - select final minimum PC based on prototype measurements.
 
@@ -118,44 +118,45 @@ An item is done only when:
 - TLS validation remains enabled;
 - no browser tab/hook is needed.
 
-## Epic 5 — Chart engine
+## Epic 5 — Chart integration (klinecharts)
 
 ### Deliverables
 
-- framework-independent TypeScript engine;
-- typed series bindings and binary-search viewport;
-- layered Canvas renderer;
-- candlestick, line, and area series;
-- axes, grid, live-price marker, status bar;
-- pointer-anchored wheel zoom;
-- horizontal pan and future space;
+- klinecharts v10 integration in `@erc-chart/renderer`;
+- data-service to klinecharts data adapter (candle feed, building candle updates);
+- presentation modes for candlestick, area, and line (area mode with transparent fill, or a thin presentation extension only if parity requires it);
+- axes, grid, live-price marker, status bar through klinecharts API;
+- pointer-anchored wheel zoom, horizontal pan, and future space;
 - X/Y-axis drag and reset;
 - crosshair and OHLC/change hover;
 - Jump to Latest;
 - resize and device-pixel-ratio handling;
-- cancellation/generation handling on series changes.
+- cancellation/generation handling on series changes;
+- klinecharts theme configuration matching ERC-chart dark theme.
 
 ### Exit criteria
 
 - behavioral tests match the confirmed reference interactions;
 - obsolete symbol/timeframe responses never appear;
-- synthetic four-chart workload meets the provisional frame target or produces an approved replacement ADR.
+- synthetic four-chart workload meets the provisional frame target or produces an approved replacement ADR;
+- klinecharts version is pinned and validated against 100,000-candle dataset.
 
-## Epic 6 — Drawing subsystem
+## Epic 6 — klinecharts drawing integration
 
 ### Deliverables
 
-- time/price coordinate drawing model;
-- selection and hit testing;
-- trend, horizontal, vertical, rectangle, Fibonacci, and text tools;
-- move, resize, style, delete;
-- session command stack for undo/redo;
-- per-chart isolation and cleanup.
+- klinecharts built-in overlays for trend, horizontal, vertical, and Fibonacci tools;
+- thin klinecharts overlay extensions using `rect` and `text` figures for rectangle and free-text tools;
+- no custom chart engine, coordinate renderer, or MVP undo/redo stack;
+- drawing style/theme alignment with ERC-chart design;
+- delete and style editing through klinecharts API;
+- per-chart isolation and cleanup on chart/tab close;
+- session-only lifecycle: drawings are not persisted in workspace schema v1.
 
 ### Exit criteria
 
-- each tool has creation/edit/delete/undo/redo tests;
-- pan/zoom preserves drawing anchoring;
+- each tool has creation/edit/delete tests through klinecharts APIs and the thin rectangle/text extensions;
+- pan/zoom preserves drawing anchoring (klinecharts native behavior);
 - restart proves drawings are intentionally absent while the workspace restores.
 
 ## Epic 7 — Indicator SDK and runtime

@@ -15,21 +15,20 @@ Do not run a second package manager or create lockfiles inside a workspace.
 
 ## Workspace Map
 
-| Workspace                    | Public package                 | Responsibility                                                                  |
-| ---------------------------- | ------------------------------ | ------------------------------------------------------------------------------- |
-| `apps/desktop`               | `@erc-chart/desktop`           | Electron application composition and packaging entry                            |
-| `packages/contracts`         | `@erc-chart/contracts`         | Pure versioned data shapes, error codes, capability identifiers, and validators |
-| `packages/electron-main`     | `@erc-chart/electron-main`     | Lifecycle, privileged APIs, process supervision, protocols, and security policy |
-| `packages/preload`           | `@erc-chart/preload`           | Narrow renderer bridge generated from allowlisted IPC contracts                 |
-| `packages/renderer`          | `@erc-chart/renderer`          | React shell, chart-slot composition, UI state, and views                        |
-| `packages/chart-core`        | `@erc-chart/chart-core`        | Framework-independent chart domain, viewport, rendering, and interaction        |
-| `packages/data-service`      | `@erc-chart/data-service`      | Canonical market-data state, candle building, cache coordination, and revisions |
-| `packages/provider-sdk`      | `@erc-chart/provider-sdk`      | Provider manifest and adapter authoring API                                     |
-| `packages/provider-runtime`  | `@erc-chart/provider-runtime`  | Validated provider loading and utility-process protocol                         |
-| `packages/indicator-sdk`     | `@erc-chart/indicator-sdk`     | Indicator manifest, inputs, outputs, and plot authoring API                     |
-| `packages/indicator-runtime` | `@erc-chart/indicator-runtime` | Worker lifecycle, dependency graph, budgets, and output validation              |
-| `packages/storage`           | `@erc-chart/storage`           | SQLite, workspace persistence, and migration APIs                               |
-| `packages/testing`           | `@erc-chart/testing`           | Contract fixtures, builders, and conformance helpers                            |
+| Workspace                    | Public package                 | Responsibility                                                                    |
+| ---------------------------- | ------------------------------ | --------------------------------------------------------------------------------- |
+| `apps/desktop`               | `@erc-chart/desktop`           | Electron application composition and packaging entry                              |
+| `packages/contracts`         | `@erc-chart/contracts`         | Pure versioned data shapes, error codes, capability identifiers, and validators   |
+| `packages/electron-main`     | `@erc-chart/electron-main`     | Lifecycle, privileged APIs, process supervision, protocols, and security policy   |
+| `packages/preload`           | `@erc-chart/preload`           | Narrow renderer bridge generated from allowlisted IPC contracts                   |
+| `packages/renderer`          | `@erc-chart/renderer`          | React shell, chart-slot composition, UI state, klinecharts integration, and views |
+| `packages/data-service`      | `@erc-chart/data-service`      | Canonical market-data state, candle building, cache coordination, and revisions   |
+| `packages/provider-sdk`      | `@erc-chart/provider-sdk`      | Provider manifest and adapter authoring API                                       |
+| `packages/provider-runtime`  | `@erc-chart/provider-runtime`  | Validated provider loading and utility-process protocol                           |
+| `packages/indicator-sdk`     | `@erc-chart/indicator-sdk`     | Indicator manifest, inputs, outputs, and plot authoring API                       |
+| `packages/indicator-runtime` | `@erc-chart/indicator-runtime` | Worker lifecycle, dependency graph, budgets, and output validation                |
+| `packages/storage`           | `@erc-chart/storage`           | SQLite, workspace persistence, and migration APIs                                 |
+| `packages/testing`           | `@erc-chart/testing`           | Contract fixtures, builders, and conformance helpers                              |
 
 Each application workspace has a strict TypeScript project and one public root
 entry. Import another workspace only through its package name:
@@ -48,8 +47,9 @@ The executable contract in
 v1. In particular:
 
 - contracts depend on no application package;
-- provider SDK, indicator SDK, and chart core may depend only on contracts;
+- provider and indicator SDKs may depend only on contracts;
 - preload may depend only on contracts;
+- renderer may depend on contracts, klinecharts, and public SDK types;
 - provider runtime may depend only on contracts and provider SDK;
 - indicator runtime may depend only on contracts and indicator SDK;
 - storage may depend only on contracts;
@@ -106,6 +106,6 @@ missing display instead of hanging.
 
 The release workflow publishes only after the exact current `main` commit passes
 the complete Windows release pipeline. The current application release is
-`0.2.2` with immutable prerelease tag `v0.2.2`, plus the unsigned Windows
+`0.2.3` with immutable prerelease tag `v0.2.3`, plus the unsigned Windows
 `.exe` and `.sha256` assets. Prior releases remain immutable. Automatic updates
 remain disabled, and production code signing remains a later release decision.

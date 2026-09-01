@@ -25,16 +25,16 @@ Purpose: Preserve the requirement that Signal-project behavior is ultimately acc
 | Finalized candles | core runtime/storage | MVP | Only finalized candles persisted |
 | Typed-array candle storage | `CandleDataStore.js`, `CandleAccessor.js` | MVP design reference | New implementation with 100,000-candle target |
 | `HL2`, `HLC3`, `OHLC4` | candle store/accessor and framework exports | MVP | Indicator SDK sources |
-| Candlestick renderer | `ChartRenderer.js` | MVP | Reimplemented in new chart engine |
-| Line price chart | Not implemented as a chart type | MVP new feature | Must be built |
-| Area price chart | Not implemented as a chart type | MVP new feature | Must be built |
-| Pointer-anchored wheel zoom | `ChartInteraction.js` | MVP parity test | Preserve user-visible behavior |
-| Horizontal pan and future space | `ChartInteraction.js`, `ChartLayout.js` | MVP parity test | Preserve |
-| X-axis drag/reset | `ChartInteraction.js` | MVP parity test | Preserve |
-| Y-axis scale/pan/reset | `ChartInteraction.js` | MVP parity test | Preserve |
-| Crosshair with time/price labels | `Crosshair.js`, `ChartRenderer.js` | MVP parity test | Preserve |
-| Hover OHLC and percentage | `ChartRenderer.js` | MVP parity test | Preserve |
-| Jump to latest | `ChartUI.js`, `ChartInteraction.js` | MVP parity test | Preserve |
+| Candlestick renderer | `ChartRenderer.js` | MVP | klinecharts built-in candlestick series |
+| Line price chart | Not implemented as a chart type | MVP new feature | klinecharts area mode with transparent fill; thin presentation extension only if parity requires it |
+| Area price chart | Not implemented as a chart type | MVP new feature | klinecharts native area presentation |
+| Pointer-anchored wheel zoom | `ChartInteraction.js` | MVP parity test | klinecharts built-in zoom |
+| Horizontal pan and future space | `ChartInteraction.js`, `ChartLayout.js` | MVP parity test | klinecharts built-in pan |
+| X-axis drag/reset | `ChartInteraction.js` | MVP parity test | klinecharts built-in axis interaction |
+| Y-axis scale/pan/reset | `ChartInteraction.js` | MVP parity test | klinecharts built-in axis interaction |
+| Crosshair with time/price labels | `Crosshair.js`, `ChartRenderer.js` | MVP parity test | klinecharts built-in crosshair |
+| Hover OHLC and percentage | `ChartRenderer.js` | MVP parity test | klinecharts built-in tooltip |
+| Jump to latest | `ChartUI.js`, `ChartInteraction.js` | MVP parity test | klinecharts `scrollToRealTime` API |
 | Timeframe switching | chart/MTF modules | MVP | Timeframes come from provider |
 | Overlay indicators | `IndicatorManager.js` | MVP | Worker result rendered by host |
 | Indicator panels | `IndicatorManager.js`, config UI | MVP | Configure/show/hide/resize/remove |
@@ -55,11 +55,11 @@ Purpose: Preserve the requirement that Signal-project behavior is ultimately acc
 | Window minimize/maximize/resize | `WindowManager.js`, `ChartUI.js` | MVP through native shell | Normal desktop window behavior |
 | Four charts/layouts/tabs | Not implemented in reference | MVP new feature | Max four visible per window |
 | Multiple independent app instances | Not implemented in reference | MVP new feature | No single-instance lock |
-| Interactive trend line | Not implemented in reference | MVP new feature | Session-only |
-| Horizontal/vertical drawings | Not implemented in reference | MVP new feature | Session-only |
-| Rectangle drawing | Not implemented in reference | MVP new feature | Session-only |
-| Fibonacci retracement | Not implemented in reference | MVP new feature | Session-only |
-| Text annotation drawing | Not implemented in reference | MVP new feature | Session-only |
+| Interactive trend line | Not implemented in reference | MVP new feature | klinecharts overlay integration, session-only |
+| Horizontal/vertical drawings | Not implemented in reference | MVP new feature | klinecharts built-in overlays, session-only |
+| Rectangle drawing | Not implemented in reference | MVP new feature | Thin klinecharts overlay extension using `rect` figure, session-only |
+| Fibonacci retracement | Not implemented in reference | MVP new feature | klinecharts built-in `fibonacciLine` overlay, session-only |
+| Text annotation drawing | Not implemented in reference | MVP new feature | Built-in annotation/tag where sufficient; thin `text` figure overlay for free text, session-only |
 | Signal creation | Base/framework signal APIs | Contract only in MVP | Delivery deferred |
 | Signal broadcast/consumers | Executor/signal modules partially imply downstream flow | Post-MVP 1 | New reliable event/consumer architecture |
 | Replay engine/UI | `ChartReplayEngine.js`, `ReplayUI.js` | Post-MVP 2 | Reimplement with live-like semantics |

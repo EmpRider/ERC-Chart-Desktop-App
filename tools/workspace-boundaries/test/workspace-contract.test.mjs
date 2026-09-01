@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -28,7 +28,7 @@ const contract = {
   toolWorkspaces: [],
   workspaces: {
     "packages/contracts": [],
-    "packages/chart-core": ["packages/contracts"],
+    "packages/renderer": ["packages/contracts"],
   },
 };
 
@@ -79,46 +79,63 @@ function validFiles() {
       files: [],
       references: [
         { path: "./packages/contracts" },
-        { path: "./packages/chart-core" },
+        { path: "./packages/renderer" },
       ],
     }),
     "packages/contracts/package.json": manifest("@erc-chart/contracts"),
     "packages/contracts/tsconfig.json": "{}",
     "packages/contracts/src/index.ts": "export {};\n",
-    "packages/chart-core/package.json": manifest("@erc-chart/chart-core", {
+    "packages/renderer/package.json": manifest("@erc-chart/renderer", {
       "@erc-chart/contracts": "workspace:*",
     }),
-    "packages/chart-core/tsconfig.json": JSON.stringify({
+    "packages/renderer/tsconfig.json": JSON.stringify({
       references: [{ path: "../contracts" }],
     }),
-    "packages/chart-core/src/index.ts": "export {};\n",
+    "packages/renderer/src/index.ts": "export {};\n",
   };
 }
 
+test("pins the renderer chart dependency exactly", async () => {
+  const root = path.resolve(import.meta.dirname, "../../..");
+  const rendererManifest = JSON.parse(
+    await readFile(path.join(root, "packages/renderer/package.json"), "utf8"),
+  );
+  const lockfile = JSON.parse(
+    await readFile(path.join(root, "package-lock.json"), "utf8"),
+  );
+
+  assert.equal(rendererManifest.dependencies.klinecharts, "10.0.3");
+  assert.equal(
+    lockfile.packages["packages/renderer"].dependencies.klinecharts,
+    "10.0.3",
+  );
+  assert.equal(lockfile.packages["node_modules/klinecharts"].version, "10.0.3");
+});
+
 test("reports an approved workspace missing from the root", async () => {
   const files = validFiles();
-  delete files["packages/chart-core/package.json"];
-  delete files["packages/chart-core/tsconfig.json"];
-  delete files["packages/chart-core/src/index.ts"];
+  delete files["packages/renderer/package.json"];
+  delete files["packages/renderer/tsconfig.json"];
+  delete files["packages/renderer/src/index.ts"];
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
-    errors.includes("packages/chart-core: approved workspace is missing"),
+    errors.includes("packages/renderer: approved workspace is missing"),
   );
 });
 
 test("reports a workspace without a root-only public entry", async () => {
   const files = validFiles();
-  const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
-  delete chartManifest.exports;
-  files["packages/chart-core/package.json"] = JSON.stringify(chartManifest);
+  const rendererManifest = JSON.parse(files["packages/renderer/package.json"]);
+  delete rendererManifest.exports;
+  files["packages/renderer/package.json"] = JSON.stringify(rendererManifest);
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/package.json: root export '.' is required",
+      "packages/renderer/package.json: root export '.' is required",
     ),
   );
 });
@@ -163,14 +180,14 @@ test("rejects a manifest dependency outside the approved direction", async () =>
   const contractsManifest = JSON.parse(
     files["packages/contracts/package.json"],
   );
-  contractsManifest.dependencies["@erc-chart/chart-core"] = "workspace:*";
+  contractsManifest.dependencies["@erc-chart/renderer"] = "workspace:*";
   files["packages/contracts/package.json"] = JSON.stringify(contractsManifest);
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/contracts/package.json: dependency @erc-chart/chart-core is not allowed",
+      "packages/contracts/package.json: dependency @erc-chart/renderer is not allowed",
     ),
   );
 });
@@ -186,7 +203,7 @@ for (const section of [
       files["packages/contracts/package.json"],
     );
     contractsManifest[section] = {
-      "@erc-chart/chart-core": "workspace:*",
+      "@erc-chart/renderer": "workspace:*",
     };
     files["packages/contracts/package.json"] =
       JSON.stringify(contractsManifest);
@@ -195,7 +212,7 @@ for (const section of [
 
     assert.ok(
       errors.includes(
-        "packages/contracts/package.json: dependency @erc-chart/chart-core is not allowed",
+        "packages/contracts/package.json: dependency @erc-chart/renderer is not allowed",
       ),
     );
   });
@@ -203,57 +220,57 @@ for (const section of [
 
 test("rejects an unknown ERC Chart manifest dependency", async () => {
   const files = validFiles();
-  const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
-  chartManifest.dependencies["@erc-chart/unapproved"] = "workspace:*";
-  files["packages/chart-core/package.json"] = JSON.stringify(chartManifest);
+  const rendererManifest = JSON.parse(files["packages/renderer/package.json"]);
+  rendererManifest.dependencies["@erc-chart/unapproved"] = "workspace:*";
+  files["packages/renderer/package.json"] = JSON.stringify(rendererManifest);
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/package.json: dependency @erc-chart/unapproved does not resolve to an approved workspace",
+      "packages/renderer/package.json: dependency @erc-chart/unapproved does not resolve to an approved workspace",
     ),
   );
 });
 
 test("rejects an undeclared workspace package import", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] =
+  files["packages/renderer/src/index.ts"] =
     'import "@erc-chart/contracts";\nimport "@erc-chart/indicator-sdk";\n';
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/index.ts: @erc-chart/indicator-sdk is not a declared workspace dependency",
+      "packages/renderer/src/index.ts: @erc-chart/indicator-sdk is not a declared workspace dependency",
     ),
   );
 });
 
 test("rejects a deep workspace package import", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] =
+  files["packages/renderer/src/index.ts"] =
     'export type { Candle } from "@erc-chart/contracts/src/market-data.js";\n';
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/index.ts: deep workspace import @erc-chart/contracts/src/market-data.js is forbidden",
+      "packages/renderer/src/index.ts: deep workspace import @erc-chart/contracts/src/market-data.js is forbidden",
     ),
   );
 });
 
 test("rejects a relative import that escapes its workspace", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] =
+  files["packages/renderer/src/index.ts"] =
     'export type { Candle } from "../../contracts/src/market-data.js";\n';
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/index.ts: relative import ../../contracts/src/market-data.js escapes its workspace",
+      "packages/renderer/src/index.ts: relative import ../../contracts/src/market-data.js escapes its workspace",
     ),
   );
 });
@@ -263,12 +280,12 @@ test("rejects a circular workspace dependency", async () => {
   const contractsManifest = JSON.parse(
     files["packages/contracts/package.json"],
   );
-  contractsManifest.dependencies["@erc-chart/chart-core"] = "workspace:*";
+  contractsManifest.dependencies["@erc-chart/renderer"] = "workspace:*";
   files["packages/contracts/package.json"] = JSON.stringify(contractsManifest);
   const cyclicContract = {
     workspaces: {
-      "packages/contracts": ["packages/chart-core"],
-      "packages/chart-core": ["packages/contracts"],
+      "packages/contracts": ["packages/renderer"],
+      "packages/renderer": ["packages/contracts"],
     },
   };
 
@@ -276,7 +293,7 @@ test("rejects a circular workspace dependency", async () => {
 
   assert.ok(
     errors.includes(
-      "workspace dependency cycle: packages/chart-core -> packages/contracts -> packages/chart-core",
+      "workspace dependency cycle: packages/contracts -> packages/renderer -> packages/contracts",
     ),
   );
 });
@@ -287,13 +304,13 @@ test("rejects a cycle declared outside regular dependencies", async () => {
     files["packages/contracts/package.json"],
   );
   contractsManifest.devDependencies = {
-    "@erc-chart/chart-core": "workspace:*",
+    "@erc-chart/renderer": "workspace:*",
   };
   files["packages/contracts/package.json"] = JSON.stringify(contractsManifest);
   const cyclicContract = {
     workspaces: {
-      "packages/contracts": ["packages/chart-core"],
-      "packages/chart-core": ["packages/contracts"],
+      "packages/contracts": ["packages/renderer"],
+      "packages/renderer": ["packages/contracts"],
     },
   };
 
@@ -301,7 +318,7 @@ test("rejects a cycle declared outside regular dependencies", async () => {
 
   assert.ok(
     errors.includes(
-      "workspace dependency cycle: packages/chart-core -> packages/contracts -> packages/chart-core",
+      "workspace dependency cycle: packages/contracts -> packages/renderer -> packages/contracts",
     ),
   );
 });
@@ -336,7 +353,7 @@ test("rejects an approved TypeScript unit missing from root project references",
   const files = validFiles();
   const rootConfig = JSON.parse(files["tsconfig.json"]);
   rootConfig.references = rootConfig.references.filter(
-    (reference) => reference.path !== "./packages/chart-core",
+    (reference) => reference.path !== "./packages/renderer",
   );
   files["tsconfig.json"] = JSON.stringify(rootConfig);
 
@@ -344,14 +361,14 @@ test("rejects an approved TypeScript unit missing from root project references",
 
   assert.ok(
     errors.includes(
-      "tsconfig.json: project reference ./packages/chart-core is required",
+      "tsconfig.json: project reference ./packages/renderer is required",
     ),
   );
 });
 
 test("rejects a malformed direct TypeScript references value", async () => {
   const files = validFiles();
-  files["packages/chart-core/tsconfig.json"] = JSON.stringify({
+  files["packages/renderer/tsconfig.json"] = JSON.stringify({
     references: "../contracts",
   });
 
@@ -359,14 +376,14 @@ test("rejects a malformed direct TypeScript references value", async () => {
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/tsconfig.json: references must be an array",
+      "packages/renderer/tsconfig.json: references must be an array",
     ),
   );
 });
 
 test("rejects malformed direct TypeScript project reference entries", async () => {
   const files = validFiles();
-  files["packages/chart-core/tsconfig.json"] = JSON.stringify({
+  files["packages/renderer/tsconfig.json"] = JSON.stringify({
     references: [null, "../contracts", {}],
   });
 
@@ -374,20 +391,20 @@ test("rejects malformed direct TypeScript project reference entries", async () =
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/tsconfig.json: project reference ../contracts is required",
+      "packages/renderer/tsconfig.json: project reference ../contracts is required",
     ),
   );
 });
 
 test("rejects a missing direct TypeScript project reference", async () => {
   const files = validFiles();
-  files["packages/chart-core/tsconfig.json"] = "{}";
+  files["packages/renderer/tsconfig.json"] = "{}";
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/tsconfig.json: project reference ../contracts is required",
+      "packages/renderer/tsconfig.json: project reference ../contracts is required",
     ),
   );
 });
@@ -452,30 +469,30 @@ test("rejects a root workspace pattern outside the approved set", async () => {
 
 test("rejects a workspace package name that differs from its directory", async () => {
   const files = validFiles();
-  const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
-  chartManifest.name = "@erc-chart/chart";
-  files["packages/chart-core/package.json"] = JSON.stringify(chartManifest);
+  const rendererManifest = JSON.parse(files["packages/renderer/package.json"]);
+  rendererManifest.name = "@erc-chart/chart";
+  files["packages/renderer/package.json"] = JSON.stringify(rendererManifest);
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/package.json: name must be @erc-chart/chart-core",
+      "packages/renderer/package.json: name must be @erc-chart/renderer",
     ),
   );
 });
 
 test("rejects a package export below the public root", async () => {
   const files = validFiles();
-  const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
-  chartManifest.exports["./src/*"] = "./src/*";
-  files["packages/chart-core/package.json"] = JSON.stringify(chartManifest);
+  const rendererManifest = JSON.parse(files["packages/renderer/package.json"]);
+  rendererManifest.exports["./src/*"] = "./src/*";
+  files["packages/renderer/package.json"] = JSON.stringify(rendererManifest);
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/package.json: only the root export '.' is allowed",
+      "packages/renderer/package.json: only the root export '.' is allowed",
     ),
   );
 });
@@ -488,33 +505,35 @@ for (const [field, invalid, expected] of [
 ]) {
   test(`rejects invalid workspace manifest field ${field}`, async () => {
     const files = validFiles();
-    const chartManifest = JSON.parse(files["packages/chart-core/package.json"]);
-    chartManifest[field] = invalid;
-    files["packages/chart-core/package.json"] = JSON.stringify(chartManifest);
+    const rendererManifest = JSON.parse(
+      files["packages/renderer/package.json"],
+    );
+    rendererManifest[field] = invalid;
+    files["packages/renderer/package.json"] = JSON.stringify(rendererManifest);
 
     const errors = await validateWorkspace(await fixture(files), contract);
 
-    assert.ok(errors.includes(`packages/chart-core/package.json: ${expected}`));
+    assert.ok(errors.includes(`packages/renderer/package.json: ${expected}`));
   });
 }
 
 test("rejects an undeclared workspace package dynamic import", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] =
+  files["packages/renderer/src/index.ts"] =
     'export const loadSdk = async () => import("@erc-chart/indicator-sdk");\n';
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/index.ts: @erc-chart/indicator-sdk is not a declared workspace dependency",
+      "packages/renderer/src/index.ts: @erc-chart/indicator-sdk is not a declared workspace dependency",
     ),
   );
 });
 
 test("rejects a non-literal dynamic import", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] = `
+  files["packages/renderer/src/index.ts"] = `
 const moduleName = "@erc-chart/contracts";
 export const loadContracts = async () => import(moduleName);
 `;
@@ -523,14 +542,14 @@ export const loadContracts = async () => import(moduleName);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/index.ts: non-literal dynamic import is forbidden",
+      "packages/renderer/src/index.ts: non-literal dynamic import is forbidden",
     ),
   );
 });
 
 test("parses TypeScript assertions with the file's script kind", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] =
+  files["packages/renderer/src/index.ts"] =
     "const value = <number>1; export { value };\n";
 
   const errors = await validateWorkspace(await fixture(files), contract);
@@ -540,27 +559,27 @@ test("parses TypeScript assertions with the file's script kind", async () => {
 
 test("fails closed when a workspace source cannot be parsed", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] = "import {\n";
+  files["packages/renderer/src/index.ts"] = "import {\n";
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/index.ts: source contains invalid syntax",
+      "packages/renderer/src/index.ts: source contains invalid syntax",
     ),
   );
 });
 
 test("validates JavaScript workspace imports", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/runtime.mjs"] =
+  files["packages/renderer/src/runtime.mjs"] =
     'import "@erc-chart/indicator-sdk";\n';
 
   const errors = await validateWorkspace(await fixture(files), contract);
 
   assert.ok(
     errors.includes(
-      "packages/chart-core/src/runtime.mjs: @erc-chart/indicator-sdk is not a declared workspace dependency",
+      "packages/renderer/src/runtime.mjs: @erc-chart/indicator-sdk is not a declared workspace dependency",
     ),
   );
 });
@@ -628,7 +647,7 @@ for (const [file, expected] of [
 
 test("ignores workspace imports inside comments", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] = `
+  files["packages/renderer/src/index.ts"] = `
 // import "@erc-chart/indicator-sdk";
 /*
  * export type { Indicator } from "@erc-chart/indicator-sdk/src/index.js";
@@ -644,7 +663,7 @@ export {};
 
 test("ignores import-like text inside string and template literals", async () => {
   const files = validFiles();
-  files["packages/chart-core/src/index.ts"] = `
+  files["packages/renderer/src/index.ts"] = `
 const staticExample = 'import "@erc-chart/indicator-sdk";';
 const dynamicExample = "import('@erc-chart/indicator-sdk')";
 const templateExample = \`export { value } from "@erc-chart/indicator-sdk/src/index.js";\`;

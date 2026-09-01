@@ -167,7 +167,7 @@ The MVP is ready when a clean Windows 10/11 x64 machine can install the signed o
 | DRAW-005 | Fibonacci retracement |
 | DRAW-006 | Text/annotation |
 | DRAW-007 | Select, move, resize, restyle, and delete supported drawing objects. |
-| DRAW-008 | Undo and redo drawing operations within the current session. |
+| DRAW-008 | Drawing undo/redo is deferred beyond MVP; the MVP does not maintain a bespoke drawing command stack. |
 | DRAW-009 | Drawing objects are isolated per chart slot and discarded when the application exits. |
 
 ### 4.5 Indicator plugins
@@ -219,12 +219,12 @@ Performance targets are release gates, not assumptions that the first implementa
 
 ## 6. Architecture style
 
-ERC-chart is a modular desktop system with a framework-independent charting domain core and explicit process boundaries.
+ERC-chart is a modular desktop system with provider-neutral contracts, thin klinecharts renderer integration, and explicit process boundaries.
 
 Key principles:
 
-1. **Core is provider-neutral.** No Binomo endpoint, cookie name, symbol format, or timeframe list belongs in chart or workspace code.
-2. **Core is indicator-neutral.** Indicator algorithms use an SDK contract and cannot import renderer or storage internals.
+1. **Chart integration is provider-neutral.** No Binomo endpoint, cookie name, symbol format, or timeframe list belongs in renderer or workspace code.
+2. **Indicator contracts are provider-neutral.** Indicator algorithms use an SDK contract and cannot import renderer or storage internals.
 3. **Contracts cross boundaries.** IPC and plugin data is schema-validated and versioned.
 4. **One owner per state.** The data service owns normalized series/cache state; the renderer owns transient viewport and drawings; indicator workers own calculation state; Credential Manager owns secrets.
 5. **Render only visible data.** Loading 100,000 candles does not mean drawing 100,000 elements every frame.
@@ -239,8 +239,8 @@ Key principles:
 | Desktop runtime | Electron, current supported release at implementation time | Mature Windows desktop process model and direct fit for JS/TS plugins |
 | Application language | TypeScript with strict compiler settings | Shared contracts across main, services, renderer, and SDK |
 | UI shell | React with domain state kept outside React components | Tabs, layouts, settings, plugin management, and predictable UI composition |
-| Chart engine | New framework-independent TypeScript package | Testable outside Electron and not coupled to provider/UI |
-| Rendering | Layered Canvas 2D, hardware acceleration enabled | Reference behavior is proven on Canvas; render cost is bounded to visible ranges |
+| Chart engine | klinecharts v10.0.3 integrated through `@erc-chart/renderer` | Mature open-source financial charting with Canvas 2D, interactions, built-in overlays, and extension APIs |
+| Rendering | klinecharts Canvas 2D pipeline, hardware acceleration enabled | Rendering internals remain upstream; ERC-chart validates behavior and visible-workload performance |
 | Indicator isolation | Node-disabled Chromium Web Workers | CPU work leaves UI thread; worker can be terminated on failure |
 | Provider isolation | Electron utility process supervised by main/data service | Separate crash boundary and MessagePort IPC |
 | Local database | SQLite in WAL mode | Indexed local queries, transactions, schema migrations, multi-process readers |
@@ -248,7 +248,7 @@ Key principles:
 | Installer | electron-builder NSIS x64 `.exe`, per-user by default | Produces the required Windows setup executable; automatic update remains disabled |
 | Validation | JSON Schema plus runtime TypeScript validators | Reject malformed plugin, IPC, and persisted documents at boundaries |
 
-The exact library versions are pinned only when implementation starts. Architecture depends on contracts, not on a specific minor version.
+Architecture depends on explicit contracts and the pinned klinecharts version. Other library versions are pinned when implementation starts.
 
 ## 8. System context
 
@@ -303,7 +303,7 @@ Responsibilities:
 
 - React application shell;
 - tabs and one-to-four chart layouts;
-- chart engine instances and layered canvas surfaces;
+- klinecharts instances and canvas surfaces;
 - transient viewport, crosshair, selection, and session drawings;
 - symbol/timeframe/indicator/plugin management UI;
 - presentation of connection and error states;
@@ -506,43 +506,34 @@ Binomo endpoints observed in the reference appear to be private implementation i
 
 ## 13. Chart engine design
 
-### 13.1 Package boundaries
+### 13.1 klinecharts integration
 
-The chart engine is a pure TypeScript package with no Electron, React, provider, SQLite, or Windows imports.
+The custom `@erc-chart/chart-core` package has been removed (see ADR-015). Chart rendering, interaction, and drawing are provided by klinecharts v10, integrated within `@erc-chart/renderer`.
 
-Main modules:
+Integration responsibilities:
 
-- `SeriesStore`: bounded typed arrays and revisions;
-- `Viewport`: time/price transforms, visible range, pan, and scale;
-- `Layout`: plot region and indicator-panel geometry;
-- `Renderer`: layered canvas rendering;
-- `InteractionController`: pointer, wheel, keyboard, hit testing;
-- `DrawingModel`: transient commands and undo/redo;
-- `IndicatorPresentation`: validates and renders plot instructions;
-- `ChartController`: coordinates a chart slot without owning provider/storage logic.
+- **Data adapter**: bridges `@erc-chart/data-service` candle feeds into klinecharts data format;
+- **Theme/style configuration**: applies ERC-chart dark theme through klinecharts style API;
+- **Chart instance management**: creates/destroys klinecharts instances per chart slot;
+- **Indicator overlay bridge**: maps indicator SDK plot outputs to klinecharts custom technical indicator and overlay APIs;
+- **Drawing integration**: configures built-in overlays and registers thin rectangle/text overlay extensions composed from klinecharts figures;
+- **Event observation**: observes klinecharts viewport, crosshair, and interaction events for workspace state and UI coordination.
 
-### 13.2 Layered rendering
+### 13.2 Rendering
 
-Each chart uses logical layers:
-
-1. background/grid and static axes;
-2. price series and finalized indicator plots;
-3. drawings and selection handles;
-4. crosshair, hover labels, live price, and temporary previews.
-
-Only dirty layers redraw. Visible range lookup uses binary search on time arrays. Price-range calculation scans only the visible range plus visible overlays. Line/area charts use a per-pixel min/max envelope when the visible data density exceeds the canvas width.
+klinecharts handles all Canvas 2D rendering internally with its own layered rendering pipeline. ERC-chart does not manage canvas layers, dirty regions, or viewport math directly.
 
 ### 13.3 Chart types
 
-- **Candlestick:** wick and body with width-aware clipping.
-- **Line:** close price by default, with future source extension possible.
-- **Area:** close line plus filled area to the visible baseline.
+- **Candlestick:** klinecharts `candle_solid` / `candle_stroke` / `candle_up_stroke` / `candle_down_stroke` styles.
+- **Line:** klinecharts area presentation with transparent fill; use a thin presentation extension only if behavioral parity cannot be met through styles.
+- **Area:** klinecharts native area presentation.
 
 Changing chart type never changes underlying market data or indicator calculations.
 
 ### 13.4 Drawings
 
-Drawings use stable time/price coordinates, not canvas pixels. Hit testing converts through the current viewport. A command stack implements undo/redo. The renderer owns session drawings; the workspace serializer deliberately omits them in schema version 1.
+klinecharts supplies built-in overlays for Fibonacci, horizontal/vertical lines, annotations, and tags. ERC-chart adds only thin rectangle and free-text overlay definitions using klinecharts `rect` and `text` figures. These extensions use klinecharts coordinates, lifecycle, selection, and rendering; ERC-chart does not build a separate chart engine or coordinate renderer. Drawings are session-only, the workspace serializer omits them in schema version 1, and MVP undo/redo is intentionally deferred.
 
 ## 14. Indicator architecture
 
@@ -821,7 +812,7 @@ No token, cookie, authorization header, full raw frame, personal account identif
 - aggregation and building/finalized transition;
 - history merge, de-duplication, gap detection, retention;
 - viewport transforms and hit testing;
-- drawing command undo/redo;
+- drawing creation, selection, move/resize, style, delete, isolation, and cleanup;
 - dependency graph and cycle detection;
 - workspace/database migration;
 - manifest and path validation;
@@ -914,7 +905,7 @@ The MVP cannot be declared ready until:
 flowchart TD
     A["Architecture spikes and contracts"] --> B["Secure desktop shell"]
     B --> C["Data service and Binomo provider"]
-    C --> D["Chart engine and drawings"]
+    C --> D["klinecharts integration and drawings"]
     D --> E["Indicator SDK and plugin lifecycle"]
     E --> F["Integration, performance, security, installer"]
 ```

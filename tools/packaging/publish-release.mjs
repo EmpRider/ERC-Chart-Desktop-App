@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Workspace persistence correction
+const curatedNotes = `# klinecharts architecture release
 
-This corrective release persists workspace identities, chart fields, and layout orientation across application restarts. Persisted workspace data is validated before hydration, and pending saves are serialized.
+This release replaces the empty custom chart-core workspace with the pinned klinecharts 10.0.3 dependency and aligns workspace boundaries, TypeScript references, architecture decisions, implementation backlog, and drawing requirements with that integration path.
 
-Known limitations: workspace renaming, chart editing UI, provider configuration, chart rendering, live market-data connectivity, plugin execution, automatic updates, and production code signing remain later work. The installer is unsigned.
+This release changes architecture and dependency metadata only; chart rendering and drawing implementation remain later work. Known limitations: provider configuration, live market-data connectivity, plugin execution, automatic updates, and production code signing remain unavailable. The installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,

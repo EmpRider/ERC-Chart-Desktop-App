@@ -4,7 +4,6 @@
     { "path": "./packages/contracts" },
     { "path": "./packages/electron-main" },
     { "path": "./packages/preload" },
-    { "path": "./packages/chart-core" },
     { "path": "./packages/provider-sdk" },
     { "path": "./packages/indicator-sdk" },
     { "path": "./packages/storage" },

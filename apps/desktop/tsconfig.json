@@ -21,9 +21,6 @@
       "path": "../../packages/renderer"
     },
     {
-      "path": "../../packages/chart-core"
-    },
-    {
       "path": "../../packages/data-service"
     },
     {
