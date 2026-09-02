@@ -335,6 +335,28 @@ test("rejects Node internals imported by installed provider code", async () => {
 });
 
 test("treats host compatibility metadata and ranges as compatibility failures", async () => {
+  const incompatibleContract = {
+    id: pluginId,
+    name: "Fixture Provider",
+    providerContractVersion: 2,
+    hostCompatibility: {
+      minimumHostApiVersion: 1,
+      maximumHostApiVersion: 1,
+    },
+  };
+  await withInstalledFixture(
+    providerEntry({ metadata: incompatibleContract }),
+    async ({ installationPath }) => {
+      const fixture = createBroker();
+      await assert.rejects(
+        instantiateInstalledProvider(options(installationPath, fixture.broker)),
+        (error) =>
+          error instanceof ProviderRuntimeError &&
+          error.code === "PROVIDER_INCOMPATIBLE",
+      );
+    },
+  );
+
   const incompatibleMetadata = {
     id: pluginId,
     name: "Fixture Provider",

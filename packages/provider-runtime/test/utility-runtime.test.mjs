@@ -181,7 +181,6 @@ test("becomes ready only after installed-provider creation and broker round trip
     assert.equal(log.metadata.token, "[REDACTED]");
 
     fixture.receive({ type: "shutdown", contractVersion: ipcContractVersion });
-    runtime.shutdown();
     assert.equal(fixture.sent.at(-1).type, "stopped");
     assert.equal(fixture.getListenerCount(), 0);
   });

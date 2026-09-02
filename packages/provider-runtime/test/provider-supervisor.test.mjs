@@ -431,13 +431,28 @@ test("reports stable host failures when the broker is absent or rejects", async 
     requestId: "profile-a.1",
     request: { url: "https://api.example.com/v1/status" },
   });
-  assert.deepEqual(absent.children[0].posted.at(-1), {
-    type: "provider-host-network-response",
+  absent.children[0].emitMessage({
+    type: "provider-host-credential-request",
     contractVersion: ipcContractVersion,
-    requestId: "profile-a.1",
-    ok: false,
-    code: "PROVIDER_HOST_UNAVAILABLE",
+    requestId: "profile-a.2",
+    credentialKey: "auth_token",
   });
+  assert.deepEqual(absent.children[0].posted.slice(-2), [
+    {
+      type: "provider-host-network-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.1",
+      ok: false,
+      code: "PROVIDER_HOST_UNAVAILABLE",
+    },
+    {
+      type: "provider-host-credential-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.2",
+      ok: false,
+      code: "PROVIDER_HOST_UNAVAILABLE",
+    },
+  ]);
   absent.children[0].emitMessage({
     type: "ready",
     contractVersion: ipcContractVersion,
