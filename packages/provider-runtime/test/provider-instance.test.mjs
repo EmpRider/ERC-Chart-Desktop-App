@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   ProviderRuntimeError,
   instantiateInstalledProvider,
+  planProviderConfigurationChange,
 } from "../dist/index.js";
 
 const pluginId = "com.example.fixture";
@@ -195,6 +196,72 @@ test("rejects secret values in persisted provider settings", async () => {
     assert.deepEqual(fixture.credentials, []);
     assert.deepEqual(fixture.network, []);
   });
+});
+
+test("plans provider configuration changes without exposing secret fields", () => {
+  const definition = {
+    config: {
+      endpoint: {
+        type: "string",
+        defaultValue: "https://api.example.com/v1/",
+        requiresReconnect: true,
+      },
+      retries: { type: "number", defaultValue: 2, minimum: 0, maximum: 5 },
+      token: { type: "secret", credentialKey: "auth_token", required: true },
+    },
+  };
+  const permissions = {
+    network: ["https://api.example.com/v1/"],
+    credentials: ["auth_token"],
+    storage: [],
+  };
+  const current = {
+    endpoint: "https://api.example.com/v1/",
+    retries: 2,
+  };
+
+  assert.deepEqual(
+    planProviderConfigurationChange(definition, current, current, permissions),
+    { impact: "none", settings: current, changedKeys: [] },
+  );
+  assert.deepEqual(
+    planProviderConfigurationChange(
+      definition,
+      current,
+      { ...current, retries: 3 },
+      permissions,
+    ),
+    {
+      impact: "restart",
+      settings: { endpoint: "https://api.example.com/v1/", retries: 3 },
+      changedKeys: ["retries"],
+    },
+  );
+  assert.deepEqual(
+    planProviderConfigurationChange(
+      definition,
+      current,
+      { endpoint: "https://sandbox.example.com/", retries: 2 },
+      permissions,
+    ),
+    {
+      impact: "reconnect",
+      settings: { endpoint: "https://sandbox.example.com/", retries: 2 },
+      changedKeys: ["endpoint"],
+    },
+  );
+  assert.throws(
+    () =>
+      planProviderConfigurationChange(
+        definition,
+        current,
+        { ...current, token: "must-not-persist" },
+        permissions,
+      ),
+    (error) =>
+      error instanceof ProviderRuntimeError &&
+      error.code === "PROVIDER_CONFIG_INVALID",
+  );
 });
 
 test("rejects undeclared credential and network permissions before broker access", async () => {

@@ -392,6 +392,20 @@ async function startDesktopMain(): Promise<void> {
               throw error;
             }
           },
+          reconfigure: async (providerProfileId, settings) => {
+            const previousLaunch = providerLaunches.get(providerProfileId);
+            if (previousLaunch === undefined)
+              throw new Error("Provider profile is not active.");
+            const result = await providerUtilities.reconfigure(
+              providerProfileId,
+              settings,
+            );
+            providerLaunches.set(providerProfileId, {
+              ...previousLaunch,
+              settings: result.settings,
+            });
+            return result;
+          },
           shutdown: async (providerProfileId): Promise<void> => {
             try {
               await providerUtilities.shutdown(providerProfileId);

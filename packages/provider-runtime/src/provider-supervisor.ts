@@ -2,7 +2,10 @@ import {
   ipcContractVersion,
   isUtilityStatusMessage,
 } from "@erc-chart/contracts";
-import type { ProviderRuntimeHostBroker } from "./provider-instance.js";
+import type {
+  ProviderConfigurationChangeImpact,
+  ProviderRuntimeHostBroker,
+} from "./provider-instance.js";
 import { isProviderNetworkRequestAllowed } from "./provider-permissions.js";
 import { requireProviderProfileId } from "./provider-profile-id.js";
 import {
@@ -17,6 +20,32 @@ export type ProviderUtilitySupervisorStatus =
 
 export type ProviderUtilityUnavailableCode =
   "PROVIDER_UTILITY_EXITED" | "PROVIDER_UTILITY_PROTOCOL_VIOLATION";
+
+export type ProviderProfileLifecycleErrorCode =
+  | "PROVIDER_PROFILE_NOT_READY"
+  | "PROVIDER_PROFILE_CONFIG_BUSY"
+  | "PROVIDER_PROFILE_CONFIG_INVALID"
+  | "PROVIDER_PROFILE_CONFIG_VALIDATION_FAILED"
+  | "PROVIDER_PROFILE_INVALIDATION_FAILED"
+  | "PROVIDER_PROFILE_RESTART_FAILED"
+  | "PROVIDER_PROFILE_RECOVERY_FAILED"
+  | "PROVIDER_PROFILE_RESTORE_FAILED";
+
+export class ProviderProfileLifecycleError extends Error {
+  readonly code: ProviderProfileLifecycleErrorCode;
+
+  constructor(code: ProviderProfileLifecycleErrorCode, message: string) {
+    super(message);
+    this.name = "ProviderProfileLifecycleError";
+    this.code = code;
+  }
+}
+
+export interface ProviderProfileConfigurationChangeResult {
+  readonly impact: ProviderConfigurationChangeImpact;
+  readonly settings: Readonly<Record<string, boolean | number | string>>;
+  readonly changedKeys: readonly string[];
+}
 
 export interface ProviderUtilityChild {
   readonly postMessage: (message: ProviderUtilityParentMessage) => void;
@@ -42,6 +71,14 @@ export interface ProviderUtilitySupervisorOptions {
     providerProfileId: string,
     code: ProviderUtilityUnavailableCode,
   ) => void;
+  readonly onProfileInvalidated?: (
+    providerProfileId: string,
+    impact: Exclude<ProviderConfigurationChangeImpact, "none">,
+  ) => void | Promise<void>;
+  readonly onProfileRestored?: (
+    providerProfileId: string,
+    impact: Exclude<ProviderConfigurationChangeImpact, "none">,
+  ) => void | Promise<void>;
   readonly hostBroker?: ProviderRuntimeHostBroker;
 }
 
@@ -51,6 +88,10 @@ export interface ProviderUtilitySupervisor {
     entryPath: string,
     launch: ProviderUtilityLaunchDescriptor,
   ) => Promise<void>;
+  readonly reconfigure: (
+    providerProfileId: string,
+    settings: Readonly<Record<string, boolean | number | string>>,
+  ) => Promise<ProviderProfileConfigurationChangeResult>;
   readonly shutdown: (providerProfileId: string) => Promise<void>;
   readonly shutdownAll: () => Promise<void>;
   readonly getStatus: (
@@ -70,6 +111,18 @@ interface ProviderProcessState {
   shutdownPromise: Promise<void> | undefined;
   permissions: ProviderUtilityLaunchDescriptor["permissions"] | undefined;
   inFlightNetwork: Set<AbortController>;
+  entryPath: string;
+  launch: ProviderUtilityLaunchDescriptor;
+  configRequestSequence: number;
+  pendingConfiguration:
+    | {
+        readonly requestId: string;
+        readonly resolve: (
+          result: ProviderProfileConfigurationChangeResult,
+        ) => void;
+        readonly reject: (error: Error) => void;
+      }
+    | undefined;
 }
 
 const maximumProviderNetworkRequestsPerProfile = 8;
@@ -92,6 +145,7 @@ export function createProviderUtilitySupervisor(
     "Provider shutdown timeout",
   );
   const states = new Map<string, ProviderProcessState>();
+  const reconfiguringProfiles = new Set<string>();
 
   const clearTimer = (state: ProviderProcessState): void => {
     if (state.timer === undefined) return;
@@ -129,6 +183,14 @@ export function createProviderUtilitySupervisor(
     state.inFlightNetwork.clear();
   };
 
+  const rejectPendingConfiguration = (
+    state: ProviderProcessState,
+    error: Error,
+  ): void => {
+    state.pendingConfiguration?.reject(error);
+    state.pendingConfiguration = undefined;
+  };
+
   const fail = (
     providerProfileId: string,
     state: ProviderProcessState,
@@ -141,6 +203,10 @@ export function createProviderUtilitySupervisor(
     const wasStopping = state.status === "stopping";
     clearTimer(state);
     abortInFlightNetwork(state);
+    rejectPendingConfiguration(
+      state,
+      error ?? new Error("Provider utility became unavailable."),
+    );
     removeListeners(state);
     if (terminateChild) terminate(state);
     state.child = undefined;
@@ -158,6 +224,10 @@ export function createProviderUtilitySupervisor(
   const finishStopped = (state: ProviderProcessState): void => {
     clearTimer(state);
     abortInFlightNetwork(state);
+    rejectPendingConfiguration(
+      state,
+      new Error("Provider utility stopped during configuration validation."),
+    );
     removeListeners(state);
     state.child = undefined;
     state.status = "stopped";
@@ -196,6 +266,10 @@ export function createProviderUtilitySupervisor(
       shutdownPromise: undefined,
       permissions: launch.permissions,
       inFlightNetwork: new Set(),
+      entryPath,
+      launch,
+      configRequestSequence: 0,
+      pendingConfiguration: undefined,
     };
     states.set(providerProfileId, state);
 
@@ -239,6 +313,33 @@ export function createProviderUtilitySupervisor(
       if (isUtilityStatusMessage(message)) return false;
       if (state.status !== "starting" && state.status !== "ready") {
         protocolViolation();
+        return true;
+      }
+      if (message.type === "provider-config-validation-response") {
+        const pending = state.pendingConfiguration;
+        if (
+          state.status !== "ready" ||
+          pending === undefined ||
+          pending.requestId !== message.requestId
+        ) {
+          protocolViolation();
+          return true;
+        }
+        state.pendingConfiguration = undefined;
+        if (!message.ok) {
+          pending.reject(
+            new ProviderProfileLifecycleError(
+              "PROVIDER_PROFILE_CONFIG_INVALID",
+              "Provider configuration was rejected by the provider schema.",
+            ),
+          );
+          return true;
+        }
+        pending.resolve({
+          impact: message.impact,
+          settings: message.settings,
+          changedKeys: message.changedKeys,
+        });
         return true;
       }
       if (message.type === "provider-host-log") {
@@ -519,8 +620,135 @@ export function createProviderUtilitySupervisor(
     return state.shutdownPromise;
   };
 
+  const validateConfiguration = (
+    state: ProviderProcessState,
+    settings: Readonly<Record<string, boolean | number | string>>,
+  ): Promise<ProviderProfileConfigurationChangeResult> => {
+    if (state.status !== "ready" || state.child === undefined) {
+      return Promise.reject(
+        new ProviderProfileLifecycleError(
+          "PROVIDER_PROFILE_NOT_READY",
+          "Provider profile must be ready before it can be reconfigured.",
+        ),
+      );
+    }
+    if (state.pendingConfiguration !== undefined) {
+      return Promise.reject(
+        new ProviderProfileLifecycleError(
+          "PROVIDER_PROFILE_CONFIG_BUSY",
+          "Provider profile configuration is already being validated.",
+        ),
+      );
+    }
+    state.configRequestSequence += 1;
+    const requestId = `cfg.${state.configRequestSequence}`;
+    const pending = new Promise<ProviderProfileConfigurationChangeResult>(
+      (resolve, reject) => {
+        state.pendingConfiguration = { requestId, resolve, reject };
+      },
+    );
+    try {
+      state.child.postMessage({
+        type: "provider-config-validation-request",
+        contractVersion: ipcContractVersion,
+        requestId,
+        settings,
+      });
+    } catch {
+      rejectPendingConfiguration(
+        state,
+        new Error(
+          "Provider configuration validation request could not be delivered.",
+        ),
+      );
+    }
+    return pending;
+  };
+
+  const reconfigure = async (
+    providerProfileIdValue: string,
+    settings: Readonly<Record<string, boolean | number | string>>,
+  ): Promise<ProviderProfileConfigurationChangeResult> => {
+    const providerProfileId = requireProviderProfileId(providerProfileIdValue);
+    if (reconfiguringProfiles.has(providerProfileId)) {
+      throw new ProviderProfileLifecycleError(
+        "PROVIDER_PROFILE_CONFIG_BUSY",
+        "Provider profile configuration is already being changed.",
+      );
+    }
+    const state = states.get(providerProfileId);
+    if (state === undefined) {
+      throw new ProviderProfileLifecycleError(
+        "PROVIDER_PROFILE_NOT_READY",
+        "Provider profile must be ready before it can be reconfigured.",
+      );
+    }
+    reconfiguringProfiles.add(providerProfileId);
+    try {
+      let plan: ProviderProfileConfigurationChangeResult;
+      try {
+        plan = await validateConfiguration(state, settings);
+      } catch (error) {
+        if (error instanceof ProviderProfileLifecycleError) throw error;
+        throw new ProviderProfileLifecycleError(
+          "PROVIDER_PROFILE_CONFIG_VALIDATION_FAILED",
+          "Provider configuration could not be validated.",
+        );
+      }
+      if (plan.impact === "none") return plan;
+
+      const impact = plan.impact;
+      const previousEntryPath = state.entryPath;
+      const previousLaunch = state.launch;
+      const nextLaunch: ProviderUtilityLaunchDescriptor = {
+        ...previousLaunch,
+        settings: plan.settings,
+      };
+      try {
+        await options.onProfileInvalidated?.(providerProfileId, impact);
+      } catch {
+        throw new ProviderProfileLifecycleError(
+          "PROVIDER_PROFILE_INVALIDATION_FAILED",
+          "Provider profile dependencies could not be invalidated.",
+        );
+      }
+
+      await shutdown(providerProfileId);
+      try {
+        await start(providerProfileId, previousEntryPath, nextLaunch);
+      } catch {
+        try {
+          await start(providerProfileId, previousEntryPath, previousLaunch);
+          await options.onProfileRestored?.(providerProfileId, impact);
+        } catch {
+          throw new ProviderProfileLifecycleError(
+            "PROVIDER_PROFILE_RECOVERY_FAILED",
+            "Provider profile failed to restart and the previous configuration could not be restored.",
+          );
+        }
+        throw new ProviderProfileLifecycleError(
+          "PROVIDER_PROFILE_RESTART_FAILED",
+          "Provider profile rejected the updated configuration and the previous configuration was restored.",
+        );
+      }
+
+      try {
+        await options.onProfileRestored?.(providerProfileId, impact);
+      } catch {
+        throw new ProviderProfileLifecycleError(
+          "PROVIDER_PROFILE_RESTORE_FAILED",
+          "Provider profile restarted but downstream subscriptions could not be restored.",
+        );
+      }
+      return plan;
+    } finally {
+      reconfiguringProfiles.delete(providerProfileId);
+    }
+  };
+
   return {
     start,
+    reconfigure,
     shutdown,
     shutdownAll: async (): Promise<void> => {
       await Promise.all(
