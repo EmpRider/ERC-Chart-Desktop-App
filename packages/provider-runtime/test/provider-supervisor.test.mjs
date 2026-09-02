@@ -118,7 +118,7 @@ test("returns the single startup rejection when spawning fails", async () => {
     });
 
     await assert.rejects(
-      supervisor.start("profile-a", "/runtime/provider.js"),
+      supervisor.start("profile-a", "/runtime/provider.js", createLaunch()),
       new Error("Provider utility process could not start."),
     );
     await new Promise((resolve) => setImmediate(resolve));
@@ -258,8 +258,16 @@ test("initializes a provider utility and brokers host requests without argv secr
 
 test("supervises provider profiles independently and passes only the profile id", async () => {
   const fixture = createFixture();
-  const first = fixture.supervisor.start("profile-a", "/runtime/provider.js");
-  const second = fixture.supervisor.start("profile-b", "/runtime/provider.js");
+  const first = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  const second = fixture.supervisor.start(
+    "profile-b",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
   fixture.children[0].emitMessage({
     type: "ready",
     contractVersion: ipcContractVersion,
@@ -290,7 +298,11 @@ test("supervises provider profiles independently and passes only the profile id"
 
 test("fails closed on malformed or out-of-sequence provider messages", async () => {
   const fixture = createFixture();
-  const started = fixture.supervisor.start("profile-a", "/runtime/provider.js");
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
 
   fixture.children[0].emitMessage({
     type: "ready",
@@ -313,6 +325,7 @@ test("fails closed on malformed or out-of-sequence provider messages", async () 
   const restarted = fixture.supervisor.start(
     "profile-a",
     "/runtime/provider.js",
+    createLaunch(),
   );
   fixture.children[1].emitMessage({
     type: "ready",
@@ -329,7 +342,11 @@ test("fails closed on malformed or out-of-sequence provider messages", async () 
 
 test("bounds startup and shutdown and supports restart after failure", async () => {
   const fixture = createFixture();
-  const started = fixture.supervisor.start("profile-a", "/runtime/provider.js");
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
   fixture.runNext();
   await assert.rejects(
     started,
@@ -340,6 +357,7 @@ test("bounds startup and shutdown and supports restart after failure", async () 
   const restarted = fixture.supervisor.start(
     "profile-a",
     "/runtime/provider.js",
+    createLaunch(),
   );
   fixture.children[1].emitMessage({
     type: "ready",
@@ -347,9 +365,10 @@ test("bounds startup and shutdown and supports restart after failure", async () 
   });
   await restarted;
   const stopped = fixture.supervisor.shutdown("profile-a");
-  assert.deepEqual(fixture.children[1].posted, [
-    { type: "shutdown", contractVersion: ipcContractVersion },
-  ]);
+  assert.deepEqual(fixture.children[1].posted.at(-1), {
+    type: "shutdown",
+    contractVersion: ipcContractVersion,
+  });
   fixture.runNext();
   await stopped;
   assert.equal(fixture.children[1].getKillCount(), 1);
@@ -358,8 +377,16 @@ test("bounds startup and shutdown and supports restart after failure", async () 
 
 test("shutdownAll stops each active provider without cross-profile corruption", async () => {
   const fixture = createFixture();
-  const first = fixture.supervisor.start("profile-a", "/runtime/provider.js");
-  const second = fixture.supervisor.start("profile-b", "/runtime/provider.js");
+  const first = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  const second = fixture.supervisor.start(
+    "profile-b",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
   for (const child of fixture.children) {
     child.emitMessage({ type: "ready", contractVersion: ipcContractVersion });
   }
@@ -367,9 +394,10 @@ test("shutdownAll stops each active provider without cross-profile corruption", 
 
   const stopped = fixture.supervisor.shutdownAll();
   for (const child of fixture.children) {
-    assert.deepEqual(child.posted, [
-      { type: "shutdown", contractVersion: ipcContractVersion },
-    ]);
+    assert.deepEqual(child.posted.at(-1), {
+      type: "shutdown",
+      contractVersion: ipcContractVersion,
+    });
     child.emitMessage({
       type: "stopped",
       contractVersion: ipcContractVersion,
@@ -623,7 +651,11 @@ test("fails the provider when a host response cannot be posted", async () => {
 
 test("resolves shutdown when an out-of-sequence host message fails the provider", async () => {
   const fixture = createFixture();
-  const started = fixture.supervisor.start("profile-a", "/runtime/provider.js");
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
   fixture.children[0].emitMessage({
     type: "ready",
     contractVersion: ipcContractVersion,

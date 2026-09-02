@@ -49,7 +49,7 @@ export interface ProviderUtilitySupervisor {
   readonly start: (
     providerProfileId: string,
     entryPath: string,
-    launch?: ProviderUtilityLaunchDescriptor,
+    launch: ProviderUtilityLaunchDescriptor,
   ) => Promise<void>;
   readonly shutdown: (providerProfileId: string) => Promise<void>;
   readonly shutdownAll: () => Promise<void>;
@@ -159,7 +159,7 @@ export function createProviderUtilitySupervisor(
   const start = (
     providerProfileIdValue: string,
     entryPath: string,
-    launch?: ProviderUtilityLaunchDescriptor,
+    launch: ProviderUtilityLaunchDescriptor,
   ): Promise<void> => {
     const providerProfileId = requireProviderProfileId(providerProfileIdValue);
     if (typeof entryPath !== "string" || entryPath.trim() === "")
@@ -184,7 +184,7 @@ export function createProviderUtilitySupervisor(
       rejectStart: undefined,
       resolveShutdown: undefined,
       shutdownPromise: undefined,
-      permissions: launch?.permissions,
+      permissions: launch.permissions,
     };
     states.set(providerProfileId, state);
 
@@ -411,13 +411,11 @@ export function createProviderUtilitySupervisor(
           true,
         );
       }, startupTimeoutMs);
-      if (launch !== undefined) {
-        state.child.postMessage({
-          type: "provider-initialize",
-          contractVersion: ipcContractVersion,
-          launch,
-        });
-      }
+      state.child.postMessage({
+        type: "provider-initialize",
+        contractVersion: ipcContractVersion,
+        launch,
+      });
     } catch {
       fail(
         providerProfileId,
