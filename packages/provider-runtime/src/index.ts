@@ -28,6 +28,14 @@ export type {
   PluginTrustResult,
 } from "./plugin-trust.js";
 export { defaultPluginPackageLimits, discardStagedPlugin };
+export {
+  installStagedPlugin,
+  removeInstalledPlugin,
+} from "./plugin-installation.js";
+export type {
+  InstalledPluginPackage,
+  PluginInstallationOptions,
+} from "./plugin-installation.js";
 
 export async function stagePluginPackage(
   source: PluginPackageSource,

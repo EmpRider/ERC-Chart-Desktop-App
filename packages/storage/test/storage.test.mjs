@@ -6,10 +6,12 @@ import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
+  activatePlugin,
   createProviderProfile,
   deleteAppSetting,
   deletePlugin,
   deleteProviderProfile,
+  disablePlugin,
   getAppSetting,
   getCandles,
   getPlugin,
@@ -23,6 +25,7 @@ import {
   putAppSetting,
   putPlugin,
   recoverStorageDatabase,
+  rollbackPlugin,
   saveWorkspace,
   serializeWorkspaceV1,
   StorageDatabaseCorruptionError,
@@ -690,6 +693,111 @@ test("persists plugin versions, permissions, and deterministic registry order", 
       assert.equal(
         getPlugin(database, newer.pluginId, newer.version),
         undefined,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("manages plugin activation, disable, rollback, and uninstall transactionally", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const base = {
+        pluginId: "erc.provider.binomo",
+        kind: "provider",
+        trust: "signed",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        permissions: [],
+      };
+      putPlugin(database, {
+        ...base,
+        version: "1.0.0",
+        status: "disabled",
+        integrityHash: `sha256:${"a".repeat(64)}`,
+      });
+      putPlugin(database, {
+        ...base,
+        version: "2.0.0",
+        status: "active",
+        integrityHash: `sha256:${"b".repeat(64)}`,
+      });
+      putPlugin(database, {
+        ...base,
+        version: "3.0.0+build.7",
+        status: "incompatible",
+        integrityHash: `sha256:${"c".repeat(64)}`,
+      });
+      putPlugin(database, {
+        pluginId: "erc.indicator.rsi",
+        version: "1.0.0",
+        kind: "indicator",
+        trust: "bundled",
+        status: "active",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"d".repeat(64)}`,
+        permissions: [],
+      });
+
+      assert.equal(
+        putPlugin(database, {
+          ...base,
+          version: "1.0.0",
+          status: "active",
+          integrityHash: `sha256:${"a".repeat(64)}`,
+        }).status,
+        "active",
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        getPlugin(database, "erc.indicator.rsi", "1.0.0").status,
+        "active",
+      );
+
+      assert.throws(
+        () => activatePlugin(database, "erc.provider.binomo", "3.0.0+build.7"),
+        /cannot be activated/,
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "active",
+      );
+
+      assert.equal(
+        disablePlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        rollbackPlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "active",
+      );
+      assert.throws(
+        () => deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        /must be disabled/,
+      );
+      assert.equal(
+        disablePlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        true,
+      );
+      assert.equal(
+        deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        false,
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "3.0.0+build.7").status,
+        "incompatible",
       );
     } finally {
       database.close();
