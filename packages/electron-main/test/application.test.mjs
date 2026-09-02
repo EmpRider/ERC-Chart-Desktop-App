@@ -13,6 +13,7 @@ function createFixture(platform = "win32") {
   const providerStartCalls = [];
   const providerReconfigureCalls = [];
   const providerShutdownCalls = [];
+  const providerDataCalls = [];
   let quitCount = 0;
   let loadUrlError;
   let shutdownError;
@@ -106,6 +107,34 @@ function createFixture(platform = "win32") {
         providerShutdownAllCount += 1;
       },
     },
+    providerData: {
+      async getCapabilities(providerProfileId) {
+        providerDataCalls.push({ type: "capabilities", providerProfileId });
+        return {
+          instruments: true,
+          nativeTimeframes: ["1m"],
+          liveData: true,
+          derivedTimeframes: true,
+        };
+      },
+      async getInstruments(providerProfileId) {
+        providerDataCalls.push({ type: "instruments", providerProfileId });
+        return [{ id: "BTCUSD", symbol: "BTCUSD", name: "Bitcoin / USD" }];
+      },
+      async requestHistory(providerProfileId, request) {
+        providerDataCalls.push({ type: "history", providerProfileId, request });
+        return [];
+      },
+      async subscribe(providerProfileId, request, sink) {
+        providerDataCalls.push({
+          type: "subscribe",
+          providerProfileId,
+          request,
+          sink,
+        });
+        return { unsubscribe: async () => undefined };
+      },
+    },
     workspacePersistence: {
       async load() {
         return null;
@@ -133,6 +162,7 @@ function createFixture(platform = "win32") {
     providerStartCalls,
     providerReconfigureCalls,
     providerShutdownCalls,
+    providerDataCalls,
     getQuitCount: () => quitCount,
     setLoadUrlError: (error) => {
       loadUrlError = error;
@@ -225,6 +255,50 @@ test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle
   assert.deepEqual(fixture.providerShutdownCalls, ["profile-a"]);
   await controller.shutdown();
   assert.equal(fixture.getProviderShutdownAllCount(), 1);
+});
+
+test("exposes provider-neutral discovery/history/live data through the application controller", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  const request = { instrumentId: "BTCUSD", timeframeId: "1m" };
+  const sink = {
+    onCandles() {
+      return undefined;
+    },
+    onTicks() {
+      return undefined;
+    },
+    onError() {
+      return undefined;
+    },
+  };
+
+  assert.equal(
+    (await controller.getProviderCapabilities("profile-a")).liveData,
+    true,
+  );
+  assert.equal(
+    (await controller.getProviderInstruments("profile-a"))[0].symbol,
+    "BTCUSD",
+  );
+  assert.deepEqual(
+    await controller.requestProviderHistory("profile-a", request),
+    [],
+  );
+  await controller.subscribeProviderData("profile-a", request, sink);
+
+  assert.deepEqual(
+    fixture.providerDataCalls.map(({ type, providerProfileId }) => ({
+      type,
+      providerProfileId,
+    })),
+    [
+      { type: "capabilities", providerProfileId: "profile-a" },
+      { type: "instruments", providerProfileId: "profile-a" },
+      { type: "history", providerProfileId: "profile-a" },
+      { type: "subscribe", providerProfileId: "profile-a" },
+    ],
+  );
 });
 
 test("recreates a missing window and quits only on non-macOS", async () => {
