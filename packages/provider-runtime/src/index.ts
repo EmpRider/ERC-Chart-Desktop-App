@@ -73,3 +73,30 @@ export type {
   ProviderUtilitySupervisorStatus,
   ProviderUtilityUnavailableCode,
 } from "./provider-supervisor.js";
+export {
+  instantiateInstalledProvider,
+  normalizeProviderConfiguration,
+  ProviderRuntimeError,
+} from "./provider-instance.js";
+export type {
+  InstalledProviderInstance,
+  InstalledProviderInstanceOptions,
+  ProviderRuntimeErrorCode,
+  ProviderRuntimeHostBroker,
+} from "./provider-instance.js";
+export { isProviderNetworkRequestAllowed } from "./provider-permissions.js";
+export {
+  isProviderUtilityChildMessage,
+  isProviderUtilityParentMessage,
+} from "./provider-protocol.js";
+export type {
+  ProviderUtilityChildMessage,
+  ProviderUtilityCredentialRequestMessage,
+  ProviderUtilityHostResponseMessage,
+  ProviderUtilityInitializeMessage,
+  ProviderUtilityLaunchDescriptor,
+  ProviderUtilityLogMessage,
+  ProviderUtilityNetworkRequestMessage,
+  ProviderUtilityParentMessage,
+  ProviderUtilityProviderStatusMessage,
+} from "./provider-protocol.js";
