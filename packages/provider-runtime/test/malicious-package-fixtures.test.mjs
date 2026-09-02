@@ -132,18 +132,24 @@ test("rejects representative malicious package fixtures through the public stagi
     );
     assert.deepEqual(await readdir(stagingRoot), []);
 
-    const executableSource = await createFolderPackage(root, pluginManifest(), [
-      ["assets/payload.exe", "not-an-executable"],
-      ["dist/native.node", "not-a-native-module"],
-    ]);
-    await assert.rejects(
-      stagePluginPackage(
-        { kind: "folder", path: executableSource },
-        { stagingRoot, trustPolicy: developerTrust },
-      ),
-      /outside the approved .* allowlist/i,
-    );
-    assert.deepEqual(await readdir(stagingRoot), []);
+    for (const [fixtureName, maliciousPath] of [
+      ["executable", "assets/payload.exe"],
+      ["native module", "dist/native.node"],
+      ["unsupported runtime", "assets/provider.py"],
+    ]) {
+      const source = await createFolderPackage(root, pluginManifest(), [
+        [maliciousPath, "malicious fixture"],
+      ]);
+      await assert.rejects(
+        stagePluginPackage(
+          { kind: "folder", path: source },
+          { stagingRoot, trustPolicy: developerTrust },
+        ),
+        /outside the approved .* allowlist/i,
+        fixtureName,
+      );
+      assert.deepEqual(await readdir(stagingRoot), [], fixtureName);
+    }
 
     const tamperedSource = await createFolderPackage(
       root,
