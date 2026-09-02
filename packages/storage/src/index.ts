@@ -531,6 +531,10 @@ export interface PluginRegistryEntry {
 
 export type PutPluginInput = PluginRegistryEntry;
 
+const pluginIdPattern = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/;
+const pluginVersionPattern =
+  /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 interface AppSettingRow {
   readonly key: string;
   readonly schema_version: number;
@@ -625,6 +629,14 @@ function requireRegistryText(
   const text = requireProfileText(value, field, maximumLength);
   if (!pattern.test(text)) throw new Error(`${field} has an invalid format.`);
   return text;
+}
+
+function requirePluginId(value: unknown): string {
+  return requireRegistryText(value, "pluginId", pluginIdPattern, 128);
+}
+
+function requirePluginVersion(value: unknown): string {
+  return requireRegistryText(value, "version", pluginVersionPattern, 128);
 }
 
 function toAppSetting(row: AppSettingRow): AppSetting {
@@ -724,18 +736,8 @@ function validatePlugin(input: PutPluginInput): {
     ],
     "plugin",
   );
-  const pluginId = requireRegistryText(
-    input.pluginId,
-    "pluginId",
-    /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/,
-    128,
-  );
-  const version = requireRegistryText(
-    input.version,
-    "version",
-    /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/,
-    128,
-  );
+  const pluginId = requirePluginId(input.pluginId);
+  const version = requirePluginVersion(input.version);
   if (input.kind !== "provider" && input.kind !== "indicator")
     throw new Error("kind must be provider or indicator.");
   if (!["bundled", "signed", "unsigned"].includes(input.trust))
@@ -834,6 +836,14 @@ export function putPlugin(
     throw new Error("Plugin input must be an object.");
   const plugin = validatePlugin(input);
   withTransaction(database, () => {
+    if (plugin.status === "active") {
+      database
+        .prepare(
+          `UPDATE plugins SET status = 'disabled'
+           WHERE plugin_id = ? AND version <> ? AND status = 'active'`,
+        )
+        .run(plugin.pluginId, plugin.version);
+    }
     database
       .prepare(
         `INSERT INTO plugins
@@ -884,8 +894,8 @@ export function getPlugin(
   pluginId: string,
   version: string,
 ): PluginRegistryEntry | undefined {
-  const checkedPluginId = requireProfileText(pluginId, "pluginId", 128);
-  const checkedVersion = requireProfileText(version, "version", 128);
+  const checkedPluginId = requirePluginId(pluginId);
+  const checkedVersion = requirePluginVersion(version);
   const row = database
     .prepare(`${pluginSelect} WHERE plugin_id = ? AND version = ?`)
     .get(checkedPluginId, checkedVersion) as PluginRow | undefined;
@@ -902,18 +912,99 @@ export function listPlugins(
   ).map((row) => toPlugin(database, row));
 }
 
+export function activatePlugin(
+  database: DatabaseSync,
+  pluginId: string,
+  version: string,
+): PluginRegistryEntry {
+  const checkedPluginId = requirePluginId(pluginId);
+  const checkedVersion = requirePluginVersion(version);
+  withTransaction(database, () => {
+    const target = database
+      .prepare("SELECT status FROM plugins WHERE plugin_id = ? AND version = ?")
+      .get(checkedPluginId, checkedVersion) as
+      { readonly status: string } | undefined;
+    if (target === undefined)
+      throw new Error("Plugin version is not installed.");
+    if (target.status === "incompatible")
+      throw new Error("Incompatible plugin versions cannot be activated.");
+    database
+      .prepare(
+        `UPDATE plugins SET status = 'disabled'
+         WHERE plugin_id = ? AND version <> ? AND status = 'active'`,
+      )
+      .run(checkedPluginId, checkedVersion);
+    database
+      .prepare(
+        "UPDATE plugins SET status = 'active' WHERE plugin_id = ? AND version = ?",
+      )
+      .run(checkedPluginId, checkedVersion);
+  });
+  const stored = getPlugin(database, checkedPluginId, checkedVersion);
+  if (stored === undefined)
+    throw new Error("Plugin disappeared after activation.");
+  return stored;
+}
+
+export function disablePlugin(
+  database: DatabaseSync,
+  pluginId: string,
+  version: string,
+): PluginRegistryEntry {
+  const checkedPluginId = requirePluginId(pluginId);
+  const checkedVersion = requirePluginVersion(version);
+  withTransaction(database, () => {
+    const target = database
+      .prepare("SELECT status FROM plugins WHERE plugin_id = ? AND version = ?")
+      .get(checkedPluginId, checkedVersion) as
+      { readonly status: string } | undefined;
+    if (target === undefined)
+      throw new Error("Plugin version is not installed.");
+    if (target.status === "incompatible")
+      throw new Error("Incompatible plugin versions cannot be disabled.");
+    database
+      .prepare(
+        "UPDATE plugins SET status = 'disabled' WHERE plugin_id = ? AND version = ?",
+      )
+      .run(checkedPluginId, checkedVersion);
+  });
+  const stored = getPlugin(database, checkedPluginId, checkedVersion);
+  if (stored === undefined)
+    throw new Error("Plugin disappeared after disable.");
+  return stored;
+}
+
+export function rollbackPlugin(
+  database: DatabaseSync,
+  pluginId: string,
+  version: string,
+): PluginRegistryEntry {
+  return activatePlugin(database, pluginId, version);
+}
+
 export function deletePlugin(
   database: DatabaseSync,
   pluginId: string,
   version: string,
 ): boolean {
-  const checkedPluginId = requireProfileText(pluginId, "pluginId", 128);
-  const checkedVersion = requireProfileText(version, "version", 128);
-  return (
-    database
-      .prepare("DELETE FROM plugins WHERE plugin_id = ? AND version = ?")
-      .run(checkedPluginId, checkedVersion).changes > 0
-  );
+  const checkedPluginId = requirePluginId(pluginId);
+  const checkedVersion = requirePluginVersion(version);
+  return withTransaction(database, () => {
+    const target = database
+      .prepare("SELECT status FROM plugins WHERE plugin_id = ? AND version = ?")
+      .get(checkedPluginId, checkedVersion) as
+      { readonly status: string } | undefined;
+    if (target === undefined) return false;
+    if (target.status === "active")
+      throw new Error(
+        "Active plugin versions must be disabled before deletion.",
+      );
+    return (
+      database
+        .prepare("DELETE FROM plugins WHERE plugin_id = ? AND version = ?")
+        .run(checkedPluginId, checkedVersion).changes > 0
+    );
+  });
 }
 
 export function saveWorkspace(
