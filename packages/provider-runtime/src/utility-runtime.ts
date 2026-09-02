@@ -1,5 +1,8 @@
 import { ipcContractVersion } from "@erc-chart/contracts";
-import type { ProviderNetworkResponse } from "@erc-chart/provider-sdk";
+import type {
+  ProviderNetworkResponse,
+  ProviderSubscription,
+} from "@erc-chart/provider-sdk";
 import {
   instantiateInstalledProvider,
   planProviderConfigurationChange,
@@ -58,6 +61,8 @@ export function createProviderUtilityRuntime(
     rejectReady = reject;
   });
   const pending = new Map<string, PendingHostRequest<unknown>>();
+  const activeSubscriptions = new Map<string, ProviderSubscription>();
+  const pendingSubscriptions = new Set<string>();
 
   const rejectPending = (error: Error): void => {
     for (const request of pending.values()) request.reject(error);
@@ -71,7 +76,30 @@ export function createProviderUtilityRuntime(
     rejectPending(new Error("Provider utility stopped."));
     if (!initializationSettled)
       rejectReady(new Error("Provider utility stopped before initialization."));
-    port.postMessage({ type: "stopped", contractVersion: ipcContractVersion });
+    const subscriptions = [...activeSubscriptions.values()];
+    activeSubscriptions.clear();
+    pendingSubscriptions.clear();
+    if (activeInstance === undefined && subscriptions.length === 0) {
+      port.postMessage({
+        type: "stopped",
+        contractVersion: ipcContractVersion,
+      });
+      return;
+    }
+    void (async (): Promise<void> => {
+      await Promise.allSettled(
+        subscriptions.map((subscription) => subscription.unsubscribe()),
+      );
+      try {
+        await activeInstance?.adapter.disconnect();
+      } catch {
+        // Shutdown remains bounded by the supervising host even if disconnect fails.
+      }
+      port.postMessage({
+        type: "stopped",
+        contractVersion: ipcContractVersion,
+      });
+    })();
   };
 
   const fail = (code: string): void => {
@@ -185,6 +213,169 @@ export function createProviderUtilityRuntime(
     }
   };
 
+  const dataFailureCode = (error: unknown): string =>
+    error instanceof ProviderRuntimeError
+      ? error.code
+      : "PROVIDER_DATA_OPERATION_FAILED";
+
+  const handleDataRequest = async (
+    message: Exclude<
+      ProviderUtilityParentMessage,
+      | { readonly type: "shutdown" }
+      | { readonly type: "provider-initialize" }
+      | { readonly type: "provider-config-validation-request" }
+      | ProviderUtilityHostResponseMessage
+    >,
+  ): Promise<void> => {
+    const instance = activeInstance;
+    if (instance === undefined || stopped) {
+      fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+      return;
+    }
+    try {
+      if (message.type === "provider-capabilities-request") {
+        const capabilities = await instance.adapter.getCapabilities();
+        if (stopped) return;
+        port.postMessage({
+          type: "provider-capabilities-response",
+          contractVersion: ipcContractVersion,
+          requestId: message.requestId,
+          ok: true,
+          capabilities,
+        });
+        return;
+      }
+      if (message.type === "provider-instruments-request") {
+        const instruments = await instance.adapter.getInstruments();
+        if (stopped) return;
+        port.postMessage({
+          type: "provider-instruments-response",
+          contractVersion: ipcContractVersion,
+          requestId: message.requestId,
+          ok: true,
+          instruments,
+        });
+        return;
+      }
+      if (message.type === "provider-history-request") {
+        const candles = await instance.adapter.requestHistory(message.request);
+        if (stopped) return;
+        port.postMessage({
+          type: "provider-history-response",
+          contractVersion: ipcContractVersion,
+          requestId: message.requestId,
+          ok: true,
+          candles,
+        });
+        return;
+      }
+      if (message.type === "provider-subscribe-request") {
+        if (
+          activeSubscriptions.has(message.subscriptionId) ||
+          pendingSubscriptions.has(message.subscriptionId)
+        ) {
+          port.postMessage({
+            type: "provider-subscribe-response",
+            contractVersion: ipcContractVersion,
+            requestId: message.requestId,
+            ok: false,
+            code: "PROVIDER_SUBSCRIPTION_DUPLICATE",
+          });
+          return;
+        }
+        pendingSubscriptions.add(message.subscriptionId);
+        try {
+          const subscription = await instance.adapter.subscribe(
+            message.request,
+            {
+              onCandles: (candles): void => {
+                if (stopped) return;
+                port.postMessage({
+                  type: "provider-subscription-candles",
+                  contractVersion: ipcContractVersion,
+                  subscriptionId: message.subscriptionId,
+                  candles,
+                });
+              },
+              onTicks: (ticks): void => {
+                if (stopped) return;
+                port.postMessage({
+                  type: "provider-subscription-ticks",
+                  contractVersion: ipcContractVersion,
+                  subscriptionId: message.subscriptionId,
+                  ticks,
+                });
+              },
+              onError: (code): void => {
+                if (stopped) return;
+                port.postMessage({
+                  type: "provider-subscription-error",
+                  contractVersion: ipcContractVersion,
+                  subscriptionId: message.subscriptionId,
+                  code: /^[A-Z][A-Z0-9_.-]{0,127}$/u.test(code)
+                    ? code
+                    : "PROVIDER_SUBSCRIPTION_ERROR",
+                });
+              },
+            },
+          );
+          if (stopped) {
+            await subscription.unsubscribe().catch(() => undefined);
+            return;
+          }
+          activeSubscriptions.set(message.subscriptionId, subscription);
+          port.postMessage({
+            type: "provider-subscribe-response",
+            contractVersion: ipcContractVersion,
+            requestId: message.requestId,
+            ok: true,
+          });
+        } finally {
+          pendingSubscriptions.delete(message.subscriptionId);
+        }
+        return;
+      }
+      const subscription = activeSubscriptions.get(message.subscriptionId);
+      if (subscription === undefined) {
+        port.postMessage({
+          type: "provider-unsubscribe-response",
+          contractVersion: ipcContractVersion,
+          requestId: message.requestId,
+          ok: false,
+          code: "PROVIDER_SUBSCRIPTION_NOT_FOUND",
+        });
+        return;
+      }
+      await subscription.unsubscribe();
+      activeSubscriptions.delete(message.subscriptionId);
+      if (stopped) return;
+      port.postMessage({
+        type: "provider-unsubscribe-response",
+        contractVersion: ipcContractVersion,
+        requestId: message.requestId,
+        ok: true,
+      });
+    } catch (error) {
+      if (stopped) return;
+      port.postMessage({
+        type:
+          message.type === "provider-capabilities-request"
+            ? "provider-capabilities-response"
+            : message.type === "provider-instruments-request"
+              ? "provider-instruments-response"
+              : message.type === "provider-history-request"
+                ? "provider-history-response"
+                : message.type === "provider-subscribe-request"
+                  ? "provider-subscribe-response"
+                  : "provider-unsubscribe-response",
+        contractVersion: ipcContractVersion,
+        requestId: message.requestId,
+        ok: false,
+        code: dataFailureCode(error),
+      });
+    }
+  };
+
   const handleMessage = (message: ProviderUtilityParentMessage): void => {
     if (message.type === "shutdown") {
       shutdown();
@@ -240,6 +431,16 @@ export function createProviderUtilityRuntime(
       }
       return;
     }
+    if (
+      message.type === "provider-capabilities-request" ||
+      message.type === "provider-instruments-request" ||
+      message.type === "provider-history-request" ||
+      message.type === "provider-subscribe-request" ||
+      message.type === "provider-unsubscribe-request"
+    ) {
+      void handleDataRequest(message);
+      return;
+    }
     if (message.type !== "provider-initialize" || initialized || stopped) {
       fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
       return;
@@ -250,9 +451,14 @@ export function createProviderUtilityRuntime(
       ...message.launch,
       hostBroker,
     })
-      .then((created) => {
+      .then(async (created) => {
         initializationSettled = true;
         if (stopped) return;
+        await created.adapter.connect();
+        if (stopped) {
+          await created.adapter.disconnect().catch(() => undefined);
+          return;
+        }
         activeInstance = created;
         activePermissions = message.launch.permissions;
         resolveReady(created);

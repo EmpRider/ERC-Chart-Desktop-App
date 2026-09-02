@@ -23,6 +23,10 @@ import {
   type ProviderUtilityLaunchDescriptor,
 } from "@erc-chart/provider-runtime";
 import {
+  createProviderDataService,
+  type ProviderDataService,
+} from "@erc-chart/data-service";
+import {
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
@@ -127,6 +131,9 @@ const dataUtility = createUtilitySupervisor({
 });
 const providerLaunches = new Map<string, ProviderUtilityLaunchDescriptor>();
 const providerCredentialManager = createWindowsGenericCredentialManager();
+const providerDataReference: { current: ProviderDataService | undefined } = {
+  current: undefined,
+};
 const providerUtilities = createProviderUtilitySupervisor({
   spawn: (entryPath, args): ProviderUtilityChild =>
     adaptUtilityChild<Parameters<ProviderUtilityChild["postMessage"]>[0]>(
@@ -145,8 +152,15 @@ const providerUtilities = createProviderUtilitySupervisor({
   shutdownTimeoutMs: 2_000,
   onUnavailable: (providerProfileId, code): void => {
     providerLaunches.delete(providerProfileId);
+    void providerDataReference.current
+      ?.invalidateProfile(providerProfileId)
+      .catch(() => undefined);
     console.error(`ERC Chart provider utility unavailable (${code}).`);
   },
+  onProfileInvalidated: (providerProfileId): Promise<void> | undefined =>
+    providerDataReference.current?.invalidateProfile(providerProfileId),
+  onProfileRestored: (providerProfileId): Promise<void> | undefined =>
+    providerDataReference.current?.restoreProfile(providerProfileId),
   hostBroker: createDesktopProviderHostBroker({
     launches: providerLaunches,
     credentialManager: providerCredentialManager,
@@ -169,6 +183,8 @@ const providerUtilities = createProviderUtilitySupervisor({
     now: () => Date.now(),
   }),
 });
+const providerData = createProviderDataService(providerUtilities);
+providerDataReference.current = providerData;
 
 function createWindow(options: SecureWindowOptions): {
   loadURL: (url: string) => Promise<void>;
@@ -408,6 +424,7 @@ async function startDesktopMain(): Promise<void> {
           },
           shutdown: async (providerProfileId): Promise<void> => {
             try {
+              await providerData.invalidateProfile(providerProfileId);
               await providerUtilities.shutdown(providerProfileId);
             } finally {
               providerLaunches.delete(providerProfileId);
@@ -415,12 +432,14 @@ async function startDesktopMain(): Promise<void> {
           },
           shutdownAll: async (): Promise<void> => {
             try {
+              await providerData.shutdown();
               await providerUtilities.shutdownAll();
             } finally {
               providerLaunches.clear();
             }
           },
         },
+        providerData,
         workspacePersistence: {
           load: async (): Promise<PersistedWorkspace | null> =>
             loadWorkspace(workspaceDatabase, lastWorkspaceId) ?? null,

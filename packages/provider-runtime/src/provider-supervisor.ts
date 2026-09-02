@@ -1,7 +1,16 @@
 import {
   ipcContractVersion,
   isUtilityStatusMessage,
+  type Candle,
 } from "@erc-chart/contracts";
+import type {
+  ProviderCapabilities,
+  ProviderDataSink,
+  ProviderHistoryRequest,
+  ProviderInstrument,
+  ProviderSubscription,
+  ProviderSubscriptionRequest,
+} from "@erc-chart/provider-sdk";
 import type {
   ProviderConfigurationChangeImpact,
   ProviderRuntimeHostBroker,
@@ -11,6 +20,8 @@ import { requireProviderProfileId } from "./provider-profile-id.js";
 import {
   isProviderUtilityChildMessage,
   type ProviderUtilityChildMessage,
+  type ProviderUtilityDataRequestMessage,
+  type ProviderUtilityDataResponseMessage,
   type ProviderUtilityLaunchDescriptor,
   type ProviderUtilityParentMessage,
 } from "./provider-protocol.js";
@@ -97,7 +108,35 @@ export interface ProviderUtilitySupervisor {
   readonly getStatus: (
     providerProfileId: string,
   ) => ProviderUtilitySupervisorStatus;
+  readonly getCapabilities: (
+    providerProfileId: string,
+  ) => Promise<ProviderCapabilities>;
+  readonly getInstruments: (
+    providerProfileId: string,
+  ) => Promise<readonly ProviderInstrument[]>;
+  readonly requestHistory: (
+    providerProfileId: string,
+    request: ProviderHistoryRequest,
+  ) => Promise<readonly Candle[]>;
+  readonly subscribe: (
+    providerProfileId: string,
+    request: ProviderSubscriptionRequest,
+    sink: ProviderDataSink,
+  ) => Promise<ProviderSubscription>;
 }
+
+interface PendingProviderDataRequest {
+  readonly expectedType: ProviderUtilityDataResponseMessage["type"];
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (error: Error) => void;
+}
+
+type ProviderUtilityDataRequestPayload =
+  ProviderUtilityDataRequestMessage extends infer Message
+    ? Message extends ProviderUtilityDataRequestMessage
+      ? Omit<Message, "contractVersion" | "requestId">
+      : never
+    : never;
 
 interface ProviderProcessState {
   status: ProviderUtilitySupervisorStatus;
@@ -123,6 +162,10 @@ interface ProviderProcessState {
         readonly reject: (error: Error) => void;
       }
     | undefined;
+  dataRequestSequence: number;
+  subscriptionSequence: number;
+  pendingData: Map<string, PendingProviderDataRequest>;
+  subscriptionSinks: Map<string, ProviderDataSink>;
 }
 
 const maximumProviderNetworkRequestsPerProfile = 8;
@@ -191,6 +234,28 @@ export function createProviderUtilitySupervisor(
     state.pendingConfiguration = undefined;
   };
 
+  const rejectPendingData = (
+    state: ProviderProcessState,
+    error: Error,
+  ): void => {
+    for (const request of state.pendingData.values()) request.reject(error);
+    state.pendingData.clear();
+  };
+
+  const clearSubscriptionSinks = (
+    state: ProviderProcessState,
+    code: string,
+  ): void => {
+    for (const sink of state.subscriptionSinks.values()) {
+      try {
+        sink.onError(code);
+      } catch {
+        // A downstream observer cannot corrupt provider process cleanup.
+      }
+    }
+    state.subscriptionSinks.clear();
+  };
+
   const fail = (
     providerProfileId: string,
     state: ProviderProcessState,
@@ -207,6 +272,11 @@ export function createProviderUtilitySupervisor(
       state,
       error ?? new Error("Provider utility became unavailable."),
     );
+    rejectPendingData(
+      state,
+      error ?? new Error("Provider utility became unavailable."),
+    );
+    clearSubscriptionSinks(state, "PROVIDER_UTILITY_UNAVAILABLE");
     removeListeners(state);
     if (terminateChild) terminate(state);
     state.child = undefined;
@@ -228,6 +298,8 @@ export function createProviderUtilitySupervisor(
       state,
       new Error("Provider utility stopped during configuration validation."),
     );
+    rejectPendingData(state, new Error("Provider utility stopped."));
+    clearSubscriptionSinks(state, "PROVIDER_UTILITY_STOPPED");
     removeListeners(state);
     state.child = undefined;
     state.status = "stopped";
@@ -270,6 +342,10 @@ export function createProviderUtilitySupervisor(
       launch,
       configRequestSequence: 0,
       pendingConfiguration: undefined,
+      dataRequestSequence: 0,
+      subscriptionSequence: 0,
+      pendingData: new Map(),
+      subscriptionSinks: new Map(),
     };
     states.set(providerProfileId, state);
 
@@ -340,6 +416,65 @@ export function createProviderUtilitySupervisor(
           settings: message.settings,
           changedKeys: message.changedKeys,
         });
+        return true;
+      }
+      if (
+        message.type === "provider-capabilities-response" ||
+        message.type === "provider-instruments-response" ||
+        message.type === "provider-history-response" ||
+        message.type === "provider-subscribe-response" ||
+        message.type === "provider-unsubscribe-response"
+      ) {
+        const pending = state.pendingData.get(message.requestId);
+        if (
+          state.status !== "ready" ||
+          pending === undefined ||
+          pending.expectedType !== message.type
+        ) {
+          protocolViolation();
+          return true;
+        }
+        state.pendingData.delete(message.requestId);
+        if (!message.ok) {
+          const error = new Error(
+            `Provider data operation failed (${message.code}).`,
+          );
+          Object.assign(error, { code: message.code });
+          pending.reject(error);
+          return true;
+        }
+        if (message.type === "provider-capabilities-response") {
+          pending.resolve(message.capabilities);
+        } else if (message.type === "provider-instruments-response") {
+          pending.resolve(message.instruments);
+        } else if (message.type === "provider-history-response") {
+          pending.resolve(message.candles);
+        } else {
+          pending.resolve(undefined);
+        }
+        return true;
+      }
+      if (
+        message.type === "provider-subscription-candles" ||
+        message.type === "provider-subscription-ticks" ||
+        message.type === "provider-subscription-error"
+      ) {
+        const sink = state.subscriptionSinks.get(message.subscriptionId);
+        if (state.status !== "ready" || sink === undefined) {
+          protocolViolation();
+          return true;
+        }
+        try {
+          if (message.type === "provider-subscription-candles") {
+            sink.onCandles(message.candles);
+          } else if (message.type === "provider-subscription-ticks") {
+            sink.onTicks(message.ticks);
+          } else {
+            sink.onError(message.code);
+          }
+        } catch {
+          // Consumer failures do not own provider process lifetime.
+        }
         return true;
       }
       if (message.type === "provider-host-log") {
@@ -665,6 +800,127 @@ export function createProviderUtilitySupervisor(
     return pending;
   };
 
+  const requireReadyState = (
+    providerProfileIdValue: string,
+  ): ProviderProcessState => {
+    const providerProfileId = requireProviderProfileId(providerProfileIdValue);
+    const state = states.get(providerProfileId);
+    if (state?.status !== "ready" || state.child === undefined) {
+      throw new ProviderProfileLifecycleError(
+        "PROVIDER_PROFILE_NOT_READY",
+        "Provider profile must be ready before requesting provider data.",
+      );
+    }
+    return state;
+  };
+
+  const sendDataRequest = <T>(
+    state: ProviderProcessState,
+    expectedType: ProviderUtilityDataResponseMessage["type"],
+    message: ProviderUtilityDataRequestPayload,
+  ): Promise<T> => {
+    state.dataRequestSequence += 1;
+    const requestId = `data.${state.dataRequestSequence}`;
+    const pending = new Promise<T>((resolve, reject) => {
+      state.pendingData.set(requestId, {
+        expectedType,
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      });
+    });
+    try {
+      state.child?.postMessage({
+        ...message,
+        contractVersion: ipcContractVersion,
+        requestId,
+      } as ProviderUtilityParentMessage);
+    } catch {
+      const request = state.pendingData.get(requestId);
+      state.pendingData.delete(requestId);
+      request?.reject(
+        new Error("Provider data request could not be delivered."),
+      );
+    }
+    return pending;
+  };
+
+  const getCapabilities = (
+    providerProfileId: string,
+  ): Promise<ProviderCapabilities> =>
+    sendDataRequest<ProviderCapabilities>(
+      requireReadyState(providerProfileId),
+      "provider-capabilities-response",
+      { type: "provider-capabilities-request" },
+    );
+
+  const getInstruments = (
+    providerProfileId: string,
+  ): Promise<readonly ProviderInstrument[]> =>
+    sendDataRequest<readonly ProviderInstrument[]>(
+      requireReadyState(providerProfileId),
+      "provider-instruments-response",
+      { type: "provider-instruments-request" },
+    );
+
+  const requestHistory = (
+    providerProfileId: string,
+    request: ProviderHistoryRequest,
+  ): Promise<readonly Candle[]> =>
+    sendDataRequest<readonly Candle[]>(
+      requireReadyState(providerProfileId),
+      "provider-history-response",
+      { type: "provider-history-request", request },
+    );
+
+  const subscribe = async (
+    providerProfileIdValue: string,
+    request: ProviderSubscriptionRequest,
+    sink: ProviderDataSink,
+  ): Promise<ProviderSubscription> => {
+    const providerProfileId = requireProviderProfileId(providerProfileIdValue);
+    const state = requireReadyState(providerProfileId);
+    state.subscriptionSequence += 1;
+    const subscriptionId = `sub.${state.subscriptionSequence}`;
+    state.subscriptionSinks.set(subscriptionId, sink);
+    try {
+      await sendDataRequest<undefined>(state, "provider-subscribe-response", {
+        type: "provider-subscribe-request",
+        subscriptionId,
+        request,
+      });
+    } catch (error) {
+      state.subscriptionSinks.delete(subscriptionId);
+      throw error;
+    }
+
+    let disposed = false;
+    return {
+      unsubscribe: async (): Promise<void> => {
+        if (disposed) return;
+        disposed = true;
+        if (
+          states.get(providerProfileId) !== state ||
+          state.status !== "ready"
+        ) {
+          state.subscriptionSinks.delete(subscriptionId);
+          return;
+        }
+        try {
+          await sendDataRequest<undefined>(
+            state,
+            "provider-unsubscribe-response",
+            {
+              type: "provider-unsubscribe-request",
+              subscriptionId,
+            },
+          );
+        } finally {
+          state.subscriptionSinks.delete(subscriptionId);
+        }
+      },
+    };
+  };
+
   const reconfigure = async (
     providerProfileIdValue: string,
     settings: Readonly<Record<string, boolean | number | string>>,
@@ -750,6 +1006,10 @@ export function createProviderUtilitySupervisor(
     start,
     reconfigure,
     shutdown,
+    getCapabilities,
+    getInstruments,
+    requestHistory,
+    subscribe,
     shutdownAll: async (): Promise<void> => {
       await Promise.all(
         [...states.keys()].map((profileId) => shutdown(profileId)),

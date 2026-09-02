@@ -86,13 +86,37 @@ async function withProviderEntry(callback) {
           disconnect: async () => undefined,
           getCapabilities: async () => ({
             instruments: true,
-            nativeTimeframes: [],
-            liveData: false,
-            derivedTimeframes: false
+            nativeTimeframes: ["1m"],
+            liveData: true,
+            derivedTimeframes: true
           }),
-          getInstruments: async () => [],
-          requestHistory: async () => [],
-          subscribe: async () => ({ unsubscribe: async () => undefined })
+          getInstruments: async () => [
+            { id: "BTCUSD", symbol: "BTCUSD", name: "Bitcoin / USD" }
+          ],
+          requestHistory: async (request) => [{
+            instrumentId: request.instrumentId,
+            timeframeId: request.timeframeId,
+            openTimeMs: 1000,
+            open: 10,
+            high: 12,
+            low: 9,
+            close: 11
+          }],
+          subscribe: async (request, sink) => {
+            sink.onTicks([{ instrumentId: request.instrumentId, timestampMs: 2000, price: 12 }]);
+            sink.onCandles([{
+              instrumentId: request.instrumentId,
+              timeframeId: request.timeframeId,
+              openTimeMs: 1000,
+              open: 10,
+              high: 13,
+              low: 9,
+              close: 12
+            }]);
+            return {
+              unsubscribe: async () => host.logger.info("SUBSCRIPTION_UNSUBSCRIBED")
+            };
+          }
         };
       }
     };\n`,
@@ -121,6 +145,32 @@ function initialize(installationPath) {
       settings: {},
     },
   };
+}
+
+async function initializeReady(fixture, runtime, installationPath) {
+  fixture.receive(initialize(installationPath));
+  const credentialRequest = await fixture.waitForMessage(
+    "provider-host-credential-request",
+  );
+  fixture.receive({
+    type: "provider-host-credential-response",
+    contractVersion: ipcContractVersion,
+    requestId: credentialRequest.requestId,
+    ok: true,
+    credential: "fixture-secret",
+  });
+  const networkRequest = await fixture.waitForMessage(
+    "provider-host-network-request",
+  );
+  fixture.receive({
+    type: "provider-host-network-response",
+    contractVersion: ipcContractVersion,
+    requestId: networkRequest.requestId,
+    ok: true,
+    response: { status: 200, headers: {}, body: new Uint8Array() },
+  });
+  await runtime.ready;
+  await flushTasks();
 }
 
 test("requires a provider profile before accepting initialization", () => {
@@ -220,6 +270,7 @@ test("becomes ready only after installed-provider creation and broker round trip
     });
 
     fixture.receive({ type: "shutdown", contractVersion: ipcContractVersion });
+    await flushTasks();
     assert.equal(fixture.sent.at(-1).type, "stopped");
     assert.equal(fixture.getListenerCount(), 0);
   });
@@ -384,4 +435,88 @@ test("shutdown is idempotent before initialization", async () => {
     { type: "stopped", contractVersion: ipcContractVersion },
   ]);
   assert.equal(fixture.getListenerCount(), 0);
+});
+
+test("executes provider discovery, history, live subscription, and disposal on the installed adapter", async () => {
+  await withProviderEntry(async (installationPath) => {
+    const fixture = createPort();
+    const runtime = createProviderUtilityRuntime(fixture.port, "profile-a");
+    await initializeReady(fixture, runtime, installationPath);
+
+    fixture.receive({
+      type: "provider-capabilities-request",
+      contractVersion: ipcContractVersion,
+      requestId: "data.1",
+    });
+    await flushTasks();
+    assert.deepEqual(fixture.sent.at(-1), {
+      type: "provider-capabilities-response",
+      contractVersion: ipcContractVersion,
+      requestId: "data.1",
+      ok: true,
+      capabilities: {
+        instruments: true,
+        nativeTimeframes: ["1m"],
+        liveData: true,
+        derivedTimeframes: true,
+      },
+    });
+
+    fixture.receive({
+      type: "provider-instruments-request",
+      contractVersion: ipcContractVersion,
+      requestId: "data.2",
+    });
+    await flushTasks();
+    assert.equal(fixture.sent.at(-1).instruments[0].symbol, "BTCUSD");
+
+    fixture.receive({
+      type: "provider-history-request",
+      contractVersion: ipcContractVersion,
+      requestId: "data.3",
+      request: { instrumentId: "BTCUSD", timeframeId: "1m", limit: 100 },
+    });
+    await flushTasks();
+    assert.equal(fixture.sent.at(-1).candles[0].close, 11);
+
+    fixture.receive({
+      type: "provider-subscribe-request",
+      contractVersion: ipcContractVersion,
+      requestId: "data.4",
+      subscriptionId: "sub.1",
+      request: { instrumentId: "BTCUSD", timeframeId: "1m" },
+    });
+    await flushTasks();
+    const liveTypes = fixture.sent.slice(-3).map((message) => message.type);
+    assert.deepEqual(liveTypes, [
+      "provider-subscription-ticks",
+      "provider-subscription-candles",
+      "provider-subscribe-response",
+    ]);
+
+    fixture.receive({
+      type: "provider-unsubscribe-request",
+      contractVersion: ipcContractVersion,
+      requestId: "data.5",
+      subscriptionId: "sub.1",
+    });
+    await flushTasks();
+    assert.equal(
+      fixture.sent.some(
+        (message) =>
+          message.type === "provider-host-log" &&
+          message.code === "SUBSCRIPTION_UNSUBSCRIBED",
+      ),
+      true,
+    );
+    assert.deepEqual(fixture.sent.at(-1), {
+      type: "provider-unsubscribe-response",
+      contractVersion: ipcContractVersion,
+      requestId: "data.5",
+      ok: true,
+    });
+
+    fixture.receive({ type: "shutdown", contractVersion: ipcContractVersion });
+    await flushTasks();
+  });
 });

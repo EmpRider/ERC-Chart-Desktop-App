@@ -974,3 +974,198 @@ test("resolves shutdown when an out-of-sequence host message fails the provider"
   assert.equal(fixture.supervisor.getStatus("profile-a"), "failed");
   assert.equal(fixture.children[0].getKillCount(), 1);
 });
+
+test("bridges provider discovery, history, live data, and unsubscribe through the supervised child", async () => {
+  const fixture = createFixture();
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  const child = fixture.children[0];
+  child.emitMessage({ type: "ready", contractVersion: ipcContractVersion });
+  await started;
+
+  const capabilitiesPromise = fixture.supervisor.getCapabilities("profile-a");
+  const capabilitiesRequest = child.posted.at(-1);
+  assert.equal(capabilitiesRequest.type, "provider-capabilities-request");
+  child.emitMessage({
+    type: "provider-capabilities-response",
+    contractVersion: ipcContractVersion,
+    requestId: capabilitiesRequest.requestId,
+    ok: true,
+    capabilities: {
+      instruments: true,
+      nativeTimeframes: ["1m"],
+      liveData: true,
+      derivedTimeframes: true,
+    },
+  });
+  assert.equal((await capabilitiesPromise).liveData, true);
+
+  const instrumentsPromise = fixture.supervisor.getInstruments("profile-a");
+  const instrumentsRequest = child.posted.at(-1);
+  child.emitMessage({
+    type: "provider-instruments-response",
+    contractVersion: ipcContractVersion,
+    requestId: instrumentsRequest.requestId,
+    ok: true,
+    instruments: [{ id: "BTCUSD", symbol: "BTCUSD", name: "Bitcoin / USD" }],
+  });
+  assert.equal((await instrumentsPromise)[0].symbol, "BTCUSD");
+
+  const historyPromise = fixture.supervisor.requestHistory("profile-a", {
+    instrumentId: "BTCUSD",
+    timeframeId: "1m",
+    limit: 100,
+  });
+  const historyRequest = child.posted.at(-1);
+  child.emitMessage({
+    type: "provider-history-response",
+    contractVersion: ipcContractVersion,
+    requestId: historyRequest.requestId,
+    ok: true,
+    candles: [
+      {
+        instrumentId: "BTCUSD",
+        timeframeId: "1m",
+        openTimeMs: 1_000,
+        open: 10,
+        high: 12,
+        low: 9,
+        close: 11,
+      },
+    ],
+  });
+  assert.equal((await historyPromise)[0].close, 11);
+
+  const received = { ticks: [], candles: [], errors: [] };
+  const subscriptionPromise = fixture.supervisor.subscribe(
+    "profile-a",
+    { instrumentId: "BTCUSD", timeframeId: "1m" },
+    {
+      onTicks(ticks) {
+        received.ticks.push(...ticks);
+      },
+      onCandles(candles) {
+        received.candles.push(...candles);
+      },
+      onError(code) {
+        received.errors.push(code);
+      },
+    },
+  );
+  const subscribeRequest = child.posted.at(-1);
+  assert.equal(subscribeRequest.type, "provider-subscribe-request");
+  child.emitMessage({
+    type: "provider-subscribe-response",
+    contractVersion: ipcContractVersion,
+    requestId: subscribeRequest.requestId,
+    ok: true,
+  });
+  const subscription = await subscriptionPromise;
+
+  child.emitMessage({
+    type: "provider-subscription-ticks",
+    contractVersion: ipcContractVersion,
+    subscriptionId: subscribeRequest.subscriptionId,
+    ticks: [{ instrumentId: "BTCUSD", timestampMs: 2_000, price: 12 }],
+  });
+  child.emitMessage({
+    type: "provider-subscription-candles",
+    contractVersion: ipcContractVersion,
+    subscriptionId: subscribeRequest.subscriptionId,
+    candles: [
+      {
+        instrumentId: "BTCUSD",
+        timeframeId: "1m",
+        openTimeMs: 1_000,
+        open: 10,
+        high: 13,
+        low: 9,
+        close: 12,
+      },
+    ],
+  });
+  child.emitMessage({
+    type: "provider-subscription-error",
+    contractVersion: ipcContractVersion,
+    subscriptionId: subscribeRequest.subscriptionId,
+    code: "PROVIDER_DEGRADED",
+  });
+  assert.equal(received.ticks[0].price, 12);
+  assert.equal(received.candles[0].close, 12);
+  assert.deepEqual(received.errors, ["PROVIDER_DEGRADED"]);
+
+  const unsubscribed = subscription.unsubscribe();
+  const unsubscribeRequest = child.posted.at(-1);
+  assert.equal(unsubscribeRequest.type, "provider-unsubscribe-request");
+  assert.equal(
+    unsubscribeRequest.subscriptionId,
+    subscribeRequest.subscriptionId,
+  );
+  child.emitMessage({
+    type: "provider-unsubscribe-response",
+    contractVersion: ipcContractVersion,
+    requestId: unsubscribeRequest.requestId,
+    ok: true,
+  });
+  await unsubscribed;
+  await subscription.unsubscribe();
+  assert.equal(
+    child.posted.filter(
+      (message) => message.type === "provider-unsubscribe-request",
+    ).length,
+    1,
+  );
+});
+
+test("rejects outstanding provider data work and invalidates live sinks when the child exits", async () => {
+  const fixture = createFixture();
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  const child = fixture.children[0];
+  child.emitMessage({ type: "ready", contractVersion: ipcContractVersion });
+  await started;
+
+  const errors = [];
+  const subscriptionPromise = fixture.supervisor.subscribe(
+    "profile-a",
+    { instrumentId: "BTCUSD", timeframeId: "1m" },
+    {
+      onCandles() {
+        return undefined;
+      },
+      onTicks() {
+        return undefined;
+      },
+      onError(code) {
+        errors.push(code);
+      },
+    },
+  );
+  const subscribeRequest = child.posted.at(-1);
+  child.emitMessage({
+    type: "provider-subscribe-response",
+    contractVersion: ipcContractVersion,
+    requestId: subscribeRequest.requestId,
+    ok: true,
+  });
+  await subscriptionPromise;
+
+  const pendingHistory = fixture.supervisor.requestHistory("profile-a", {
+    instrumentId: "BTCUSD",
+    timeframeId: "1m",
+  });
+  child.emitExit();
+
+  await assert.rejects(
+    pendingHistory,
+    new Error("Provider utility became unavailable."),
+  );
+  assert.deepEqual(errors, ["PROVIDER_UTILITY_UNAVAILABLE"]);
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "failed");
+});

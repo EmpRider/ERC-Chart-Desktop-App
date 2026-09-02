@@ -1,9 +1,18 @@
 import {
   ipcContractVersion,
   isWorkspaceSaveRequest,
+  type Candle,
   type PersistedWorkspace,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
+import type {
+  ProviderCapabilities,
+  ProviderDataSink,
+  ProviderHistoryRequest,
+  ProviderInstrument,
+  ProviderSubscription,
+  ProviderSubscriptionRequest,
+} from "@erc-chart/provider-sdk";
 import { assertTrustedIpcSender, type DesktopIpcSender } from "./security.js";
 import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
 
@@ -73,6 +82,23 @@ export interface DesktopApplicationAdapters<ProviderLaunch = unknown> {
     readonly shutdown: (providerProfileId: string) => Promise<void>;
     readonly shutdownAll: () => Promise<void>;
   };
+  readonly providerData: {
+    readonly getCapabilities: (
+      providerProfileId: string,
+    ) => Promise<ProviderCapabilities>;
+    readonly getInstruments: (
+      providerProfileId: string,
+    ) => Promise<readonly ProviderInstrument[]>;
+    readonly requestHistory: (
+      providerProfileId: string,
+      request: ProviderHistoryRequest,
+    ) => Promise<readonly Candle[]>;
+    readonly subscribe: (
+      providerProfileId: string,
+      request: ProviderSubscriptionRequest,
+      sink: ProviderDataSink,
+    ) => Promise<ProviderSubscription>;
+  };
   readonly workspacePersistence: {
     readonly load: () => Promise<PersistedWorkspace | null>;
     readonly save: (workspace: PersistedWorkspace) => Promise<void>;
@@ -91,6 +117,21 @@ export interface DesktopApplicationController<ProviderLaunch = unknown> {
     settings: Readonly<Record<string, boolean | number | string>>,
   ) => Promise<ProviderConfigurationChange>;
   readonly stopProviderProfile: (providerProfileId: string) => Promise<void>;
+  readonly getProviderCapabilities: (
+    providerProfileId: string,
+  ) => Promise<ProviderCapabilities>;
+  readonly getProviderInstruments: (
+    providerProfileId: string,
+  ) => Promise<readonly ProviderInstrument[]>;
+  readonly requestProviderHistory: (
+    providerProfileId: string,
+    request: ProviderHistoryRequest,
+  ) => Promise<readonly Candle[]>;
+  readonly subscribeProviderData: (
+    providerProfileId: string,
+    request: ProviderSubscriptionRequest,
+    sink: ProviderDataSink,
+  ) => Promise<ProviderSubscription>;
   readonly shutdown: () => Promise<void>;
 }
 
@@ -203,6 +244,25 @@ export async function startDesktopApplication<ProviderLaunch>(
       adapters.providerUtilities.reconfigure(providerProfileId, settings),
     stopProviderProfile: (providerProfileId): Promise<void> =>
       adapters.providerUtilities.shutdown(providerProfileId),
+    getProviderCapabilities: (
+      providerProfileId,
+    ): Promise<ProviderCapabilities> =>
+      adapters.providerData.getCapabilities(providerProfileId),
+    getProviderInstruments: (
+      providerProfileId,
+    ): Promise<readonly ProviderInstrument[]> =>
+      adapters.providerData.getInstruments(providerProfileId),
+    requestProviderHistory: (
+      providerProfileId,
+      request,
+    ): Promise<readonly Candle[]> =>
+      adapters.providerData.requestHistory(providerProfileId, request),
+    subscribeProviderData: (
+      providerProfileId,
+      request,
+      sink,
+    ): Promise<ProviderSubscription> =>
+      adapters.providerData.subscribe(providerProfileId, request, sink),
     shutdown: async (): Promise<void> => {
       if (stopped) return;
       stopped = true;

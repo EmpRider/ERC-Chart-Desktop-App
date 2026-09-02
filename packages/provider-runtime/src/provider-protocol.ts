@@ -2,13 +2,19 @@ import {
   ipcContractVersion,
   isUtilityControlMessage,
   isUtilityStatusMessage,
+  type Candle,
   type PluginManifestPermissions,
+  type Tick,
   type UtilityControlMessage,
   type UtilityStatusMessage,
 } from "@erc-chart/contracts";
 import type {
+  ProviderCapabilities,
+  ProviderHistoryRequest,
+  ProviderInstrument,
   ProviderNetworkRequest,
   ProviderNetworkResponse,
+  ProviderSubscriptionRequest,
   ProviderStatus,
 } from "@erc-chart/provider-sdk";
 
@@ -55,6 +61,120 @@ export interface ProviderUtilityConfigurationValidationFailureMessage {
 export type ProviderUtilityConfigurationValidationResponseMessage =
   | ProviderUtilityConfigurationValidationSuccessMessage
   | ProviderUtilityConfigurationValidationFailureMessage;
+
+export interface ProviderUtilityCapabilitiesRequestMessage {
+  readonly type: "provider-capabilities-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+}
+
+export interface ProviderUtilityInstrumentsRequestMessage {
+  readonly type: "provider-instruments-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+}
+
+export interface ProviderUtilityHistoryRequestMessage {
+  readonly type: "provider-history-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly request: ProviderHistoryRequest;
+}
+
+export interface ProviderUtilitySubscribeRequestMessage {
+  readonly type: "provider-subscribe-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly subscriptionId: string;
+  readonly request: ProviderSubscriptionRequest;
+}
+
+export interface ProviderUtilityUnsubscribeRequestMessage {
+  readonly type: "provider-unsubscribe-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly subscriptionId: string;
+}
+
+export type ProviderUtilityDataRequestMessage =
+  | ProviderUtilityCapabilitiesRequestMessage
+  | ProviderUtilityInstrumentsRequestMessage
+  | ProviderUtilityHistoryRequestMessage
+  | ProviderUtilitySubscribeRequestMessage
+  | ProviderUtilityUnsubscribeRequestMessage;
+
+export interface ProviderUtilityCapabilitiesSuccessMessage {
+  readonly type: "provider-capabilities-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: true;
+  readonly capabilities: ProviderCapabilities;
+}
+
+export interface ProviderUtilityInstrumentsSuccessMessage {
+  readonly type: "provider-instruments-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: true;
+  readonly instruments: readonly ProviderInstrument[];
+}
+
+export interface ProviderUtilityHistorySuccessMessage {
+  readonly type: "provider-history-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: true;
+  readonly candles: readonly Candle[];
+}
+
+export interface ProviderUtilitySubscriptionSuccessMessage {
+  readonly type:
+    "provider-subscribe-response" | "provider-unsubscribe-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: true;
+}
+
+export interface ProviderUtilityDataFailureMessage {
+  readonly type:
+    | "provider-capabilities-response"
+    | "provider-instruments-response"
+    | "provider-history-response"
+    | "provider-subscribe-response"
+    | "provider-unsubscribe-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: false;
+  readonly code: string;
+}
+
+export type ProviderUtilityDataResponseMessage =
+  | ProviderUtilityCapabilitiesSuccessMessage
+  | ProviderUtilityInstrumentsSuccessMessage
+  | ProviderUtilityHistorySuccessMessage
+  | ProviderUtilitySubscriptionSuccessMessage
+  | ProviderUtilityDataFailureMessage;
+
+export interface ProviderUtilitySubscriptionCandlesMessage {
+  readonly type: "provider-subscription-candles";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly subscriptionId: string;
+  readonly candles: readonly Candle[];
+}
+
+export interface ProviderUtilitySubscriptionTicksMessage {
+  readonly type: "provider-subscription-ticks";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly subscriptionId: string;
+  readonly ticks: readonly Tick[];
+}
+
+export interface ProviderUtilitySubscriptionErrorMessage {
+  readonly type: "provider-subscription-error";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly subscriptionId: string;
+  readonly code: string;
+}
 
 export interface ProviderUtilityNetworkRequestMessage {
   readonly type: "provider-host-network-request";
@@ -118,11 +238,16 @@ export type ProviderUtilityParentMessage =
   | UtilityControlMessage
   | ProviderUtilityInitializeMessage
   | ProviderUtilityConfigurationValidationRequestMessage
+  | ProviderUtilityDataRequestMessage
   | ProviderUtilityHostResponseMessage;
 
 export type ProviderUtilityChildMessage =
   | UtilityStatusMessage
   | ProviderUtilityConfigurationValidationResponseMessage
+  | ProviderUtilityDataResponseMessage
+  | ProviderUtilitySubscriptionCandlesMessage
+  | ProviderUtilitySubscriptionTicksMessage
+  | ProviderUtilitySubscriptionErrorMessage
   | ProviderUtilityNetworkRequestMessage
   | ProviderUtilityCredentialRequestMessage
   | ProviderUtilityLogMessage
@@ -135,6 +260,8 @@ const credentialKeyPattern = /^[a-z][a-z0-9_-]{0,63}$/u;
 const requestIdPattern = /^[A-Za-z0-9._-]{1,96}$/u;
 const codePattern = /^[A-Z][A-Z0-9_.-]{0,127}$/u;
 const settingKeyPattern = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u;
+const dataIdPattern = /^[A-Za-z0-9._:/-]{1,256}$/u;
+const subscriptionIdPattern = /^[A-Za-z0-9._-]{1,96}$/u;
 const configurationImpacts = new Set(["none", "restart", "reconnect"]);
 const providerStatuses = new Set<ProviderStatus>([
   "disconnected",
@@ -310,6 +437,150 @@ function isNetworkResponse(value: unknown): value is ProviderNetworkResponse {
   );
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function isProviderHistoryRequest(
+  value: unknown,
+): value is ProviderHistoryRequest {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(
+      value,
+      ["instrumentId", "timeframeId"],
+      ["fromMs", "toMs", "limit"],
+    ) ||
+    typeof value.instrumentId !== "string" ||
+    !dataIdPattern.test(value.instrumentId) ||
+    typeof value.timeframeId !== "string" ||
+    !dataIdPattern.test(value.timeframeId)
+  ) {
+    return false;
+  }
+  if (value.fromMs !== undefined && !isSafeInteger(value.fromMs)) return false;
+  if (value.toMs !== undefined && !isSafeInteger(value.toMs)) return false;
+  return (
+    value.limit === undefined ||
+    (isSafeInteger(value.limit) && value.limit >= 1 && value.limit <= 100_000)
+  );
+}
+
+function isProviderSubscriptionRequest(
+  value: unknown,
+): value is ProviderSubscriptionRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["instrumentId", "timeframeId"]) &&
+    typeof value.instrumentId === "string" &&
+    dataIdPattern.test(value.instrumentId) &&
+    typeof value.timeframeId === "string" &&
+    dataIdPattern.test(value.timeframeId)
+  );
+}
+
+function isCandle(value: unknown): value is Candle {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(
+      value,
+      [
+        "instrumentId",
+        "timeframeId",
+        "openTimeMs",
+        "open",
+        "high",
+        "low",
+        "close",
+      ],
+      ["volume"],
+    ) ||
+    typeof value.instrumentId !== "string" ||
+    !dataIdPattern.test(value.instrumentId) ||
+    typeof value.timeframeId !== "string" ||
+    !dataIdPattern.test(value.timeframeId) ||
+    !isSafeInteger(value.openTimeMs) ||
+    !isFiniteNumber(value.open) ||
+    !isFiniteNumber(value.high) ||
+    !isFiniteNumber(value.low) ||
+    !isFiniteNumber(value.close) ||
+    (value.volume !== undefined && !isFiniteNumber(value.volume))
+  ) {
+    return false;
+  }
+  return (
+    value.high >= Math.max(value.open, value.low, value.close) &&
+    value.low <= Math.min(value.open, value.high, value.close)
+  );
+}
+
+function isTick(value: unknown): value is Tick {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["instrumentId", "timestampMs", "price"], ["volume"]) &&
+    typeof value.instrumentId === "string" &&
+    dataIdPattern.test(value.instrumentId) &&
+    isSafeInteger(value.timestampMs) &&
+    isFiniteNumber(value.price) &&
+    (value.volume === undefined || isFiniteNumber(value.volume))
+  );
+}
+
+function isCandleArray(value: unknown): value is readonly Candle[] {
+  return (
+    Array.isArray(value) && value.length <= 100_000 && value.every(isCandle)
+  );
+}
+
+function isTickArray(value: unknown): value is readonly Tick[] {
+  return Array.isArray(value) && value.length <= 100_000 && value.every(isTick);
+}
+
+function isCapabilities(value: unknown): value is ProviderCapabilities {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "instruments",
+      "nativeTimeframes",
+      "liveData",
+      "derivedTimeframes",
+    ]) &&
+    typeof value.instruments === "boolean" &&
+    isStringArray(value.nativeTimeframes, 1_024, (item) =>
+      dataIdPattern.test(item),
+    ) &&
+    typeof value.liveData === "boolean" &&
+    typeof value.derivedTimeframes === "boolean"
+  );
+}
+
+function isInstrument(value: unknown): value is ProviderInstrument {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["id", "symbol", "name"]) &&
+    typeof value.id === "string" &&
+    dataIdPattern.test(value.id) &&
+    typeof value.symbol === "string" &&
+    value.symbol.length > 0 &&
+    value.symbol.length <= 256 &&
+    typeof value.name === "string" &&
+    value.name.length > 0 &&
+    value.name.length <= 512
+  );
+}
+
+function isInstrumentArray(
+  value: unknown,
+): value is readonly ProviderInstrument[] {
+  return (
+    Array.isArray(value) && value.length <= 100_000 && value.every(isInstrument)
+  );
+}
+
 function isHostFailure(value: Record<string, unknown>): boolean {
   return (
     value.ok === false &&
@@ -348,6 +619,59 @@ export function isProviderUtilityParentMessage(
       typeof value.requestId === "string" &&
       requestIdPattern.test(value.requestId) &&
       isSettings(value.settings)
+    );
+  }
+  if (
+    value.type === "provider-capabilities-request" ||
+    value.type === "provider-instruments-request"
+  ) {
+    return (
+      hasExactKeys(value, ["type", "contractVersion", "requestId"]) &&
+      typeof value.requestId === "string" &&
+      requestIdPattern.test(value.requestId)
+    );
+  }
+  if (value.type === "provider-history-request") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "request",
+      ]) &&
+      typeof value.requestId === "string" &&
+      requestIdPattern.test(value.requestId) &&
+      isProviderHistoryRequest(value.request)
+    );
+  }
+  if (value.type === "provider-subscribe-request") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "subscriptionId",
+        "request",
+      ]) &&
+      typeof value.requestId === "string" &&
+      requestIdPattern.test(value.requestId) &&
+      typeof value.subscriptionId === "string" &&
+      subscriptionIdPattern.test(value.subscriptionId) &&
+      isProviderSubscriptionRequest(value.request)
+    );
+  }
+  if (value.type === "provider-unsubscribe-request") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "subscriptionId",
+      ]) &&
+      typeof value.requestId === "string" &&
+      requestIdPattern.test(value.requestId) &&
+      typeof value.subscriptionId === "string" &&
+      subscriptionIdPattern.test(value.subscriptionId)
     );
   }
   if (
@@ -432,6 +756,108 @@ export function isProviderUtilityChildMessage(
       isStringArray(value.changedKeys, 128, (item) =>
         settingKeyPattern.test(item),
       )
+    );
+  }
+  if (
+    value.type === "provider-capabilities-response" ||
+    value.type === "provider-instruments-response" ||
+    value.type === "provider-history-response" ||
+    value.type === "provider-subscribe-response" ||
+    value.type === "provider-unsubscribe-response"
+  ) {
+    if (
+      typeof value.requestId !== "string" ||
+      !requestIdPattern.test(value.requestId) ||
+      typeof value.ok !== "boolean"
+    ) {
+      return false;
+    }
+    if (value.ok === false) {
+      return (
+        hasExactKeys(value, [
+          "type",
+          "contractVersion",
+          "requestId",
+          "ok",
+          "code",
+        ]) &&
+        typeof value.code === "string" &&
+        codePattern.test(value.code)
+      );
+    }
+    if (value.type === "provider-capabilities-response") {
+      return (
+        hasExactKeys(value, [
+          "type",
+          "contractVersion",
+          "requestId",
+          "ok",
+          "capabilities",
+        ]) && isCapabilities(value.capabilities)
+      );
+    }
+    if (value.type === "provider-instruments-response") {
+      return (
+        hasExactKeys(value, [
+          "type",
+          "contractVersion",
+          "requestId",
+          "ok",
+          "instruments",
+        ]) && isInstrumentArray(value.instruments)
+      );
+    }
+    if (value.type === "provider-history-response") {
+      return (
+        hasExactKeys(value, [
+          "type",
+          "contractVersion",
+          "requestId",
+          "ok",
+          "candles",
+        ]) && isCandleArray(value.candles)
+      );
+    }
+    return hasExactKeys(value, ["type", "contractVersion", "requestId", "ok"]);
+  }
+  if (value.type === "provider-subscription-candles") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "subscriptionId",
+        "candles",
+      ]) &&
+      typeof value.subscriptionId === "string" &&
+      subscriptionIdPattern.test(value.subscriptionId) &&
+      isCandleArray(value.candles)
+    );
+  }
+  if (value.type === "provider-subscription-ticks") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "subscriptionId",
+        "ticks",
+      ]) &&
+      typeof value.subscriptionId === "string" &&
+      subscriptionIdPattern.test(value.subscriptionId) &&
+      isTickArray(value.ticks)
+    );
+  }
+  if (value.type === "provider-subscription-error") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "subscriptionId",
+        "code",
+      ]) &&
+      typeof value.subscriptionId === "string" &&
+      subscriptionIdPattern.test(value.subscriptionId) &&
+      typeof value.code === "string" &&
+      codePattern.test(value.code)
     );
   }
   if (value.type === "provider-host-network-request") {
