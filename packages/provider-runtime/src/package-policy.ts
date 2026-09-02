@@ -1,40 +1,15 @@
 import type { StagedPluginFile } from "./plugin-staging.js";
 
-const forbiddenPluginPackageExtensions = new Set([
-  ".a",
-  ".appx",
-  ".appxbundle",
-  ".bat",
-  ".cab",
-  ".cmd",
-  ".com",
-  ".cpl",
-  ".dll",
-  ".dylib",
-  ".exe",
-  ".hta",
-  ".lib",
-  ".msi",
-  ".msix",
-  ".msp",
-  ".node",
-  ".o",
-  ".obj",
-  ".ocx",
-  ".ps1",
-  ".py",
-  ".pyc",
-  ".pyd",
-  ".pyo",
-  ".pyw",
-  ".sh",
-  ".so",
-  ".sys",
-  ".vbe",
-  ".vbs",
-  ".wasm",
-  ".wsf",
-  ".wsh",
+const staticAssetExtensions = new Set([
+  ".gif",
+  ".ico",
+  ".jpeg",
+  ".jpg",
+  ".json",
+  ".md",
+  ".png",
+  ".txt",
+  ".webp",
 ]);
 
 function fileExtension(packagePath: string): string {
@@ -44,13 +19,25 @@ function fileExtension(packagePath: string): string {
   return packagePath.slice(dotIndex).toLocaleLowerCase("en-US");
 }
 
+function isAllowedPluginPackageFile(packagePath: string): boolean {
+  if (packagePath === "plugin.json" || packagePath === "LICENSE") return true;
+  if (packagePath.startsWith("dist/")) {
+    const extension = fileExtension(packagePath);
+    return extension === ".js" || extension === ".mjs";
+  }
+  if (packagePath.startsWith("assets/")) {
+    return staticAssetExtensions.has(fileExtension(packagePath));
+  }
+  return false;
+}
+
 export function assertPluginPackageContentPolicy(
   files: readonly StagedPluginFile[],
 ): void {
   for (const file of files) {
-    if (forbiddenPluginPackageExtensions.has(fileExtension(file.path))) {
+    if (!isAllowedPluginPackageFile(file.path)) {
       throw new Error(
-        `Plugin package contains a forbidden executable, native, Python, install-hook, or unsupported runtime file: ${file.path}.`,
+        `Plugin package contains a file outside the approved manifest, JavaScript module, static asset, and license allowlist: ${file.path}.`,
       );
     }
   }

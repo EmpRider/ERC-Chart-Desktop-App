@@ -85,11 +85,13 @@ test("allows the documented provider package layout and static assets", () => {
   );
 });
 
-test("rejects executable, native, Python, install-hook, and unsupported runtime extensions", () => {
+test("rejects files outside the approved package allowlist", () => {
   const forbiddenPaths = [
     "dist/helper.exe",
     "dist/native.node",
     "dist/native.DLL",
+    "dist/helper.rb",
+    "dist/source.ts",
     "assets/setup.msi",
     "assets/install.ps1",
     "assets/install.cmd",
@@ -97,12 +99,14 @@ test("rejects executable, native, Python, install-hook, and unsupported runtime 
     "assets/provider.py",
     "assets/provider.pyd",
     "assets/module.wasm",
+    "assets/helper.rb",
+    "README.md",
   ];
 
   for (const filePath of forbiddenPaths) {
     assert.throws(
       () => assertPluginPackageContentPolicy([stagedFile(filePath)]),
-      /forbidden executable, native, Python, install-hook, or unsupported runtime file/i,
+      /outside the approved .* allowlist/i,
       filePath,
     );
   }
@@ -130,7 +134,7 @@ test("removes staged output when package content policy rejects a folder package
 
     await assert.rejects(
       stagePluginPackage({ kind: "folder", path: source }, { stagingRoot }),
-      /forbidden executable/i,
+      /outside the approved .* allowlist/i,
     );
     assert.deepEqual(await readdir(stagingRoot), []);
   } finally {
@@ -156,7 +160,7 @@ test("removes staged output when package content policy rejects a ZIP package", 
 
     await assert.rejects(
       stagePluginPackage({ kind: "zip", path: archivePath }, { stagingRoot }),
-      /forbidden executable/i,
+      /outside the approved .* allowlist/i,
     );
     assert.deepEqual(await readdir(stagingRoot), []);
   } finally {
