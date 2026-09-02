@@ -56,6 +56,14 @@ export interface DesktopApplicationAdapters {
     ) => Promise<void>;
     readonly shutdown: () => Promise<void>;
   };
+  readonly providerUtilities: {
+    readonly start: (
+      providerProfileId: string,
+      entryPath: string,
+    ) => Promise<void>;
+    readonly shutdown: (providerProfileId: string) => Promise<void>;
+    readonly shutdownAll: () => Promise<void>;
+  };
   readonly workspacePersistence: {
     readonly load: () => Promise<PersistedWorkspace | null>;
     readonly save: (workspace: PersistedWorkspace) => Promise<void>;
@@ -65,6 +73,8 @@ export interface DesktopApplicationAdapters {
 }
 
 export interface DesktopApplicationController {
+  readonly startProviderProfile: (providerProfileId: string) => Promise<void>;
+  readonly stopProviderProfile: (providerProfileId: string) => Promise<void>;
   readonly shutdown: () => Promise<void>;
 }
 
@@ -137,6 +147,11 @@ export async function startDesktopApplication(
     await openWindow();
   } catch {
     try {
+      await adapters.providerUtilities.shutdownAll();
+    } catch {
+      // Cleanup failure must not expose the original startup error.
+    }
+    try {
       await adapters.dataUtility.shutdown();
     } catch {
       // Cleanup failure must not expose the original startup error.
@@ -159,14 +174,26 @@ export async function startDesktopApplication(
   }
 
   return {
+    startProviderProfile: (providerProfileId): Promise<void> =>
+      adapters.providerUtilities.start(
+        providerProfileId,
+        paths.providerUtilityPath,
+      ),
+    stopProviderProfile: (providerProfileId): Promise<void> =>
+      adapters.providerUtilities.shutdown(providerProfileId),
     shutdown: async (): Promise<void> => {
       if (stopped) return;
       stopped = true;
       let shutdownError: unknown;
       try {
-        await adapters.dataUtility.shutdown();
+        await adapters.providerUtilities.shutdownAll();
       } catch (error) {
         shutdownError = error;
+      }
+      try {
+        await adapters.dataUtility.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
       }
       try {
         await currentWindow?.flushWorkspace();
