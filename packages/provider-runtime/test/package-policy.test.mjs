@@ -139,7 +139,9 @@ test("removes staged output when package content policy rejects a folder package
 });
 
 test("removes staged output when package content policy rejects a ZIP package", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-policy-zip-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "erc-provider-policy-zip-"),
+  );
   const archivePath = path.join(root, "provider.zip");
   const stagingRoot = path.join(root, "staging");
   try {
