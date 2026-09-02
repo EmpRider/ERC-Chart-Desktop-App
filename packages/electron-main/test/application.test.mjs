@@ -87,8 +87,8 @@ function createFixture(platform = "win32") {
       },
     },
     providerUtilities: {
-      async start(providerProfileId, entryPath) {
-        providerStartCalls.push({ providerProfileId, entryPath });
+      async start(providerProfileId, entryPath, launch) {
+        providerStartCalls.push({ providerProfileId, entryPath, launch });
       },
       async shutdown(providerProfileId) {
         providerShutdownCalls.push(providerProfileId);
@@ -188,15 +188,17 @@ test("registers fixed IPC before loading one secure window", async () => {
 test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle", async () => {
   const fixture = createFixture();
   const controller = await startDesktopApplication(fixture.adapters, paths);
+  const launch = { pluginId: "com.example.provider" };
 
   assert.deepEqual(fixture.providerStartCalls, []);
-  await controller.startProviderProfile("profile-a");
+  await controller.startProviderProfile("profile-a", launch);
   await controller.stopProviderProfile("profile-a");
 
   assert.deepEqual(fixture.providerStartCalls, [
     {
       providerProfileId: "profile-a",
       entryPath: "/runtime/provider-utility.js",
+      launch,
     },
   ]);
   assert.deepEqual(fixture.providerShutdownCalls, ["profile-a"]);
