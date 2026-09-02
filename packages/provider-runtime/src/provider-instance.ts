@@ -18,6 +18,7 @@ import type {
   ProviderNetworkResponse,
   ProviderStatus,
 } from "@erc-chart/provider-sdk";
+import { isProviderNetworkRequestAllowed } from "./provider-permissions.js";
 
 export type ProviderRuntimeErrorCode =
   | "PROVIDER_ADAPTER_INVALID"
@@ -115,7 +116,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function installedRootForUrl(url: string | undefined): string | undefined {
   if (url === undefined) return undefined;
-  return [...installedProviderRoots].find((root) => url.startsWith(root));
+  return [...installedProviderRoots]
+    .filter((root) => url.startsWith(root))
+    .sort((left, right) => right.length - left.length)[0];
 }
 
 function registerProviderModuleHooks(): void {
@@ -224,7 +227,7 @@ function validateDefinition(
   }
   if (!isRecord(metadata.hostCompatibility)) {
     throw new ProviderRuntimeError(
-      "PROVIDER_DEFINITION_INVALID",
+      "PROVIDER_INCOMPATIBLE",
       "Provider host compatibility metadata is invalid.",
     );
   }
@@ -238,7 +241,7 @@ function validateDefinition(
     minimum > maximum
   ) {
     throw new ProviderRuntimeError(
-      "PROVIDER_DEFINITION_INVALID",
+      "PROVIDER_INCOMPATIBLE",
       "Provider host compatibility metadata is invalid.",
     );
   }
@@ -372,7 +375,7 @@ export function normalizeProviderConfiguration(
   }
   const schema = definition.config ?? {};
   const unknown = Object.keys(supplied).find(
-    (key) => schema[key] === undefined,
+    (key) => !Object.hasOwn(schema, key),
   );
   if (unknown !== undefined) {
     throw new ProviderRuntimeError(
@@ -405,7 +408,9 @@ export function normalizeProviderConfiguration(
       continue;
     }
 
-    const value = supplied[key] ?? field.defaultValue;
+    const value = Object.hasOwn(supplied, key)
+      ? supplied[key]
+      : field.defaultValue;
     if (value === undefined) {
       if (field.required === true) {
         throw new ProviderRuntimeError(
@@ -419,36 +424,6 @@ export function normalizeProviderConfiguration(
     normalized[key] = value;
   }
   return Object.freeze(normalized);
-}
-
-function isNetworkRequestAllowed(
-  requestUrl: string,
-  permissions: readonly string[],
-): boolean {
-  let target: URL;
-  try {
-    target = new URL(requestUrl);
-  } catch {
-    return false;
-  }
-  if (target.protocol !== "https:" && target.protocol !== "wss:") return false;
-  return permissions.some((permission) => {
-    try {
-      const allowed = new URL(permission);
-      if (
-        allowed.protocol !== target.protocol ||
-        allowed.origin !== target.origin
-      ) {
-        return false;
-      }
-      if (!target.pathname.startsWith(allowed.pathname)) return false;
-      if (allowed.search !== "" && allowed.search !== target.search)
-        return false;
-      return true;
-    } catch {
-      return false;
-    }
-  });
 }
 
 function redactMetadataValue(
@@ -521,7 +496,9 @@ function createProviderHostServices(
       request: async (
         request: ProviderNetworkRequest,
       ): Promise<ProviderNetworkResponse> => {
-        if (!isNetworkRequestAllowed(request.url, permissions.network)) {
+        if (
+          !isProviderNetworkRequestAllowed(request.url, permissions.network)
+        ) {
           throw new ProviderRuntimeError(
             "PROVIDER_PERMISSION_DENIED",
             "Provider network request is outside the approved manifest permissions.",
@@ -592,7 +569,15 @@ async function resolveInstalledEntry(
       "Installed provider entry path is required.",
     );
   }
-  const managedRoot = await realpath(path.resolve(installationPath));
+  let managedRoot: string;
+  try {
+    managedRoot = await realpath(path.resolve(installationPath));
+  } catch {
+    throw new ProviderRuntimeError(
+      "PROVIDER_ENTRY_INVALID",
+      "Installed provider directory is unavailable.",
+    );
+  }
   const candidate = path.resolve(managedRoot, entry);
   const relative = path.relative(managedRoot, candidate);
   if (
@@ -605,14 +590,30 @@ async function resolveInstalledEntry(
       "Installed provider entry must remain inside the installation directory.",
     );
   }
-  const info = await lstat(candidate);
+  let info;
+  try {
+    info = await lstat(candidate);
+  } catch {
+    throw new ProviderRuntimeError(
+      "PROVIDER_ENTRY_INVALID",
+      "Installed provider entry is unavailable.",
+    );
+  }
   if (!info.isFile() || info.isSymbolicLink()) {
     throw new ProviderRuntimeError(
       "PROVIDER_ENTRY_INVALID",
       "Installed provider entry must be a regular file.",
     );
   }
-  const resolved = await realpath(candidate);
+  let resolved: string;
+  try {
+    resolved = await realpath(candidate);
+  } catch {
+    throw new ProviderRuntimeError(
+      "PROVIDER_ENTRY_INVALID",
+      "Installed provider entry is unavailable.",
+    );
+  }
   const resolvedRelative = path.relative(managedRoot, resolved);
   if (
     resolvedRelative.startsWith(`..${path.sep}`) ||

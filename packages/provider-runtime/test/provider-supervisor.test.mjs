@@ -83,6 +83,22 @@ function createFixture(options = {}) {
   return { ...scheduler, children, spawnCalls, unavailable, supervisor };
 }
 
+function createLaunch(overrides = {}) {
+  return {
+    installationPath: "C:/erc/plugins/com.example.provider/1.0.0",
+    entry: "dist/index.js",
+    pluginId: "com.example.provider",
+    version: "1.0.0",
+    permissions: {
+      network: ["https://api.example.com/v1"],
+      credentials: ["auth_token"],
+      storage: [],
+    },
+    settings: {},
+    ...overrides,
+  };
+}
+
 test("initializes a provider utility and brokers host requests without argv secrets", async () => {
   const calls = {
     network: [],
@@ -335,4 +351,250 @@ test("shutdownAll stops each active provider without cross-profile corruption", 
 
   assert.equal(fixture.supervisor.getStatus("profile-a"), "stopped");
   assert.equal(fixture.supervisor.getStatus("profile-b"), "stopped");
+});
+
+test("enforces launch permissions before forwarding host requests", async () => {
+  const calls = { network: 0, credentials: 0 };
+  const fixture = createFixture({
+    hostBroker: {
+      async requestNetwork() {
+        calls.network += 1;
+        return { status: 200, headers: {}, body: new Uint8Array() };
+      },
+      async getCredential() {
+        calls.credentials += 1;
+        return "secret";
+      },
+      log() {
+        return undefined;
+      },
+      reportStatus() {
+        return undefined;
+      },
+    },
+  });
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+
+  fixture.children[0].emitMessage({
+    type: "provider-host-network-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    request: { url: "https://api.example.com/v1private" },
+  });
+  fixture.children[0].emitMessage({
+    type: "provider-host-credential-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.2",
+    credentialKey: "undeclared",
+  });
+
+  assert.equal(calls.network, 0);
+  assert.equal(calls.credentials, 0);
+  assert.deepEqual(fixture.children[0].posted.slice(-2), [
+    {
+      type: "provider-host-network-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.1",
+      ok: false,
+      code: "PROVIDER_PERMISSION_DENIED",
+    },
+    {
+      type: "provider-host-credential-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.2",
+      ok: false,
+      code: "PROVIDER_PERMISSION_DENIED",
+    },
+  ]);
+
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+});
+
+test("reports stable host failures when the broker is absent or rejects", async () => {
+  const absent = createFixture();
+  const absentStarted = absent.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  absent.children[0].emitMessage({
+    type: "provider-host-network-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    request: { url: "https://api.example.com/v1/status" },
+  });
+  assert.deepEqual(absent.children[0].posted.at(-1), {
+    type: "provider-host-network-response",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    ok: false,
+    code: "PROVIDER_HOST_UNAVAILABLE",
+  });
+  absent.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await absentStarted;
+
+  const rejected = createFixture({
+    hostBroker: {
+      async requestNetwork() {
+        throw new Error("private network failure");
+      },
+      async getCredential() {
+        throw new Error("private credential failure");
+      },
+      log() {
+        return undefined;
+      },
+      reportStatus() {
+        return undefined;
+      },
+    },
+  });
+  const rejectedStarted = rejected.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  rejected.children[0].emitMessage({
+    type: "provider-host-network-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    request: { url: "https://api.example.com/v1/status" },
+  });
+  rejected.children[0].emitMessage({
+    type: "provider-host-credential-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.2",
+    credentialKey: "auth_token",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(rejected.children[0].posted.slice(-2), [
+    {
+      type: "provider-host-network-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.1",
+      ok: false,
+      code: "PROVIDER_HOST_NETWORK_FAILED",
+    },
+    {
+      type: "provider-host-credential-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.2",
+      ok: false,
+      code: "PROVIDER_HOST_CREDENTIAL_FAILED",
+    },
+  ]);
+  rejected.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await rejectedStarted;
+});
+
+test("fails the provider when a host response cannot be posted", async () => {
+  const scheduler = createScheduler();
+  const messages = new Set();
+  let killCount = 0;
+  const unavailable = [];
+  const supervisor = createProviderUtilitySupervisor({
+    spawn() {
+      return {
+        postMessage(message) {
+          if (message.type === "provider-host-network-response") {
+            throw new Error("post failed");
+          }
+        },
+        kill() {
+          killCount += 1;
+        },
+        onMessage(listener) {
+          messages.add(listener);
+          return () => messages.delete(listener);
+        },
+        onExit() {
+          return () => undefined;
+        },
+      };
+    },
+    scheduler: scheduler.scheduler,
+    startupTimeoutMs: 5_000,
+    shutdownTimeoutMs: 2_000,
+    onUnavailable(providerProfileId, code) {
+      unavailable.push({ providerProfileId, code });
+    },
+    hostBroker: {
+      async requestNetwork() {
+        return { status: 200, headers: {}, body: new Uint8Array() };
+      },
+      async getCredential() {
+        return null;
+      },
+      log() {
+        return undefined;
+      },
+      reportStatus() {
+        return undefined;
+      },
+    },
+  });
+  const started = supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  const rejectedStart = assert.rejects(
+    started,
+    new Error("Provider host response could not be delivered."),
+  );
+  for (const listener of messages) {
+    listener({
+      type: "provider-host-network-request",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.1",
+      request: { url: "https://api.example.com/v1/status" },
+    });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await rejectedStart;
+  assert.equal(supervisor.getStatus("profile-a"), "failed");
+  assert.equal(killCount, 1);
+  assert.deepEqual(unavailable, [
+    {
+      providerProfileId: "profile-a",
+      code: "PROVIDER_UTILITY_PROTOCOL_VIOLATION",
+    },
+  ]);
+});
+
+test("resolves shutdown when an out-of-sequence host message fails the provider", async () => {
+  const fixture = createFixture();
+  const started = fixture.supervisor.start("profile-a", "/runtime/provider.js");
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+
+  const stopped = fixture.supervisor.shutdown("profile-a");
+  fixture.children[0].emitMessage({
+    type: "provider-host-log",
+    contractVersion: ipcContractVersion,
+    level: "info",
+    code: "LATE_MESSAGE",
+  });
+  await stopped;
+
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "failed");
+  assert.equal(fixture.children[0].getKillCount(), 1);
 });

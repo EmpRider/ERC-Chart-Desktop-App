@@ -31,7 +31,7 @@ export interface DesktopAppAdapter {
   readonly quit: () => void;
 }
 
-export interface DesktopApplicationAdapters {
+export interface DesktopApplicationAdapters<ProviderLaunch = unknown> {
   readonly app: DesktopAppAdapter;
   readonly registerRuntimeInfoHandler: (
     handler: (sender: DesktopIpcSender | undefined) => RuntimeInfo,
@@ -60,6 +60,7 @@ export interface DesktopApplicationAdapters {
     readonly start: (
       providerProfileId: string,
       entryPath: string,
+      launch: ProviderLaunch,
     ) => Promise<void>;
     readonly shutdown: (providerProfileId: string) => Promise<void>;
     readonly shutdownAll: () => Promise<void>;
@@ -72,16 +73,19 @@ export interface DesktopApplicationAdapters {
   };
 }
 
-export interface DesktopApplicationController {
-  readonly startProviderProfile: (providerProfileId: string) => Promise<void>;
+export interface DesktopApplicationController<ProviderLaunch = unknown> {
+  readonly startProviderProfile: (
+    providerProfileId: string,
+    launch: ProviderLaunch,
+  ) => Promise<void>;
   readonly stopProviderProfile: (providerProfileId: string) => Promise<void>;
   readonly shutdown: () => Promise<void>;
 }
 
-export async function startDesktopApplication(
-  adapters: DesktopApplicationAdapters,
+export async function startDesktopApplication<ProviderLaunch>(
+  adapters: DesktopApplicationAdapters<ProviderLaunch>,
   paths: DesktopArtifactPaths,
-): Promise<DesktopApplicationController> {
+): Promise<DesktopApplicationController<ProviderLaunch>> {
   let currentWindow: DesktopWindow | undefined;
   let stopped = false;
   let removeRendererProtocol: (() => void) | undefined;
@@ -174,10 +178,11 @@ export async function startDesktopApplication(
   }
 
   return {
-    startProviderProfile: (providerProfileId): Promise<void> =>
+    startProviderProfile: (providerProfileId, launch): Promise<void> =>
       adapters.providerUtilities.start(
         providerProfileId,
         paths.providerUtilityPath,
+        launch,
       ),
     stopProviderProfile: (providerProfileId): Promise<void> =>
       adapters.providerUtilities.shutdown(providerProfileId),

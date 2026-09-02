@@ -333,3 +333,128 @@ test("rejects Node internals imported by installed provider code", async () => {
     );
   });
 });
+
+test("treats host compatibility metadata and ranges as compatibility failures", async () => {
+  const incompatibleMetadata = {
+    id: pluginId,
+    name: "Fixture Provider",
+    providerContractVersion: 1,
+    hostCompatibility: {
+      minimumHostApiVersion: 99,
+      maximumHostApiVersion: 100,
+    },
+  };
+  await withInstalledFixture(
+    providerEntry({ metadata: incompatibleMetadata }),
+    async ({ installationPath }) => {
+      const fixture = createBroker();
+      await assert.rejects(
+        instantiateInstalledProvider(options(installationPath, fixture.broker)),
+        (error) =>
+          error instanceof ProviderRuntimeError &&
+          error.code === "PROVIDER_INCOMPATIBLE",
+      );
+    },
+  );
+
+  const invalidMetadata = {
+    ...incompatibleMetadata,
+    hostCompatibility: { minimumHostApiVersion: "invalid" },
+  };
+  await withInstalledFixture(
+    providerEntry({ metadata: invalidMetadata }),
+    async ({ installationPath }) => {
+      const fixture = createBroker();
+      await assert.rejects(
+        instantiateInstalledProvider(options(installationPath, fixture.broker)),
+        (error) =>
+          error instanceof ProviderRuntimeError &&
+          error.code === "PROVIDER_INCOMPATIBLE",
+      );
+    },
+  );
+});
+
+test("rejects incomplete provider adapters with a stable adapter error", async () => {
+  await withInstalledFixture(
+    providerEntry({
+      async create() {
+        return { connect: async () => undefined };
+      },
+    }),
+    async ({ installationPath }) => {
+      const fixture = createBroker();
+      await assert.rejects(
+        instantiateInstalledProvider(options(installationPath, fixture.broker)),
+        (error) =>
+          error instanceof ProviderRuntimeError &&
+          error.code === "PROVIDER_ADAPTER_INVALID",
+      );
+    },
+  );
+});
+
+test("does not treat a path-prefix collision as an approved network permission", async () => {
+  const boundaryEntry = providerEntry({
+    async create(host) {
+      await host.network.request({
+        url: "https://api.example.com/v1private/instruments",
+      });
+      return {
+        connect: async () => undefined,
+        disconnect: async () => undefined,
+        getCapabilities: async () => ({
+          instruments: true,
+          nativeTimeframes: [],
+          liveData: false,
+          derivedTimeframes: false,
+        }),
+        getInstruments: async () => [],
+        requestHistory: async () => [],
+        subscribe: async () => ({ unsubscribe: async () => undefined }),
+      };
+    },
+  });
+  await withInstalledFixture(boundaryEntry, async ({ installationPath }) => {
+    const fixture = createBroker();
+    await assert.rejects(
+      instantiateInstalledProvider(
+        options(installationPath, fixture.broker, {
+          permissions: {
+            network: ["https://api.example.com/v1"],
+            credentials: [],
+            storage: [],
+          },
+        }),
+      ),
+      (error) =>
+        error instanceof ProviderRuntimeError &&
+        error.code === "PROVIDER_PERMISSION_DENIED",
+    );
+    assert.deepEqual(fixture.network, []);
+  });
+});
+
+test("maps missing installation and entry filesystem failures to stable entry errors", async () => {
+  const fixture = createBroker();
+  const missingRoot = path.join(os.tmpdir(), "erc-provider-definitely-missing");
+  await assert.rejects(
+    instantiateInstalledProvider(options(missingRoot, fixture.broker)),
+    (error) =>
+      error instanceof ProviderRuntimeError &&
+      error.code === "PROVIDER_ENTRY_INVALID" &&
+      !error.message.includes(missingRoot),
+  );
+
+  await withInstalledFixture(providerEntry(), async ({ installationPath }) => {
+    await assert.rejects(
+      instantiateInstalledProvider(
+        options(installationPath, fixture.broker, { entry: "dist/missing.js" }),
+      ),
+      (error) =>
+        error instanceof ProviderRuntimeError &&
+        error.code === "PROVIDER_ENTRY_INVALID" &&
+        !error.message.includes(installationPath),
+    );
+  });
+});

@@ -9,9 +9,11 @@ import {
 import {
   isProviderUtilityParentMessage,
   type ProviderUtilityChildMessage,
+  type ProviderUtilityHostFailureMessage,
   type ProviderUtilityHostResponseMessage,
   type ProviderUtilityParentMessage,
 } from "./provider-protocol.js";
+import { requireProviderProfileId } from "./provider-profile-id.js";
 
 export interface ProviderUtilityPort {
   readonly postMessage: (message: ProviderUtilityChildMessage) => void;
@@ -30,20 +32,7 @@ interface PendingHostRequest<T> {
   readonly reject: (error: Error) => void;
 }
 
-function requireProviderProfileId(value: string): string {
-  if (
-    typeof value !== "string" ||
-    value.trim() !== value ||
-    value.length === 0 ||
-    value.length > 128
-  ) {
-    throw new RangeError("Provider profile ID is required.");
-  }
-  return value;
-}
-
-function hostFailure(message: ProviderUtilityHostResponseMessage): Error {
-  if (message.ok) return new Error("Provider host request failed.");
+function hostFailure(message: ProviderUtilityHostFailureMessage): Error {
   return new Error(`Provider host request failed (${message.code}).`);
 }
 
@@ -54,6 +43,7 @@ export function createProviderUtilityRuntime(
   const providerProfileId = requireProviderProfileId(providerProfileIdValue);
   let stopped = false;
   let initialized = false;
+  let initializationSettled = false;
   let removeListener = (): void => undefined;
   let requestSequence = 0;
   let resolveReady: (value: InstalledProviderInstance) => void = () =>
@@ -75,7 +65,7 @@ export function createProviderUtilityRuntime(
     stopped = true;
     removeListener();
     rejectPending(new Error("Provider utility stopped."));
-    if (!initialized)
+    if (!initializationSettled)
       rejectReady(new Error("Provider utility stopped before initialization."));
     port.postMessage({ type: "stopped", contractVersion: ipcContractVersion });
   };
@@ -218,6 +208,7 @@ export function createProviderUtilityRuntime(
       hostBroker,
     })
       .then((created) => {
+        initializationSettled = true;
         if (stopped) return;
         resolveReady(created);
         port.postMessage({
@@ -226,6 +217,8 @@ export function createProviderUtilityRuntime(
         });
       })
       .catch((error: unknown) => {
+        initializationSettled = true;
+        if (stopped) return;
         const code =
           error instanceof ProviderRuntimeError
             ? error.code

@@ -101,8 +101,8 @@ test("a provider utility crash leaves the renderer window alive", async () => {
         shutdown: async () => undefined,
       },
       providerUtilities: {
-        start: (providerProfileId, entryPath) =>
-          providerUtilities.start(providerProfileId, entryPath),
+        start: (providerProfileId, entryPath, launch) =>
+          providerUtilities.start(providerProfileId, entryPath, launch),
         shutdown: (providerProfileId) =>
           providerUtilities.shutdown(providerProfileId),
         shutdownAll: () => providerUtilities.shutdownAll(),
@@ -123,7 +123,14 @@ test("a provider utility crash leaves the renderer window alive", async () => {
     },
   );
 
-  const started = controller.startProviderProfile("profile-a");
+  const started = controller.startProviderProfile("profile-a", {
+    installationPath: "C:/erc/plugins/com.example.provider/1.0.0",
+    entry: "dist/index.js",
+    pluginId: "com.example.provider",
+    version: "1.0.0",
+    permissions: { network: [], credentials: [], storage: [] },
+    settings: {},
+  });
   children[0].emitMessage({
     type: "ready",
     contractVersion: ipcContractVersion,

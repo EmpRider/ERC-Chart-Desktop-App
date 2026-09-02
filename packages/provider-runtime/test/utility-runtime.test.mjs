@@ -209,7 +209,7 @@ test("fails closed on invalid initialization without exposing exception text", a
     {
       type: "error",
       contractVersion: ipcContractVersion,
-      code: "PROVIDER_LOAD_FAILED",
+      code: "PROVIDER_ENTRY_INVALID",
     },
   ]);
 });
@@ -229,4 +229,121 @@ test("reports protocol violation for malformed parent messages", async () => {
       code: "PROVIDER_UTILITY_PROTOCOL_VIOLATION",
     },
   ]);
+});
+
+test("fails closed on unknown host response ids", async () => {
+  await withProviderEntry(async (installationPath) => {
+    const fixture = createPort();
+    const runtime = createProviderUtilityRuntime(fixture.port, "profile-a");
+    fixture.receive(initialize(installationPath));
+    await fixture.waitForMessage("provider-host-credential-request");
+
+    fixture.receive({
+      type: "provider-host-credential-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.999",
+      ok: true,
+      credential: "fixture-secret",
+    });
+
+    await assert.rejects(
+      runtime.ready,
+      new Error("PROVIDER_UTILITY_PROTOCOL_VIOLATION"),
+    );
+    assert.equal(fixture.sent.at(-1).type, "error");
+    assert.equal(
+      fixture.sent.at(-1).code,
+      "PROVIDER_UTILITY_PROTOCOL_VIOLATION",
+    );
+  });
+});
+
+test("fails closed when a host response type does not match its request", async () => {
+  await withProviderEntry(async (installationPath) => {
+    const fixture = createPort();
+    const runtime = createProviderUtilityRuntime(fixture.port, "profile-a");
+    fixture.receive(initialize(installationPath));
+    const credentialRequest = await fixture.waitForMessage(
+      "provider-host-credential-request",
+    );
+
+    fixture.receive({
+      type: "provider-host-network-response",
+      contractVersion: ipcContractVersion,
+      requestId: credentialRequest.requestId,
+      ok: true,
+      response: { status: 200, headers: {}, body: new Uint8Array() },
+    });
+
+    await assert.rejects(
+      runtime.ready,
+      new Error("PROVIDER_UTILITY_PROTOCOL_VIOLATION"),
+    );
+    assert.equal(
+      fixture.sent.at(-1).code,
+      "PROVIDER_UTILITY_PROTOCOL_VIOLATION",
+    );
+  });
+});
+
+test("maps an explicit host failure to a stable provider load failure", async () => {
+  await withProviderEntry(async (installationPath) => {
+    const fixture = createPort();
+    const runtime = createProviderUtilityRuntime(fixture.port, "profile-a");
+    fixture.receive(initialize(installationPath));
+    const credentialRequest = await fixture.waitForMessage(
+      "provider-host-credential-request",
+    );
+
+    fixture.receive({
+      type: "provider-host-credential-response",
+      contractVersion: ipcContractVersion,
+      requestId: credentialRequest.requestId,
+      ok: false,
+      code: "PROVIDER_HOST_CREDENTIAL_FAILED",
+    });
+
+    await assert.rejects(runtime.ready, new Error("PROVIDER_LOAD_FAILED"));
+    await flushTasks();
+    assert.deepEqual(fixture.sent.at(-1), {
+      type: "error",
+      contractVersion: ipcContractVersion,
+      code: "PROVIDER_LOAD_FAILED",
+    });
+  });
+});
+
+test("rejects ready when shutdown arrives while provider initialization is in flight", async () => {
+  await withProviderEntry(async (installationPath) => {
+    const fixture = createPort();
+    const runtime = createProviderUtilityRuntime(fixture.port, "profile-a");
+    fixture.receive(initialize(installationPath));
+    await fixture.waitForMessage("provider-host-credential-request");
+
+    fixture.receive({ type: "shutdown", contractVersion: ipcContractVersion });
+
+    await assert.rejects(
+      runtime.ready,
+      new Error("Provider utility stopped before initialization."),
+    );
+    assert.equal(fixture.sent.at(-1).type, "stopped");
+    assert.equal(fixture.getListenerCount(), 0);
+  });
+});
+
+test("shutdown is idempotent before initialization", async () => {
+  const fixture = createPort();
+  const runtime = createProviderUtilityRuntime(fixture.port, "profile-a");
+
+  runtime.shutdown();
+  runtime.shutdown();
+
+  await assert.rejects(
+    runtime.ready,
+    new Error("Provider utility stopped before initialization."),
+  );
+  assert.deepEqual(fixture.sent, [
+    { type: "stopped", contractVersion: ipcContractVersion },
+  ]);
+  assert.equal(fixture.getListenerCount(), 0);
 });

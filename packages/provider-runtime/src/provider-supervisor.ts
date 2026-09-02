@@ -3,6 +3,8 @@ import {
   isUtilityStatusMessage,
 } from "@erc-chart/contracts";
 import type { ProviderRuntimeHostBroker } from "./provider-instance.js";
+import { isProviderNetworkRequestAllowed } from "./provider-permissions.js";
+import { requireProviderProfileId } from "./provider-profile-id.js";
 import {
   isProviderUtilityChildMessage,
   type ProviderUtilityChildMessage,
@@ -66,18 +68,7 @@ interface ProviderProcessState {
   rejectStart: ((error: Error) => void) | undefined;
   resolveShutdown: (() => void) | undefined;
   shutdownPromise: Promise<void> | undefined;
-}
-
-function requireProviderProfileId(value: string): string {
-  if (
-    typeof value !== "string" ||
-    value.trim() !== value ||
-    value.length === 0 ||
-    value.length > 128
-  ) {
-    throw new RangeError("Provider profile ID is required.");
-  }
-  return value;
+  permissions: ProviderUtilityLaunchDescriptor["permissions"] | undefined;
 }
 
 function requireTimeout(value: number, label: string): number {
@@ -139,6 +130,7 @@ export function createProviderUtilitySupervisor(
   ): void => {
     if (state.status === "failed" || state.status === "stopped") return;
     const wasStarting = state.status === "starting";
+    const wasStopping = state.status === "stopping";
     clearTimer(state);
     removeListeners(state);
     if (terminateChild) terminate(state);
@@ -148,6 +140,9 @@ export function createProviderUtilitySupervisor(
       state.rejectStart?.(error ?? new Error("Provider utility failed."));
     state.resolveStart = undefined;
     state.rejectStart = undefined;
+    if (wasStopping) state.resolveShutdown?.();
+    state.resolveShutdown = undefined;
+    state.shutdownPromise = undefined;
     if (code !== undefined) options.onUnavailable(providerProfileId, code);
   };
 
@@ -189,6 +184,7 @@ export function createProviderUtilitySupervisor(
       rejectStart: undefined,
       resolveShutdown: undefined,
       shutdownPromise: undefined,
+      permissions: launch?.permissions,
     };
     states.set(providerProfileId, state);
 
@@ -256,6 +252,20 @@ export function createProviderUtilitySupervisor(
         return true;
       }
       if (message.type === "provider-host-network-request") {
+        if (
+          state.permissions === undefined ||
+          !isProviderNetworkRequestAllowed(
+            message.request.url,
+            state.permissions.network,
+          )
+        ) {
+          postHostFailure(
+            "provider-host-network-response",
+            message.requestId,
+            "PROVIDER_PERMISSION_DENIED",
+          );
+          return true;
+        }
         if (options.hostBroker === undefined) {
           postHostFailure(
             "provider-host-network-response",
@@ -286,35 +296,49 @@ export function createProviderUtilitySupervisor(
           });
         return true;
       }
-      if (options.hostBroker === undefined) {
-        postHostFailure(
-          "provider-host-credential-response",
-          message.requestId,
-          "PROVIDER_HOST_UNAVAILABLE",
-        );
-        return true;
-      }
-      void options.hostBroker
-        .getCredential(providerProfileId, message.credentialKey)
-        .then((credential) => {
-          if (state.status !== "starting" && state.status !== "ready") return;
-          state.child?.postMessage({
-            type: "provider-host-credential-response",
-            contractVersion: ipcContractVersion,
-            requestId: message.requestId,
-            ok: true,
-            credential,
-          });
-        })
-        .catch(() => {
-          if (state.status !== "starting" && state.status !== "ready") return;
+      if (message.type === "provider-host-credential-request") {
+        if (
+          state.permissions === undefined ||
+          !state.permissions.credentials.includes(message.credentialKey)
+        ) {
           postHostFailure(
             "provider-host-credential-response",
             message.requestId,
-            "PROVIDER_HOST_CREDENTIAL_FAILED",
+            "PROVIDER_PERMISSION_DENIED",
           );
-        });
-      return true;
+          return true;
+        }
+        if (options.hostBroker === undefined) {
+          postHostFailure(
+            "provider-host-credential-response",
+            message.requestId,
+            "PROVIDER_HOST_UNAVAILABLE",
+          );
+          return true;
+        }
+        void options.hostBroker
+          .getCredential(providerProfileId, message.credentialKey)
+          .then((credential) => {
+            if (state.status !== "starting" && state.status !== "ready") return;
+            state.child?.postMessage({
+              type: "provider-host-credential-response",
+              contractVersion: ipcContractVersion,
+              requestId: message.requestId,
+              ok: true,
+              credential,
+            });
+          })
+          .catch(() => {
+            if (state.status !== "starting" && state.status !== "ready") return;
+            postHostFailure(
+              "provider-host-credential-response",
+              message.requestId,
+              "PROVIDER_HOST_CREDENTIAL_FAILED",
+            );
+          });
+        return true;
+      }
+      return false;
     };
 
     const onMessage = (message: unknown): void => {
@@ -370,10 +394,23 @@ export function createProviderUtilitySupervisor(
       }
     };
 
+    const started = new Promise<void>((resolve, reject) => {
+      state.resolveStart = resolve;
+      state.rejectStart = reject;
+    });
     try {
       state.child = options.spawn(entryPath, [providerProfileId]);
       state.removeMessage = state.child.onMessage(onMessage);
       state.removeExit = state.child.onExit(onExit);
+      state.timer = options.scheduler.setTimeout(() => {
+        fail(
+          providerProfileId,
+          state,
+          new Error("Provider utility failed to become ready."),
+          undefined,
+          true,
+        );
+      }, startupTimeoutMs);
       if (launch !== undefined) {
         state.child.postMessage({
           type: "provider-initialize",
@@ -393,20 +430,6 @@ export function createProviderUtilitySupervisor(
         new Error("Provider utility process could not start."),
       );
     }
-
-    const started = new Promise<void>((resolve, reject) => {
-      state.resolveStart = resolve;
-      state.rejectStart = reject;
-    });
-    state.timer = options.scheduler.setTimeout(() => {
-      fail(
-        providerProfileId,
-        state,
-        new Error("Provider utility failed to become ready."),
-        undefined,
-        true,
-      );
-    }, startupTimeoutMs);
     return started;
   };
 

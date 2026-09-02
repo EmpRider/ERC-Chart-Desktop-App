@@ -230,6 +230,7 @@ function isHeaders(value: unknown): value is Readonly<Record<string, string>> {
 function isNetworkRequest(value: unknown): value is ProviderNetworkRequest {
   if (
     !isRecord(value) ||
+    !hasExactKeys(value, ["url"], ["method", "headers", "body", "timeoutMs"]) ||
     typeof value.url !== "string" ||
     value.url.length > 32_768
   ) {
