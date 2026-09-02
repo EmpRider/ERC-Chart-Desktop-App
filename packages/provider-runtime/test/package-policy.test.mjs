@@ -133,7 +133,13 @@ test("removes staged output when package content policy rejects a folder package
     );
 
     await assert.rejects(
-      stagePluginPackage({ kind: "folder", path: source }, { stagingRoot }),
+      stagePluginPackage(
+        { kind: "folder", path: source },
+        {
+          stagingRoot,
+          trustPolicy: { mode: "developer", trustedPublisherKeys: {} },
+        },
+      ),
       /outside the approved .* allowlist/i,
     );
     assert.deepEqual(await readdir(stagingRoot), []);
@@ -159,7 +165,13 @@ test("removes staged output when package content policy rejects a ZIP package", 
     );
 
     await assert.rejects(
-      stagePluginPackage({ kind: "zip", path: archivePath }, { stagingRoot }),
+      stagePluginPackage(
+        { kind: "zip", path: archivePath },
+        {
+          stagingRoot,
+          trustPolicy: { mode: "developer", trustedPublisherKeys: {} },
+        },
+      ),
       /outside the approved .* allowlist/i,
     );
     assert.deepEqual(await readdir(stagingRoot), []);
