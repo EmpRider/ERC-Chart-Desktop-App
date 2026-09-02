@@ -64,3 +64,12 @@ export type {
   ProviderUtilityPort,
   ProviderUtilityRuntime,
 } from "./utility-runtime.js";
+export { createProviderUtilitySupervisor } from "./provider-supervisor.js";
+export type {
+  ProviderUtilityChild,
+  ProviderUtilityScheduler,
+  ProviderUtilitySupervisor,
+  ProviderUtilitySupervisorOptions,
+  ProviderUtilitySupervisorStatus,
+  ProviderUtilityUnavailableCode,
+} from "./provider-supervisor.js";
