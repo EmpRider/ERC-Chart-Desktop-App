@@ -389,6 +389,182 @@ textarea {
   letter-spacing: 0.025em;
 }
 
+.permission-review-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgb(2 6 12 / 78%);
+  backdrop-filter: blur(0.35rem);
+}
+
+.permission-review {
+  width: min(42rem, 100%);
+  max-height: calc(100vh - 3rem);
+  padding: 1.2rem;
+  border: 1px solid #29415b;
+  border-radius: 0.85rem;
+  background: #0a111c;
+  box-shadow: 0 2rem 6rem rgb(0 0 0 / 50%);
+  overflow-y: auto;
+}
+
+.permission-review-header h2 {
+  margin: 0;
+  color: #f0f5fc;
+  font-size: 1.35rem;
+}
+
+.permission-review-header > p:last-child {
+  margin: 0.6rem 0 0;
+  color: #91a0b4;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.permission-plugin-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 0.85rem;
+  border: 1px solid #1d2b40;
+  border-radius: 0.65rem;
+  background: #080e17;
+}
+
+.permission-plugin-identity > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.permission-plugin-identity strong {
+  color: #e7f0fb;
+  font-size: 0.85rem;
+}
+
+.permission-plugin-identity span {
+  color: #718096;
+  font-size: 0.68rem;
+}
+
+.permission-trust {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #275b48;
+  border-radius: 999px;
+  color: #7ce0b5 !important;
+  white-space: nowrap;
+}
+
+.permission-trust[data-trust="unsigned"] {
+  border-color: #76592b;
+  color: #f0c36a !important;
+}
+
+.permission-warning {
+  margin: 0.8rem 0 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #6b4e26;
+  border-radius: 0.55rem;
+  background: #21170c;
+  color: #efc776;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.permission-groups {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+}
+
+.permission-group {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.8fr) minmax(0, 1.4fr);
+  gap: 1rem;
+  padding: 0.8rem;
+  border: 1px solid #17253a;
+  border-radius: 0.6rem;
+  background: #09101a;
+}
+
+.permission-group-heading h3 {
+  margin: 0;
+  color: #dce8f7;
+  font-size: 0.78rem;
+}
+
+.permission-group-heading p,
+.permission-empty {
+  margin: 0.3rem 0 0;
+  color: #68788d;
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.permission-group ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.permission-group li {
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #1b2b41;
+  border-radius: 0.4rem;
+  background: #0b1522;
+  overflow-wrap: anywhere;
+}
+
+.permission-group code {
+  color: #9fdcf5;
+  font-size: 0.67rem;
+}
+
+.permission-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #18263a;
+}
+
+.permission-review-actions button {
+  min-height: 2.25rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid #29415b;
+  border-radius: 0.5rem;
+  background: #0d1927;
+  color: #c8d5e6;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.permission-review-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.permission-review-actions .permission-approve {
+  border-color: #2b6b55;
+  background: #0f2a21;
+  color: #8ee7be;
+}
+
+.permission-review-actions button:not(:disabled):hover,
+.permission-review-actions button:focus-visible {
+  outline: 1px solid #59a7ca;
+  outline-offset: 2px;
+}
+
 @media (max-width: 40rem) {
   .app-header {
     align-items: stretch;
@@ -417,6 +593,20 @@ textarea {
 
   .chart-slot {
     min-height: 12rem;
+  }
+
+  .permission-review-backdrop {
+    padding: 0.75rem;
+  }
+
+  .permission-group {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+  }
+
+  .permission-plugin-identity {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

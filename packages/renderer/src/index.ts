@@ -16,6 +16,16 @@ export {
   maximumWorkspaces,
   workspaceReducer,
 } from "./workspace.js";
+export { PluginPermissionReview } from "./permission-review.js";
+export type {
+  PluginPermissionDecision,
+  PluginPermissionReviewMode,
+  PluginPermissionReviewPresentation,
+  PluginPermissionReviewProps,
+  PluginPermissionReviewReason,
+  PluginPermissionReviewRequest,
+  PluginPermissionReviewTrust,
+} from "./permission-review.js";
 export {
   fromPersistedWorkspace,
   toPersistedWorkspace,
