@@ -11,11 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  discardStagedPlugin,
-  moveStagedPlugin,
-  stagePluginPackage,
-} from "../dist/index.js";
+import { discardStagedPlugin, stagePluginPackage } from "../dist/index.js";
 
 function pluginManifest(entry = "dist/index.js") {
   return {
@@ -274,32 +270,6 @@ test("rejects symbolic links in folder packages", async (t) => {
       /symbolic link/i,
     );
     assert.deepEqual(await readdir(stagingRoot), []);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("moves staged packages only into a destination that does not exist", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-move-"));
-  try {
-    const source = await createFolderFixture(root);
-    const staged = await stagePluginPackage(
-      { kind: "folder", path: source },
-      { stagingRoot: path.join(root, "staging") },
-    );
-    const occupied = path.join(root, "installed", "occupied");
-    await mkdir(occupied, { recursive: true });
-    await assert.rejects(
-      moveStagedPlugin(staged, occupied),
-      /destination must not already exist/i,
-    );
-
-    const destination = path.join(root, "installed", "1.0.0");
-    await moveStagedPlugin(staged, destination);
-    assert.equal(
-      await readFile(path.join(destination, "dist", "index.js"), "utf8"),
-      "export default {};\n",
-    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

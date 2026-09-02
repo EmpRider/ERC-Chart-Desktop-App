@@ -1,13 +1,10 @@
 import { createHash } from "node:crypto";
 import {
-  cp,
-  lstat,
   mkdir,
   mkdtemp,
   open,
   readFile,
   readdir,
-  rename,
   rm,
   stat,
   writeFile,
@@ -484,38 +481,4 @@ export async function discardStagedPlugin(
   staged: StagedPluginPackage,
 ): Promise<void> {
   await rm(staged.stagingPath, { recursive: true, force: true });
-}
-
-/**
- * Moves a staged package into its final version directory.
- * The destination must not exist. A cross-volume move falls back to copy/remove.
- */
-export async function moveStagedPlugin(
-  staged: StagedPluginPackage,
-  destinationPath: string,
-): Promise<void> {
-  await mkdir(path.dirname(destinationPath), { recursive: true });
-  try {
-    await lstat(destinationPath);
-    throw new Error("Plugin install destination must not already exist.");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-
-  try {
-    await rename(staged.stagingPath, destinationPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
-    try {
-      await cp(staged.stagingPath, destinationPath, {
-        recursive: true,
-        errorOnExist: true,
-        force: false,
-      });
-    } catch (copyError) {
-      await rm(destinationPath, { recursive: true, force: true });
-      throw copyError;
-    }
-    await rm(staged.stagingPath, { recursive: true, force: true });
-  }
 }

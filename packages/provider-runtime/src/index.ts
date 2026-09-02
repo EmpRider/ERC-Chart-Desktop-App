@@ -2,7 +2,6 @@ export { createProviderUtilityRuntime } from "./utility-runtime.js";
 export {
   defaultPluginPackageLimits,
   discardStagedPlugin,
-  moveStagedPlugin,
   stagePluginPackage,
 } from "./plugin-staging.js";
 export type {
