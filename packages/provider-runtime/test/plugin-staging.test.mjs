@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -218,6 +219,61 @@ test("removes failed staging directories when the manifest or entry is invalid",
       /entry file is missing/i,
     );
     assert.deepEqual(await readdir(path.join(root, "staging")), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects folder packages that exceed staging limits", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "erc-provider-folder-limit-"),
+  );
+  const stagingRoot = path.join(root, "staging");
+  try {
+    const source = await createFolderFixture(root);
+    await assert.rejects(
+      stagePluginPackage(
+        { kind: "folder", path: source },
+        { stagingRoot, limits: { maximumFiles: 1 } },
+      ),
+      /exceeds staging limits/i,
+    );
+    assert.deepEqual(await readdir(stagingRoot), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects symbolic links in folder packages", async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "erc-provider-folder-link-"),
+  );
+  const stagingRoot = path.join(root, "staging");
+  try {
+    const source = await createFolderFixture(root);
+    try {
+      await symlink(
+        path.join(source, "dist", "index.js"),
+        path.join(source, "linked-index.js"),
+        process.platform === "win32" ? "file" : undefined,
+      );
+    } catch (error) {
+      const code = error?.code;
+      if (
+        process.platform === "win32" &&
+        (code === "EPERM" || code === "EACCES")
+      ) {
+        t.skip("Windows account cannot create symbolic links.");
+        return;
+      }
+      throw error;
+    }
+
+    await assert.rejects(
+      stagePluginPackage({ kind: "folder", path: source }, { stagingRoot }),
+      /symbolic link/i,
+    );
+    assert.deepEqual(await readdir(stagingRoot), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

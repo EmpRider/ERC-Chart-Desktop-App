@@ -150,10 +150,10 @@ function inflateRawAsync(
   });
 }
 
-async function readZipEntries(
+async function* readZipEntries(
   archive: Buffer,
   limits: PluginPackageLimits,
-): Promise<readonly ZipEntry[]> {
+): AsyncGenerator<ZipEntry, void, void> {
   const eocd = findEndOfCentralDirectory(archive);
   const diskNumber = archive.readUInt16LE(eocd + 4);
   const directoryDisk = archive.readUInt16LE(eocd + 6);
@@ -180,7 +180,6 @@ async function readZipEntries(
     throw new Error("Plugin ZIP central directory is malformed.");
   }
 
-  const entries: ZipEntry[] = [];
   const seen = new Set<string>();
   let expandedBytes = 0;
   let cursor = directoryOffset;
@@ -232,7 +231,7 @@ async function readZipEntries(
       throw new Error("Plugin ZIP contains a symbolic link.");
     }
     if (directory) {
-      entries.push({ path: entryPath, data: Buffer.alloc(0), directory: true });
+      yield { path: entryPath, data: Buffer.alloc(0), directory: true };
       cursor = nameEnd + extraLength + commentLength;
       continue;
     }
@@ -260,12 +259,12 @@ async function readZipEntries(
     const compressed = archive.subarray(dataStart, dataEnd);
     const data =
       compressionMethod === 0
-        ? Buffer.from(compressed)
+        ? compressed
         : await inflateRawAsync(compressed, limits.maximumFileBytes);
     if (data.length !== uncompressedSize) {
       throw new Error("Plugin ZIP entry size does not match its metadata.");
     }
-    entries.push({ path: entryPath, data, directory: false });
+    yield { path: entryPath, data, directory: false };
     cursor = nameEnd + extraLength + commentLength;
   }
   if (cursor !== directoryOffset + directorySize) {
@@ -273,7 +272,6 @@ async function readZipEntries(
       "Plugin ZIP central directory size does not match its entries.",
     );
   }
-  return entries;
 }
 
 async function copyFolderIntoStaging(
@@ -349,7 +347,7 @@ async function extractZipIntoStaging(
     throw new Error("Plugin ZIP exceeds the archive size limit.");
   }
   const archive = await readFile(sourcePath);
-  for (const entry of await readZipEntries(archive, limits)) {
+  for await (const entry of readZipEntries(archive, limits)) {
     const destination = containedPath(stagingPath, entry.path);
     if (entry.directory) {
       await mkdir(destination, { recursive: true });
