@@ -15,6 +15,10 @@ import {
   fromPersistedWorkspace,
   toPersistedWorkspace,
 } from "./workspace-persistence.js";
+import {
+  PluginPermissionReview,
+  type PluginPermissionReviewPresentation,
+} from "./permission-review.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
@@ -63,12 +67,14 @@ export interface ApplicationShellProps {
   readonly connection: ShellConnectionState;
   readonly workspace: WorkspaceState;
   readonly onWorkspaceAction: (action: WorkspaceAction) => void;
+  readonly pluginPermissionReview?: PluginPermissionReviewPresentation;
 }
 
 export function ApplicationShell({
   connection,
   workspace,
   onWorkspaceAction,
+  pluginPermissionReview,
 }: ApplicationShellProps): JSX.Element {
   const activeTab =
     workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ??
@@ -199,6 +205,9 @@ export function ApplicationShell({
         <span>Local desktop session</span>
         <span>ERC Chart alpha</span>
       </footer>
+      {pluginPermissionReview === undefined ? null : (
+        <PluginPermissionReview {...pluginPermissionReview} />
+      )}
     </div>
   );
 }
