@@ -115,6 +115,10 @@ const migrations = [
   ) STRICT;
   CREATE INDEX diagnostic_events_oldest ON diagnostic_events (occurred_at_ms);
   `,
+  `
+  ALTER TABLE provider_profiles
+    ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';
+  `,
 ] as const;
 
 export interface StoredCandle {
@@ -306,19 +310,28 @@ export interface ProviderProfile {
   readonly providerId: string;
   readonly displayName: string;
   readonly credentialReference: string;
+  readonly settings: ProviderProfileSettings;
   readonly createdAtMs: number;
   readonly updatedAtMs: number;
 }
+
+export type ProviderProfileSettingValue = boolean | number | string;
+
+export type ProviderProfileSettings = Readonly<
+  Record<string, ProviderProfileSettingValue>
+>;
 
 export interface CreateProviderProfileInput {
   readonly id: string;
   readonly providerId: string;
   readonly displayName: string;
   readonly credentialReference: string;
+  readonly settings?: ProviderProfileSettings;
 }
 
 export interface UpdateProviderProfileInput {
-  readonly displayName: string;
+  readonly displayName?: string;
+  readonly settings?: ProviderProfileSettings;
 }
 
 interface ProviderProfileRow {
@@ -326,12 +339,13 @@ interface ProviderProfileRow {
   readonly provider_id: string;
   readonly display_name: string;
   readonly credential_target: string;
+  readonly settings_json: string;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }
 
 const profileSelect = `
-  SELECT id, provider_id, display_name, credential_target, created_at_ms, updated_at_ms
+  SELECT id, provider_id, display_name, credential_target, settings_json, created_at_ms, updated_at_ms
   FROM provider_profiles
 `;
 
@@ -388,12 +402,59 @@ function validateCredentialReference(
   return reference;
 }
 
+const providerSettingKeyPattern = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u;
+const sensitiveProviderSettingKey =
+  /(authorization|cookie|credential|password|secret|token|api[._-]?key|device[._-]?id)/iu;
+
+function validateProviderProfileSettings(
+  value: unknown,
+): ProviderProfileSettings {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Provider profile settings must be an object.");
+  const entries = Object.entries(value);
+  if (entries.length > 128)
+    throw new Error(
+      "Provider profile settings exceed the supported field count.",
+    );
+  const settings: Record<string, ProviderProfileSettingValue> = {};
+  for (const [key, item] of entries) {
+    if (!providerSettingKeyPattern.test(key))
+      throw new Error(`Provider profile setting key is invalid: ${key}.`);
+    if (sensitiveProviderSettingKey.test(key))
+      throw new Error(
+        `Provider profile setting ${key} may contain credential material and cannot be persisted.`,
+      );
+    if (
+      typeof item !== "boolean" &&
+      !(typeof item === "number" && Number.isFinite(item)) &&
+      !(typeof item === "string" && item.length <= 8_192)
+    ) {
+      throw new Error(`Provider profile setting ${key} has an invalid value.`);
+    }
+    settings[key] = item as ProviderProfileSettingValue;
+  }
+  return Object.freeze(settings);
+}
+
+function parseProviderProfileSettings(value: string): ProviderProfileSettings {
+  try {
+    return validateProviderProfileSettings(JSON.parse(value));
+  } catch (error) {
+    if (error instanceof SyntaxError)
+      throw new Error("Provider profile settings contain invalid JSON.", {
+        cause: error,
+      });
+    throw error;
+  }
+}
+
 function toProviderProfile(row: ProviderProfileRow): ProviderProfile {
   return {
     id: row.id,
     providerId: row.provider_id,
     displayName: row.display_name,
     credentialReference: row.credential_target,
+    settings: parseProviderProfileSettings(row.settings_json),
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
   };
@@ -407,7 +468,7 @@ export function createProviderProfile(
     throw new Error("Provider profile input must be an object.");
   assertFields(
     input,
-    ["id", "providerId", "displayName", "credentialReference"],
+    ["id", "providerId", "displayName", "credentialReference", "settings"],
     "provider profile",
   );
   const { id, providerId } = validateProfileIdentity(
@@ -420,19 +481,29 @@ export function createProviderProfile(
     providerId,
     id,
   );
+  const settings = validateProviderProfileSettings(input.settings ?? {});
   const now = Date.now();
   database
     .prepare(
       `INSERT INTO provider_profiles
-        (id, provider_id, display_name, credential_target, created_at_ms, updated_at_ms)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+        (id, provider_id, display_name, credential_target, settings_json, created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, providerId, displayName, credentialReference, now, now);
+    .run(
+      id,
+      providerId,
+      displayName,
+      credentialReference,
+      JSON.stringify(settings),
+      now,
+      now,
+    );
   return {
     id,
     providerId,
     displayName,
     credentialReference,
+    settings,
     createdAtMs: now,
     updatedAtMs: now,
   };
@@ -466,14 +537,26 @@ export function updateProviderProfile(
 ): ProviderProfile {
   if (input === null || typeof input !== "object")
     throw new Error("Provider profile update must be an object.");
-  assertFields(input, ["displayName"], "provider profile update");
+  assertFields(input, ["displayName", "settings"], "provider profile update");
+  if (input.displayName === undefined && input.settings === undefined)
+    throw new Error("Provider profile update must include a changed field.");
   const checkedId = requireProfileText(id, "id", 128);
-  const displayName = requireProfileText(input.displayName, "displayName", 256);
+  const existing = getProviderProfile(database, checkedId);
+  if (existing === undefined)
+    throw new Error(`Provider profile not found: ${checkedId}.`);
+  const displayName =
+    input.displayName === undefined
+      ? existing.displayName
+      : requireProfileText(input.displayName, "displayName", 256);
+  const settings =
+    input.settings === undefined
+      ? existing.settings
+      : validateProviderProfileSettings(input.settings);
   const result = database
     .prepare(
-      "UPDATE provider_profiles SET display_name = ?, updated_at_ms = ? WHERE id = ?",
+      "UPDATE provider_profiles SET display_name = ?, settings_json = ?, updated_at_ms = ? WHERE id = ?",
     )
-    .run(displayName, Date.now(), checkedId);
+    .run(displayName, JSON.stringify(settings), Date.now(), checkedId);
   if (result.changes === 0)
     throw new Error(`Provider profile not found: ${checkedId}.`);
   const profile = getProviderProfile(database, checkedId);

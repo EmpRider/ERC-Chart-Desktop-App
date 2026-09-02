@@ -11,6 +11,7 @@ function createFixture(platform = "win32") {
   let shutdownCount = 0;
   let providerShutdownAllCount = 0;
   const providerStartCalls = [];
+  const providerReconfigureCalls = [];
   const providerShutdownCalls = [];
   let quitCount = 0;
   let loadUrlError;
@@ -90,6 +91,14 @@ function createFixture(platform = "win32") {
       async start(providerProfileId, entryPath, launch) {
         providerStartCalls.push({ providerProfileId, entryPath, launch });
       },
+      async reconfigure(providerProfileId, settings) {
+        providerReconfigureCalls.push({ providerProfileId, settings });
+        return {
+          impact: "restart",
+          settings,
+          changedKeys: Object.keys(settings),
+        };
+      },
       async shutdown(providerProfileId) {
         providerShutdownCalls.push(providerProfileId);
       },
@@ -122,6 +131,7 @@ function createFixture(platform = "win32") {
     getShutdownCount: () => shutdownCount,
     getProviderShutdownAllCount: () => providerShutdownAllCount,
     providerStartCalls,
+    providerReconfigureCalls,
     providerShutdownCalls,
     getQuitCount: () => quitCount,
     setLoadUrlError: (error) => {
@@ -192,6 +202,9 @@ test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle
 
   assert.deepEqual(fixture.providerStartCalls, []);
   await controller.startProviderProfile("profile-a", launch);
+  const changed = await controller.reconfigureProviderProfile("profile-a", {
+    region: "eu",
+  });
   await controller.stopProviderProfile("profile-a");
 
   assert.deepEqual(fixture.providerStartCalls, [
@@ -201,6 +214,14 @@ test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle
       launch,
     },
   ]);
+  assert.deepEqual(fixture.providerReconfigureCalls, [
+    { providerProfileId: "profile-a", settings: { region: "eu" } },
+  ]);
+  assert.deepEqual(changed, {
+    impact: "restart",
+    settings: { region: "eu" },
+    changedKeys: ["region"],
+  });
   assert.deepEqual(fixture.providerShutdownCalls, ["profile-a"]);
   await controller.shutdown();
   assert.equal(fixture.getProviderShutdownAllCount(), 1);

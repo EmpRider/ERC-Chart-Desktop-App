@@ -11,6 +11,7 @@ import type {
   ProviderAdapter,
   ProviderConfiguration,
   ProviderConfigurationField,
+  ProviderConfigurationSchema,
   ProviderDefinition,
   ProviderHostServices,
   ProviderLogger,
@@ -78,6 +79,15 @@ export interface InstalledProviderInstance {
   readonly definition: ProviderDefinition;
   readonly adapter: ProviderAdapter;
   readonly settings: ProviderConfiguration;
+}
+
+export type ProviderConfigurationChangeImpact =
+  "none" | "restart" | "reconnect";
+
+export interface ProviderConfigurationChangePlan {
+  readonly impact: ProviderConfigurationChangeImpact;
+  readonly settings: ProviderConfiguration;
+  readonly changedKeys: readonly string[];
 }
 
 const sensitiveMetadataKey =
@@ -363,8 +373,8 @@ function validateFieldValue(
   );
 }
 
-export function normalizeProviderConfiguration(
-  definition: ProviderDefinition,
+export function normalizeProviderConfigurationSchema(
+  schema: ProviderConfigurationSchema,
   supplied: Readonly<Record<string, boolean | number | string>>,
   permissions: PluginManifestPermissions,
 ): ProviderConfiguration {
@@ -374,7 +384,6 @@ export function normalizeProviderConfiguration(
       "Provider configuration must be an object.",
     );
   }
-  const schema = definition.config ?? {};
   const unknown = Object.keys(supplied).find(
     (key) => !Object.hasOwn(schema, key),
   );
@@ -425,6 +434,48 @@ export function normalizeProviderConfiguration(
     normalized[key] = value;
   }
   return Object.freeze(normalized);
+}
+
+export function normalizeProviderConfiguration(
+  definition: ProviderDefinition,
+  supplied: Readonly<Record<string, boolean | number | string>>,
+  permissions: PluginManifestPermissions,
+): ProviderConfiguration {
+  return normalizeProviderConfigurationSchema(
+    definition.config ?? {},
+    supplied,
+    permissions,
+  );
+}
+
+export function planProviderConfigurationChange(
+  definition: ProviderDefinition,
+  current: ProviderConfiguration,
+  supplied: Readonly<Record<string, boolean | number | string>>,
+  permissions: PluginManifestPermissions,
+): ProviderConfigurationChangePlan {
+  const schema = definition.config ?? {};
+  const settings = normalizeProviderConfigurationSchema(
+    schema,
+    supplied,
+    permissions,
+  );
+  const changedKeys = [
+    ...new Set([...Object.keys(current), ...Object.keys(settings)]),
+  ]
+    .filter((key) => current[key] !== settings[key])
+    .sort();
+  const impact: ProviderConfigurationChangeImpact =
+    changedKeys.length === 0
+      ? "none"
+      : changedKeys.some((key) => schema[key]?.requiresReconnect === true)
+        ? "reconnect"
+        : "restart";
+  return Object.freeze({
+    impact,
+    settings,
+    changedKeys: Object.freeze(changedKeys),
+  });
 }
 
 function redactMetadataValue(

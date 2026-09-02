@@ -27,6 +27,35 @@ export interface ProviderUtilityInitializeMessage {
   readonly launch: ProviderUtilityLaunchDescriptor;
 }
 
+export interface ProviderUtilityConfigurationValidationRequestMessage {
+  readonly type: "provider-config-validation-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly settings: Readonly<Record<string, boolean | number | string>>;
+}
+
+export interface ProviderUtilityConfigurationValidationSuccessMessage {
+  readonly type: "provider-config-validation-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: true;
+  readonly impact: "none" | "restart" | "reconnect";
+  readonly settings: Readonly<Record<string, boolean | number | string>>;
+  readonly changedKeys: readonly string[];
+}
+
+export interface ProviderUtilityConfigurationValidationFailureMessage {
+  readonly type: "provider-config-validation-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: false;
+  readonly code: string;
+}
+
+export type ProviderUtilityConfigurationValidationResponseMessage =
+  | ProviderUtilityConfigurationValidationSuccessMessage
+  | ProviderUtilityConfigurationValidationFailureMessage;
+
 export interface ProviderUtilityNetworkRequestMessage {
   readonly type: "provider-host-network-request";
   readonly contractVersion: typeof ipcContractVersion;
@@ -88,10 +117,12 @@ export type ProviderUtilityHostResponseMessage =
 export type ProviderUtilityParentMessage =
   | UtilityControlMessage
   | ProviderUtilityInitializeMessage
+  | ProviderUtilityConfigurationValidationRequestMessage
   | ProviderUtilityHostResponseMessage;
 
 export type ProviderUtilityChildMessage =
   | UtilityStatusMessage
+  | ProviderUtilityConfigurationValidationResponseMessage
   | ProviderUtilityNetworkRequestMessage
   | ProviderUtilityCredentialRequestMessage
   | ProviderUtilityLogMessage
@@ -103,6 +134,8 @@ const versionPattern =
 const credentialKeyPattern = /^[a-z][a-z0-9_-]{0,63}$/u;
 const requestIdPattern = /^[A-Za-z0-9._-]{1,96}$/u;
 const codePattern = /^[A-Z][A-Z0-9_.-]{0,127}$/u;
+const settingKeyPattern = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u;
+const configurationImpacts = new Set(["none", "restart", "reconnect"]);
 const providerStatuses = new Set<ProviderStatus>([
   "disconnected",
   "connecting",
@@ -175,7 +208,7 @@ function isSettings(
     Object.keys(value).length <= 128 &&
     Object.entries(value).every(
       ([key, item]) =>
-        /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u.test(key) &&
+        settingKeyPattern.test(key) &&
         (typeof item === "boolean" ||
           (typeof item === "number" && Number.isFinite(item)) ||
           (typeof item === "string" && item.length <= 8_192)),
@@ -304,6 +337,19 @@ export function isProviderUtilityParentMessage(
       isLaunch(value.launch)
     );
   }
+  if (value.type === "provider-config-validation-request") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "settings",
+      ]) &&
+      typeof value.requestId === "string" &&
+      requestIdPattern.test(value.requestId) &&
+      isSettings(value.settings)
+    );
+  }
   if (
     value.type !== "provider-host-network-response" &&
     value.type !== "provider-host-credential-response"
@@ -349,6 +395,45 @@ export function isProviderUtilityChildMessage(
   if (isUtilityStatusMessage(value)) return true;
   if (!isRecord(value) || value.contractVersion !== ipcContractVersion)
     return false;
+  if (value.type === "provider-config-validation-response") {
+    if (
+      typeof value.requestId !== "string" ||
+      !requestIdPattern.test(value.requestId) ||
+      typeof value.ok !== "boolean"
+    ) {
+      return false;
+    }
+    if (value.ok === false) {
+      return (
+        hasExactKeys(value, [
+          "type",
+          "contractVersion",
+          "requestId",
+          "ok",
+          "code",
+        ]) &&
+        typeof value.code === "string" &&
+        codePattern.test(value.code)
+      );
+    }
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "ok",
+        "impact",
+        "settings",
+        "changedKeys",
+      ]) &&
+      typeof value.impact === "string" &&
+      configurationImpacts.has(value.impact) &&
+      isSettings(value.settings) &&
+      isStringArray(value.changedKeys, 128, (item) =>
+        settingKeyPattern.test(item),
+      )
+    );
+  }
   if (value.type === "provider-host-network-request") {
     return (
       hasExactKeys(value, [

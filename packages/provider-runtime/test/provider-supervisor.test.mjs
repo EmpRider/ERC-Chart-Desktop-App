@@ -76,6 +76,12 @@ function createFixture(options = {}) {
     onUnavailable(providerProfileId, code) {
       unavailable.push({ providerProfileId, code });
     },
+    ...(options.onProfileInvalidated === undefined
+      ? {}
+      : { onProfileInvalidated: options.onProfileInvalidated }),
+    ...(options.onProfileRestored === undefined
+      ? {}
+      : { onProfileRestored: options.onProfileRestored }),
     ...(options.hostBroker === undefined
       ? {}
       : { hostBroker: options.hostBroker }),
@@ -97,6 +103,10 @@ function createLaunch(overrides = {}) {
     settings: {},
     ...overrides,
   };
+}
+
+async function flushTasks() {
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 test("returns the single startup rejection when spawning fails", async () => {
@@ -292,6 +302,231 @@ test("supervises provider profiles independently and passes only the profile id"
     {
       providerProfileId: "profile-a",
       code: "PROVIDER_UTILITY_EXITED",
+    },
+  ]);
+});
+
+test("reconfigures only the affected profile and runs invalidation/restoration hooks", async () => {
+  const lifecycle = [];
+  const fixture = createFixture({
+    onProfileInvalidated(providerProfileId, impact) {
+      lifecycle.push({ phase: "invalidated", providerProfileId, impact });
+    },
+    onProfileRestored(providerProfileId, impact) {
+      lifecycle.push({ phase: "restored", providerProfileId, impact });
+    },
+  });
+  const firstLaunch = createLaunch({
+    settings: { endpoint: "https://api.example.com/v1" },
+  });
+  const secondLaunch = createLaunch({ settings: { region: "us" } });
+  const first = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    firstLaunch,
+  );
+  const second = fixture.supervisor.start(
+    "profile-b",
+    "/runtime/provider.js",
+    secondLaunch,
+  );
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  fixture.children[1].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await Promise.all([first, second]);
+
+  const changed = fixture.supervisor.reconfigure("profile-a", {
+    endpoint: "https://api.example.com/v2",
+  });
+  const validationRequest = fixture.children[0].posted.at(-1);
+  assert.equal(validationRequest.type, "provider-config-validation-request");
+  fixture.children[0].emitMessage({
+    type: "provider-config-validation-response",
+    contractVersion: ipcContractVersion,
+    requestId: validationRequest.requestId,
+    ok: true,
+    impact: "reconnect",
+    settings: { endpoint: "https://api.example.com/v2" },
+    changedKeys: ["endpoint"],
+  });
+  await flushTasks();
+
+  assert.deepEqual(lifecycle, [
+    {
+      phase: "invalidated",
+      providerProfileId: "profile-a",
+      impact: "reconnect",
+    },
+  ]);
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "shutdown",
+    contractVersion: ipcContractVersion,
+  });
+  assert.notDeepEqual(fixture.children[1].posted.at(-1), {
+    type: "shutdown",
+    contractVersion: ipcContractVersion,
+  });
+
+  fixture.children[0].emitMessage({
+    type: "stopped",
+    contractVersion: ipcContractVersion,
+  });
+  await flushTasks();
+  assert.equal(fixture.children.length, 3);
+  assert.deepEqual(fixture.children[2].posted[0], {
+    type: "provider-initialize",
+    contractVersion: ipcContractVersion,
+    launch: {
+      ...firstLaunch,
+      settings: { endpoint: "https://api.example.com/v2" },
+    },
+  });
+  fixture.children[2].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+
+  assert.deepEqual(await changed, {
+    impact: "reconnect",
+    settings: { endpoint: "https://api.example.com/v2" },
+    changedKeys: ["endpoint"],
+  });
+  assert.deepEqual(lifecycle, [
+    {
+      phase: "invalidated",
+      providerProfileId: "profile-a",
+      impact: "reconnect",
+    },
+    {
+      phase: "restored",
+      providerProfileId: "profile-a",
+      impact: "reconnect",
+    },
+  ]);
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "ready");
+  assert.equal(fixture.supervisor.getStatus("profile-b"), "ready");
+  assert.equal(fixture.children.length, 3);
+});
+
+test("rejects invalid configuration before stopping the current provider", async () => {
+  const fixture = createFixture();
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch({ settings: { region: "us" } }),
+  );
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+
+  const changed = fixture.supervisor.reconfigure("profile-a", {
+    region: "bad",
+  });
+  const validationRequest = fixture.children[0].posted.at(-1);
+  fixture.children[0].emitMessage({
+    type: "provider-config-validation-response",
+    contractVersion: ipcContractVersion,
+    requestId: validationRequest.requestId,
+    ok: false,
+    code: "PROVIDER_CONFIG_INVALID",
+  });
+
+  await assert.rejects(changed, (error) => {
+    assert.equal(error.code, "PROVIDER_PROFILE_CONFIG_INVALID");
+    return true;
+  });
+  assert.equal(fixture.children.length, 1);
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "ready");
+  assert.equal(
+    fixture.children[0].posted.some((message) => message.type === "shutdown"),
+    false,
+  );
+});
+
+test("rolls back the previous launch when a configuration restart fails", async () => {
+  const lifecycle = [];
+  const fixture = createFixture({
+    onProfileInvalidated(providerProfileId, impact) {
+      lifecycle.push({ phase: "invalidated", providerProfileId, impact });
+    },
+    onProfileRestored(providerProfileId, impact) {
+      lifecycle.push({ phase: "restored", providerProfileId, impact });
+    },
+  });
+  const previousLaunch = createLaunch({ settings: { region: "us" } });
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    previousLaunch,
+  );
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+
+  const changed = fixture.supervisor.reconfigure("profile-a", { region: "eu" });
+  const validationRequest = fixture.children[0].posted.at(-1);
+  fixture.children[0].emitMessage({
+    type: "provider-config-validation-response",
+    contractVersion: ipcContractVersion,
+    requestId: validationRequest.requestId,
+    ok: true,
+    impact: "restart",
+    settings: { region: "eu" },
+    changedKeys: ["region"],
+  });
+  await flushTasks();
+  fixture.children[0].emitMessage({
+    type: "stopped",
+    contractVersion: ipcContractVersion,
+  });
+  await flushTasks();
+
+  assert.deepEqual(fixture.children[1].posted[0], {
+    type: "provider-initialize",
+    contractVersion: ipcContractVersion,
+    launch: { ...previousLaunch, settings: { region: "eu" } },
+  });
+  fixture.children[1].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion + 1,
+  });
+  await flushTasks();
+
+  assert.equal(fixture.children.length, 3);
+  assert.deepEqual(fixture.children[2].posted[0], {
+    type: "provider-initialize",
+    contractVersion: ipcContractVersion,
+    launch: previousLaunch,
+  });
+  fixture.children[2].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+
+  await assert.rejects(changed, (error) => {
+    assert.equal(error.code, "PROVIDER_PROFILE_RESTART_FAILED");
+    return true;
+  });
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "ready");
+  assert.deepEqual(lifecycle, [
+    {
+      phase: "invalidated",
+      providerProfileId: "profile-a",
+      impact: "restart",
+    },
+    {
+      phase: "restored",
+      providerProfileId: "profile-a",
+      impact: "restart",
     },
   ]);
 });

@@ -64,8 +64,13 @@ export type {
   ProviderUtilityPort,
   ProviderUtilityRuntime,
 } from "./utility-runtime.js";
-export { createProviderUtilitySupervisor } from "./provider-supervisor.js";
+export {
+  createProviderUtilitySupervisor,
+  ProviderProfileLifecycleError,
+} from "./provider-supervisor.js";
 export type {
+  ProviderProfileConfigurationChangeResult,
+  ProviderProfileLifecycleErrorCode,
   ProviderUtilityChild,
   ProviderUtilityScheduler,
   ProviderUtilitySupervisor,
@@ -76,11 +81,15 @@ export type {
 export {
   instantiateInstalledProvider,
   normalizeProviderConfiguration,
+  normalizeProviderConfigurationSchema,
+  planProviderConfigurationChange,
   ProviderRuntimeError,
 } from "./provider-instance.js";
 export type {
   InstalledProviderInstance,
   InstalledProviderInstanceOptions,
+  ProviderConfigurationChangeImpact,
+  ProviderConfigurationChangePlan,
   ProviderRuntimeErrorCode,
   ProviderRuntimeHostBroker,
 } from "./provider-instance.js";
@@ -91,6 +100,8 @@ export {
 } from "./provider-protocol.js";
 export type {
   ProviderUtilityChildMessage,
+  ProviderUtilityConfigurationValidationRequestMessage,
+  ProviderUtilityConfigurationValidationResponseMessage,
   ProviderUtilityCredentialRequestMessage,
   ProviderUtilityHostResponseMessage,
   ProviderUtilityInitializeMessage,
