@@ -5,10 +5,12 @@ import {
   open,
   readFile,
   readdir,
+  realpath,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { inflateRaw } from "node:zlib";
 import {
@@ -68,6 +70,15 @@ const centralDirectoryHeaderSignature = 0x02014b50;
 const endOfCentralDirectorySignature = 0x06054b50;
 const utf8Flag = 0x0800;
 const encryptedFlag = 0x0001;
+const windowsReservedDeviceName =
+  /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/iu;
+
+function hasWindowsInvalidSegmentCharacters(value: string): boolean {
+  return Array.from(value).some(
+    (character) =>
+      character.charCodeAt(0) < 32 || '<>:"|?*'.includes(character),
+  );
+}
 
 function resolvedLimits(
   override: Partial<PluginPackageLimits> | undefined,
@@ -100,11 +111,74 @@ function normalizePackagePath(
     .filter((segment) => segment.length > 0);
   if (
     segments.length === 0 ||
-    segments.some((segment) => segment === "." || segment === "..")
+    segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        hasWindowsInvalidSegmentCharacters(segment) ||
+        /[ .]$/u.test(segment) ||
+        windowsReservedDeviceName.test(segment),
+    )
   ) {
     throw new Error("Plugin package contains an invalid path.");
   }
   return segments.join("/");
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+async function pathsOverlap(left: string, right: string): Promise<boolean> {
+  const [resolvedLeft, resolvedRight] = await Promise.all([
+    realpath(left),
+    realpath(right),
+  ]);
+  return (
+    pathContains(resolvedLeft, resolvedRight) ||
+    pathContains(resolvedRight, resolvedLeft)
+  );
+}
+
+async function readHandleBounded(
+  handle: FileHandle,
+  initialSize: number,
+  maximumBytes: number,
+  errorMessage: string,
+): Promise<Buffer> {
+  if (initialSize > maximumBytes) throw new Error(errorMessage);
+
+  const initial = Buffer.allocUnsafe(initialSize);
+  let totalBytes = 0;
+  while (totalBytes < initialSize) {
+    const { bytesRead } = await handle.read(
+      initial,
+      totalBytes,
+      initialSize - totalBytes,
+      null,
+    );
+    if (bytesRead === 0) return initial.subarray(0, totalBytes);
+    totalBytes += bytesRead;
+  }
+
+  const chunks: Buffer[] = [initial];
+  while (true) {
+    const remaining = maximumBytes - totalBytes;
+    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+    if (bytesRead === 0) break;
+    totalBytes += bytesRead;
+    if (totalBytes > maximumBytes) throw new Error(errorMessage);
+    chunks.push(chunk.subarray(0, bytesRead));
+  }
+
+  return chunks.length === 1 ? initial : Buffer.concat(chunks, totalBytes);
 }
 
 function containedPath(root: string, relativePath: string): string {
@@ -212,9 +286,10 @@ async function* readZipEntries(
     if (compressionMethod !== 0 && compressionMethod !== 8) {
       throw new Error("Plugin ZIP contains an unsupported compression method.");
     }
-    const rawName = archive
-      .subarray(nameStart, nameEnd)
-      .toString((flags & utf8Flag) !== 0 ? "utf8" : "latin1");
+    if ((flags & utf8Flag) === 0) {
+      throw new Error("Plugin ZIP entry names must use UTF-8 encoding.");
+    }
+    const rawName = archive.subarray(nameStart, nameEnd).toString("utf8");
     const directory = rawName.endsWith("/") || rawName.endsWith("\\");
     const entryPath = normalizePackagePath(rawName, limits);
     const duplicateKey = entryPath.toLocaleLowerCase("en-US");
@@ -307,23 +382,29 @@ async function copyFolderIntoStaging(
           "Plugin folder contains an unsupported filesystem entry.",
         );
       }
-      const info = await stat(absolute);
-      fileCount += 1;
-      totalBytes += info.size;
-      if (
-        fileCount > limits.maximumFiles ||
-        info.size > limits.maximumFileBytes ||
-        totalBytes > limits.maximumExpandedBytes
-      ) {
-        throw new Error("Plugin folder exceeds staging limits.");
-      }
-      const destination = containedPath(stagingPath, packagePath);
-      await mkdir(path.dirname(destination), { recursive: true });
       const sourceHandle = await open(absolute, "r");
       try {
-        await writeFile(destination, await sourceHandle.readFile(), {
-          flag: "wx",
-        });
+        const info = await sourceHandle.stat();
+        if (!info.isFile()) {
+          throw new Error(
+            "Plugin folder contains an unsupported filesystem entry.",
+          );
+        }
+        fileCount += 1;
+        if (fileCount > limits.maximumFiles) {
+          throw new Error("Plugin folder exceeds staging limits.");
+        }
+        const remainingExpandedBytes = limits.maximumExpandedBytes - totalBytes;
+        const data = await readHandleBounded(
+          sourceHandle,
+          info.size,
+          Math.min(limits.maximumFileBytes, remainingExpandedBytes),
+          "Plugin folder exceeds staging limits.",
+        );
+        totalBytes += data.length;
+        const destination = containedPath(stagingPath, packagePath);
+        await mkdir(path.dirname(destination), { recursive: true });
+        await writeFile(destination, data, { flag: "wx" });
       } finally {
         await sourceHandle.close();
       }
@@ -338,12 +419,20 @@ async function extractZipIntoStaging(
   stagingPath: string,
   limits: PluginPackageLimits,
 ): Promise<void> {
-  const info = await stat(sourcePath);
-  if (!info.isFile()) throw new Error("Plugin ZIP source must be a file.");
-  if (info.size > limits.maximumArchiveBytes) {
-    throw new Error("Plugin ZIP exceeds the archive size limit.");
+  const sourceHandle = await open(sourcePath, "r");
+  let archive: Buffer;
+  try {
+    const info = await sourceHandle.stat();
+    if (!info.isFile()) throw new Error("Plugin ZIP source must be a file.");
+    archive = await readHandleBounded(
+      sourceHandle,
+      info.size,
+      limits.maximumArchiveBytes,
+      "Plugin ZIP exceeds the archive size limit.",
+    );
+  } finally {
+    await sourceHandle.close();
   }
-  const archive = await readFile(sourcePath);
   for await (const entry of readZipEntries(archive, limits)) {
     const destination = containedPath(stagingPath, entry.path);
     if (entry.directory) {
@@ -454,6 +543,12 @@ export async function stagePluginPackage(
   }
   const limits = resolvedLimits(options.limits);
   await mkdir(options.stagingRoot, { recursive: true });
+  if (
+    source.kind === "folder" &&
+    (await pathsOverlap(source.path, options.stagingRoot))
+  ) {
+    throw new Error("Plugin folder source overlaps the staging directory.");
+  }
   const stagingPath = await mkdtemp(path.join(options.stagingRoot, "plugin-"));
   let complete = false;
   try {

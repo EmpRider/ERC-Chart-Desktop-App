@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -48,10 +49,11 @@ function makeStoredZip(entries) {
   for (const [name, value, metadata = {}] of entries) {
     const nameBytes = Buffer.from(name, "utf8");
     const data = Buffer.from(value);
+    const flags = metadata.flags ?? 0x0800;
     const local = Buffer.alloc(30 + nameBytes.length);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(0, 8);
     local.writeUInt32LE(0, 14);
     local.writeUInt32LE(data.length, 18);
@@ -64,7 +66,7 @@ function makeStoredZip(entries) {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(flags, 8);
     central.writeUInt16LE(0, 10);
     central.writeUInt32LE(0, 16);
     central.writeUInt32LE(data.length, 20);
@@ -90,9 +92,14 @@ test("stages a provider folder into a controlled temporary directory", async () 
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-stage-"));
   try {
     const source = await createFolderFixture(root);
+    const stagingRoot = path.join(root, "staging");
     const staged = await stagePluginPackage(
       { kind: "folder", path: source },
-      { stagingRoot: path.join(root, "staging") },
+      { stagingRoot },
+    );
+    const stagedAgain = await stagePluginPackage(
+      { kind: "folder", path: source },
+      { stagingRoot },
     );
 
     assert.equal(staged.sourceKind, "folder");
@@ -102,11 +109,27 @@ test("stages a provider folder into a controlled temporary directory", async () 
       ["dist/index.js", "plugin.json"],
     );
     assert.match(staged.packageHash, /^[a-f0-9]{64}$/);
+    assert.deepEqual(stagedAgain.files, staged.files);
+    assert.equal(stagedAgain.packageHash, staged.packageHash);
     assert.equal(
       await readFile(path.join(staged.stagingPath, "dist", "index.js"), "utf8"),
       "export default {};\n",
     );
+
+    await writeFile(
+      path.join(source, "dist", "index.js"),
+      "export default { changed: true };\n",
+    );
+    const changed = await stagePluginPackage(
+      { kind: "folder", path: source },
+      { stagingRoot },
+    );
+    assert.notEqual(changed.packageHash, staged.packageHash);
+
     await discardStagedPlugin(staged);
+    await assert.rejects(stat(staged.stagingPath), { code: "ENOENT" });
+    await discardStagedPlugin(stagedAgain);
+    await discardStagedPlugin(changed);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -177,6 +200,33 @@ test("rejects traversal, symlink, duplicate, and oversized ZIP entries", async (
       options: { limits: { maximumFileBytes: 512 } },
       pattern: /oversized file/i,
     },
+    {
+      name: "non utf8 filename",
+      entries: [
+        ["plugin.json", JSON.stringify(pluginManifest())],
+        ["dist/index.js", "export default {};\n", { flags: 0 }],
+      ],
+      options: {},
+      pattern: /UTF-8 encoding/i,
+    },
+    {
+      name: "windows alternate data stream",
+      entries: [
+        ["plugin.json", JSON.stringify(pluginManifest())],
+        ["dist/index.js:metadata", "export default {};\n"],
+      ],
+      options: {},
+      pattern: /invalid path/i,
+    },
+    {
+      name: "windows reserved device name",
+      entries: [
+        ["plugin.json", JSON.stringify(pluginManifest())],
+        ["dist/CON.js", "export default {};\n"],
+      ],
+      options: {},
+      pattern: /invalid path/i,
+    },
   ];
 
   try {
@@ -235,6 +285,23 @@ test("rejects folder packages that exceed staging limits", async () => {
       /exceeds staging limits/i,
     );
     assert.deepEqual(await readdir(stagingRoot), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects folder sources that overlap the staging root", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-overlap-"));
+  try {
+    const source = await createFolderFixture(root);
+    await assert.rejects(
+      stagePluginPackage(
+        { kind: "folder", path: source },
+        { stagingRoot: source },
+      ),
+      /overlaps the staging directory/i,
+    );
+    assert.deepEqual((await readdir(source)).sort(), ["dist", "plugin.json"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
