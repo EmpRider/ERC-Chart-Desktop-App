@@ -12,7 +12,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discardStagedPlugin, stagePluginPackage } from "../dist/index.js";
+import {
+  discardStagedPlugin,
+  stagePluginPackage,
+} from "../dist/plugin-staging.js";
 
 function pluginManifest(entry = "dist/index.js") {
   return {
