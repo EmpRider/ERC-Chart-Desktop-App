@@ -43,6 +43,7 @@ export interface ProviderRuntimeHostBroker {
   readonly requestNetwork: (
     providerProfileId: string,
     request: ProviderNetworkRequest,
+    signal?: AbortSignal,
   ) => Promise<ProviderNetworkResponse>;
   readonly getCredential: (
     providerProfileId: string,

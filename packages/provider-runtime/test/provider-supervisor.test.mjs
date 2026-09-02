@@ -573,6 +573,71 @@ test("reports stable host failures when the broker is absent or rejects", async 
   await rejectedStarted;
 });
 
+test("bounds and cancels in-flight provider network requests", async () => {
+  const signals = [];
+  const fixture = createFixture({
+    hostBroker: {
+      requestNetwork(_providerProfileId, _request, signal) {
+        signals.push(signal);
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      },
+      async getCredential() {
+        return null;
+      },
+      log() {
+        return undefined;
+      },
+      reportStatus() {
+        return undefined;
+      },
+    },
+  });
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    createLaunch(),
+  );
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+
+  for (let index = 1; index <= 9; index += 1) {
+    fixture.children[0].emitMessage({
+      type: "provider-host-network-request",
+      contractVersion: ipcContractVersion,
+      requestId: `profile-a.${index}`,
+      request: { url: "https://api.example.com/v1/status" },
+    });
+  }
+  assert.equal(signals.length, 8);
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "provider-host-network-response",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.9",
+    ok: false,
+    code: "PROVIDER_HOST_NETWORK_FAILED",
+  });
+
+  const stopped = fixture.supervisor.shutdown("profile-a");
+  assert.equal(
+    signals.every((signal) => signal.aborted),
+    true,
+  );
+  fixture.children[0].emitMessage({
+    type: "stopped",
+    contractVersion: ipcContractVersion,
+  });
+  await stopped;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "stopped");
+});
+
 test("fails the provider when a host response cannot be posted", async () => {
   const scheduler = createScheduler();
   const messages = new Set();

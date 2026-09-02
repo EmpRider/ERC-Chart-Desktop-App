@@ -69,7 +69,10 @@ interface ProviderProcessState {
   resolveShutdown: (() => void) | undefined;
   shutdownPromise: Promise<void> | undefined;
   permissions: ProviderUtilityLaunchDescriptor["permissions"] | undefined;
+  inFlightNetwork: Set<AbortController>;
 }
+
+const maximumProviderNetworkRequestsPerProfile = 8;
 
 function requireTimeout(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1)
@@ -121,6 +124,11 @@ export function createProviderUtilitySupervisor(
     }
   };
 
+  const abortInFlightNetwork = (state: ProviderProcessState): void => {
+    for (const controller of state.inFlightNetwork) controller.abort();
+    state.inFlightNetwork.clear();
+  };
+
   const fail = (
     providerProfileId: string,
     state: ProviderProcessState,
@@ -132,6 +140,7 @@ export function createProviderUtilitySupervisor(
     const wasStarting = state.status === "starting";
     const wasStopping = state.status === "stopping";
     clearTimer(state);
+    abortInFlightNetwork(state);
     removeListeners(state);
     if (terminateChild) terminate(state);
     state.child = undefined;
@@ -148,6 +157,7 @@ export function createProviderUtilitySupervisor(
 
   const finishStopped = (state: ProviderProcessState): void => {
     clearTimer(state);
+    abortInFlightNetwork(state);
     removeListeners(state);
     state.child = undefined;
     state.status = "stopped";
@@ -185,6 +195,7 @@ export function createProviderUtilitySupervisor(
       resolveShutdown: undefined,
       shutdownPromise: undefined,
       permissions: launch.permissions,
+      inFlightNetwork: new Set(),
     };
     states.set(providerProfileId, state);
 
@@ -274,8 +285,37 @@ export function createProviderUtilitySupervisor(
           );
           return true;
         }
-        void options.hostBroker
-          .requestNetwork(providerProfileId, message.request)
+        if (
+          state.inFlightNetwork.size >= maximumProviderNetworkRequestsPerProfile
+        ) {
+          postHostFailure(
+            "provider-host-network-response",
+            message.requestId,
+            "PROVIDER_HOST_NETWORK_FAILED",
+          );
+          return true;
+        }
+        const controller = new AbortController();
+        state.inFlightNetwork.add(controller);
+        let networkRequest: ReturnType<
+          ProviderRuntimeHostBroker["requestNetwork"]
+        >;
+        try {
+          networkRequest = options.hostBroker.requestNetwork(
+            providerProfileId,
+            message.request,
+            controller.signal,
+          );
+        } catch {
+          state.inFlightNetwork.delete(controller);
+          postHostFailure(
+            "provider-host-network-response",
+            message.requestId,
+            "PROVIDER_HOST_NETWORK_FAILED",
+          );
+          return true;
+        }
+        void networkRequest
           .then((response) => {
             if (state.status !== "starting" && state.status !== "ready") return;
             state.child?.postMessage({
@@ -293,7 +333,8 @@ export function createProviderUtilitySupervisor(
               message.requestId,
               "PROVIDER_HOST_NETWORK_FAILED",
             );
-          });
+          })
+          .finally(() => state.inFlightNetwork.delete(controller));
         return true;
       }
       if (message.type === "provider-host-credential-request") {
@@ -457,6 +498,7 @@ export function createProviderUtilitySupervisor(
     }
 
     state.status = "stopping";
+    abortInFlightNetwork(state);
     state.shutdownPromise = new Promise<void>((resolve) => {
       state.resolveShutdown = resolve;
     });

@@ -17,6 +17,7 @@ type ProviderStatus = Parameters<ProviderRuntimeHostBroker["reportStatus"]>[1];
 const defaultProviderNetworkTimeoutMs = 30_000;
 const minimumProviderNetworkTimeoutMs = 1;
 const maximumProviderNetworkTimeoutMs = 120_000;
+export const maximumProviderNetworkResponseBytes: number = 8 * 1024 * 1024;
 
 export interface ProviderHostBrokerOptions {
   readonly launches: ReadonlyMap<string, ProviderUtilityLaunchDescriptor>;
@@ -69,8 +70,15 @@ function parseCredentialBundle(
 async function fetchProviderNetwork(
   fetcher: ProviderHostBrokerOptions["fetch"],
   request: ProviderNetworkRequest,
+  signal?: AbortSignal,
 ): Promise<ProviderNetworkResponse> {
   const controller = new AbortController();
+  const abortFromCaller = (): void => controller.abort();
+  if (signal?.aborted === true) {
+    controller.abort();
+  } else {
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
   const timer = setTimeout(
     () => controller.abort(),
     resolveProviderNetworkTimeoutMs(request.timeoutMs),
@@ -87,14 +95,51 @@ async function fetchProviderNetwork(
       ...(request.headers === undefined ? {} : { headers: request.headers }),
       ...(body === undefined ? {} : { body }),
       signal: controller.signal,
+      cache: "no-store",
+      redirect: "error",
     });
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > maximumProviderNetworkResponseBytes
+    ) {
+      throw new Error("Provider network response exceeds the allowed size.");
+    }
+    const reader = response.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let byteLength = 0;
+    if (reader !== undefined) {
+      try {
+        while (true) {
+          const result = await reader.read();
+          if (result.done) break;
+          byteLength += result.value.byteLength;
+          if (byteLength > maximumProviderNetworkResponseBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new Error(
+              "Provider network response exceeds the allowed size.",
+            );
+          }
+          chunks.push(result.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    const responseBody = new Uint8Array(byteLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      responseBody.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
     return {
       status: response.status,
       headers: Object.fromEntries(response.headers.entries()),
-      body: new Uint8Array(await response.arrayBuffer()),
+      body: responseBody,
     };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -117,7 +162,7 @@ export function createDesktopProviderHostBroker(
   options: ProviderHostBrokerOptions,
 ): ProviderRuntimeHostBroker {
   return {
-    requestNetwork: (providerProfileId, request) => {
+    requestNetwork: (providerProfileId, request, signal) => {
       const launch = requireLaunch(options.launches, providerProfileId);
       if (
         !isProviderNetworkRequestAllowed(
@@ -127,7 +172,10 @@ export function createDesktopProviderHostBroker(
       ) {
         throw new Error("Provider network request is not permitted.");
       }
-      return fetchProviderNetwork(options.fetch, request);
+      if (new URL(request.url).protocol !== "https:") {
+        throw new Error("Provider network request protocol is not supported.");
+      }
+      return fetchProviderNetwork(options.fetch, request, signal);
     },
     getCredential: async (providerProfileId, credentialKey) => {
       const launch = requireLaunch(options.launches, providerProfileId);
