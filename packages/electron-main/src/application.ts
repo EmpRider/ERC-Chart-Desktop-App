@@ -31,6 +31,10 @@ export interface DesktopAppAdapter {
   readonly quit: () => void;
 }
 
+export interface ProviderConfigurationChange {
+  readonly settings: Readonly<Record<string, boolean | number | string>>;
+}
+
 export interface DesktopApplicationAdapters<ProviderLaunch = unknown> {
   readonly app: DesktopAppAdapter;
   readonly registerRuntimeInfoHandler: (
@@ -62,6 +66,10 @@ export interface DesktopApplicationAdapters<ProviderLaunch = unknown> {
       entryPath: string,
       launch: ProviderLaunch,
     ) => Promise<void>;
+    readonly reconfigure: (
+      providerProfileId: string,
+      settings: Readonly<Record<string, boolean | number | string>>,
+    ) => Promise<ProviderConfigurationChange>;
     readonly shutdown: (providerProfileId: string) => Promise<void>;
     readonly shutdownAll: () => Promise<void>;
   };
@@ -78,6 +86,10 @@ export interface DesktopApplicationController<ProviderLaunch = unknown> {
     providerProfileId: string,
     launch: ProviderLaunch,
   ) => Promise<void>;
+  readonly reconfigureProviderProfile: (
+    providerProfileId: string,
+    settings: Readonly<Record<string, boolean | number | string>>,
+  ) => Promise<ProviderConfigurationChange>;
   readonly stopProviderProfile: (providerProfileId: string) => Promise<void>;
   readonly shutdown: () => Promise<void>;
 }
@@ -184,6 +196,11 @@ export async function startDesktopApplication<ProviderLaunch>(
         paths.providerUtilityPath,
         launch,
       ),
+    reconfigureProviderProfile: (
+      providerProfileId,
+      settings,
+    ): Promise<ProviderConfigurationChange> =>
+      adapters.providerUtilities.reconfigure(providerProfileId, settings),
     stopProviderProfile: (providerProfileId): Promise<void> =>
       adapters.providerUtilities.shutdown(providerProfileId),
     shutdown: async (): Promise<void> => {

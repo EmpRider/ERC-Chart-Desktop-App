@@ -2,6 +2,7 @@ import { ipcContractVersion } from "@erc-chart/contracts";
 import type { ProviderNetworkResponse } from "@erc-chart/provider-sdk";
 import {
   instantiateInstalledProvider,
+  planProviderConfigurationChange,
   ProviderRuntimeError,
   type InstalledProviderInstance,
   type ProviderRuntimeHostBroker,
@@ -44,6 +45,9 @@ export function createProviderUtilityRuntime(
   let stopped = false;
   let initialized = false;
   let initializationSettled = false;
+  let activeInstance: InstalledProviderInstance | undefined;
+  let activePermissions:
+    Parameters<typeof planProviderConfigurationChange>[3] | undefined;
   let removeListener = (): void => undefined;
   let requestSequence = 0;
   let resolveReady: (value: InstalledProviderInstance) => void = () =>
@@ -197,6 +201,45 @@ export function createProviderUtilityRuntime(
       handleHostResponse(message);
       return;
     }
+    if (message.type === "provider-config-validation-request") {
+      if (
+        activeInstance === undefined ||
+        activePermissions === undefined ||
+        stopped
+      ) {
+        fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+        return;
+      }
+      try {
+        const plan = planProviderConfigurationChange(
+          activeInstance.definition,
+          activeInstance.settings,
+          message.settings,
+          activePermissions,
+        );
+        port.postMessage({
+          type: "provider-config-validation-response",
+          contractVersion: ipcContractVersion,
+          requestId: message.requestId,
+          ok: true,
+          impact: plan.impact,
+          settings: plan.settings,
+          changedKeys: plan.changedKeys,
+        });
+      } catch (error) {
+        port.postMessage({
+          type: "provider-config-validation-response",
+          contractVersion: ipcContractVersion,
+          requestId: message.requestId,
+          ok: false,
+          code:
+            error instanceof ProviderRuntimeError
+              ? error.code
+              : "PROVIDER_CONFIG_INVALID",
+        });
+      }
+      return;
+    }
     if (message.type !== "provider-initialize" || initialized || stopped) {
       fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
       return;
@@ -210,6 +253,8 @@ export function createProviderUtilityRuntime(
       .then((created) => {
         initializationSettled = true;
         if (stopped) return;
+        activeInstance = created;
+        activePermissions = message.launch.permissions;
         resolveReady(created);
         port.postMessage({
           type: "ready",

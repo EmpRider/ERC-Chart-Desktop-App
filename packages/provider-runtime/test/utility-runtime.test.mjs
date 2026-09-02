@@ -65,7 +65,12 @@ async function withProviderEntry(callback) {
       },
       version: "1.0.0",
       config: {
-        endpoint: { type: "string", defaultValue: "https://api.example.com/" },
+        endpoint: {
+          type: "string",
+          defaultValue: "https://api.example.com/",
+          requiresReconnect: true
+        },
+        retries: { type: "number", defaultValue: 2, minimum: 0, maximum: 5 },
         token: { type: "secret", credentialKey: "auth_token", required: true }
       },
       async create(host, settings) {
@@ -179,6 +184,40 @@ test("becomes ready only after installed-provider creation and broker round trip
       (message) => message.type === "provider-host-log",
     );
     assert.equal(log.metadata.token, "[REDACTED]");
+
+    fixture.receive({
+      type: "provider-config-validation-request",
+      contractVersion: ipcContractVersion,
+      requestId: "cfg.1",
+      settings: { endpoint: "https://sandbox.example.com/", retries: 2 },
+    });
+    const validated = await fixture.waitForMessage(
+      "provider-config-validation-response",
+    );
+    assert.deepEqual(validated, {
+      type: "provider-config-validation-response",
+      contractVersion: ipcContractVersion,
+      requestId: "cfg.1",
+      ok: true,
+      impact: "reconnect",
+      settings: { endpoint: "https://sandbox.example.com/", retries: 2 },
+      changedKeys: ["endpoint"],
+    });
+
+    fixture.receive({
+      type: "provider-config-validation-request",
+      contractVersion: ipcContractVersion,
+      requestId: "cfg.2",
+      settings: { token: "must-not-persist" },
+    });
+    await flushTasks();
+    assert.deepEqual(fixture.sent.at(-1), {
+      type: "provider-config-validation-response",
+      contractVersion: ipcContractVersion,
+      requestId: "cfg.2",
+      ok: false,
+      code: "PROVIDER_CONFIG_INVALID",
+    });
 
     fixture.receive({ type: "shutdown", contractVersion: ipcContractVersion });
     assert.equal(fixture.sent.at(-1).type, "stopped");
