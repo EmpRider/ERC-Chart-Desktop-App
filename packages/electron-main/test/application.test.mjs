@@ -9,6 +9,9 @@ function createFixture(platform = "win32") {
   const windows = [];
   let runtimeInfoHandler;
   let shutdownCount = 0;
+  let providerShutdownAllCount = 0;
+  const providerStartCalls = [];
+  const providerShutdownCalls = [];
   let quitCount = 0;
   let loadUrlError;
   let shutdownError;
@@ -83,6 +86,17 @@ function createFixture(platform = "win32") {
         if (shutdownError !== undefined) throw shutdownError;
       },
     },
+    providerUtilities: {
+      async start(providerProfileId, entryPath) {
+        providerStartCalls.push({ providerProfileId, entryPath });
+      },
+      async shutdown(providerProfileId) {
+        providerShutdownCalls.push(providerProfileId);
+      },
+      async shutdownAll() {
+        providerShutdownAllCount += 1;
+      },
+    },
     workspacePersistence: {
       async load() {
         return null;
@@ -106,6 +120,9 @@ function createFixture(platform = "win32") {
     windows,
     getRuntimeInfoHandler: () => runtimeInfoHandler,
     getShutdownCount: () => shutdownCount,
+    getProviderShutdownAllCount: () => providerShutdownAllCount,
+    providerStartCalls,
+    providerShutdownCalls,
     getQuitCount: () => quitCount,
     setLoadUrlError: (error) => {
       loadUrlError = error;
@@ -168,6 +185,25 @@ test("registers fixed IPC before loading one secure window", async () => {
   });
 });
 
+test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+
+  assert.deepEqual(fixture.providerStartCalls, []);
+  await controller.startProviderProfile("profile-a");
+  await controller.stopProviderProfile("profile-a");
+
+  assert.deepEqual(fixture.providerStartCalls, [
+    {
+      providerProfileId: "profile-a",
+      entryPath: "/runtime/provider-utility.js",
+    },
+  ]);
+  assert.deepEqual(fixture.providerShutdownCalls, ["profile-a"]);
+  await controller.shutdown();
+  assert.equal(fixture.getProviderShutdownAllCount(), 1);
+});
+
 test("recreates a missing window and quits only on non-macOS", async () => {
   const fixture = createFixture();
   await startDesktopApplication(fixture.adapters, paths);
@@ -193,6 +229,7 @@ test("shuts down the data utility and IPC registration idempotently", async () =
   await controller.shutdown();
 
   assert.equal(fixture.getShutdownCount(), 1);
+  assert.equal(fixture.getProviderShutdownAllCount(), 1);
   assert.equal(
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,

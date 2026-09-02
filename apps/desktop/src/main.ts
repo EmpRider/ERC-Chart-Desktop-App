@@ -17,6 +17,10 @@ import {
   type UtilityChild,
 } from "@erc-chart/electron-main";
 import {
+  createProviderUtilitySupervisor,
+  type ProviderUtilityChild,
+} from "@erc-chart/provider-runtime";
+import {
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
@@ -109,6 +113,25 @@ const dataUtility = createUtilitySupervisor({
   shutdownTimeoutMs: 2_000,
   onUnavailable: (): void => {
     console.error("ERC Chart data utility unavailable.");
+  },
+});
+const providerUtilities = createProviderUtilitySupervisor({
+  spawn: (entryPath, args): ProviderUtilityChild =>
+    adaptUtilityChild(
+      utilityProcess.fork(entryPath, [...args], {
+        serviceName: "ERC Chart Provider",
+        stdio: "ignore",
+      }),
+    ),
+  scheduler: {
+    setTimeout: (callback, delayMs): NodeJS.Timeout =>
+      setTimeout(callback, delayMs),
+    clearTimeout: (timer): void => clearTimeout(timer as NodeJS.Timeout),
+  },
+  startupTimeoutMs: 5_000,
+  shutdownTimeoutMs: 2_000,
+  onUnavailable: (_providerProfileId, code): void => {
+    console.error(`ERC Chart provider utility unavailable (${code}).`);
   },
 });
 
@@ -313,6 +336,13 @@ async function startDesktopMain(): Promise<void> {
           reportSmokeStage("data-utility-ready");
         },
         shutdown: (): Promise<void> => dataUtility.shutdown(),
+      },
+      providerUtilities: {
+        start: (providerProfileId, entryPath): Promise<void> =>
+          providerUtilities.start(providerProfileId, entryPath),
+        shutdown: (providerProfileId): Promise<void> =>
+          providerUtilities.shutdown(providerProfileId),
+        shutdownAll: (): Promise<void> => providerUtilities.shutdownAll(),
       },
       workspacePersistence: {
         load: async (): Promise<PersistedWorkspace | null> =>
