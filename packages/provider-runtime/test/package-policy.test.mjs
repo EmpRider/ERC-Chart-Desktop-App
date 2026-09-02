@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -109,6 +116,48 @@ test("rejects files outside the approved package allowlist", () => {
       /outside the approved .* allowlist/i,
       filePath,
     );
+  }
+});
+
+test("rejects package-manager metadata without executing install or build scripts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-scripts-"));
+  const source = path.join(root, "provider-folder");
+  const stagingRoot = path.join(root, "staging");
+  const markerPath = path.join(root, "script-executed.txt");
+  try {
+    await mkdir(path.join(source, "dist"), { recursive: true });
+    await writeFile(
+      path.join(source, "plugin.json"),
+      JSON.stringify(pluginManifest()),
+    );
+    await writeFile(
+      path.join(source, "dist", "index.js"),
+      "export default {};\n",
+    );
+    await writeFile(
+      path.join(source, "package.json"),
+      JSON.stringify({
+        scripts: {
+          install: `node -e "require('node:fs').writeFileSync('${markerPath.replaceAll("\\", "\\\\")}', 'install')"`,
+          build: `node -e "require('node:fs').writeFileSync('${markerPath.replaceAll("\\", "\\\\")}', 'build')"`,
+        },
+      }),
+    );
+
+    await assert.rejects(
+      stagePluginPackage(
+        { kind: "folder", path: source },
+        {
+          stagingRoot,
+          trustPolicy: { mode: "developer", trustedPublisherKeys: {} },
+        },
+      ),
+      /outside the approved .* allowlist.*package\.json/i,
+    );
+    await assert.rejects(access(markerPath), { code: "ENOENT" });
+    assert.deepEqual(await readdir(stagingRoot), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
