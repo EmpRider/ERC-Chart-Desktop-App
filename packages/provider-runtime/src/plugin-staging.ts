@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  cp,
+  lstat,
   mkdir,
   mkdtemp,
   open,
@@ -11,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { inflateRawSync } from "node:zlib";
+import { inflateRaw } from "node:zlib";
 import {
   inspectPluginManifest,
   type ContractVersion,
@@ -132,10 +134,26 @@ function findEndOfCentralDirectory(archive: Buffer): number {
   throw new Error("Plugin ZIP is missing its central directory.");
 }
 
-function readZipEntries(
+function inflateRawAsync(
+  compressed: Buffer,
+  maximumFileBytes: number,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    inflateRaw(
+      compressed,
+      { maxOutputLength: maximumFileBytes },
+      (error, result) => {
+        if (error !== null) reject(error);
+        else resolve(result);
+      },
+    );
+  });
+}
+
+async function readZipEntries(
   archive: Buffer,
   limits: PluginPackageLimits,
-): readonly ZipEntry[] {
+): Promise<readonly ZipEntry[]> {
   const eocd = findEndOfCentralDirectory(archive);
   const diskNumber = archive.readUInt16LE(eocd + 4);
   const directoryDisk = archive.readUInt16LE(eocd + 6);
@@ -243,9 +261,7 @@ function readZipEntries(
     const data =
       compressionMethod === 0
         ? Buffer.from(compressed)
-        : inflateRawSync(compressed, {
-            maxOutputLength: limits.maximumFileBytes,
-          });
+        : await inflateRawAsync(compressed, limits.maximumFileBytes);
     if (data.length !== uncompressedSize) {
       throw new Error("Plugin ZIP entry size does not match its metadata.");
     }
@@ -333,7 +349,7 @@ async function extractZipIntoStaging(
     throw new Error("Plugin ZIP exceeds the archive size limit.");
   }
   const archive = await readFile(sourcePath);
-  for (const entry of readZipEntries(archive, limits)) {
+  for (const entry of await readZipEntries(archive, limits)) {
     const destination = containedPath(stagingPath, entry.path);
     if (entry.directory) {
       await mkdir(destination, { recursive: true });
@@ -373,7 +389,9 @@ async function collectStagedFiles(
     }
   };
   await visit(stagingPath);
-  return files.sort((left, right) => left.path.localeCompare(right.path));
+  return files.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
 }
 
 function packageHash(files: readonly StagedPluginFile[]): string {
@@ -470,10 +488,36 @@ export async function discardStagedPlugin(
   await rm(staged.stagingPath, { recursive: true, force: true });
 }
 
+/**
+ * Moves a staged package into its final version directory.
+ * The destination must not exist. A cross-volume move falls back to copy/remove.
+ */
 export async function moveStagedPlugin(
   staged: StagedPluginPackage,
   destinationPath: string,
 ): Promise<void> {
   await mkdir(path.dirname(destinationPath), { recursive: true });
-  await rename(staged.stagingPath, destinationPath);
+  try {
+    await lstat(destinationPath);
+    throw new Error("Plugin install destination must not already exist.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  try {
+    await rename(staged.stagingPath, destinationPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    try {
+      await cp(staged.stagingPath, destinationPath, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+      });
+    } catch (copyError) {
+      await rm(destinationPath, { recursive: true, force: true });
+      throw copyError;
+    }
+    await rm(staged.stagingPath, { recursive: true, force: true });
+  }
 }
