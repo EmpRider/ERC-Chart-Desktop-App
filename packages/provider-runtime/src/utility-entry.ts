@@ -27,4 +27,5 @@ const port: ProviderUtilityPort = {
   },
 };
 
-createProviderUtilityRuntime(port, providerProfileId);
+const runtime = createProviderUtilityRuntime(port, providerProfileId);
+void runtime.ready.catch(() => undefined);

@@ -1,8 +1,14 @@
 import {
   ipcContractVersion,
   isUtilityStatusMessage,
-  type UtilityControlMessage,
 } from "@erc-chart/contracts";
+import type { ProviderRuntimeHostBroker } from "./provider-instance.js";
+import {
+  isProviderUtilityChildMessage,
+  type ProviderUtilityChildMessage,
+  type ProviderUtilityLaunchDescriptor,
+  type ProviderUtilityParentMessage,
+} from "./provider-protocol.js";
 
 export type ProviderUtilitySupervisorStatus =
   "idle" | "starting" | "ready" | "stopping" | "stopped" | "failed";
@@ -11,7 +17,7 @@ export type ProviderUtilityUnavailableCode =
   "PROVIDER_UTILITY_EXITED" | "PROVIDER_UTILITY_PROTOCOL_VIOLATION";
 
 export interface ProviderUtilityChild {
-  readonly postMessage: (message: UtilityControlMessage) => void;
+  readonly postMessage: (message: ProviderUtilityParentMessage) => void;
   readonly kill: () => void;
   readonly onMessage: (listener: (message: unknown) => void) => () => void;
   readonly onExit: (listener: (code: number | null) => void) => () => void;
@@ -34,12 +40,14 @@ export interface ProviderUtilitySupervisorOptions {
     providerProfileId: string,
     code: ProviderUtilityUnavailableCode,
   ) => void;
+  readonly hostBroker?: ProviderRuntimeHostBroker;
 }
 
 export interface ProviderUtilitySupervisor {
   readonly start: (
     providerProfileId: string,
     entryPath: string,
+    launch?: ProviderUtilityLaunchDescriptor,
   ) => Promise<void>;
   readonly shutdown: (providerProfileId: string) => Promise<void>;
   readonly shutdownAll: () => Promise<void>;
@@ -156,6 +164,7 @@ export function createProviderUtilitySupervisor(
   const start = (
     providerProfileIdValue: string,
     entryPath: string,
+    launch?: ProviderUtilityLaunchDescriptor,
   ): Promise<void> => {
     const providerProfileId = requireProviderProfileId(providerProfileIdValue);
     if (typeof entryPath !== "string" || entryPath.trim() === "")
@@ -192,11 +201,128 @@ export function createProviderUtilitySupervisor(
         true,
       );
 
+    const postHostFailure = (
+      type:
+        "provider-host-network-response" | "provider-host-credential-response",
+      requestId: string,
+      code: string,
+    ): void => {
+      try {
+        state.child?.postMessage({
+          type,
+          contractVersion: ipcContractVersion,
+          requestId,
+          ok: false,
+          code,
+        });
+      } catch {
+        fail(
+          providerProfileId,
+          state,
+          new Error("Provider host response could not be delivered."),
+          "PROVIDER_UTILITY_PROTOCOL_VIOLATION",
+          true,
+        );
+      }
+    };
+
+    const handleHostMessage = (
+      message: ProviderUtilityChildMessage,
+    ): boolean => {
+      if (isUtilityStatusMessage(message)) return false;
+      if (state.status !== "starting" && state.status !== "ready") {
+        protocolViolation();
+        return true;
+      }
+      if (message.type === "provider-host-log") {
+        try {
+          options.hostBroker?.log(
+            providerProfileId,
+            message.level,
+            message.code,
+            message.metadata,
+          );
+        } catch {
+          // Logging failures must not terminate a healthy provider process.
+        }
+        return true;
+      }
+      if (message.type === "provider-host-status") {
+        try {
+          options.hostBroker?.reportStatus(providerProfileId, message.status);
+        } catch {
+          // Status observers are diagnostics and must not own provider lifetime.
+        }
+        return true;
+      }
+      if (message.type === "provider-host-network-request") {
+        if (options.hostBroker === undefined) {
+          postHostFailure(
+            "provider-host-network-response",
+            message.requestId,
+            "PROVIDER_HOST_UNAVAILABLE",
+          );
+          return true;
+        }
+        void options.hostBroker
+          .requestNetwork(providerProfileId, message.request)
+          .then((response) => {
+            if (state.status !== "starting" && state.status !== "ready") return;
+            state.child?.postMessage({
+              type: "provider-host-network-response",
+              contractVersion: ipcContractVersion,
+              requestId: message.requestId,
+              ok: true,
+              response,
+            });
+          })
+          .catch(() => {
+            if (state.status !== "starting" && state.status !== "ready") return;
+            postHostFailure(
+              "provider-host-network-response",
+              message.requestId,
+              "PROVIDER_HOST_NETWORK_FAILED",
+            );
+          });
+        return true;
+      }
+      if (options.hostBroker === undefined) {
+        postHostFailure(
+          "provider-host-credential-response",
+          message.requestId,
+          "PROVIDER_HOST_UNAVAILABLE",
+        );
+        return true;
+      }
+      void options.hostBroker
+        .getCredential(providerProfileId, message.credentialKey)
+        .then((credential) => {
+          if (state.status !== "starting" && state.status !== "ready") return;
+          state.child?.postMessage({
+            type: "provider-host-credential-response",
+            contractVersion: ipcContractVersion,
+            requestId: message.requestId,
+            ok: true,
+            credential,
+          });
+        })
+        .catch(() => {
+          if (state.status !== "starting" && state.status !== "ready") return;
+          postHostFailure(
+            "provider-host-credential-response",
+            message.requestId,
+            "PROVIDER_HOST_CREDENTIAL_FAILED",
+          );
+        });
+      return true;
+    };
+
     const onMessage = (message: unknown): void => {
-      if (!isUtilityStatusMessage(message)) {
+      if (!isProviderUtilityChildMessage(message)) {
         protocolViolation();
         return;
       }
+      if (handleHostMessage(message)) return;
       if (message.type === "ready" && state.status === "starting") {
         clearTimer(state);
         state.status = "ready";
@@ -248,6 +374,13 @@ export function createProviderUtilitySupervisor(
       state.child = options.spawn(entryPath, [providerProfileId]);
       state.removeMessage = state.child.onMessage(onMessage);
       state.removeExit = state.child.onExit(onExit);
+      if (launch !== undefined) {
+        state.child.postMessage({
+          type: "provider-initialize",
+          contractVersion: ipcContractVersion,
+          launch,
+        });
+      }
     } catch {
       fail(
         providerProfileId,

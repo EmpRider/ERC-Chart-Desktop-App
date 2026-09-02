@@ -66,6 +66,29 @@ function adaptUtilityChild(child: UtilityProcess): UtilityChild {
   };
 }
 
+function adaptProviderUtilityChild(
+  child: UtilityProcess,
+): ProviderUtilityChild {
+  return {
+    postMessage: (message): void => child.postMessage(message),
+    kill: (): void => {
+      child.kill();
+    },
+    onMessage: (listener): (() => void) => {
+      child.on("message", listener);
+      return (): void => {
+        child.off("message", listener);
+      };
+    },
+    onExit: (listener): (() => void) => {
+      child.on("exit", listener);
+      return (): void => {
+        child.off("exit", listener);
+      };
+    },
+  };
+}
+
 function isSmokeResult(value: unknown): value is SmokeResult {
   if (typeof value !== "object" || value === null) return false;
   const result = value as Record<string, unknown>;
@@ -117,7 +140,7 @@ const dataUtility = createUtilitySupervisor({
 });
 const providerUtilities = createProviderUtilitySupervisor({
   spawn: (entryPath, args): ProviderUtilityChild =>
-    adaptUtilityChild(
+    adaptProviderUtilityChild(
       utilityProcess.fork(entryPath, [...args], {
         serviceName: "ERC Chart Provider",
         stdio: "ignore",

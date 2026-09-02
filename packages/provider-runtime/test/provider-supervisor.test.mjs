@@ -58,7 +58,7 @@ function createChild() {
   };
 }
 
-function createFixture() {
+function createFixture(options = {}) {
   const scheduler = createScheduler();
   const children = [];
   const spawnCalls = [];
@@ -76,9 +76,140 @@ function createFixture() {
     onUnavailable(providerProfileId, code) {
       unavailable.push({ providerProfileId, code });
     },
+    ...(options.hostBroker === undefined
+      ? {}
+      : { hostBroker: options.hostBroker }),
   });
   return { ...scheduler, children, spawnCalls, unavailable, supervisor };
 }
+
+test("initializes a provider utility and brokers host requests without argv secrets", async () => {
+  const calls = {
+    network: [],
+    credentials: [],
+    logs: [],
+    statuses: [],
+  };
+  const fixture = createFixture({
+    hostBroker: {
+      async requestNetwork(providerProfileId, request) {
+        calls.network.push({ providerProfileId, request });
+        return { status: 204, headers: {}, body: new Uint8Array() };
+      },
+      async getCredential(providerProfileId, credentialKey) {
+        calls.credentials.push({ providerProfileId, credentialKey });
+        return "credential-value";
+      },
+      log(providerProfileId, level, code, metadata) {
+        calls.logs.push({ providerProfileId, level, code, metadata });
+      },
+      reportStatus(providerProfileId, status) {
+        calls.statuses.push({ providerProfileId, status });
+      },
+    },
+  });
+  const launch = {
+    installationPath: "C:/erc/plugins/com.example.provider/1.0.0",
+    entry: "dist/index.js",
+    pluginId: "com.example.provider",
+    version: "1.0.0",
+    permissions: {
+      network: ["https://api.example.com/"],
+      credentials: ["auth_token"],
+      storage: [],
+    },
+    settings: { endpoint: "https://api.example.com/" },
+  };
+
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    launch,
+  );
+  assert.deepEqual(fixture.spawnCalls, [
+    {
+      entryPath: "/runtime/provider.js",
+      args: ["profile-a"],
+    },
+  ]);
+  assert.deepEqual(fixture.children[0].posted, [
+    {
+      type: "provider-initialize",
+      contractVersion: ipcContractVersion,
+      launch,
+    },
+  ]);
+
+  fixture.children[0].emitMessage({
+    type: "provider-host-credential-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    credentialKey: "auth_token",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.credentials, [
+    { providerProfileId: "profile-a", credentialKey: "auth_token" },
+  ]);
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "provider-host-credential-response",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    ok: true,
+    credential: "credential-value",
+  });
+
+  fixture.children[0].emitMessage({
+    type: "provider-host-network-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.2",
+    request: { url: "https://api.example.com/status" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.network, [
+    {
+      providerProfileId: "profile-a",
+      request: { url: "https://api.example.com/status" },
+    },
+  ]);
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "provider-host-network-response",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.2",
+    ok: true,
+    response: { status: 204, headers: {}, body: new Uint8Array() },
+  });
+
+  fixture.children[0].emitMessage({
+    type: "provider-host-log",
+    contractVersion: ipcContractVersion,
+    level: "info",
+    code: "PROVIDER_READY",
+    metadata: { phase: "startup" },
+  });
+  fixture.children[0].emitMessage({
+    type: "provider-host-status",
+    contractVersion: ipcContractVersion,
+    status: "connected",
+  });
+  assert.deepEqual(calls.logs, [
+    {
+      providerProfileId: "profile-a",
+      level: "info",
+      code: "PROVIDER_READY",
+      metadata: { phase: "startup" },
+    },
+  ]);
+  assert.deepEqual(calls.statuses, [
+    { providerProfileId: "profile-a", status: "connected" },
+  ]);
+
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+  assert.equal(fixture.supervisor.getStatus("profile-a"), "ready");
+});
 
 test("supervises provider profiles independently and passes only the profile id", async () => {
   const fixture = createFixture();

@@ -1,41 +1,246 @@
+import { ipcContractVersion } from "@erc-chart/contracts";
+import type { ProviderNetworkResponse } from "@erc-chart/provider-sdk";
 import {
-  ipcContractVersion,
-  isUtilityControlMessage,
-  type UtilityStatusMessage,
-} from "@erc-chart/contracts";
+  instantiateInstalledProvider,
+  ProviderRuntimeError,
+  type InstalledProviderInstance,
+  type ProviderRuntimeHostBroker,
+} from "./provider-instance.js";
+import {
+  isProviderUtilityParentMessage,
+  type ProviderUtilityChildMessage,
+  type ProviderUtilityHostResponseMessage,
+  type ProviderUtilityParentMessage,
+} from "./provider-protocol.js";
 
 export interface ProviderUtilityPort {
-  readonly postMessage: (message: UtilityStatusMessage) => void;
+  readonly postMessage: (message: ProviderUtilityChildMessage) => void;
   readonly onMessage: (listener: (message: unknown) => void) => () => void;
 }
 
 export interface ProviderUtilityRuntime {
   readonly providerProfileId: string;
+  readonly ready: Promise<InstalledProviderInstance>;
   readonly shutdown: () => void;
+}
+
+interface PendingHostRequest<T> {
+  readonly kind: "network" | "credential";
+  readonly resolve: (value: T) => void;
+  readonly reject: (error: Error) => void;
+}
+
+function requireProviderProfileId(value: string): string {
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    value.length === 0 ||
+    value.length > 128
+  ) {
+    throw new RangeError("Provider profile ID is required.");
+  }
+  return value;
+}
+
+function hostFailure(message: ProviderUtilityHostResponseMessage): Error {
+  if (message.ok) return new Error("Provider host request failed.");
+  return new Error(`Provider host request failed (${message.code}).`);
 }
 
 export function createProviderUtilityRuntime(
   port: ProviderUtilityPort,
-  providerProfileId: string,
+  providerProfileIdValue: string,
 ): ProviderUtilityRuntime {
-  if (providerProfileId.trim() === "") {
-    throw new RangeError("Provider profile ID is required.");
-  }
-
+  const providerProfileId = requireProviderProfileId(providerProfileIdValue);
   let stopped = false;
+  let initialized = false;
   let removeListener = (): void => undefined;
+  let requestSequence = 0;
+  let resolveReady: (value: InstalledProviderInstance) => void = () =>
+    undefined;
+  let rejectReady: (error: Error) => void = () => undefined;
+  const ready = new Promise<InstalledProviderInstance>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const pending = new Map<string, PendingHostRequest<unknown>>();
+
+  const rejectPending = (error: Error): void => {
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+  };
 
   const shutdown = (): void => {
     if (stopped) return;
     stopped = true;
     removeListener();
+    rejectPending(new Error("Provider utility stopped."));
+    if (!initialized)
+      rejectReady(new Error("Provider utility stopped before initialization."));
     port.postMessage({ type: "stopped", contractVersion: ipcContractVersion });
   };
 
-  removeListener = port.onMessage((message) => {
-    if (isUtilityControlMessage(message)) shutdown();
-  });
-  port.postMessage({ type: "ready", contractVersion: ipcContractVersion });
+  const fail = (code: string): void => {
+    if (stopped) return;
+    rejectReady(new Error(code));
+    rejectPending(new Error(code));
+    port.postMessage({
+      type: "error",
+      contractVersion: ipcContractVersion,
+      code,
+    });
+  };
 
-  return { providerProfileId, shutdown };
+  const nextRequestId = (): string => {
+    requestSequence += 1;
+    return `${providerProfileId}.${requestSequence}`;
+  };
+
+  const hostBroker: ProviderRuntimeHostBroker = {
+    requestNetwork: async (
+      _profileId,
+      request,
+    ): Promise<ProviderNetworkResponse> => {
+      if (stopped) throw new Error("Provider utility is stopped.");
+      const requestId = nextRequestId();
+      const response = new Promise<ProviderNetworkResponse>(
+        (resolve, reject) => {
+          pending.set(requestId, {
+            kind: "network",
+            resolve: resolve as (value: unknown) => void,
+            reject,
+          });
+        },
+      );
+      port.postMessage({
+        type: "provider-host-network-request",
+        contractVersion: ipcContractVersion,
+        requestId,
+        request,
+      });
+      return response;
+    },
+    getCredential: async (
+      _profileId,
+      credentialKey,
+    ): Promise<string | null> => {
+      if (stopped) throw new Error("Provider utility is stopped.");
+      const requestId = nextRequestId();
+      const response = new Promise<string | null>((resolve, reject) => {
+        pending.set(requestId, {
+          kind: "credential",
+          resolve: resolve as (value: unknown) => void,
+          reject,
+        });
+      });
+      port.postMessage({
+        type: "provider-host-credential-request",
+        contractVersion: ipcContractVersion,
+        requestId,
+        credentialKey,
+      });
+      return response;
+    },
+    log: (_profileId, level, code, metadata): void => {
+      if (stopped) return;
+      port.postMessage({
+        type: "provider-host-log",
+        contractVersion: ipcContractVersion,
+        level,
+        code,
+        ...(metadata === undefined ? {} : { metadata }),
+      });
+    },
+    reportStatus: (_profileId, status): void => {
+      if (stopped) return;
+      port.postMessage({
+        type: "provider-host-status",
+        contractVersion: ipcContractVersion,
+        status,
+      });
+    },
+  };
+
+  const handleHostResponse = (
+    message: ProviderUtilityHostResponseMessage,
+  ): void => {
+    const request = pending.get(message.requestId);
+    if (request === undefined) {
+      fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+      return;
+    }
+    const expectedType =
+      request.kind === "network"
+        ? "provider-host-network-response"
+        : "provider-host-credential-response";
+    if (message.type !== expectedType) {
+      pending.delete(message.requestId);
+      request.reject(new Error("Provider host response type mismatch."));
+      fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+      return;
+    }
+    pending.delete(message.requestId);
+    if (!message.ok) {
+      request.reject(hostFailure(message));
+      return;
+    }
+    if (message.type === "provider-host-network-response") {
+      request.resolve(message.response);
+    } else {
+      request.resolve(message.credential);
+    }
+  };
+
+  const handleMessage = (message: ProviderUtilityParentMessage): void => {
+    if (message.type === "shutdown") {
+      shutdown();
+      return;
+    }
+    if (
+      message.type === "provider-host-network-response" ||
+      message.type === "provider-host-credential-response"
+    ) {
+      if (!initialized || stopped) {
+        fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+        return;
+      }
+      handleHostResponse(message);
+      return;
+    }
+    if (message.type !== "provider-initialize" || initialized || stopped) {
+      fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+      return;
+    }
+    initialized = true;
+    void instantiateInstalledProvider({
+      providerProfileId,
+      ...message.launch,
+      hostBroker,
+    })
+      .then((created) => {
+        if (stopped) return;
+        resolveReady(created);
+        port.postMessage({
+          type: "ready",
+          contractVersion: ipcContractVersion,
+        });
+      })
+      .catch((error: unknown) => {
+        const code =
+          error instanceof ProviderRuntimeError
+            ? error.code
+            : "PROVIDER_LOAD_FAILED";
+        fail(code);
+      });
+  };
+
+  removeListener = port.onMessage((message) => {
+    if (!isProviderUtilityParentMessage(message)) {
+      fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+      return;
+    }
+    handleMessage(message);
+  });
+
+  return { providerProfileId, ready, shutdown };
 }
