@@ -2,6 +2,7 @@ import type {
   ProviderRuntimeHostBroker,
   ProviderUtilityLaunchDescriptor,
 } from "@erc-chart/provider-runtime";
+import { isProviderNetworkRequestAllowed } from "@erc-chart/provider-runtime";
 import type { WindowsGenericCredentialManager } from "@erc-chart/electron-main";
 import { windowsCredentialTarget } from "@erc-chart/electron-main";
 
@@ -12,6 +13,10 @@ type ProviderNetworkResponse = Awaited<
   ReturnType<ProviderRuntimeHostBroker["requestNetwork"]>
 >;
 type ProviderStatus = Parameters<ProviderRuntimeHostBroker["reportStatus"]>[1];
+
+const defaultProviderNetworkTimeoutMs = 30_000;
+const minimumProviderNetworkTimeoutMs = 1;
+const maximumProviderNetworkTimeoutMs = 120_000;
 
 export interface ProviderHostBrokerOptions {
   readonly launches: ReadonlyMap<string, ProviderUtilityLaunchDescriptor>;
@@ -66,10 +71,10 @@ async function fetchProviderNetwork(
   request: ProviderNetworkRequest,
 ): Promise<ProviderNetworkResponse> {
   const controller = new AbortController();
-  const timer =
-    request.timeoutMs === undefined
-      ? undefined
-      : setTimeout(() => controller.abort(), request.timeoutMs);
+  const timer = setTimeout(
+    () => controller.abort(),
+    resolveProviderNetworkTimeoutMs(request.timeoutMs),
+  );
   try {
     const body =
       request.body === undefined
@@ -89,18 +94,46 @@ async function fetchProviderNetwork(
       body: new Uint8Array(await response.arrayBuffer()),
     };
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
+}
+
+export function resolveProviderNetworkTimeoutMs(
+  requestedTimeoutMs: number | undefined,
+): number {
+  if (
+    requestedTimeoutMs === undefined ||
+    !Number.isFinite(requestedTimeoutMs)
+  ) {
+    return defaultProviderNetworkTimeoutMs;
+  }
+  return Math.min(
+    maximumProviderNetworkTimeoutMs,
+    Math.max(minimumProviderNetworkTimeoutMs, Math.trunc(requestedTimeoutMs)),
+  );
 }
 
 export function createDesktopProviderHostBroker(
   options: ProviderHostBrokerOptions,
 ): ProviderRuntimeHostBroker {
   return {
-    requestNetwork: (_providerProfileId, request) =>
-      fetchProviderNetwork(options.fetch, request),
+    requestNetwork: (providerProfileId, request) => {
+      const launch = requireLaunch(options.launches, providerProfileId);
+      if (
+        !isProviderNetworkRequestAllowed(
+          request.url,
+          launch.permissions.network,
+        )
+      ) {
+        throw new Error("Provider network request is not permitted.");
+      }
+      return fetchProviderNetwork(options.fetch, request);
+    },
     getCredential: async (providerProfileId, credentialKey) => {
       const launch = requireLaunch(options.launches, providerProfileId);
+      if (!launch.permissions.credentials.includes(credentialKey)) {
+        throw new Error("Provider credential access is not permitted.");
+      }
       const raw = await options.credentialManager.read(
         windowsCredentialTarget(launch.pluginId, providerProfileId),
       );

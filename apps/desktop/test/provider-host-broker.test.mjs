@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDesktopProviderHostBroker } from "../dist/provider-host-broker.js";
+import {
+  createDesktopProviderHostBroker,
+  resolveProviderNetworkTimeoutMs,
+} from "../dist/provider-host-broker.js";
 
 function launch() {
   return {
@@ -10,7 +13,7 @@ function launch() {
     version: "1.0.0",
     permissions: {
       network: ["https://api.example.com/v1"],
-      credentials: ["auth_token"],
+      credentials: ["auth_token", "optional_token"],
       storage: [],
     },
     settings: {},
@@ -51,7 +54,7 @@ test("brokers provider network responses and reads named credentials from one pr
   });
 
   assert.equal(await broker.getCredential("profile-a", "auth_token"), "secret");
-  assert.equal(await broker.getCredential("profile-a", "missing"), null);
+  assert.equal(await broker.getCredential("profile-a", "optional_token"), null);
   assert.deepEqual(reads, [
     "ERC-chart/provider/com.example.provider/profile-a",
     "ERC-chart/provider/com.example.provider/profile-a",
@@ -71,6 +74,59 @@ test("brokers provider network responses and reads named credentials from one pr
     headers: { "x-provider": "fixture" },
     body: new Uint8Array([1, 2, 3]),
   });
+});
+
+test("enforces provider permissions again at the desktop broker boundary", async () => {
+  let reads = 0;
+  let fetches = 0;
+  const broker = createDesktopProviderHostBroker({
+    launches: new Map([["profile-a", launch()]]),
+    credentialManager: {
+      async write() {
+        return undefined;
+      },
+      async read() {
+        reads += 1;
+        return JSON.stringify({ auth_token: "secret" });
+      },
+      async delete() {
+        return true;
+      },
+    },
+    async fetch() {
+      fetches += 1;
+      return new Response(null, { status: 204 });
+    },
+    log() {
+      return undefined;
+    },
+    reportStatus() {
+      return undefined;
+    },
+    now: () => 1234,
+  });
+
+  assert.throws(
+    () =>
+      broker.requestNetwork("profile-a", {
+        url: "https://api.example.com/v1private",
+      }),
+    new Error("Provider network request is not permitted."),
+  );
+  await assert.rejects(
+    broker.getCredential("profile-a", "device_id"),
+    new Error("Provider credential access is not permitted."),
+  );
+  assert.equal(fetches, 0);
+  assert.equal(reads, 0);
+});
+
+test("defaults and clamps provider network timeouts", () => {
+  assert.equal(resolveProviderNetworkTimeoutMs(undefined), 30_000);
+  assert.equal(resolveProviderNetworkTimeoutMs(Number.NaN), 30_000);
+  assert.equal(resolveProviderNetworkTimeoutMs(0), 1);
+  assert.equal(resolveProviderNetworkTimeoutMs(180_000), 120_000);
+  assert.equal(resolveProviderNetworkTimeoutMs(2_500.9), 2_500);
 });
 
 test("fails closed for missing profiles and malformed credential bundles", async () => {

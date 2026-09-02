@@ -426,9 +426,7 @@ export function createProviderUtilitySupervisor(
         undefined,
         true,
       );
-      return Promise.reject(
-        new Error("Provider utility process could not start."),
-      );
+      return started;
     }
     return started;
   };

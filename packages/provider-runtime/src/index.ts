@@ -84,6 +84,7 @@ export type {
   ProviderRuntimeErrorCode,
   ProviderRuntimeHostBroker,
 } from "./provider-instance.js";
+export { isProviderNetworkRequestAllowed } from "./provider-permissions.js";
 export {
   isProviderUtilityChildMessage,
   isProviderUtilityParentMessage,

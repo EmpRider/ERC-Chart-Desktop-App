@@ -133,6 +133,7 @@ const providerUtilities = createProviderUtilitySupervisor({
       utilityProcess.fork(entryPath, [...args], {
         serviceName: "ERC Chart Provider",
         stdio: "ignore",
+        env: {},
       }),
     ),
   scheduler: {

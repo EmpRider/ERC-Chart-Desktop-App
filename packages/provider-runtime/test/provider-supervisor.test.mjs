@@ -99,6 +99,35 @@ function createLaunch(overrides = {}) {
   };
 }
 
+test("returns the single startup rejection when spawning fails", async () => {
+  const scheduler = createScheduler();
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const supervisor = createProviderUtilitySupervisor({
+      spawn() {
+        throw new Error("spawn failed");
+      },
+      scheduler: scheduler.scheduler,
+      startupTimeoutMs: 5_000,
+      shutdownTimeoutMs: 2_000,
+      onUnavailable() {
+        return undefined;
+      },
+    });
+
+    await assert.rejects(
+      supervisor.start("profile-a", "/runtime/provider.js"),
+      new Error("Provider utility process could not start."),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
 test("initializes a provider utility and brokers host requests without argv secrets", async () => {
   const calls = {
     network: [],

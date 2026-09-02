@@ -2,6 +2,7 @@ import {
   createProviderUtilityRuntime,
   type ProviderUtilityPort,
 } from "./utility-runtime.js";
+import { restrictProviderRuntimeGlobals } from "./provider-global-isolation.js";
 import nodeProcess from "node:process";
 import type { ParentPort } from "electron";
 
@@ -27,5 +28,6 @@ const port: ProviderUtilityPort = {
   },
 };
 
+restrictProviderRuntimeGlobals();
 const runtime = createProviderUtilityRuntime(port, providerProfileId);
 void runtime.ready.catch(() => undefined);
