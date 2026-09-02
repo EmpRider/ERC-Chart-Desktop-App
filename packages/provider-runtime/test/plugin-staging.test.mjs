@@ -31,19 +31,38 @@ function pluginManifest(entry = "dist/index.js") {
   };
 }
 
-async function createFolderFixture(root) {
+async function createFolderFixture(root, manifest = pluginManifest()) {
   const folder = path.join(root, "provider-folder");
   await mkdir(path.join(folder, "dist"), { recursive: true });
-  await writeFile(
-    path.join(folder, "plugin.json"),
-    JSON.stringify(pluginManifest()),
-  );
+  await writeFile(path.join(folder, "plugin.json"), JSON.stringify(manifest));
   await writeFile(
     path.join(folder, "dist", "index.js"),
     "export default {};\n",
   );
   return folder;
 }
+
+test("rejects a provider package incompatible with the current host API", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-api-"));
+  try {
+    const source = await createFolderFixture(root, {
+      ...pluginManifest(),
+      apiVersion: "^2.0.0",
+    });
+    const stagingRoot = path.join(root, "staging");
+
+    await assert.rejects(
+      stagePluginPackage(
+        { kind: "folder", path: source },
+        { stagingRoot, currentHostApiVersion: 1 },
+      ),
+      /INCOMPATIBLE_HOST_API.*must include host API 1\.0\.0/i,
+    );
+    assert.deepEqual(await readdir(stagingRoot), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 function makeStoredZip(entries) {
   const localParts = [];
