@@ -18,6 +18,9 @@ test("exposes only the allowlisted application bridge methods", async () => {
     "loadWorkspace",
     "saveWorkspace",
     "flushWorkspace",
+    "previewProviderImport",
+    "approveProviderImport",
+    "cancelProviderImport",
   ]);
   assert.deepEqual(await bridge.getRuntimeInfo(), {
     ipcContractVersion,
@@ -62,7 +65,69 @@ test("installs one application-specific global", () => {
   assert.deepEqual(exposures, [
     [
       "ercChart",
-      ["getRuntimeInfo", "loadWorkspace", "saveWorkspace", "flushWorkspace"],
+      [
+        "getRuntimeInfo",
+        "loadWorkspace",
+        "saveWorkspace",
+        "flushWorkspace",
+        "previewProviderImport",
+        "approveProviderImport",
+        "cancelProviderImport",
+      ],
     ],
+  ]);
+});
+
+test("validates provider import IPC results without exposing local paths", async () => {
+  const calls = [];
+  const preview = {
+    requestId: "request-1",
+    pluginId: "erc.provider.binomo",
+    pluginName: "Binomo",
+    pluginVersion: "0.1.0",
+    mode: "developer",
+    trust: "unsigned",
+    permissions: {
+      network: ["https://api.binomo.com/*"],
+      credentials: [],
+      storage: [],
+    },
+  };
+  const session = {
+    profileId: "erc.provider.binomo.default",
+    providerId: "erc.provider.binomo",
+    providerName: "Binomo",
+    instrument: {
+      id: "Z-CRY/IDX",
+      symbol: "Z-CRY/IDX",
+      name: "Z-CRY/IDX",
+    },
+    timeframeId: "1m",
+    candles: [],
+  };
+  const bridge = createErcChartBridge(async (...args) => {
+    calls.push(args);
+    if (args[0] === "erc-chart:provider-import-preview") return preview;
+    if (args[0] === "erc-chart:provider-import-approve") return session;
+    if (args[0] === "erc-chart:provider-import-cancel") return true;
+    throw new Error("unexpected");
+  });
+
+  assert.deepEqual(await bridge.previewProviderImport(), preview);
+  assert.deepEqual(
+    await bridge.approveProviderImport("request-1", {
+      binomo_cookie: "fixture-cookie",
+    }),
+    session,
+  );
+  await bridge.cancelProviderImport("request-1");
+  assert.deepEqual(calls, [
+    ["erc-chart:provider-import-preview"],
+    [
+      "erc-chart:provider-import-approve",
+      "request-1",
+      { binomo_cookie: "fixture-cookie" },
+    ],
+    ["erc-chart:provider-import-cancel", "request-1"],
   ]);
 });

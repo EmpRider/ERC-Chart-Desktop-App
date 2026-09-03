@@ -26,6 +26,8 @@ export type {
   PluginPermissionReviewRequest,
   PluginPermissionReviewTrust,
 } from "./permission-review.js";
+export { ProviderChart } from "./provider-chart.js";
+export type { ProviderChartProps } from "./provider-chart.js";
 export {
   fromPersistedWorkspace,
   toPersistedWorkspace,
