@@ -1,17 +1,16 @@
-import type {
-  Candle,
-  InstrumentId,
-  ProviderId,
-  TimeframeId,
-} from "@erc-chart/contracts";
 import {
   config,
   defineProvider,
+  hostApiVersion,
   providerSdkVersion,
+  type Candle,
+  type InstrumentId,
   type ProviderAdapter,
   type ProviderDefinition,
   type ProviderHostServices,
+  type ProviderId,
   type ProviderPluginMetadata,
+  type TimeframeId,
 } from "../src/index.js";
 
 const providerId = "fixture.provider" as ProviderId;
@@ -23,8 +22,8 @@ export const metadata: ProviderPluginMetadata = {
   name: "Fixture Provider",
   providerContractVersion: providerSdkVersion,
   hostCompatibility: {
-    minimumHostApiVersion: providerSdkVersion,
-    maximumHostApiVersion: providerSdkVersion,
+    minimumHostApiVersion: hostApiVersion,
+    maximumHostApiVersion: hostApiVersion,
   },
 };
 

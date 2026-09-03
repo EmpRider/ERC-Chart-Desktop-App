@@ -106,6 +106,6 @@ missing display instead of hanging.
 
 The release workflow publishes only after the exact current `main` commit passes
 the complete Windows release pipeline. The current application release is
-`0.2.3` with immutable prerelease tag `v0.2.3`, plus the unsigned Windows
-`.exe` and `.sha256` assets. Prior releases remain immutable. Automatic updates
-remain disabled, and production code signing remains a later release decision.
+`0.3.0` with immutable prerelease tag `v0.3.0`, plus the unsigned Windows `.exe`
+and `.sha256` assets. Prior releases remain immutable. Automatic updates remain
+disabled, and production code signing remains a later release decision.
