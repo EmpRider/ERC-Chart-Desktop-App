@@ -9,6 +9,7 @@
     { "path": "./packages/storage" },
     { "path": "./packages/data-service" },
     { "path": "./packages/provider-runtime" },
+    { "path": "./packages/provider-examples" },
     { "path": "./packages/indicator-runtime" },
     { "path": "./packages/renderer" },
     { "path": "./packages/testing" },

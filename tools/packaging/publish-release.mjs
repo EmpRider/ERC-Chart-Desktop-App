@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# klinecharts architecture release
+const curatedNotes = `# Provider SDK and plugin runtime release
 
-This release replaces the empty custom chart-core workspace with the pinned klinecharts 10.0.3 dependency and aligns workspace boundaries, TypeScript references, architecture decisions, implementation backlog, and drawing requirements with that integration path.
+This release completes Epic 3: the public Provider SDK v1 authoring contract, secure provider package staging and trust checks, permission review, versioned plugin lifecycle, isolated provider utility processes, profile-scoped configuration, and brokered host services.
 
-This release changes architecture and dependency metadata only; chart rendering and drawing implementation remain later work. Known limitations: provider configuration, live market-data connectivity, plugin execution, automatic updates, and production code signing remain unavailable. The installer is unsigned.
+Provider discovery, capabilities, historical candles, and live tick/candle subscriptions now cross the provider runtime into the provider-neutral Data Service. Public-SDK-only tick and candle examples exercise the complete development import and startup path. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
