@@ -2,7 +2,7 @@ import type {
   PluginKind,
   PluginManifestPermissions,
 } from "@erc-chart/contracts";
-import type { JSX } from "react";
+import { useState, type JSX } from "react";
 
 export type PluginPermissionDecision = "approve" | "reject";
 export type PluginPermissionReviewReason = "install" | "permission-change";
@@ -27,6 +27,7 @@ export interface PluginPermissionReviewPresentation {
   readonly onDecision: (
     requestId: string,
     decision: PluginPermissionDecision,
+    credentials: Readonly<Record<string, string>>,
   ) => void;
 }
 
@@ -67,6 +68,7 @@ export function PluginPermissionReview({
   busy = false,
   onDecision,
 }: PluginPermissionReviewProps): JSX.Element {
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
   const trustLabel =
     request.trust === "bundled"
       ? "Bundled plugin"
@@ -120,7 +122,7 @@ export function PluginPermissionReview({
           />
           <PermissionList
             title="Credentials"
-            description="Credential keys the plugin may request. Secret values remain outside the renderer and plugin package."
+            description="Credential keys the plugin may request. Values entered below are transferred to desktop secure storage and are not persisted in plugin settings."
             values={request.permissions.credentials}
           />
           <PermissionList
@@ -130,12 +132,41 @@ export function PluginPermissionReview({
           />
         </div>
 
+        {request.permissions.credentials.length === 0 ? null : (
+          <section className="permission-credential-fields">
+            <div className="permission-group-heading">
+              <h3>Credential values</h3>
+              <p>
+                Optional. Leave a value blank to install the provider without
+                that credential.
+              </p>
+            </div>
+            {request.permissions.credentials.map((credentialKey) => (
+              <label key={credentialKey}>
+                <span>{credentialKey}</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={credentials[credentialKey] ?? ""}
+                  onInput={(event) =>
+                    setCredentials((current) => ({
+                      ...current,
+                      [credentialKey]: event.currentTarget.value,
+                    }))
+                  }
+                />
+              </label>
+            ))}
+          </section>
+        )}
+
         <footer className="permission-review-actions">
           <button
             type="button"
             className="permission-reject"
             disabled={busy}
-            onClick={() => onDecision(request.requestId, "reject")}
+            onClick={() => onDecision(request.requestId, "reject", {})}
           >
             Cancel
           </button>
@@ -143,7 +174,20 @@ export function PluginPermissionReview({
             type="button"
             className="permission-approve"
             disabled={busy}
-            onClick={() => onDecision(request.requestId, "approve")}
+            onClick={() =>
+              onDecision(
+                request.requestId,
+                "approve",
+                Object.fromEntries(
+                  request.permissions.credentials.flatMap((credentialKey) => {
+                    const value = credentials[credentialKey];
+                    return value === undefined || value.length === 0
+                      ? []
+                      : [[credentialKey, value]];
+                  }),
+                ),
+              )
+            }
           >
             {busy ? "Applying…" : "Approve permissions"}
           </button>

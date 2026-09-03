@@ -18,6 +18,9 @@ import type {
   ProviderNetworkRequest,
   ProviderNetworkResponse,
   ProviderStatus,
+  ProviderWebSocketConnection,
+  ProviderWebSocketHandlers,
+  ProviderWebSocketRequest,
 } from "@erc-chart/provider-sdk";
 import { isProviderNetworkRequestAllowed } from "./provider-permissions.js";
 
@@ -46,6 +49,11 @@ export interface ProviderRuntimeHostBroker {
     request: ProviderNetworkRequest,
     signal?: AbortSignal,
   ) => Promise<ProviderNetworkResponse>;
+  readonly openWebSocket?: (
+    providerProfileId: string,
+    request: ProviderWebSocketRequest,
+    handlers: ProviderWebSocketHandlers,
+  ) => Promise<ProviderWebSocketConnection>;
   readonly getCredential: (
     providerProfileId: string,
     credentialKey: string,
@@ -569,6 +577,25 @@ function createProviderHostServices(
           );
         }
         return broker.requestNetwork(providerProfileId, request);
+      },
+    }),
+    websocket: Object.freeze({
+      connect: async (
+        request: ProviderWebSocketRequest,
+        handlers: ProviderWebSocketHandlers,
+      ): Promise<ProviderWebSocketConnection> => {
+        if (
+          !isProviderNetworkRequestAllowed(request.url, permissions.network)
+        ) {
+          throw new ProviderRuntimeError(
+            "PROVIDER_PERMISSION_DENIED",
+            "Provider websocket request is outside the approved manifest permissions.",
+          );
+        }
+        if (broker.openWebSocket === undefined) {
+          throw new Error("Provider websocket host is unavailable.");
+        }
+        return broker.openWebSocket(providerProfileId, request, handlers);
       },
     }),
     credentials: Object.freeze({

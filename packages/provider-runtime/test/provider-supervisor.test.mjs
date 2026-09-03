@@ -710,6 +710,116 @@ test("enforces launch permissions before forwarding host requests", async () => 
   await started;
 });
 
+test("brokers websocket open, message, send, and close for one provider profile", async () => {
+  const calls = { open: [], sent: [], closed: [] };
+  let handlers;
+  const fixture = createFixture({
+    hostBroker: {
+      async requestNetwork() {
+        return { status: 204, headers: {}, body: new Uint8Array() };
+      },
+      async openWebSocket(providerProfileId, request, socketHandlers) {
+        calls.open.push({ providerProfileId, request });
+        handlers = socketHandlers;
+        return {
+          send(data) {
+            calls.sent.push(data);
+          },
+          close(code, reason) {
+            calls.closed.push({ code, reason });
+          },
+        };
+      },
+      async getCredential() {
+        return null;
+      },
+      log() {
+        return undefined;
+      },
+      reportStatus() {
+        return undefined;
+      },
+    },
+  });
+  const launch = createLaunch({
+    permissions: {
+      network: ["https://api.example.com/v1", "wss://stream.example.com/"],
+      credentials: ["auth_token"],
+      storage: [],
+    },
+  });
+  const started = fixture.supervisor.start(
+    "profile-a",
+    "/runtime/provider.js",
+    launch,
+  );
+
+  fixture.children[0].emitMessage({
+    type: "provider-host-websocket-open-request",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    socketId: "profile-a.ws.1",
+    request: {
+      url: "wss://stream.example.com/live",
+      headers: { Origin: "https://example.com" },
+    },
+  });
+  await flushTasks();
+  assert.deepEqual(calls.open, [
+    {
+      providerProfileId: "profile-a",
+      request: {
+        url: "wss://stream.example.com/live",
+        headers: { Origin: "https://example.com" },
+      },
+    },
+  ]);
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "provider-host-websocket-open-response",
+    contractVersion: ipcContractVersion,
+    requestId: "profile-a.1",
+    ok: true,
+    socketId: "profile-a.ws.1",
+  });
+
+  handlers.onMessage("live-tick");
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "provider-host-websocket-message",
+    contractVersion: ipcContractVersion,
+    socketId: "profile-a.ws.1",
+    data: "live-tick",
+  });
+  fixture.children[0].emitMessage({
+    type: "provider-host-websocket-send",
+    contractVersion: ipcContractVersion,
+    socketId: "profile-a.ws.1",
+    data: "subscribe",
+  });
+  fixture.children[0].emitMessage({
+    type: "provider-host-websocket-close",
+    contractVersion: ipcContractVersion,
+    socketId: "profile-a.ws.1",
+    code: 1000,
+    reason: "done",
+  });
+  assert.deepEqual(calls.sent, ["subscribe"]);
+  assert.deepEqual(calls.closed, [{ code: 1000, reason: "done" }]);
+
+  handlers.onClose({ code: 1000, reason: "done" });
+  assert.deepEqual(fixture.children[0].posted.at(-1), {
+    type: "provider-host-websocket-closed",
+    contractVersion: ipcContractVersion,
+    socketId: "profile-a.ws.1",
+    code: 1000,
+    reason: "done",
+  });
+  fixture.children[0].emitMessage({
+    type: "ready",
+    contractVersion: ipcContractVersion,
+  });
+  await started;
+});
+
 test("reports stable host failures when the broker is absent or rejects", async () => {
   const absent = createFixture();
   const absentStarted = absent.supervisor.start(

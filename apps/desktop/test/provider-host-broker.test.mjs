@@ -265,6 +265,64 @@ test("rejects websocket URLs from the one-shot HTTP request broker", () => {
   assert.equal(fetches, 0);
 });
 
+test("enforces websocket permissions and host-managed handshake headers", async () => {
+  const broker = createDesktopProviderHostBroker({
+    launches: new Map([["profile-a", launch()]]),
+    credentialManager: {
+      async write() {
+        return undefined;
+      },
+      async read() {
+        return undefined;
+      },
+      async delete() {
+        return true;
+      },
+    },
+    async fetch() {
+      throw new Error("unused");
+    },
+    log() {
+      return undefined;
+    },
+    reportStatus() {
+      return undefined;
+    },
+    now: () => 1234,
+  });
+  const handlers = {
+    onMessage() {
+      return undefined;
+    },
+    onClose() {
+      return undefined;
+    },
+    onError() {
+      return undefined;
+    },
+  };
+
+  await assert.rejects(
+    broker.openWebSocket(
+      "profile-a",
+      { url: "wss://evil.example.com/live" },
+      handlers,
+    ),
+    new Error("Provider websocket request is not permitted."),
+  );
+  await assert.rejects(
+    broker.openWebSocket(
+      "profile-a",
+      {
+        url: "wss://stream.example.com/live",
+        headers: { Host: "attacker.example" },
+      },
+      handlers,
+    ),
+    new Error("Provider websocket header is managed by the host."),
+  );
+});
+
 test("fails closed for missing profiles and malformed credential bundles", async () => {
   const launches = new Map([["profile-a", launch()]]);
   let stored = "not-json";

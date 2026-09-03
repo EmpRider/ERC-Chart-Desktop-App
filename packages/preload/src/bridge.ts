@@ -1,11 +1,20 @@
 import {
+  isImportedProviderSession,
+  isProviderImportCredentialValues,
+  isProviderImportPreviewResult,
   isRuntimeInfo,
   isWorkspaceLoadResult,
   isWorkspaceSaveRequest,
+  providerImportApproveChannel,
+  providerImportCancelChannel,
+  providerImportPreviewChannel,
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
+  type ImportedProviderSession,
   type PersistedWorkspace,
+  type ProviderImportPreview,
+  type ProviderImportCredentialValues,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
 
@@ -14,6 +23,12 @@ export interface ErcChartBridge {
   readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
   readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
   readonly flushWorkspace: () => Promise<void>;
+  readonly previewProviderImport: () => Promise<ProviderImportPreview | null>;
+  readonly approveProviderImport: (
+    requestId: string,
+    credentials?: ProviderImportCredentialValues,
+  ) => Promise<ImportedProviderSession>;
+  readonly cancelProviderImport: (requestId: string) => Promise<void>;
 }
 
 export type BridgeInvoke = (
@@ -22,6 +37,18 @@ export type BridgeInvoke = (
 ) => Promise<unknown>;
 
 export type BridgeExpose = (key: "ercChart", api: ErcChartBridge) => void;
+
+function requireRequestId(value: string): string {
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    value.length === 0 ||
+    value.length > 128
+  ) {
+    throw new Error("Provider import request is invalid.");
+  }
+  return value;
+}
 
 export function createErcChartBridge(invoke: BridgeInvoke): ErcChartBridge {
   let latestSave: Promise<void> = Promise.resolve();
@@ -63,6 +90,47 @@ export function createErcChartBridge(invoke: BridgeInvoke): ErcChartBridge {
     },
     saveWorkspace,
     flushWorkspace: async (): Promise<void> => latestSave,
+    previewProviderImport: async (): Promise<ProviderImportPreview | null> => {
+      try {
+        const result = await invoke(providerImportPreviewChannel);
+        if (!isProviderImportPreviewResult(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Provider import could not be prepared.");
+      }
+    },
+    approveProviderImport: async (
+      requestId: string,
+      credentials: ProviderImportCredentialValues = {},
+    ): Promise<ImportedProviderSession> => {
+      const checkedRequestId = requireRequestId(requestId);
+      if (!isProviderImportCredentialValues(credentials)) {
+        throw new Error("Provider credentials are invalid.");
+      }
+      try {
+        const result = await invoke(
+          providerImportApproveChannel,
+          checkedRequestId,
+          credentials,
+        );
+        if (!isImportedProviderSession(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Provider could not be installed and started.");
+      }
+    },
+    cancelProviderImport: async (requestId: string): Promise<void> => {
+      const checkedRequestId = requireRequestId(requestId);
+      try {
+        const result = await invoke(
+          providerImportCancelChannel,
+          checkedRequestId,
+        );
+        if (result !== true) throw new Error();
+      } catch {
+        throw new Error("Provider import could not be cancelled.");
+      }
+    },
   };
 }
 

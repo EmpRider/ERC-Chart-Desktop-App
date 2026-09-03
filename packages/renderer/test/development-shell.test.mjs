@@ -14,12 +14,18 @@ import {
   workspaceReducer,
 } from "../dist/index.js";
 
-function renderShell(connection, workspace = createInitialWorkspace()) {
+function renderShell(
+  connection,
+  workspace = createInitialWorkspace(),
+  overrides = {},
+) {
   return renderToStaticMarkup(
     createElement(ApplicationShell, {
       connection,
       workspace,
       onWorkspaceAction: () => undefined,
+      onProviderImport: () => undefined,
+      ...overrides,
     }),
   );
 }
@@ -50,6 +56,7 @@ async function mountShell(t, workspace, onWorkspaceAction) {
         connection: connectingShellState,
         workspace,
         onWorkspaceAction,
+        onProviderImport: () => undefined,
       }),
     );
   });
@@ -57,7 +64,7 @@ async function mountShell(t, workspace, onWorkspaceAction) {
   return document;
 }
 
-test("renders the semantic dark application shell without deferred controls", () => {
+test("renders the semantic dark application shell with provider import available", () => {
   const markup = renderShell(connectingShellState);
 
   assert.match(markup, /<header/);
@@ -67,7 +74,42 @@ test("renders the semantic dark application shell without deferred controls", ()
   assert.match(markup, /Desktop workspace/);
   assert.match(markup, /Workspace ready/);
   assert.match(markup, /Connecting secure bridge/);
-  assert.doesNotMatch(markup, /settings|provider/i);
+  assert.match(markup, /Import provider/);
+  assert.doesNotMatch(markup, /settings/i);
+});
+
+test("renders loaded provider candles in the primary chart workspace", () => {
+  const markup = renderShell(connectingShellState, createInitialWorkspace(), {
+    providerSession: {
+      profileId: "erc.provider.binomo.default",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "1m",
+      candles: [
+        {
+          instrumentId: "Z-CRY/IDX",
+          timeframeId: "1m",
+          openTimeMs: 1_800_000_000_000,
+          open: 100,
+          high: 102,
+          low: 99,
+          close: 101,
+        },
+      ],
+    },
+  });
+  const { document } = parseHTML(markup);
+
+  assert.match(markup, /Binomo connected/);
+  assert.match(markup, /Z-CRY\/IDX/);
+  assert.match(markup, /1m · 1 candles/);
+  assert.ok(document.querySelector("[data-provider-chart]"));
+  assert.doesNotMatch(markup, /Awaiting market data/);
 });
 
 test("resolves and renders a connected secure bridge", async () => {
