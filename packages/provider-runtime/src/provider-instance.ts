@@ -93,7 +93,7 @@ export interface ProviderConfigurationChangePlan {
 const sensitiveMetadataKey =
   /(authorization|cookie|credential|password|secret|token)/iu;
 const providerEntrySpecifier = "erc-chart-provider-entry";
-const providerSdkUrl = import.meta.resolve("@erc-chart/provider-sdk");
+let providerSdkUrl: string | undefined;
 const installedProviderRoots = new Set<string>();
 let providerEntryUrl: string | undefined;
 let providerHooksRegistered = false;
@@ -132,6 +132,14 @@ function installedRootForUrl(url: string | undefined): string | undefined {
     .sort((left, right) => right.length - left.length)[0];
 }
 
+function resolveProviderSdkUrl(): string {
+  providerSdkUrl ??= new URL(
+    "../../provider-sdk/dist/index.js",
+    import.meta.url,
+  ).href;
+  return providerSdkUrl;
+}
+
 function registerProviderModuleHooks(): void {
   if (providerHooksRegistered) return;
   registerHooks({
@@ -150,7 +158,11 @@ function registerProviderModuleHooks(): void {
       const parentRoot = installedRootForUrl(context.parentURL);
       if (parentRoot === undefined) return nextResolve(specifier, context);
       if (specifier === "@erc-chart/provider-sdk") {
-        return { url: providerSdkUrl, format: "module", shortCircuit: true };
+        return {
+          url: resolveProviderSdkUrl(),
+          format: "module",
+          shortCircuit: true,
+        };
       }
       if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
         throw new Error(

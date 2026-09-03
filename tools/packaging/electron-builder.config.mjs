@@ -16,12 +16,18 @@ export default {
     version: applicationVersion,
   },
   asar: true,
+  asarUnpack: [
+    "packages/data-service/dist/utility-entry.js",
+    "packages/provider-runtime/dist/utility-entry.js",
+    "packages/provider-sdk/dist/index.js",
+  ],
   npmRebuild: false,
   electronFuses: electronFusePolicy,
   win: {
     target: [{ target: "nsis", arch: ["x64"] }],
   },
   nsis: {
+    include: "tools/packaging/installer.nsh",
     oneClick: true,
     perMachine: false,
     allowElevation: false,
