@@ -18,7 +18,7 @@ All notable changes to ERC Chart are documented here.
 - Added public-SDK-only tick and candle provider examples plus end-to-end import,
   startup, conformance, and failure-cleanup regression coverage.
 
-### Packaging
+### Provider SDK release packaging
 
 - Unsigned x64 per-user Windows installer.
 - Automatic updates and production code signing remain unavailable.
