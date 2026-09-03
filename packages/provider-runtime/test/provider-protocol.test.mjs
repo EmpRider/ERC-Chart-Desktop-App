@@ -79,3 +79,67 @@ test("accepts bounded provider data operations and rejects malformed market data
     false,
   );
 });
+
+test("validates brokered websocket lifecycle messages", () => {
+  assert.equal(
+    isProviderUtilityChildMessage({
+      type: "provider-host-websocket-open-request",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.2",
+      socketId: "profile-a.ws.1",
+      request: {
+        url: "wss://stream.example.com/",
+        headers: { Origin: "https://example.com" },
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isProviderUtilityParentMessage({
+      type: "provider-host-websocket-open-response",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.2",
+      socketId: "profile-a.ws.1",
+      ok: true,
+    }),
+    true,
+  );
+  assert.equal(
+    isProviderUtilityParentMessage({
+      type: "provider-host-websocket-message",
+      contractVersion: ipcContractVersion,
+      socketId: "profile-a.ws.1",
+      data: '{"price":10}',
+    }),
+    true,
+  );
+  assert.equal(
+    isProviderUtilityChildMessage({
+      type: "provider-host-websocket-send",
+      contractVersion: ipcContractVersion,
+      socketId: "profile-a.ws.1",
+      data: "subscribe",
+    }),
+    true,
+  );
+  assert.equal(
+    isProviderUtilityChildMessage({
+      type: "provider-host-websocket-close",
+      contractVersion: ipcContractVersion,
+      socketId: "profile-a.ws.1",
+      code: 1000,
+      reason: "done",
+    }),
+    true,
+  );
+  assert.equal(
+    isProviderUtilityChildMessage({
+      type: "provider-host-websocket-open-request",
+      contractVersion: ipcContractVersion,
+      requestId: "profile-a.3",
+      socketId: "profile-a.ws.2",
+      request: { url: "https://stream.example.com/" },
+    }),
+    false,
+  );
+});

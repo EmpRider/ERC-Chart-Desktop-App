@@ -16,6 +16,7 @@ import type {
   ProviderNetworkResponse,
   ProviderSubscriptionRequest,
   ProviderStatus,
+  ProviderWebSocketRequest,
 } from "@erc-chart/provider-sdk";
 
 export interface ProviderUtilityLaunchDescriptor {
@@ -183,6 +184,29 @@ export interface ProviderUtilityNetworkRequestMessage {
   readonly request: ProviderNetworkRequest;
 }
 
+export interface ProviderUtilityWebSocketOpenRequestMessage {
+  readonly type: "provider-host-websocket-open-request";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly socketId: string;
+  readonly request: ProviderWebSocketRequest;
+}
+
+export interface ProviderUtilityWebSocketSendMessage {
+  readonly type: "provider-host-websocket-send";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly socketId: string;
+  readonly data: string | Uint8Array;
+}
+
+export interface ProviderUtilityWebSocketCloseMessage {
+  readonly type: "provider-host-websocket-close";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly socketId: string;
+  readonly code?: number;
+  readonly reason?: string;
+}
+
 export interface ProviderUtilityCredentialRequestMessage {
   readonly type: "provider-host-credential-request";
   readonly contractVersion: typeof ipcContractVersion;
@@ -212,6 +236,36 @@ export interface ProviderUtilityNetworkSuccessMessage {
   readonly response: ProviderNetworkResponse;
 }
 
+export interface ProviderUtilityWebSocketOpenSuccessMessage {
+  readonly type: "provider-host-websocket-open-response";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly requestId: string;
+  readonly ok: true;
+  readonly socketId: string;
+}
+
+export interface ProviderUtilityWebSocketMessage {
+  readonly type: "provider-host-websocket-message";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly socketId: string;
+  readonly data: string | Uint8Array;
+}
+
+export interface ProviderUtilityWebSocketClosedMessage {
+  readonly type: "provider-host-websocket-closed";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly socketId: string;
+  readonly code: number;
+  readonly reason: string;
+}
+
+export interface ProviderUtilityWebSocketErrorMessage {
+  readonly type: "provider-host-websocket-error";
+  readonly contractVersion: typeof ipcContractVersion;
+  readonly socketId: string;
+  readonly code: string;
+}
+
 export interface ProviderUtilityCredentialSuccessMessage {
   readonly type: "provider-host-credential-response";
   readonly contractVersion: typeof ipcContractVersion;
@@ -222,7 +276,9 @@ export interface ProviderUtilityCredentialSuccessMessage {
 
 export interface ProviderUtilityHostFailureMessage {
   readonly type:
-    "provider-host-network-response" | "provider-host-credential-response";
+    | "provider-host-network-response"
+    | "provider-host-credential-response"
+    | "provider-host-websocket-open-response";
   readonly contractVersion: typeof ipcContractVersion;
   readonly requestId: string;
   readonly ok: false;
@@ -232,6 +288,7 @@ export interface ProviderUtilityHostFailureMessage {
 export type ProviderUtilityHostResponseMessage =
   | ProviderUtilityNetworkSuccessMessage
   | ProviderUtilityCredentialSuccessMessage
+  | ProviderUtilityWebSocketOpenSuccessMessage
   | ProviderUtilityHostFailureMessage;
 
 export type ProviderUtilityParentMessage =
@@ -239,7 +296,10 @@ export type ProviderUtilityParentMessage =
   | ProviderUtilityInitializeMessage
   | ProviderUtilityConfigurationValidationRequestMessage
   | ProviderUtilityDataRequestMessage
-  | ProviderUtilityHostResponseMessage;
+  | ProviderUtilityHostResponseMessage
+  | ProviderUtilityWebSocketMessage
+  | ProviderUtilityWebSocketClosedMessage
+  | ProviderUtilityWebSocketErrorMessage;
 
 export type ProviderUtilityChildMessage =
   | UtilityStatusMessage
@@ -249,6 +309,9 @@ export type ProviderUtilityChildMessage =
   | ProviderUtilitySubscriptionTicksMessage
   | ProviderUtilitySubscriptionErrorMessage
   | ProviderUtilityNetworkRequestMessage
+  | ProviderUtilityWebSocketOpenRequestMessage
+  | ProviderUtilityWebSocketSendMessage
+  | ProviderUtilityWebSocketCloseMessage
   | ProviderUtilityCredentialRequestMessage
   | ProviderUtilityLogMessage
   | ProviderUtilityProviderStatusMessage;
@@ -262,6 +325,7 @@ const codePattern = /^[A-Z][A-Z0-9_.-]{0,127}$/u;
 const settingKeyPattern = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u;
 const dataIdPattern = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const subscriptionIdPattern = /^[A-Za-z0-9._-]{1,96}$/u;
+const socketIdPattern = /^[A-Za-z0-9._-]{1,96}$/u;
 const configurationImpacts = new Set(["none", "restart", "reconnect"]);
 const providerStatuses = new Set<ProviderStatus>([
   "disconnected",
@@ -434,6 +498,46 @@ function isNetworkResponse(value: unknown): value is ProviderNetworkResponse {
     isHeaders(value.headers) &&
     value.body instanceof Uint8Array &&
     value.body.byteLength <= 8_000_000
+  );
+}
+
+function isWebSocketRequest(value: unknown): value is ProviderWebSocketRequest {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["url"], ["headers", "protocols"]) ||
+    typeof value.url !== "string" ||
+    value.url.length === 0 ||
+    value.url.length > 32_768
+  ) {
+    return false;
+  }
+  try {
+    if (new URL(value.url).protocol !== "wss:") return false;
+  } catch {
+    return false;
+  }
+  if (value.headers !== undefined && !isHeaders(value.headers)) return false;
+  return (
+    value.protocols === undefined ||
+    isStringArray(value.protocols, 16, (item) =>
+      /^[!#$%&'*+\-.0-9A-Z^_`a-z|~]{1,128}$/u.test(item),
+    )
+  );
+}
+
+function isWebSocketData(value: unknown): value is string | Uint8Array {
+  return (
+    (typeof value === "string" && value.length <= 2_000_000) ||
+    (value instanceof Uint8Array && value.byteLength <= 2_000_000)
+  );
+}
+
+function isWebSocketCloseCode(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 1000 &&
+    value <= 4999
   );
 }
 
@@ -674,9 +778,43 @@ export function isProviderUtilityParentMessage(
       subscriptionIdPattern.test(value.subscriptionId)
     );
   }
+  if (value.type === "provider-host-websocket-message") {
+    return (
+      hasExactKeys(value, ["type", "contractVersion", "socketId", "data"]) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId) &&
+      isWebSocketData(value.data)
+    );
+  }
+  if (value.type === "provider-host-websocket-closed") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "socketId",
+        "code",
+        "reason",
+      ]) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId) &&
+      isWebSocketCloseCode(value.code) &&
+      typeof value.reason === "string" &&
+      value.reason.length <= 512
+    );
+  }
+  if (value.type === "provider-host-websocket-error") {
+    return (
+      hasExactKeys(value, ["type", "contractVersion", "socketId", "code"]) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId) &&
+      typeof value.code === "string" &&
+      codePattern.test(value.code)
+    );
+  }
   if (
     value.type !== "provider-host-network-response" &&
-    value.type !== "provider-host-credential-response"
+    value.type !== "provider-host-credential-response" &&
+    value.type !== "provider-host-websocket-open-response"
   ) {
     return false;
   }
@@ -697,6 +835,19 @@ export function isProviderUtilityParentMessage(
         "ok",
         "response",
       ]) && isNetworkResponse(value.response)
+    );
+  }
+  if (value.type === "provider-host-websocket-open-response") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "ok",
+        "socketId",
+      ]) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId)
     );
   }
   return (
@@ -871,6 +1022,44 @@ export function isProviderUtilityChildMessage(
       typeof value.requestId === "string" &&
       requestIdPattern.test(value.requestId) &&
       isNetworkRequest(value.request)
+    );
+  }
+  if (value.type === "provider-host-websocket-open-request") {
+    return (
+      hasExactKeys(value, [
+        "type",
+        "contractVersion",
+        "requestId",
+        "socketId",
+        "request",
+      ]) &&
+      typeof value.requestId === "string" &&
+      requestIdPattern.test(value.requestId) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId) &&
+      isWebSocketRequest(value.request)
+    );
+  }
+  if (value.type === "provider-host-websocket-send") {
+    return (
+      hasExactKeys(value, ["type", "contractVersion", "socketId", "data"]) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId) &&
+      isWebSocketData(value.data)
+    );
+  }
+  if (value.type === "provider-host-websocket-close") {
+    return (
+      hasExactKeys(
+        value,
+        ["type", "contractVersion", "socketId"],
+        ["code", "reason"],
+      ) &&
+      typeof value.socketId === "string" &&
+      socketIdPattern.test(value.socketId) &&
+      (value.code === undefined || isWebSocketCloseCode(value.code)) &&
+      (value.reason === undefined ||
+        (typeof value.reason === "string" && value.reason.length <= 512))
     );
   }
   if (value.type === "provider-host-credential-request") {

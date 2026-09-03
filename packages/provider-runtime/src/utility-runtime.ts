@@ -2,6 +2,8 @@ import { ipcContractVersion } from "@erc-chart/contracts";
 import type {
   ProviderNetworkResponse,
   ProviderSubscription,
+  ProviderWebSocketConnection,
+  ProviderWebSocketHandlers,
 } from "@erc-chart/provider-sdk";
 import {
   instantiateInstalledProvider,
@@ -13,6 +15,7 @@ import {
 import {
   isProviderUtilityParentMessage,
   type ProviderUtilityChildMessage,
+  type ProviderUtilityDataRequestMessage,
   type ProviderUtilityHostFailureMessage,
   type ProviderUtilityHostResponseMessage,
   type ProviderUtilityParentMessage,
@@ -31,7 +34,8 @@ export interface ProviderUtilityRuntime {
 }
 
 interface PendingHostRequest<T> {
-  readonly kind: "network" | "credential";
+  readonly kind: "network" | "credential" | "websocket-open";
+  readonly socketId?: string;
   readonly resolve: (value: T) => void;
   readonly reject: (error: Error) => void;
 }
@@ -53,6 +57,7 @@ export function createProviderUtilityRuntime(
     Parameters<typeof planProviderConfigurationChange>[3] | undefined;
   let removeListener = (): void => undefined;
   let requestSequence = 0;
+  let socketSequence = 0;
   let resolveReady: (value: InstalledProviderInstance) => void = () =>
     undefined;
   let rejectReady: (error: Error) => void = () => undefined;
@@ -63,6 +68,7 @@ export function createProviderUtilityRuntime(
   const pending = new Map<string, PendingHostRequest<unknown>>();
   const activeSubscriptions = new Map<string, ProviderSubscription>();
   const pendingSubscriptions = new Set<string>();
+  const activeWebSockets = new Map<string, ProviderWebSocketHandlers>();
 
   const rejectPending = (error: Error): void => {
     for (const request of pending.values()) request.reject(error);
@@ -74,6 +80,16 @@ export function createProviderUtilityRuntime(
     stopped = true;
     removeListener();
     rejectPending(new Error("Provider utility stopped."));
+    for (const socketId of activeWebSockets.keys()) {
+      port.postMessage({
+        type: "provider-host-websocket-close",
+        contractVersion: ipcContractVersion,
+        socketId,
+        code: 1000,
+        reason: "Provider utility shutdown",
+      });
+    }
+    activeWebSockets.clear();
     if (!initializationSettled)
       rejectReady(new Error("Provider utility stopped before initialization."));
     const subscriptions = [...activeSubscriptions.values()];
@@ -118,6 +134,11 @@ export function createProviderUtilityRuntime(
     return `${providerProfileId}.${requestSequence}`;
   };
 
+  const nextSocketId = (): string => {
+    socketSequence += 1;
+    return `${providerProfileId}.ws.${socketSequence}`;
+  };
+
   const hostBroker: ProviderRuntimeHostBroker = {
     requestNetwork: async (
       _profileId,
@@ -141,6 +162,60 @@ export function createProviderUtilityRuntime(
         request,
       });
       return response;
+    },
+    openWebSocket: async (
+      _profileId,
+      request,
+      handlers,
+    ): Promise<ProviderWebSocketConnection> => {
+      if (stopped) throw new Error("Provider utility is stopped.");
+      const requestId = nextRequestId();
+      const socketId = nextSocketId();
+      activeWebSockets.set(socketId, handlers);
+      const opened = new Promise<void>((resolve, reject) => {
+        pending.set(requestId, {
+          kind: "websocket-open",
+          socketId,
+          resolve: resolve as (value: unknown) => void,
+          reject,
+        });
+      });
+      port.postMessage({
+        type: "provider-host-websocket-open-request",
+        contractVersion: ipcContractVersion,
+        requestId,
+        socketId,
+        request,
+      });
+      try {
+        await opened;
+      } catch (error) {
+        activeWebSockets.delete(socketId);
+        throw error;
+      }
+      return Object.freeze({
+        send: (
+          data: Parameters<ProviderWebSocketConnection["send"]>[0],
+        ): void => {
+          if (stopped || !activeWebSockets.has(socketId)) return;
+          port.postMessage({
+            type: "provider-host-websocket-send",
+            contractVersion: ipcContractVersion,
+            socketId,
+            data,
+          });
+        },
+        close: (code?: number, reason?: string): void => {
+          if (stopped || !activeWebSockets.has(socketId)) return;
+          port.postMessage({
+            type: "provider-host-websocket-close",
+            contractVersion: ipcContractVersion,
+            socketId,
+            ...(code === undefined ? {} : { code }),
+            ...(reason === undefined ? {} : { reason }),
+          });
+        },
+      });
     },
     getCredential: async (
       _profileId,
@@ -194,7 +269,9 @@ export function createProviderUtilityRuntime(
     const expectedType =
       request.kind === "network"
         ? "provider-host-network-response"
-        : "provider-host-credential-response";
+        : request.kind === "credential"
+          ? "provider-host-credential-response"
+          : "provider-host-websocket-open-response";
     if (message.type !== expectedType) {
       pending.delete(message.requestId);
       request.reject(new Error("Provider host response type mismatch."));
@@ -208,8 +285,44 @@ export function createProviderUtilityRuntime(
     }
     if (message.type === "provider-host-network-response") {
       request.resolve(message.response);
-    } else {
+    } else if (message.type === "provider-host-credential-response") {
       request.resolve(message.credential);
+    } else {
+      if (message.socketId !== request.socketId) {
+        request.reject(
+          new Error("Provider websocket response socket mismatch."),
+        );
+        fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+        return;
+      }
+      request.resolve(undefined);
+    }
+  };
+
+  const handleWebSocketEvent = (
+    message: Extract<
+      ProviderUtilityParentMessage,
+      {
+        readonly type:
+          | "provider-host-websocket-message"
+          | "provider-host-websocket-closed"
+          | "provider-host-websocket-error";
+      }
+    >,
+  ): void => {
+    const handlers = activeWebSockets.get(message.socketId);
+    if (handlers === undefined) return;
+    try {
+      if (message.type === "provider-host-websocket-message") {
+        handlers.onMessage(message.data);
+      } else if (message.type === "provider-host-websocket-error") {
+        handlers.onError(message.code);
+      } else {
+        activeWebSockets.delete(message.socketId);
+        handlers.onClose({ code: message.code, reason: message.reason });
+      }
+    } catch {
+      // Provider callback failures stay inside the provider lifecycle.
     }
   };
 
@@ -219,13 +332,7 @@ export function createProviderUtilityRuntime(
       : "PROVIDER_DATA_OPERATION_FAILED";
 
   const handleDataRequest = async (
-    message: Exclude<
-      ProviderUtilityParentMessage,
-      | { readonly type: "shutdown" }
-      | { readonly type: "provider-initialize" }
-      | { readonly type: "provider-config-validation-request" }
-      | ProviderUtilityHostResponseMessage
-    >,
+    message: ProviderUtilityDataRequestMessage,
   ): Promise<void> => {
     const instance = activeInstance;
     if (instance === undefined || stopped) {
@@ -383,13 +490,26 @@ export function createProviderUtilityRuntime(
     }
     if (
       message.type === "provider-host-network-response" ||
-      message.type === "provider-host-credential-response"
+      message.type === "provider-host-credential-response" ||
+      message.type === "provider-host-websocket-open-response"
     ) {
       if (!initialized || stopped) {
         fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
         return;
       }
       handleHostResponse(message);
+      return;
+    }
+    if (
+      message.type === "provider-host-websocket-message" ||
+      message.type === "provider-host-websocket-closed" ||
+      message.type === "provider-host-websocket-error"
+    ) {
+      if (!initialized || stopped) {
+        fail("PROVIDER_UTILITY_PROTOCOL_VIOLATION");
+        return;
+      }
+      handleWebSocketEvent(message);
       return;
     }
     if (message.type === "provider-config-validation-request") {

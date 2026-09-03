@@ -1,6 +1,6 @@
 {
   "name": "erc-chart-desktop-app",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "ERC Chart Windows desktop charting application monorepo",
@@ -22,6 +22,7 @@
     "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/packaging/*.test.mjs tools/*.test.mjs",
     "build": "node node_modules/@typescript/native/bin/tsc -b --pretty false --force",
     "build:runtime": "npm run build && node tools/build-runtime.mjs",
+    "build:binomo-provider": "npm run build && node tools/build-binomo-provider.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
     "smoke:electron": "npm run build:runtime && node tools/electron-smoke.mjs",
     "smoke:workspace-restart": "npm run build:runtime && node tools/electron-workspace-restart.mjs",

@@ -11,6 +11,21 @@ export type {
 } from "./identifiers.js";
 export type { Candle, Tick } from "./market-data.js";
 export {
+  isImportedProviderSession,
+  isProviderImportCredentialValues,
+  isProviderImportPreview,
+  isProviderImportPreviewResult,
+  providerImportApproveChannel,
+  providerImportCancelChannel,
+  providerImportPreviewChannel,
+} from "./provider-management.js";
+export type {
+  ImportedProviderInstrument,
+  ImportedProviderSession,
+  ProviderImportCredentialValues,
+  ProviderImportPreview,
+} from "./provider-management.js";
+export {
   inspectPluginManifest,
   isPluginManifest,
   pluginManifestSchema,
