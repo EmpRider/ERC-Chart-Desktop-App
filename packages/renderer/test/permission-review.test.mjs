@@ -43,6 +43,10 @@ test("renders a complete accessible permission review without secret values", ()
   assert.match(dialog.textContent ?? "", /session-token/);
   assert.match(dialog.textContent ?? "", /provider-cache/);
   assert.doesNotMatch(dialog.textContent ?? "", /secret-value/i);
+  assert.equal(
+    dialog.querySelector('input[type="password"]')?.getAttribute("value"),
+    "",
+  );
 });
 
 test("requires explicit re-approval when an update changes permissions", () => {
@@ -69,7 +73,7 @@ test("shows an explicit warning for unsigned Developer Mode packages", () => {
   assert.match(markup, /role="alert"/);
 });
 
-test("emits only the review id and explicit approve or reject decision", async (t) => {
+test("emits review decisions with only explicitly entered credential values", async (t) => {
   const { document, window } = parseHTML(
     '<!doctype html><html><body><main id="root"></main></body></html>',
   );
@@ -99,11 +103,17 @@ test("emits only the review id and explicit approve or reject decision", async (
   });
 
   await act(async () => document.querySelector(".permission-reject")?.click());
+  const credentialInput = document.querySelector('input[type="password"]');
+  assert.ok(credentialInput);
+  await act(async () => {
+    credentialInput.value = "fixture-cookie";
+    credentialInput.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
   await act(async () => document.querySelector(".permission-approve")?.click());
 
   assert.deepEqual(decisions, [
-    ["review-1", "reject"],
-    ["review-1", "approve"],
+    ["review-1", "reject", {}],
+    ["review-1", "approve", { "session-token": "fixture-cookie" }],
   ]);
 });
 

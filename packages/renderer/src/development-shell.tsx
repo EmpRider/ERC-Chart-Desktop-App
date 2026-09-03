@@ -1,4 +1,7 @@
 import {
+  type ImportedProviderSession,
+  type ProviderImportCredentialValues,
+  type ProviderImportPreview,
   isRuntimeInfo,
   type PersistedWorkspace,
   type RuntimeInfo,
@@ -19,12 +22,19 @@ import {
   PluginPermissionReview,
   type PluginPermissionReviewPresentation,
 } from "./permission-review.js";
+import { ProviderChart } from "./provider-chart.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
   readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
   readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
   readonly flushWorkspace: () => Promise<void>;
+  readonly previewProviderImport: () => Promise<ProviderImportPreview | null>;
+  readonly approveProviderImport: (
+    requestId: string,
+    credentials?: ProviderImportCredentialValues,
+  ) => Promise<ImportedProviderSession>;
+  readonly cancelProviderImport: (requestId: string) => Promise<void>;
 }
 
 export interface ShellConnectionState {
@@ -67,7 +77,12 @@ export interface ApplicationShellProps {
   readonly connection: ShellConnectionState;
   readonly workspace: WorkspaceState;
   readonly onWorkspaceAction: (action: WorkspaceAction) => void;
-  readonly pluginPermissionReview?: PluginPermissionReviewPresentation;
+  readonly pluginPermissionReview?:
+    PluginPermissionReviewPresentation | undefined;
+  readonly providerSession?: ImportedProviderSession | undefined;
+  readonly providerImportBusy?: boolean;
+  readonly providerImportError?: string | undefined;
+  readonly onProviderImport?: (() => void) | undefined;
 }
 
 export function ApplicationShell({
@@ -75,6 +90,10 @@ export function ApplicationShell({
   workspace,
   onWorkspaceAction,
   pluginPermissionReview,
+  providerSession,
+  providerImportBusy = false,
+  providerImportError,
+  onProviderImport,
 }: ApplicationShellProps): JSX.Element {
   const activeTab =
     workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ??
@@ -165,6 +184,26 @@ export function ApplicationShell({
           {workspaceLimitReached ? (
             <span role="status">Maximum 4 workspaces</span>
           ) : null}
+          {onProviderImport === undefined ? null : (
+            <button
+              type="button"
+              className="provider-import"
+              disabled={providerImportBusy}
+              onClick={onProviderImport}
+            >
+              {providerImportBusy ? "Importing provider…" : "Import provider"}
+            </button>
+          )}
+          {providerSession === undefined ? null : (
+            <span className="provider-loaded" role="status">
+              {providerSession.providerName} connected
+            </span>
+          )}
+          {providerImportError === undefined ? null : (
+            <span className="provider-import-error" role="alert">
+              {providerImportError}
+            </span>
+          )}
         </div>
 
         <section
@@ -190,12 +229,20 @@ export function ApplicationShell({
                   ×
                 </button>
               ) : null}
-              <div className="slot-number" aria-hidden="true">
-                {index + 1}
-              </div>
-              <p className="eyebrow">Secure desktop shell</p>
-              <h2>{index === 0 ? "Workspace ready" : `Chart ${index + 1}`}</h2>
-              <p className="workspace-copy">Awaiting market data</p>
+              {index === 0 && providerSession !== undefined ? (
+                <ProviderChart session={providerSession} />
+              ) : (
+                <>
+                  <div className="slot-number" aria-hidden="true">
+                    {index + 1}
+                  </div>
+                  <p className="eyebrow">Secure desktop shell</p>
+                  <h2>
+                    {index === 0 ? "Workspace ready" : `Chart ${index + 1}`}
+                  </h2>
+                  <p className="workspace-copy">Awaiting market data</p>
+                </>
+              )}
             </article>
           ))}
         </section>
@@ -300,6 +347,16 @@ function HydratedRuntimeApplicationShell({
     store.getSnapshot,
     store.getSnapshot,
   );
+  const [providerPreview, setProviderPreview] = useState<
+    ProviderImportPreview | undefined
+  >();
+  const [providerSession, setProviderSession] = useState<
+    ImportedProviderSession | undefined
+  >();
+  const [providerImportBusy, setProviderImportBusy] = useState(false);
+  const [providerImportError, setProviderImportError] = useState<
+    string | undefined
+  >();
   const dispatch = (action: WorkspaceAction): void => {
     const before = store.getSnapshot();
     store.dispatch(action);
@@ -310,11 +367,78 @@ function HydratedRuntimeApplicationShell({
       .catch(() => undefined);
   };
 
+  const beginProviderImport = (): void => {
+    if (providerImportBusy) return;
+    setProviderImportBusy(true);
+    setProviderImportError(undefined);
+    void bridge
+      .previewProviderImport()
+      .then((preview) => {
+        if (preview !== null) setProviderPreview(preview);
+      })
+      .catch(() => {
+        setProviderImportError(
+          "Provider import could not be prepared. Check the package and try again.",
+        );
+      })
+      .finally(() => setProviderImportBusy(false));
+  };
+
+  const pluginPermissionReview: PluginPermissionReviewPresentation | undefined =
+    providerPreview === undefined
+      ? undefined
+      : {
+          request: {
+            requestId: providerPreview.requestId,
+            pluginId: providerPreview.pluginId,
+            pluginName: providerPreview.pluginName,
+            pluginVersion: providerPreview.pluginVersion,
+            kind: "provider",
+            mode: providerPreview.mode,
+            trust: providerPreview.trust,
+            reason: "install",
+            permissions: providerPreview.permissions,
+          },
+          busy: providerImportBusy,
+          onDecision: (requestId, decision, credentials): void => {
+            if (providerImportBusy) return;
+            setProviderImportBusy(true);
+            setProviderImportError(undefined);
+            if (decision === "reject") {
+              void bridge
+                .cancelProviderImport(requestId)
+                .catch(() => undefined)
+                .finally(() => {
+                  setProviderPreview(undefined);
+                  setProviderImportBusy(false);
+                });
+              return;
+            }
+            void bridge
+              .approveProviderImport(requestId, credentials)
+              .then((session) => {
+                setProviderSession(session);
+                setProviderPreview(undefined);
+              })
+              .catch(() => {
+                setProviderImportError(
+                  "Provider could not be installed, started, or loaded.",
+                );
+              })
+              .finally(() => setProviderImportBusy(false));
+          },
+        };
+
   return (
     <ApplicationShell
       connection={connection}
       workspace={workspace}
       onWorkspaceAction={dispatch}
+      pluginPermissionReview={pluginPermissionReview}
+      providerSession={providerSession}
+      providerImportBusy={providerImportBusy}
+      providerImportError={providerImportError}
+      onProviderImport={beginProviderImport}
     />
   );
 }

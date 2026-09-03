@@ -174,6 +174,37 @@ export interface ProviderNetworkBroker {
   ) => Promise<ProviderNetworkResponse>;
 }
 
+export type ProviderWebSocketData = string | Uint8Array;
+
+export interface ProviderWebSocketRequest {
+  readonly url: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly protocols?: readonly string[];
+}
+
+export interface ProviderWebSocketCloseEvent {
+  readonly code: number;
+  readonly reason: string;
+}
+
+export interface ProviderWebSocketHandlers {
+  readonly onMessage: (data: ProviderWebSocketData) => void;
+  readonly onClose: (event: ProviderWebSocketCloseEvent) => void;
+  readonly onError: (code: string) => void;
+}
+
+export interface ProviderWebSocketConnection {
+  readonly send: (data: ProviderWebSocketData) => void;
+  readonly close: (code?: number, reason?: string) => void;
+}
+
+export interface ProviderWebSocketBroker {
+  readonly connect: (
+    request: ProviderWebSocketRequest,
+    handlers: ProviderWebSocketHandlers,
+  ) => Promise<ProviderWebSocketConnection>;
+}
+
 export interface ProviderCredentialLease {
   readonly get: (credentialKey: string) => Promise<string | null>;
 }
@@ -199,6 +230,7 @@ export interface ProviderLogger {
 
 export interface ProviderHostServices {
   readonly network: ProviderNetworkBroker;
+  readonly websocket?: ProviderWebSocketBroker;
   readonly credentials: ProviderCredentialLease;
   readonly logger: ProviderLogger;
   readonly now: () => number;

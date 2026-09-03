@@ -10,6 +10,7 @@ import type {
   ProviderInstrument,
   ProviderSubscription,
   ProviderSubscriptionRequest,
+  ProviderWebSocketConnection,
 } from "@erc-chart/provider-sdk";
 import type {
   ProviderConfigurationChangeImpact,
@@ -150,6 +151,8 @@ interface ProviderProcessState {
   shutdownPromise: Promise<void> | undefined;
   permissions: ProviderUtilityLaunchDescriptor["permissions"] | undefined;
   inFlightNetwork: Set<AbortController>;
+  activeWebSockets: Map<string, ProviderWebSocketConnection>;
+  openingWebSockets: Set<string>;
   entryPath: string;
   launch: ProviderUtilityLaunchDescriptor;
   configRequestSequence: number;
@@ -169,6 +172,7 @@ interface ProviderProcessState {
 }
 
 const maximumProviderNetworkRequestsPerProfile = 8;
+const maximumProviderWebSocketsPerProfile = 4;
 
 function requireTimeout(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1)
@@ -226,6 +230,18 @@ export function createProviderUtilitySupervisor(
     state.inFlightNetwork.clear();
   };
 
+  const closeActiveWebSockets = (state: ProviderProcessState): void => {
+    for (const connection of state.activeWebSockets.values()) {
+      try {
+        connection.close(1001, "Provider host shutdown");
+      } catch {
+        // Socket cleanup remains best-effort during provider teardown.
+      }
+    }
+    state.activeWebSockets.clear();
+    state.openingWebSockets.clear();
+  };
+
   const rejectPendingConfiguration = (
     state: ProviderProcessState,
     error: Error,
@@ -268,6 +284,7 @@ export function createProviderUtilitySupervisor(
     const wasStopping = state.status === "stopping";
     clearTimer(state);
     abortInFlightNetwork(state);
+    closeActiveWebSockets(state);
     rejectPendingConfiguration(
       state,
       error ?? new Error("Provider utility became unavailable."),
@@ -294,6 +311,7 @@ export function createProviderUtilitySupervisor(
   const finishStopped = (state: ProviderProcessState): void => {
     clearTimer(state);
     abortInFlightNetwork(state);
+    closeActiveWebSockets(state);
     rejectPendingConfiguration(
       state,
       new Error("Provider utility stopped during configuration validation."),
@@ -338,6 +356,8 @@ export function createProviderUtilitySupervisor(
       shutdownPromise: undefined,
       permissions: launch.permissions,
       inFlightNetwork: new Set(),
+      activeWebSockets: new Map(),
+      openingWebSockets: new Set(),
       entryPath,
       launch,
       configRequestSequence: 0,
@@ -360,7 +380,9 @@ export function createProviderUtilitySupervisor(
 
     const postHostFailure = (
       type:
-        "provider-host-network-response" | "provider-host-credential-response",
+        | "provider-host-network-response"
+        | "provider-host-credential-response"
+        | "provider-host-websocket-open-response",
       requestId: string,
       code: string,
     ): void => {
@@ -571,6 +593,148 @@ export function createProviderUtilitySupervisor(
             );
           })
           .finally(() => state.inFlightNetwork.delete(controller));
+        return true;
+      }
+      if (message.type === "provider-host-websocket-open-request") {
+        if (
+          state.permissions === undefined ||
+          !isProviderNetworkRequestAllowed(
+            message.request.url,
+            state.permissions.network,
+          )
+        ) {
+          postHostFailure(
+            "provider-host-websocket-open-response",
+            message.requestId,
+            "PROVIDER_PERMISSION_DENIED",
+          );
+          return true;
+        }
+        if (options.hostBroker?.openWebSocket === undefined) {
+          postHostFailure(
+            "provider-host-websocket-open-response",
+            message.requestId,
+            "PROVIDER_HOST_UNAVAILABLE",
+          );
+          return true;
+        }
+        if (
+          state.activeWebSockets.has(message.socketId) ||
+          state.openingWebSockets.has(message.socketId) ||
+          state.activeWebSockets.size + state.openingWebSockets.size >=
+            maximumProviderWebSocketsPerProfile
+        ) {
+          postHostFailure(
+            "provider-host-websocket-open-response",
+            message.requestId,
+            "PROVIDER_HOST_WEBSOCKET_FAILED",
+          );
+          return true;
+        }
+        state.openingWebSockets.add(message.socketId);
+        const queued: ProviderUtilityParentMessage[] = [];
+        let opened = false;
+        const deliver = (event: ProviderUtilityParentMessage): void => {
+          if (!opened) {
+            queued.push(event);
+            return;
+          }
+          if (state.status !== "starting" && state.status !== "ready") return;
+          try {
+            state.child?.postMessage(event);
+          } catch {
+            protocolViolation();
+          }
+        };
+        void options.hostBroker
+          .openWebSocket(providerProfileId, message.request, {
+            onMessage: (data): void =>
+              deliver({
+                type: "provider-host-websocket-message",
+                contractVersion: ipcContractVersion,
+                socketId: message.socketId,
+                data,
+              }),
+            onError: (code): void =>
+              deliver({
+                type: "provider-host-websocket-error",
+                contractVersion: ipcContractVersion,
+                socketId: message.socketId,
+                code,
+              }),
+            onClose: (event): void => {
+              state.activeWebSockets.delete(message.socketId);
+              state.openingWebSockets.delete(message.socketId);
+              deliver({
+                type: "provider-host-websocket-closed",
+                contractVersion: ipcContractVersion,
+                socketId: message.socketId,
+                code: event.code,
+                reason: event.reason,
+              });
+            },
+          })
+          .then((connection) => {
+            state.openingWebSockets.delete(message.socketId);
+            if (state.status !== "starting" && state.status !== "ready") {
+              connection.close(1001, "Provider no longer active");
+              return;
+            }
+            state.activeWebSockets.set(message.socketId, connection);
+            state.child?.postMessage({
+              type: "provider-host-websocket-open-response",
+              contractVersion: ipcContractVersion,
+              requestId: message.requestId,
+              ok: true,
+              socketId: message.socketId,
+            });
+            opened = true;
+            for (const event of queued.splice(0)) deliver(event);
+          })
+          .catch(() => {
+            state.openingWebSockets.delete(message.socketId);
+            if (state.status !== "starting" && state.status !== "ready") return;
+            postHostFailure(
+              "provider-host-websocket-open-response",
+              message.requestId,
+              "PROVIDER_HOST_WEBSOCKET_FAILED",
+            );
+          });
+        return true;
+      }
+      if (message.type === "provider-host-websocket-send") {
+        const connection = state.activeWebSockets.get(message.socketId);
+        if (connection === undefined) {
+          protocolViolation();
+          return true;
+        }
+        try {
+          connection.send(message.data);
+        } catch {
+          try {
+            state.child?.postMessage({
+              type: "provider-host-websocket-error",
+              contractVersion: ipcContractVersion,
+              socketId: message.socketId,
+              code: "PROVIDER_HOST_WEBSOCKET_SEND_FAILED",
+            });
+          } catch {
+            protocolViolation();
+          }
+        }
+        return true;
+      }
+      if (message.type === "provider-host-websocket-close") {
+        const connection = state.activeWebSockets.get(message.socketId);
+        if (connection === undefined) {
+          protocolViolation();
+          return true;
+        }
+        try {
+          connection.close(message.code, message.reason);
+        } catch {
+          state.activeWebSockets.delete(message.socketId);
+        }
         return true;
       }
       if (message.type === "provider-host-credential-request") {

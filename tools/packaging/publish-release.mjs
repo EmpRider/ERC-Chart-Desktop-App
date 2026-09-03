@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Provider SDK and plugin runtime release
+const curatedNotes = `# Binomo provider import and live-data patch
 
-This release completes Epic 3: the public Provider SDK v1 authoring contract, secure provider package staging and trust checks, permission review, versioned plugin lifecycle, isolated provider utility processes, profile-scoped configuration, and brokered host services.
+This corrective release adds the importable Binomo provider package and completes the desktop UI path for provider permission review, secure credential entry, installation, startup, instrument discovery, and initial candle loading.
 
-Provider discovery, capabilities, historical candles, and live tick/candle subscriptions now cross the provider runtime into the provider-neutral Data Service. Public-SDK-only tick and candle examples exercise the complete development import and startup path. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+Binomo historical candles keep the migrated timestamp semantics, authenticated live updates use the brokered WebSocket host path with compressed tick handling, and REST polling remains available when no Binomo cookie is supplied. Credential values are stored through Windows Credential Manager rather than provider settings. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,

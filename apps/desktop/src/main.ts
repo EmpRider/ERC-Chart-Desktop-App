@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   net,
   protocol,
@@ -12,6 +13,7 @@ import {
 import {
   createWindowsGenericCredentialManager,
   createUtilitySupervisor,
+  assertTrustedIpcSender,
   startDesktopApplication,
   type DesktopApplicationController,
   type SecureWindowOptions,
@@ -27,6 +29,10 @@ import {
   type ProviderDataService,
 } from "@erc-chart/data-service";
 import {
+  providerImportApproveChannel,
+  providerImportCancelChannel,
+  providerImportPreviewChannel,
+  isProviderImportCredentialValues,
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
@@ -44,6 +50,7 @@ import {
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
 import { createDesktopProviderHostBroker } from "./provider-host-broker.js";
+import { createProviderImportService } from "./provider-import-service.js";
 import { installWindowSecurity } from "./window-security.js";
 
 interface SmokeResult {
@@ -321,12 +328,11 @@ async function startDesktopMain(): Promise<void> {
           : [`--erc-chart-user-data-path=${userDataSwitch}`]),
       ].find((argument) => argument.startsWith("--erc-chart-user-data-path="))
     : undefined;
+  const userDataRoot =
+    userDataArgument?.slice("--erc-chart-user-data-path=".length) ??
+    app.getPath("userData");
   const workspaceDatabase = await openStorageDatabase(
-    path.join(
-      userDataArgument?.slice("--erc-chart-user-data-path=".length) ??
-        app.getPath("userData"),
-      "erc-chart.sqlite",
-    ),
+    path.join(userDataRoot, "erc-chart.sqlite"),
   );
   const senderFromEvent = (event: Electron.IpcMainInvokeEvent) => {
     const senderFrame = event.senderFrame;
@@ -456,13 +462,66 @@ async function startDesktopMain(): Promise<void> {
     );
   resolveController(controller);
 
+  const providerImportService = createProviderImportService({
+    database: workspaceDatabase,
+    controller,
+    credentialManager: providerCredentialManager,
+    stagingRoot: path.join(userDataRoot, "provider-staging"),
+    installationRoot: path.join(userDataRoot, "provider-plugins"),
+  });
+  ipcMain.handle(providerImportPreviewChannel, async (event) => {
+    assertTrustedIpcSender(senderFromEvent(event));
+    const selection = await dialog.showOpenDialog({
+      title: "Import ERC Chart provider",
+      properties: ["openDirectory"],
+    });
+    const selectedPath = selection.filePaths[0];
+    if (selection.canceled || selectedPath === undefined) return null;
+    return providerImportService.preview({
+      kind: "folder",
+      path: selectedPath,
+    });
+  });
+  ipcMain.handle(
+    providerImportApproveChannel,
+    async (event, requestId: unknown, credentials: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (
+        typeof requestId !== "string" ||
+        !isProviderImportCredentialValues(credentials)
+      ) {
+        throw new Error("Provider import request is invalid.");
+      }
+      return providerImportService.approve(requestId, credentials);
+    },
+  );
+  ipcMain.handle(
+    providerImportCancelChannel,
+    async (event, requestId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof requestId !== "string") {
+        throw new Error("Provider import request is invalid.");
+      }
+      await providerImportService.cancel(requestId);
+      return true;
+    },
+  );
+
+  const removeProviderImportHandlers = (): void => {
+    ipcMain.removeHandler(providerImportPreviewChannel);
+    ipcMain.removeHandler(providerImportApproveChannel);
+    ipcMain.removeHandler(providerImportCancelChannel);
+  };
+
   let quitting = false;
   app.on("before-quit", (event) => {
     if (quitting || (smokeMode && !workspaceSeedMode)) return;
     event.preventDefault();
     quitting = true;
-    void controller
+    void providerImportService
       .shutdown()
+      .then(() => controller.shutdown())
+      .finally(removeProviderImportHandlers)
       .then(() => app.quit())
       .catch(() => app.exit(1));
   });
