@@ -10,6 +10,16 @@ import {
 } from "@erc-chart/contracts";
 
 export { providerContractVersion } from "@erc-chart/contracts";
+export { hostApiVersion } from "@erc-chart/contracts";
+export type {
+  Candle,
+  CompatibilityRange,
+  ContractVersion,
+  InstrumentId,
+  ProviderId,
+  Tick,
+  TimeframeId,
+} from "@erc-chart/contracts";
 
 export const providerSdkVersion: ContractVersion = providerContractVersion;
 

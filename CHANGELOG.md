@@ -2,6 +2,27 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.3.0] - 2026-09-03
+
+### Provider SDK and plugin runtime
+
+- Added the public Provider SDK v1 authoring contract, configuration helpers,
+  compatibility metadata, and provider contract conformance kit.
+- Added secure provider package staging, integrity/trust validation, permission
+  review, versioned install/activation/rollback, and isolated utility-process
+  supervision.
+- Added profile-scoped provider configuration with controlled restart/reconnect
+  lifecycle and brokered network/credential host services.
+- Bridged provider instrument discovery, capabilities, historical candles, and
+  live tick/candle subscriptions into the provider-neutral Data Service.
+- Added public-SDK-only tick and candle provider examples plus end-to-end import,
+  startup, conformance, and failure-cleanup regression coverage.
+
+### Packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.2.3] - 2026-09-01
 
 ### Architecture changes

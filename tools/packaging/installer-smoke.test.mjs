@@ -91,7 +91,7 @@ test("preserves the application smoke failure when uninstall and cleanup fail", 
       },
       accessFile: async () => undefined,
       extractPackagedFile: () =>
-        Buffer.from(JSON.stringify({ version: "0.2.3" })),
+        Buffer.from(JSON.stringify({ version: "0.3.0" })),
       executeCommand: async () => {
         command += 1;
         if (command === 2) throw new Error("uninstall failed");

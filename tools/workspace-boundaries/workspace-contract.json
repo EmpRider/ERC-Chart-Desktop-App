@@ -48,6 +48,7 @@
     ],
     "packages/indicator-sdk": ["packages/contracts"],
     "packages/preload": ["packages/contracts"],
+    "packages/provider-examples": ["packages/provider-sdk"],
     "packages/provider-runtime": [
       "packages/contracts",
       "packages/provider-sdk"
