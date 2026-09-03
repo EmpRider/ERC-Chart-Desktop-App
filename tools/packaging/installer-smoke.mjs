@@ -14,6 +14,30 @@ import {
 } from "./packaging-contract.mjs";
 
 const maximumDiagnosticCharacters = 8_192;
+const unpackedRuntimeEntries = [
+  ["packages", "data-service", "dist", "utility-entry.js"],
+  ["packages", "provider-runtime", "dist", "utility-entry.js"],
+  ["packages", "provider-sdk", "dist", "index.js"],
+];
+
+async function assertInstalledRuntimeFiles(accessFile, installationRoot) {
+  try {
+    await Promise.all(
+      unpackedRuntimeEntries.map((segments) =>
+        accessFile(
+          path.join(
+            installationRoot,
+            "resources",
+            "app.asar.unpacked",
+            ...segments,
+          ),
+        ),
+      ),
+    );
+  } catch {
+    throw new Error("Installed unpacked utility runtime is unavailable.");
+  }
+}
 
 export function runCommand({
   executable,
@@ -124,13 +148,12 @@ export async function runInstallerSmoke({
     });
     installed = true;
     await accessFile(executablePath);
+    const asarPath = path.join(installationRoot, "resources", "app.asar");
     const packagedManifest = JSON.parse(
-      extractPackagedFile(
-        path.join(installationRoot, "resources", "app.asar"),
-        "package.json",
-      ).toString("utf8"),
+      extractPackagedFile(asarPath, "package.json").toString("utf8"),
     );
     assertPackagedVersion(packagedManifest.version);
+    await assertInstalledRuntimeFiles(accessFile, installationRoot);
     await runProcesses({
       processes: profiles.map((profile) => ({
         executable: executablePath,

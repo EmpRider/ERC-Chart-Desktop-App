@@ -44,12 +44,7 @@ export function installedExecutablePath(localAppData) {
   if (typeof localAppData !== "string" || localAppData.trim() === "") {
     throw new Error("LOCALAPPDATA is required.");
   }
-  return path.join(
-    localAppData,
-    "Programs",
-    packageIdentityName,
-    `${productName}.exe`,
-  );
+  return path.join(localAppData, packageIdentityName, `${productName}.exe`);
 }
 
 export function packagedElectronArguments(userDataPath) {

@@ -11,20 +11,23 @@ export function resolveDesktopArtifacts(
 ): DesktopArtifactPaths {
   const moduleDirectory = path.dirname(fileURLToPath(moduleUrl));
   const repositoryRoot = path.resolve(moduleDirectory, "../../..");
+  const utilityRoot = repositoryRoot.endsWith(".asar")
+    ? `${repositoryRoot}.unpacked`
+    : repositoryRoot;
   const rendererRootPath = path.join(moduleDirectory, "runtime");
   return {
     preloadPath: path.join(rendererRootPath, "preload.cjs"),
     rendererRootPath,
     rendererEntryUrl,
     dataUtilityPath: path.join(
-      repositoryRoot,
+      utilityRoot,
       "packages",
       "data-service",
       "dist",
       "utility-entry.js",
     ),
     providerUtilityPath: path.join(
-      repositoryRoot,
+      utilityRoot,
       "packages",
       "provider-runtime",
       "dist",

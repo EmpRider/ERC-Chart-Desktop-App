@@ -49,6 +49,10 @@ test("configures one unsigned per-user x64 NSIS installer without updates", () =
   assert.equal(builderConfiguration.win.target[0].target, "nsis");
   assert.deepEqual(builderConfiguration.win.target[0].arch, ["x64"]);
   assert.equal(builderConfiguration.nsis.perMachine, false);
+  assert.equal(
+    builderConfiguration.nsis.include,
+    "tools/packaging/installer.nsh",
+  );
   assert.equal(builderConfiguration.nsis.allowElevation, false);
   assert.equal(builderConfiguration.nsis.differentialPackage, false);
   assert.equal(builderConfiguration.publish, null);
@@ -63,18 +67,21 @@ test("applies the immutable desktop fuse policy during packaging", () => {
   assert.equal(Object.isFrozen(electronFusePolicy), true);
 });
 
+test("unpacks utility-process entry points that require physical Windows paths", () => {
+  assert.deepEqual(builderConfiguration.asarUnpack, [
+    "packages/data-service/dist/utility-entry.js",
+    "packages/provider-runtime/dist/utility-entry.js",
+    "packages/provider-sdk/dist/index.js",
+  ]);
+});
+
 test("resolves the installed executable beneath LOCALAPPDATA", () => {
   const localAppData = path.resolve("C:/Users/test/AppData/Local");
   const executablePath = installedExecutablePath(localAppData);
 
   assert.equal(
     executablePath,
-    path.join(
-      localAppData,
-      "Programs",
-      "erc-chart-desktop-app",
-      "ERC Chart.exe",
-    ),
+    path.join(localAppData, "erc-chart-desktop-app", "ERC Chart.exe"),
   );
   assert.throws(() => installedExecutablePath(""), /LOCALAPPDATA/);
 });
