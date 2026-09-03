@@ -9,6 +9,11 @@ function createFixture(platform = "win32") {
   const windows = [];
   let runtimeInfoHandler;
   let shutdownCount = 0;
+  let providerShutdownAllCount = 0;
+  const providerStartCalls = [];
+  const providerReconfigureCalls = [];
+  const providerShutdownCalls = [];
+  const providerDataCalls = [];
   let quitCount = 0;
   let loadUrlError;
   let shutdownError;
@@ -83,6 +88,53 @@ function createFixture(platform = "win32") {
         if (shutdownError !== undefined) throw shutdownError;
       },
     },
+    providerUtilities: {
+      async start(providerProfileId, entryPath, launch) {
+        providerStartCalls.push({ providerProfileId, entryPath, launch });
+      },
+      async reconfigure(providerProfileId, settings) {
+        providerReconfigureCalls.push({ providerProfileId, settings });
+        return {
+          impact: "restart",
+          settings,
+          changedKeys: Object.keys(settings),
+        };
+      },
+      async shutdown(providerProfileId) {
+        providerShutdownCalls.push(providerProfileId);
+      },
+      async shutdownAll() {
+        providerShutdownAllCount += 1;
+      },
+    },
+    providerData: {
+      async getCapabilities(providerProfileId) {
+        providerDataCalls.push({ type: "capabilities", providerProfileId });
+        return {
+          instruments: true,
+          nativeTimeframes: ["1m"],
+          liveData: true,
+          derivedTimeframes: true,
+        };
+      },
+      async getInstruments(providerProfileId) {
+        providerDataCalls.push({ type: "instruments", providerProfileId });
+        return [{ id: "BTCUSD", symbol: "BTCUSD", name: "Bitcoin / USD" }];
+      },
+      async requestHistory(providerProfileId, request) {
+        providerDataCalls.push({ type: "history", providerProfileId, request });
+        return [];
+      },
+      async subscribe(providerProfileId, request, sink) {
+        providerDataCalls.push({
+          type: "subscribe",
+          providerProfileId,
+          request,
+          sink,
+        });
+        return { unsubscribe: async () => undefined };
+      },
+    },
     workspacePersistence: {
       async load() {
         return null;
@@ -106,6 +158,11 @@ function createFixture(platform = "win32") {
     windows,
     getRuntimeInfoHandler: () => runtimeInfoHandler,
     getShutdownCount: () => shutdownCount,
+    getProviderShutdownAllCount: () => providerShutdownAllCount,
+    providerStartCalls,
+    providerReconfigureCalls,
+    providerShutdownCalls,
+    providerDataCalls,
     getQuitCount: () => quitCount,
     setLoadUrlError: (error) => {
       loadUrlError = error;
@@ -168,6 +225,82 @@ test("registers fixed IPC before loading one secure window", async () => {
   });
 });
 
+test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  const launch = { pluginId: "com.example.provider" };
+
+  assert.deepEqual(fixture.providerStartCalls, []);
+  await controller.startProviderProfile("profile-a", launch);
+  const changed = await controller.reconfigureProviderProfile("profile-a", {
+    region: "eu",
+  });
+  await controller.stopProviderProfile("profile-a");
+
+  assert.deepEqual(fixture.providerStartCalls, [
+    {
+      providerProfileId: "profile-a",
+      entryPath: "/runtime/provider-utility.js",
+      launch,
+    },
+  ]);
+  assert.deepEqual(fixture.providerReconfigureCalls, [
+    { providerProfileId: "profile-a", settings: { region: "eu" } },
+  ]);
+  assert.deepEqual(changed, {
+    impact: "restart",
+    settings: { region: "eu" },
+    changedKeys: ["region"],
+  });
+  assert.deepEqual(fixture.providerShutdownCalls, ["profile-a"]);
+  await controller.shutdown();
+  assert.equal(fixture.getProviderShutdownAllCount(), 1);
+});
+
+test("exposes provider-neutral discovery/history/live data through the application controller", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  const request = { instrumentId: "BTCUSD", timeframeId: "1m" };
+  const sink = {
+    onCandles() {
+      return undefined;
+    },
+    onTicks() {
+      return undefined;
+    },
+    onError() {
+      return undefined;
+    },
+  };
+
+  assert.equal(
+    (await controller.getProviderCapabilities("profile-a")).liveData,
+    true,
+  );
+  assert.equal(
+    (await controller.getProviderInstruments("profile-a"))[0].symbol,
+    "BTCUSD",
+  );
+  assert.deepEqual(
+    await controller.requestProviderHistory("profile-a", request),
+    [],
+  );
+  await controller.subscribeProviderData("profile-a", request, sink);
+
+  assert.deepEqual(
+    fixture.providerDataCalls.map(({ type, providerProfileId }) => ({
+      type,
+      providerProfileId,
+    })),
+    [
+      { type: "capabilities", providerProfileId: "profile-a" },
+      { type: "instruments", providerProfileId: "profile-a" },
+      { type: "history", providerProfileId: "profile-a" },
+      { type: "subscribe", providerProfileId: "profile-a" },
+    ],
+  );
+});
+
 test("recreates a missing window and quits only on non-macOS", async () => {
   const fixture = createFixture();
   await startDesktopApplication(fixture.adapters, paths);
@@ -193,6 +326,7 @@ test("shuts down the data utility and IPC registration idempotently", async () =
   await controller.shutdown();
 
   assert.equal(fixture.getShutdownCount(), 1);
+  assert.equal(fixture.getProviderShutdownAllCount(), 1);
   assert.equal(
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,

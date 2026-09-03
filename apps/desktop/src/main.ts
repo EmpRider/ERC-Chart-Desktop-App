@@ -10,12 +10,22 @@ import {
   type UtilityProcess,
 } from "electron";
 import {
+  createWindowsGenericCredentialManager,
   createUtilitySupervisor,
   startDesktopApplication,
   type DesktopApplicationController,
   type SecureWindowOptions,
   type UtilityChild,
 } from "@erc-chart/electron-main";
+import {
+  createProviderUtilitySupervisor,
+  type ProviderUtilityChild,
+  type ProviderUtilityLaunchDescriptor,
+} from "@erc-chart/provider-runtime";
+import {
+  createProviderDataService,
+  type ProviderDataService,
+} from "@erc-chart/data-service";
 import {
   runtimeInfoChannel,
   workspaceLoadChannel,
@@ -33,6 +43,7 @@ import {
 } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
+import { createDesktopProviderHostBroker } from "./provider-host-broker.js";
 import { installWindowSecurity } from "./window-security.js";
 
 interface SmokeResult {
@@ -41,7 +52,12 @@ interface SmokeResult {
   readonly requireType: string;
 }
 
-function adaptUtilityChild(child: UtilityProcess): UtilityChild {
+function adaptUtilityChild<Message>(child: UtilityProcess): {
+  readonly postMessage: (message: Message) => void;
+  readonly kill: () => void;
+  readonly onMessage: (listener: (message: unknown) => void) => () => void;
+  readonly onExit: (listener: (code: number | null) => void) => () => void;
+} {
   return {
     postMessage: (message): void => child.postMessage(message),
     kill: (): void => {
@@ -86,15 +102,17 @@ const reportSmokeStage = (stage: string): void => {
   if (smokeMode) console.log(`ERC_CHART_SMOKE_STAGE ${stage}`);
 };
 let resolveController: (
-  controller: DesktopApplicationController,
+  controller: DesktopApplicationController<ProviderUtilityLaunchDescriptor>,
 ) => void = (): void => undefined;
-const controllerReady = new Promise<DesktopApplicationController>((resolve) => {
+const controllerReady = new Promise<
+  DesktopApplicationController<ProviderUtilityLaunchDescriptor>
+>((resolve) => {
   resolveController = resolve;
 });
 
 const dataUtility = createUtilitySupervisor({
   spawn: (entryPath, args): UtilityChild =>
-    adaptUtilityChild(
+    adaptUtilityChild<Parameters<UtilityChild["postMessage"]>[0]>(
       utilityProcess.fork(entryPath, [...args], {
         serviceName: "ERC Chart Data Service",
         stdio: "ignore",
@@ -111,6 +129,62 @@ const dataUtility = createUtilitySupervisor({
     console.error("ERC Chart data utility unavailable.");
   },
 });
+const providerLaunches = new Map<string, ProviderUtilityLaunchDescriptor>();
+const providerCredentialManager = createWindowsGenericCredentialManager();
+const providerDataReference: { current: ProviderDataService | undefined } = {
+  current: undefined,
+};
+const providerUtilities = createProviderUtilitySupervisor({
+  spawn: (entryPath, args): ProviderUtilityChild =>
+    adaptUtilityChild<Parameters<ProviderUtilityChild["postMessage"]>[0]>(
+      utilityProcess.fork(entryPath, [...args], {
+        serviceName: "ERC Chart Provider",
+        stdio: "ignore",
+        env: {},
+      }),
+    ),
+  scheduler: {
+    setTimeout: (callback, delayMs): NodeJS.Timeout =>
+      setTimeout(callback, delayMs),
+    clearTimeout: (timer): void => clearTimeout(timer as NodeJS.Timeout),
+  },
+  startupTimeoutMs: 5_000,
+  shutdownTimeoutMs: 2_000,
+  onUnavailable: (providerProfileId, code): void => {
+    providerLaunches.delete(providerProfileId);
+    void providerDataReference.current
+      ?.invalidateProfile(providerProfileId)
+      .catch(() => undefined);
+    console.error(`ERC Chart provider utility unavailable (${code}).`);
+  },
+  onProfileInvalidated: (providerProfileId): Promise<void> | undefined =>
+    providerDataReference.current?.invalidateProfile(providerProfileId),
+  onProfileRestored: (providerProfileId): Promise<void> | undefined =>
+    providerDataReference.current?.restoreProfile(providerProfileId),
+  hostBroker: createDesktopProviderHostBroker({
+    launches: providerLaunches,
+    credentialManager: providerCredentialManager,
+    fetch: (url, init): Promise<Response> => net.fetch(url, init),
+    log: (providerProfileId, level, code, metadata): void => {
+      const writer =
+        level === "error"
+          ? console.error
+          : level === "warn"
+            ? console.warn
+            : console.log;
+      writer(
+        `ERC Chart provider ${providerProfileId} ${code}.`,
+        metadata ?? {},
+      );
+    },
+    reportStatus: (providerProfileId, status): void => {
+      console.log(`ERC Chart provider ${providerProfileId} status ${status}.`);
+    },
+    now: () => Date.now(),
+  }),
+});
+const providerData = createProviderDataService(providerUtilities);
+providerDataReference.current = providerData;
 
 function createWindow(options: SecureWindowOptions): {
   loadURL: (url: string) => Promise<void>;
@@ -263,71 +337,123 @@ async function startDesktopMain(): Promise<void> {
           isMainFrame: senderFrame.parent === null,
         };
   };
-  const controller = await startDesktopApplication(
-    {
-      app: {
-        platform: nodeProcess.platform,
-        whenReady: async (): Promise<void> => {
-          await app.whenReady();
-          reportSmokeStage("app-ready");
-        },
-        onActivate: (handler): void => {
-          app.on("activate", handler);
-        },
-        onWindowAllClosed: (handler): void => {
-          app.on("window-all-closed", handler);
-        },
-        quit: (): void => app.quit(),
-      },
-      registerRuntimeInfoHandler: (handler): (() => void) => {
-        ipcMain.handle(runtimeInfoChannel, (event) =>
-          handler(senderFromEvent(event)),
-        );
-        return (): void => ipcMain.removeHandler(runtimeInfoChannel);
-      },
-      registerWorkspaceLoadHandler: (handler): (() => void) => {
-        ipcMain.handle(workspaceLoadChannel, (event) =>
-          handler(senderFromEvent(event)),
-        );
-        return (): void => ipcMain.removeHandler(workspaceLoadChannel);
-      },
-      registerWorkspaceSaveHandler: (handler): (() => void) => {
-        ipcMain.handle(workspaceSaveChannel, (event, workspace: unknown) =>
-          handler(senderFromEvent(event), workspace).then(() => true),
-        );
-        return (): void => ipcMain.removeHandler(workspaceSaveChannel);
-      },
-      registerRendererProtocol: (rootPath): Promise<() => void> =>
-        installRendererProtocol(
-          {
-            handle: (scheme, handler): void => protocol.handle(scheme, handler),
-            unhandle: (scheme): void => protocol.unhandle(scheme),
-            fetch: (url): Promise<Response> => net.fetch(url),
+  const controller =
+    await startDesktopApplication<ProviderUtilityLaunchDescriptor>(
+      {
+        app: {
+          platform: nodeProcess.platform,
+          whenReady: async (): Promise<void> => {
+            await app.whenReady();
+            reportSmokeStage("app-ready");
           },
-          rootPath,
-        ),
-      createWindow,
-      dataUtility: {
-        start: async (entryPath, args): Promise<void> => {
-          await dataUtility.start(entryPath, args);
-          reportSmokeStage("data-utility-ready");
+          onActivate: (handler): void => {
+            app.on("activate", handler);
+          },
+          onWindowAllClosed: (handler): void => {
+            app.on("window-all-closed", handler);
+          },
+          quit: (): void => app.quit(),
         },
-        shutdown: (): Promise<void> => dataUtility.shutdown(),
+        registerRuntimeInfoHandler: (handler): (() => void) => {
+          ipcMain.handle(runtimeInfoChannel, (event) =>
+            handler(senderFromEvent(event)),
+          );
+          return (): void => ipcMain.removeHandler(runtimeInfoChannel);
+        },
+        registerWorkspaceLoadHandler: (handler): (() => void) => {
+          ipcMain.handle(workspaceLoadChannel, (event) =>
+            handler(senderFromEvent(event)),
+          );
+          return (): void => ipcMain.removeHandler(workspaceLoadChannel);
+        },
+        registerWorkspaceSaveHandler: (handler): (() => void) => {
+          ipcMain.handle(workspaceSaveChannel, (event, workspace: unknown) =>
+            handler(senderFromEvent(event), workspace).then(() => true),
+          );
+          return (): void => ipcMain.removeHandler(workspaceSaveChannel);
+        },
+        registerRendererProtocol: (rootPath): Promise<() => void> =>
+          installRendererProtocol(
+            {
+              handle: (scheme, handler): void =>
+                protocol.handle(scheme, handler),
+              unhandle: (scheme): void => protocol.unhandle(scheme),
+              fetch: (url): Promise<Response> => net.fetch(url),
+            },
+            rootPath,
+          ),
+        createWindow,
+        dataUtility: {
+          start: async (entryPath, args): Promise<void> => {
+            await dataUtility.start(entryPath, args);
+            reportSmokeStage("data-utility-ready");
+          },
+          shutdown: (): Promise<void> => dataUtility.shutdown(),
+        },
+        providerUtilities: {
+          start: async (
+            providerProfileId,
+            entryPath,
+            launch,
+          ): Promise<void> => {
+            providerLaunches.set(providerProfileId, launch);
+            try {
+              await providerUtilities.start(
+                providerProfileId,
+                entryPath,
+                launch,
+              );
+            } catch (error) {
+              providerLaunches.delete(providerProfileId);
+              throw error;
+            }
+          },
+          reconfigure: async (providerProfileId, settings) => {
+            const previousLaunch = providerLaunches.get(providerProfileId);
+            if (previousLaunch === undefined)
+              throw new Error("Provider profile is not active.");
+            const result = await providerUtilities.reconfigure(
+              providerProfileId,
+              settings,
+            );
+            providerLaunches.set(providerProfileId, {
+              ...previousLaunch,
+              settings: result.settings,
+            });
+            return result;
+          },
+          shutdown: async (providerProfileId): Promise<void> => {
+            try {
+              await providerData.invalidateProfile(providerProfileId);
+              await providerUtilities.shutdown(providerProfileId);
+            } finally {
+              providerLaunches.delete(providerProfileId);
+            }
+          },
+          shutdownAll: async (): Promise<void> => {
+            try {
+              await providerData.shutdown();
+              await providerUtilities.shutdownAll();
+            } finally {
+              providerLaunches.clear();
+            }
+          },
+        },
+        providerData,
+        workspacePersistence: {
+          load: async (): Promise<PersistedWorkspace | null> =>
+            loadWorkspace(workspaceDatabase, lastWorkspaceId) ?? null,
+          save: async (workspace): Promise<void> => {
+            saveWorkspace(workspaceDatabase, workspace, desktopInstanceId);
+          },
+          flush: async (): Promise<void> => undefined,
+          close: async (): Promise<void> => {
+            workspaceDatabase.close();
+          },
+        },
       },
-      workspacePersistence: {
-        load: async (): Promise<PersistedWorkspace | null> =>
-          loadWorkspace(workspaceDatabase, lastWorkspaceId) ?? null,
-        save: async (workspace): Promise<void> => {
-          saveWorkspace(workspaceDatabase, workspace, desktopInstanceId);
-        },
-        flush: async (): Promise<void> => undefined,
-        close: async (): Promise<void> => {
-          workspaceDatabase.close();
-        },
-      },
-    },
-    paths,
-  );
+      paths,
+    );
   resolveController(controller);
 
   let quitting = false;

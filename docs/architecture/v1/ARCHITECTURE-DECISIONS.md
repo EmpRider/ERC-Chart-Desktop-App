@@ -351,3 +351,27 @@ Detailed implementation guidance is recorded in `SDK-IMPLEMENTATION-DECISIONS.md
 - klinecharts instances are not persistence sources of truth; workspace persistence stores normalized ERC-chart indicator configuration.
 - Calculation inputs and presentation styles must be classified so style-only edits do not create unnecessary provider/worker churn.
 - Equivalent positional and object-form TA calls must produce equivalent semantics and contract tests.
+
+## ADR-017 — Stateful TA ownership and bounded indicator-result access
+
+Status: **Accepted**
+
+### Context
+
+klinecharts calculates registered indicators during its chart pipeline but does not expose a stable universal method dedicated to returning indicator values for signal evaluation. Its internal result representation is also a dependency-version compatibility concern. Signal processing needs only the latest or a bounded tail of normalized values, while the public `ta.*` facade requires deterministic incremental semantics that klinecharts does not provide as a Pine-like dependency engine.
+
+### Decision
+
+ERC-chart owns the public `ta.*` semantics, warm-up rules, retained rolling state, multi-timeframe dependencies, revisions, and performance contract. Steady-state SMA, EMA, RSI, ATR, and crossover updates are O(1); highest/lowest are amortized O(1). Initial history is O(N), while configuration changes and historical corrections rebuild only the required history or dirty range.
+
+The renderer owns one pinned klinecharts compatibility adapter. It validates and normalizes calculated `indicator.result` values against canonical candle timestamps/revisions and fails closed on an unknown layout. No plugin receives the raw chart instance or result object.
+
+A host-only bounded result reader supplies O(1) latest access and O(requested count) last-N access for signal processing. Finalized-only is the default for actionable signals; provisional evaluation is explicit. ERC-chart also owns the settings Save/apply transaction and uses verified klinecharts override APIs instead of assuming a generic settings-committed callback.
+
+### Consequences
+
+- klinecharts remains the chart scheduler, result-storage integration point, and presentation engine without becoming the SDK semantic authority.
+- A klinecharts version upgrade requires result-layout, readiness, override, and stale-callback compatibility fixtures.
+- Signal evaluation never scans complete candle history during an ordinary update.
+- Building-bar state is provisional and can be replaced without corrupting the last committed rolling state.
+- Implementation tasks must measure the required steady-state complexity bounds and reject oversized tail requests.

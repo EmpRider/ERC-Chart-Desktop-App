@@ -1,9 +1,18 @@
 import {
   ipcContractVersion,
   isWorkspaceSaveRequest,
+  type Candle,
   type PersistedWorkspace,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
+import type {
+  ProviderCapabilities,
+  ProviderDataSink,
+  ProviderHistoryRequest,
+  ProviderInstrument,
+  ProviderSubscription,
+  ProviderSubscriptionRequest,
+} from "@erc-chart/provider-sdk";
 import { assertTrustedIpcSender, type DesktopIpcSender } from "./security.js";
 import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
 
@@ -31,7 +40,11 @@ export interface DesktopAppAdapter {
   readonly quit: () => void;
 }
 
-export interface DesktopApplicationAdapters {
+export interface ProviderConfigurationChange {
+  readonly settings: Readonly<Record<string, boolean | number | string>>;
+}
+
+export interface DesktopApplicationAdapters<ProviderLaunch = unknown> {
   readonly app: DesktopAppAdapter;
   readonly registerRuntimeInfoHandler: (
     handler: (sender: DesktopIpcSender | undefined) => RuntimeInfo,
@@ -56,6 +69,36 @@ export interface DesktopApplicationAdapters {
     ) => Promise<void>;
     readonly shutdown: () => Promise<void>;
   };
+  readonly providerUtilities: {
+    readonly start: (
+      providerProfileId: string,
+      entryPath: string,
+      launch: ProviderLaunch,
+    ) => Promise<void>;
+    readonly reconfigure: (
+      providerProfileId: string,
+      settings: Readonly<Record<string, boolean | number | string>>,
+    ) => Promise<ProviderConfigurationChange>;
+    readonly shutdown: (providerProfileId: string) => Promise<void>;
+    readonly shutdownAll: () => Promise<void>;
+  };
+  readonly providerData: {
+    readonly getCapabilities: (
+      providerProfileId: string,
+    ) => Promise<ProviderCapabilities>;
+    readonly getInstruments: (
+      providerProfileId: string,
+    ) => Promise<readonly ProviderInstrument[]>;
+    readonly requestHistory: (
+      providerProfileId: string,
+      request: ProviderHistoryRequest,
+    ) => Promise<readonly Candle[]>;
+    readonly subscribe: (
+      providerProfileId: string,
+      request: ProviderSubscriptionRequest,
+      sink: ProviderDataSink,
+    ) => Promise<ProviderSubscription>;
+  };
   readonly workspacePersistence: {
     readonly load: () => Promise<PersistedWorkspace | null>;
     readonly save: (workspace: PersistedWorkspace) => Promise<void>;
@@ -64,14 +107,38 @@ export interface DesktopApplicationAdapters {
   };
 }
 
-export interface DesktopApplicationController {
+export interface DesktopApplicationController<ProviderLaunch = unknown> {
+  readonly startProviderProfile: (
+    providerProfileId: string,
+    launch: ProviderLaunch,
+  ) => Promise<void>;
+  readonly reconfigureProviderProfile: (
+    providerProfileId: string,
+    settings: Readonly<Record<string, boolean | number | string>>,
+  ) => Promise<ProviderConfigurationChange>;
+  readonly stopProviderProfile: (providerProfileId: string) => Promise<void>;
+  readonly getProviderCapabilities: (
+    providerProfileId: string,
+  ) => Promise<ProviderCapabilities>;
+  readonly getProviderInstruments: (
+    providerProfileId: string,
+  ) => Promise<readonly ProviderInstrument[]>;
+  readonly requestProviderHistory: (
+    providerProfileId: string,
+    request: ProviderHistoryRequest,
+  ) => Promise<readonly Candle[]>;
+  readonly subscribeProviderData: (
+    providerProfileId: string,
+    request: ProviderSubscriptionRequest,
+    sink: ProviderDataSink,
+  ) => Promise<ProviderSubscription>;
   readonly shutdown: () => Promise<void>;
 }
 
-export async function startDesktopApplication(
-  adapters: DesktopApplicationAdapters,
+export async function startDesktopApplication<ProviderLaunch>(
+  adapters: DesktopApplicationAdapters<ProviderLaunch>,
   paths: DesktopArtifactPaths,
-): Promise<DesktopApplicationController> {
+): Promise<DesktopApplicationController<ProviderLaunch>> {
   let currentWindow: DesktopWindow | undefined;
   let stopped = false;
   let removeRendererProtocol: (() => void) | undefined;
@@ -137,6 +204,11 @@ export async function startDesktopApplication(
     await openWindow();
   } catch {
     try {
+      await adapters.providerUtilities.shutdownAll();
+    } catch {
+      // Cleanup failure must not expose the original startup error.
+    }
+    try {
       await adapters.dataUtility.shutdown();
     } catch {
       // Cleanup failure must not expose the original startup error.
@@ -159,14 +231,51 @@ export async function startDesktopApplication(
   }
 
   return {
+    startProviderProfile: (providerProfileId, launch): Promise<void> =>
+      adapters.providerUtilities.start(
+        providerProfileId,
+        paths.providerUtilityPath,
+        launch,
+      ),
+    reconfigureProviderProfile: (
+      providerProfileId,
+      settings,
+    ): Promise<ProviderConfigurationChange> =>
+      adapters.providerUtilities.reconfigure(providerProfileId, settings),
+    stopProviderProfile: (providerProfileId): Promise<void> =>
+      adapters.providerUtilities.shutdown(providerProfileId),
+    getProviderCapabilities: (
+      providerProfileId,
+    ): Promise<ProviderCapabilities> =>
+      adapters.providerData.getCapabilities(providerProfileId),
+    getProviderInstruments: (
+      providerProfileId,
+    ): Promise<readonly ProviderInstrument[]> =>
+      adapters.providerData.getInstruments(providerProfileId),
+    requestProviderHistory: (
+      providerProfileId,
+      request,
+    ): Promise<readonly Candle[]> =>
+      adapters.providerData.requestHistory(providerProfileId, request),
+    subscribeProviderData: (
+      providerProfileId,
+      request,
+      sink,
+    ): Promise<ProviderSubscription> =>
+      adapters.providerData.subscribe(providerProfileId, request, sink),
     shutdown: async (): Promise<void> => {
       if (stopped) return;
       stopped = true;
       let shutdownError: unknown;
       try {
-        await adapters.dataUtility.shutdown();
+        await adapters.providerUtilities.shutdownAll();
       } catch (error) {
         shutdownError = error;
+      }
+      try {
+        await adapters.dataUtility.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
       }
       try {
         await currentWindow?.flushWorkspace();

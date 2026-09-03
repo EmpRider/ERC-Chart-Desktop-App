@@ -43,6 +43,37 @@ test("resolves runtime artifacts independently of the working directory", () => 
   });
 });
 
+test("resolves packaged utility processes through app.asar.unpacked", () => {
+  const resourcesRoot = path.resolve("/installed/resources");
+  const moduleUrl = pathToFileURL(
+    path.join(resourcesRoot, "app.asar", "apps", "desktop", "dist", "main.js"),
+  ).href;
+
+  const artifacts = resolveDesktopArtifacts(moduleUrl);
+  assert.equal(
+    artifacts.dataUtilityPath,
+    path.join(
+      resourcesRoot,
+      "app.asar.unpacked",
+      "packages",
+      "data-service",
+      "dist",
+      "utility-entry.js",
+    ),
+  );
+  assert.equal(
+    artifacts.providerUtilityPath,
+    path.join(
+      resourcesRoot,
+      "app.asar.unpacked",
+      "packages",
+      "provider-runtime",
+      "dist",
+      "utility-entry.js",
+    ),
+  );
+});
+
 test("validates every required artifact without exposing its path", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-artifacts-"));
   t.after(() => rm(root, { recursive: true, force: true }));

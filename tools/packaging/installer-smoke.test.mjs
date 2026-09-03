@@ -90,8 +90,10 @@ test("preserves the application smoke failure when uninstall and cleanup fail", 
         throw new Error("cleanup failed");
       },
       accessFile: async () => undefined,
-      extractPackagedFile: () =>
-        Buffer.from(JSON.stringify({ version: "0.2.3" })),
+      extractPackagedFile: (_asarPath, filePath) =>
+        filePath === "package.json"
+          ? Buffer.from(JSON.stringify({ version: "0.3.0" }))
+          : Buffer.from("export const providerSdkVersion = 1;"),
       executeCommand: async () => {
         command += 1;
         if (command === 2) throw new Error("uninstall failed");
@@ -101,5 +103,26 @@ test("preserves the application smoke failure when uninstall and cleanup fail", 
       },
     }),
     new Error("application smoke failed"),
+  );
+});
+
+test("rejects an installed package without the unpacked utility runtime", async () => {
+  await assert.rejects(
+    runInstallerSmoke({
+      platform: "win32",
+      environment: { LOCALAPPDATA: "local-app-data" },
+      createProfile: async (instance) => `profile-${instance}`,
+      removeProfile: async () => undefined,
+      accessFile: async (filePath) => {
+        if (filePath.includes("app.asar.unpacked")) {
+          throw new Error("runtime missing");
+        }
+      },
+      extractPackagedFile: () =>
+        Buffer.from(JSON.stringify({ version: "0.3.0" })),
+      executeCommand: async () => undefined,
+      runProcesses: async () => assert.fail("Installed app must not launch"),
+    }),
+    /unpacked utility runtime is unavailable/,
   );
 });

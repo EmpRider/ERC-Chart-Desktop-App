@@ -1,6 +1,6 @@
 {
   "name": "erc-chart-desktop-app",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "ERC Chart Windows desktop charting application monorepo",
@@ -18,7 +18,7 @@
     "boundaries:check": "node tools/workspace-boundaries/src/cli.mjs",
     "lint": "npm run boundaries:check && eslint apps packages tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries eslint.config.mjs",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
-    "test:unit": "npm run build && node --test tools/delivery-governance/test/*.test.mjs apps/desktop/test/*.test.mjs packages/contracts/test/*.test.mjs packages/data-service/test/*.test.mjs packages/electron-main/test/*.test.mjs packages/indicator-sdk/test/*.test.mjs packages/preload/test/*.test.mjs packages/provider-runtime/test/*.test.mjs packages/provider-sdk/test/*.test.mjs packages/renderer/test/*.test.mjs packages/storage/test/*.test.mjs",
+    "test:unit": "npm run build && node --test tools/delivery-governance/test/*.test.mjs apps/desktop/test/*.test.mjs packages/contracts/test/*.test.mjs packages/data-service/test/*.test.mjs packages/electron-main/test/*.test.mjs packages/indicator-sdk/test/*.test.mjs packages/preload/test/*.test.mjs packages/provider-runtime/test/*.test.mjs packages/provider-sdk/test/*.test.mjs packages/testing/test/*.test.mjs packages/renderer/test/*.test.mjs packages/storage/test/*.test.mjs",
     "test:integration": "node --test tools/workspace-boundaries/test/*.test.mjs tools/packaging/*.test.mjs tools/*.test.mjs",
     "build": "node node_modules/@typescript/native/bin/tsc -b --pretty false --force",
     "build:runtime": "npm run build && node tools/build-runtime.mjs",

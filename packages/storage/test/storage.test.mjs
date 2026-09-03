@@ -6,10 +6,12 @@ import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
+  activatePlugin,
   createProviderProfile,
   deleteAppSetting,
   deletePlugin,
   deleteProviderProfile,
+  disablePlugin,
   getAppSetting,
   getCandles,
   getPlugin,
@@ -23,6 +25,7 @@ import {
   putAppSetting,
   putPlugin,
   recoverStorageDatabase,
+  rollbackPlugin,
   saveWorkspace,
   serializeWorkspaceV1,
   StorageDatabaseCorruptionError,
@@ -312,7 +315,7 @@ test("creates the versioned SQLite schema and records its migration", async () =
         .map(({ version }) => version);
 
       assert.deepEqual(tables, expectedTables);
-      assert.deepEqual(migrations, [1]);
+      assert.deepEqual(migrations, [1, 2]);
     } finally {
       database.close();
     }
@@ -329,7 +332,56 @@ test("runs migrations idempotently", async () => {
         database
           .prepare("SELECT COUNT(*) AS count FROM schema_migrations")
           .get().count,
-        1,
+        2,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("upgrades version-1 provider profiles with empty non-secret settings", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const setup = new DatabaseSync(databasePath);
+    setup.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at_ms INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO schema_migrations (version, applied_at_ms) VALUES (1, 1);
+      CREATE TABLE provider_profiles (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        credential_target TEXT NOT NULL UNIQUE,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO provider_profiles
+        (id, provider_id, display_name, credential_target, created_at_ms, updated_at_ms)
+      VALUES
+        ('legacy', 'binomo', 'Legacy', 'ERC-chart/provider/binomo/legacy', 1, 1);
+    `);
+    setup.close();
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(getProviderProfile(database, "legacy"), {
+        id: "legacy",
+        providerId: "binomo",
+        displayName: "Legacy",
+        credentialReference: "ERC-chart/provider/binomo/legacy",
+        settings: {},
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      });
+      assert.deepEqual(
+        database
+          .prepare("SELECT version FROM schema_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2],
       );
     } finally {
       database.close();
@@ -504,6 +556,7 @@ test("creates, reads, lists, updates, and deletes provider metadata", async () =
         providerId: "binomo",
         displayName: "Primary account",
         credentialReference: "ERC-chart/provider/binomo/primary",
+        settings: { endpoint: "https://api.example.com", sandbox: false },
       });
       assert.equal(created.createdAtMs, created.updatedAtMs);
       assert.deepEqual(getProviderProfile(database, "primary"), created);
@@ -511,8 +564,13 @@ test("creates, reads, lists, updates, and deletes provider metadata", async () =
 
       const updated = updateProviderProfile(database, "primary", {
         displayName: "Renamed account",
+        settings: { endpoint: "https://api.example.com/v2", sandbox: true },
       });
       assert.equal(updated.displayName, "Renamed account");
+      assert.deepEqual(updated.settings, {
+        endpoint: "https://api.example.com/v2",
+        sandbox: true,
+      });
       assert.equal(updated.createdAtMs, created.createdAtMs);
       assert.ok(updated.updatedAtMs >= created.updatedAtMs);
 
@@ -549,6 +607,17 @@ test("rejects raw secret-like provider profile fields without persisting them", 
             authtoken: "raw-secret",
           }),
         /Unsupported provider profile update field: authtoken/,
+      );
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: "unsafe-settings",
+            providerId: "binomo",
+            displayName: "Unsafe settings",
+            credentialReference: "ERC-chart/provider/binomo/unsafe-settings",
+            settings: { authToken: "raw-secret" },
+          }),
+        /cannot be persisted/,
       );
       assert.equal(
         database
@@ -697,6 +766,111 @@ test("persists plugin versions, permissions, and deterministic registry order", 
   });
 });
 
+test("manages plugin activation, disable, rollback, and uninstall transactionally", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const base = {
+        pluginId: "erc.provider.binomo",
+        kind: "provider",
+        trust: "signed",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        permissions: [],
+      };
+      putPlugin(database, {
+        ...base,
+        version: "1.0.0",
+        status: "disabled",
+        integrityHash: `sha256:${"a".repeat(64)}`,
+      });
+      putPlugin(database, {
+        ...base,
+        version: "2.0.0",
+        status: "active",
+        integrityHash: `sha256:${"b".repeat(64)}`,
+      });
+      putPlugin(database, {
+        ...base,
+        version: "3.0.0+build.7",
+        status: "incompatible",
+        integrityHash: `sha256:${"c".repeat(64)}`,
+      });
+      putPlugin(database, {
+        pluginId: "erc.indicator.rsi",
+        version: "1.0.0",
+        kind: "indicator",
+        trust: "bundled",
+        status: "active",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"d".repeat(64)}`,
+        permissions: [],
+      });
+
+      assert.equal(
+        putPlugin(database, {
+          ...base,
+          version: "1.0.0",
+          status: "active",
+          integrityHash: `sha256:${"a".repeat(64)}`,
+        }).status,
+        "active",
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        getPlugin(database, "erc.indicator.rsi", "1.0.0").status,
+        "active",
+      );
+
+      assert.throws(
+        () => activatePlugin(database, "erc.provider.binomo", "3.0.0+build.7"),
+        /cannot be activated/,
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "active",
+      );
+
+      assert.equal(
+        disablePlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        rollbackPlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "active",
+      );
+      assert.throws(
+        () => deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        /must be disabled/,
+      );
+      assert.equal(
+        disablePlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        true,
+      );
+      assert.equal(
+        deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        false,
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "3.0.0+build.7").status,
+        "incompatible",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
 test("rejects malformed settings and plugin registry records", async () => {
   await withDatabase(async (databasePath) => {
     const database = await openStorageDatabase(databasePath);
@@ -756,13 +930,18 @@ test("rejects malformed settings and plugin registry records", async () => {
 test("rejects a database created by a newer application version", async () => {
   await withDatabase(async (databasePath) => {
     const database = await openStorageDatabase(databasePath);
-    database.exec("UPDATE schema_migrations SET version = 999");
+    database.exec("DELETE FROM schema_migrations");
+    database
+      .prepare(
+        "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)",
+      )
+      .run(999, Date.now());
     database.close();
 
     await assert.rejects(
       openStorageDatabase(databasePath),
       new Error(
-        "Database schema version 999 is newer than supported version 1.",
+        "Database schema version 999 is newer than supported version 2.",
       ),
     );
 

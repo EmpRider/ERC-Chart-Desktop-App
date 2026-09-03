@@ -2,15 +2,15 @@
 
 ## Document control
 
-| Field | Value |
-|---|---|
-| Product | ERC-chart |
-| Document version | 1.0 draft |
-| Date | 2026-07-30 |
-| Target release | MVP |
-| Target platform | Windows 10/11 x64 |
-| Distribution | `.exe` installer |
-| Primary theme | Dark only |
+| Field               | Value                                           |
+| ------------------- | ----------------------------------------------- |
+| Product             | ERC-chart                                       |
+| Document version    | 1.0 draft                                       |
+| Date                | 2026-07-30                                      |
+| Target release      | MVP                                             |
+| Target platform     | Windows 10/11 x64                               |
+| Distribution        | `.exe` installer                                |
+| Primary theme       | Dark only                                       |
 | Architecture status | Baseline for review and implementation planning |
 
 ## 1. Executive summary
@@ -41,35 +41,35 @@ The application will be implemented from zero. The supplied Signal project is ev
 
 ## 2. Confirmed product decisions
 
-| Area | Confirmed decision |
-|---|---|
-| Product name | ERC-chart |
-| First platform | Windows 10/11 x64 only |
-| Installer | `.exe` |
-| First provider | Binomo |
-| Per-window chart capacity | Four visible charts |
-| Additional windows | Launch additional independent application instances |
-| Chart types | Candlestick, line, area |
-| Timeframes | Declared by the selected provider adapter; no hard-coded global list |
-| Max active history | 100,000 candles per chart series |
-| Max indicators | Five active indicator instances per chart |
-| Indicator languages | JavaScript and TypeScript authoring; packaged runtime is ESM JavaScript |
-| Indicator inputs | Candles, building candle, live ticks, multi-timeframe series, bound outputs from other indicators |
-| Plugin installation | Local ZIP or folder |
-| Unsigned plugins | Developer Mode only |
-| Plugin store | Excluded from MVP |
-| Historical cache | Required |
-| Settings/workspaces | Local only |
-| Drawing persistence | Excluded from MVP; drawings exist only for the running session |
-| Accounts/cloud sync | Excluded from MVP |
-| Provider credentials | Entered in the app and stored through Windows Credential Manager |
-| Offline mode | Not a supported product mode |
-| Theme | Dark only in MVP |
-| Automatic update | Excluded from MVP |
-| Languages | One UI language in MVP |
-| Crash analytics/telemetry | Excluded from MVP |
-| Commercial licensing | Excluded from MVP |
-| Signal broadcasting | First post-MVP phase |
+| Area                      | Confirmed decision                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| Product name              | ERC-chart                                                                                         |
+| First platform            | Windows 10/11 x64 only                                                                            |
+| Installer                 | `.exe`                                                                                            |
+| First provider            | Binomo                                                                                            |
+| Per-window chart capacity | Four visible charts                                                                               |
+| Additional windows        | Launch additional independent application instances                                               |
+| Chart types               | Candlestick, line, area                                                                           |
+| Timeframes                | Declared by the selected provider adapter; no hard-coded global list                              |
+| Max active history        | 100,000 candles per chart series                                                                  |
+| Max indicators            | Five active indicator instances per chart                                                         |
+| Indicator languages       | JavaScript and TypeScript authoring; packaged runtime is ESM JavaScript                           |
+| Indicator inputs          | Candles, building candle, live ticks, multi-timeframe series, bound outputs from other indicators |
+| Plugin installation       | Local ZIP or folder                                                                               |
+| Unsigned plugins          | Developer Mode only                                                                               |
+| Plugin store              | Excluded from MVP                                                                                 |
+| Historical cache          | Required                                                                                          |
+| Settings/workspaces       | Local only                                                                                        |
+| Drawing persistence       | Excluded from MVP; drawings exist only for the running session                                    |
+| Accounts/cloud sync       | Excluded from MVP                                                                                 |
+| Provider credentials      | Entered in the app and stored through Windows Credential Manager                                  |
+| Offline mode              | Not a supported product mode                                                                      |
+| Theme                     | Dark only in MVP                                                                                  |
+| Automatic update          | Excluded from MVP                                                                                 |
+| Languages                 | One UI language in MVP                                                                            |
+| Crash analytics/telemetry | Excluded from MVP                                                                                 |
+| Commercial licensing      | Excluded from MVP                                                                                 |
+| Signal broadcasting       | First post-MVP phase                                                                              |
 
 ### Clarification: workspace versus drawing persistence
 
@@ -117,103 +117,103 @@ The MVP is ready when a clean Windows 10/11 x64 machine can install the signed o
 
 ### 4.1 Application shell and workspaces
 
-| ID | Requirement |
-|---|---|
-| APP-001 | Install and uninstall using a Windows x64 `.exe` installer. |
-| APP-002 | Run without requiring administrator rights for normal per-user installation. |
-| APP-003 | Permit more than one independent ERC-chart process to run. |
-| APP-004 | Support multiple tabs per window. |
+| ID      | Requirement                                                                                           |
+| ------- | ----------------------------------------------------------------------------------------------------- |
+| APP-001 | Install and uninstall using a Windows x64 `.exe` installer.                                           |
+| APP-002 | Run without requiring administrator rights for normal per-user installation.                          |
+| APP-003 | Permit more than one independent ERC-chart process to run.                                            |
+| APP-004 | Support multiple tabs per window.                                                                     |
 | APP-005 | Support one-, two-, three-, and four-chart layouts, with no more than four visible charts per window. |
-| APP-006 | Save and restore the last local workspace using a versioned schema. |
-| APP-007 | Use a dark theme only in the MVP. |
-| APP-008 | Show clear states for Connecting, Live, Reconnecting, Stale, Authentication Required, and Error. |
+| APP-006 | Save and restore the last local workspace using a versioned schema.                                   |
+| APP-007 | Use a dark theme only in the MVP.                                                                     |
+| APP-008 | Show clear states for Connecting, Live, Reconnecting, Stale, Authentication Required, and Error.      |
 
 ### 4.2 Market data
 
-| ID | Requirement |
-|---|---|
+| ID       | Requirement                                                                                                           |
+| -------- | --------------------------------------------------------------------------------------------------------------------- |
 | DATA-001 | Provider adapters declare their instruments, timeframes, data types, authentication fields, and endpoint permissions. |
-| DATA-002 | Load up to 100,000 normalized candles into an active chart series. |
-| DATA-003 | Receive live timestamped ticks and deterministically update a building candle. |
-| DATA-004 | Distinguish building and finalized candles. |
-| DATA-005 | Detect gaps, backfill history, de-duplicate equal bar times, and reject invalid OHLC records. |
-| DATA-006 | Expose optional volume, bid, and ask fields only when a provider declares them. |
-| DATA-007 | Use provider-supplied bar-alignment metadata when deriving timeframes. |
-| DATA-008 | Keep live ticks in bounded memory for indicators; raw tick persistence is excluded from MVP. |
+| DATA-002 | Load up to 100,000 normalized candles into an active chart series.                                                    |
+| DATA-003 | Receive live timestamped ticks and deterministically update a building candle.                                        |
+| DATA-004 | Distinguish building and finalized candles.                                                                           |
+| DATA-005 | Detect gaps, backfill history, de-duplicate equal bar times, and reject invalid OHLC records.                         |
+| DATA-006 | Expose optional volume, bid, and ask fields only when a provider declares them.                                       |
+| DATA-007 | Use provider-supplied bar-alignment metadata when deriving timeframes.                                                |
+| DATA-008 | Keep live ticks in bounded memory for indicators; raw tick persistence is excluded from MVP.                          |
 
 ### 4.3 Charts and interactions
 
-| ID | Requirement |
-|---|---|
-| CHART-001 | Render candlestick, line, and area price charts. |
-| CHART-002 | Mouse-wheel zoom is anchored to the pointer’s time position. |
-| CHART-003 | Horizontal pan supports historical data and controlled future space on the right. |
-| CHART-004 | X-axis drag adjusts horizontal scale; double-click resets it. |
-| CHART-005 | Y-axis drag adjusts price scale; chart drag pans price vertically; reset returns to auto-scale. |
-| CHART-006 | Crosshair snaps to a candle on the time axis and displays time and price labels. |
-| CHART-007 | Hover status displays OHLC values and change/percentage. |
-| CHART-008 | A Jump to Latest action returns to the current building candle. |
-| CHART-009 | Timeframe and symbol changes cancel obsolete requests and cannot mix data from the previous selection. |
+| ID        | Requirement                                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------------- |
+| CHART-001 | Render candlestick, line, and area price charts.                                                         |
+| CHART-002 | Mouse-wheel zoom is anchored to the pointer’s time position.                                             |
+| CHART-003 | Horizontal pan supports historical data and controlled future space on the right.                        |
+| CHART-004 | X-axis drag adjusts horizontal scale; double-click resets it.                                            |
+| CHART-005 | Y-axis drag adjusts price scale; chart drag pans price vertically; reset returns to auto-scale.          |
+| CHART-006 | Crosshair snaps to a candle on the time axis and displays time and price labels.                         |
+| CHART-007 | Hover status displays OHLC values and change/percentage.                                                 |
+| CHART-008 | A Jump to Latest action returns to the current building candle.                                          |
+| CHART-009 | Timeframe and symbol changes cancel obsolete requests and cannot mix data from the previous selection.   |
 | CHART-010 | Overlay indicators and separate indicator panels can be shown, hidden, configured, resized, and removed. |
 
 ### 4.4 Drawing tools
 
-| ID | Requirement |
-|---|---|
-| DRAW-001 | Trend line |
-| DRAW-002 | Horizontal line |
-| DRAW-003 | Vertical line |
-| DRAW-004 | Rectangle |
-| DRAW-005 | Fibonacci retracement |
-| DRAW-006 | Text/annotation |
-| DRAW-007 | Select, move, resize, restyle, and delete supported drawing objects. |
+| ID       | Requirement                                                                                          |
+| -------- | ---------------------------------------------------------------------------------------------------- |
+| DRAW-001 | Trend line                                                                                           |
+| DRAW-002 | Horizontal line                                                                                      |
+| DRAW-003 | Vertical line                                                                                        |
+| DRAW-004 | Rectangle                                                                                            |
+| DRAW-005 | Fibonacci retracement                                                                                |
+| DRAW-006 | Text/annotation                                                                                      |
+| DRAW-007 | Select, move, resize, restyle, and delete supported drawing objects.                                 |
 | DRAW-008 | Drawing undo/redo is deferred beyond MVP; the MVP does not maintain a bespoke drawing command stack. |
-| DRAW-009 | Drawing objects are isolated per chart slot and discarded when the application exits. |
+| DRAW-009 | Drawing objects are isolated per chart slot and discarded when the application exits.                |
 
 ### 4.5 Indicator plugins
 
-| ID | Requirement |
-|---|---|
-| IND-001 | Maximum five active indicator instances per chart. |
-| IND-002 | Support overlay and separate-panel indicators. |
-| IND-003 | Provide typed OHLC arrays, time/index arrays, derived `HL2`, `HLC3`, and `OHLC4`, and building-candle state. |
-| IND-004 | Provide bounded live-tick events when requested by the plugin. |
-| IND-005 | Provide multi-timeframe data only from timeframes declared available for the current provider/series. |
-| IND-006 | Bind another indicator’s published output through an explicit instance/output reference. |
+| ID      | Requirement                                                                                                                 |
+| ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| IND-001 | Maximum five active indicator instances per chart.                                                                          |
+| IND-002 | Support overlay and separate-panel indicators.                                                                              |
+| IND-003 | Provide typed OHLC arrays, time/index arrays, derived `HL2`, `HLC3`, and `OHLC4`, and building-candle state.                |
+| IND-004 | Provide bounded live-tick events when requested by the plugin.                                                              |
+| IND-005 | Provide multi-timeframe data only from timeframes declared available for the current provider/series.                       |
+| IND-006 | Bind another indicator’s published output through an explicit instance/output reference.                                    |
 | IND-007 | Build a dependency graph, calculate it in topological order, and reject missing or circular dependencies before activation. |
-| IND-008 | Support line, horizontal line, histogram, band/fill, shape, box, and text plot primitives. |
-| IND-009 | Keep calculations off the UI thread and disable an indicator that repeatedly violates its execution budget. |
-| IND-010 | Version indicator outputs by source-data revision to prevent stale results from being rendered. |
+| IND-008 | Support line, horizontal line, histogram, band/fill, shape, box, and text plot primitives.                                  |
+| IND-009 | Keep calculations off the UI thread and disable an indicator that repeatedly violates its execution budget.                 |
+| IND-010 | Version indicator outputs by source-data revision to prevent stale results from being rendered.                             |
 
 ### 4.6 Plugin lifecycle
 
-| ID | Requirement |
-|---|---|
-| PLUG-001 | Install a plugin from a local ZIP or folder after manifest and package validation. |
-| PLUG-002 | Production Mode accepts only packages trusted by the configured signing policy. |
+| ID       | Requirement                                                                                                     |
+| -------- | --------------------------------------------------------------------------------------------------------------- |
+| PLUG-001 | Install a plugin from a local ZIP or folder after manifest and package validation.                              |
+| PLUG-002 | Production Mode accepts only packages trusted by the configured signing policy.                                 |
 | PLUG-003 | Developer Mode may install unsigned packages only after an explicit persistent warning and application restart. |
-| PLUG-004 | Never run package install scripts, `npm install`, executables, native `.node` modules, or Python. |
-| PLUG-005 | TypeScript is an authoring language; a distributable package must contain a precompiled ESM JavaScript entry. |
-| PLUG-006 | Stage and validate an installation before atomically activating it. |
-| PLUG-007 | Disable, enable, uninstall, and roll back activation without corrupting other plugins. |
-| PLUG-008 | Enforce host API compatibility before loading a package. |
+| PLUG-004 | Never run package install scripts, `npm install`, executables, native `.node` modules, or Python.               |
+| PLUG-005 | TypeScript is an authoring language; a distributable package must contain a precompiled ESM JavaScript entry.   |
+| PLUG-006 | Stage and validate an installation before atomically activating it.                                             |
+| PLUG-007 | Disable, enable, uninstall, and roll back activation without corrupting other plugins.                          |
+| PLUG-008 | Enforce host API compatibility before loading a package.                                                        |
 
 ## 5. Quality attributes and provisional targets
 
 The minimum PC specification is not yet confirmed. Until measured on user-selected hardware, use this provisional benchmark machine: Windows 10 or 11 x64, four logical CPU cores, 8 GB RAM, integrated graphics with hardware acceleration, and SSD storage.
 
-| Attribute | MVP target |
-|---|---|
-| UI responsiveness | No provider, storage, or indicator calculation on the renderer UI thread |
-| Rendering | 60 FPS target during normal pan/zoom; p95 frame time below 33 ms under the four-chart stress workload |
-| Live latency | p95 below 100 ms from a normalized tick entering ERC-chart to visible update, excluding provider/network transit |
-| Cached history open | p95 below 2 seconds for 100,000 candles on the provisional benchmark |
-| Memory | No unbounded growth; soft target below 1 GB for one window with four 100,000-candle charts and five indicators per chart |
-| Availability | A provider or indicator crash must not terminate the application shell or unrelated chart tabs |
-| Recovery | Reconnect with bounded exponential backoff and historical gap repair |
-| Data integrity | Duplicate key protection, OHLC invariants, monotonic bar ordering, and atomic workspace writes |
-| Security | No plaintext provider credentials at rest; no secrets in logs; renderer Node integration disabled |
-| Compatibility | Versioned IPC, workspace, database, provider, indicator, and manifest contracts |
+| Attribute           | MVP target                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| UI responsiveness   | No provider, storage, or indicator calculation on the renderer UI thread                                                 |
+| Rendering           | 60 FPS target during normal pan/zoom; p95 frame time below 33 ms under the four-chart stress workload                    |
+| Live latency        | p95 below 100 ms from a normalized tick entering ERC-chart to visible update, excluding provider/network transit         |
+| Cached history open | p95 below 2 seconds for 100,000 candles on the provisional benchmark                                                     |
+| Memory              | No unbounded growth; soft target below 1 GB for one window with four 100,000-candle charts and five indicators per chart |
+| Availability        | A provider or indicator crash must not terminate the application shell or unrelated chart tabs                           |
+| Recovery            | Reconnect with bounded exponential backoff and historical gap repair                                                     |
+| Data integrity      | Duplicate key protection, OHLC invariants, monotonic bar ordering, and atomic workspace writes                           |
+| Security            | No plaintext provider credentials at rest; no secrets in logs; renderer Node integration disabled                        |
+| Compatibility       | Versioned IPC, workspace, database, provider, indicator, and manifest contracts                                          |
 
 Performance targets are release gates, not assumptions that the first implementation automatically satisfies.
 
@@ -234,19 +234,19 @@ Key principles:
 
 ## 7. Technology baseline
 
-| Concern | Baseline choice | Reason |
-|---|---|---|
-| Desktop runtime | Electron, current supported release at implementation time | Mature Windows desktop process model and direct fit for JS/TS plugins |
-| Application language | TypeScript with strict compiler settings | Shared contracts across main, services, renderer, and SDK |
-| UI shell | React with domain state kept outside React components | Tabs, layouts, settings, plugin management, and predictable UI composition |
-| Chart engine | klinecharts v10.0.3 integrated through `@erc-chart/renderer` | Mature open-source financial charting with Canvas 2D, interactions, built-in overlays, and extension APIs |
-| Rendering | klinecharts Canvas 2D pipeline, hardware acceleration enabled | Rendering internals remain upstream; ERC-chart validates behavior and visible-workload performance |
-| Indicator isolation | Node-disabled Chromium Web Workers | CPU work leaves UI thread; worker can be terminated on failure |
-| Provider isolation | Electron utility process supervised by main/data service | Separate crash boundary and MessagePort IPC |
-| Local database | SQLite in WAL mode | Indexed local queries, transactions, schema migrations, multi-process readers |
-| Secrets | Windows Credential Manager through a small core-owned bridge | Meets the confirmed credential-storage requirement |
-| Installer | electron-builder NSIS x64 `.exe`, per-user by default | Produces the required Windows setup executable; automatic update remains disabled |
-| Validation | JSON Schema plus runtime TypeScript validators | Reject malformed plugin, IPC, and persisted documents at boundaries |
+| Concern              | Baseline choice                                               | Reason                                                                                                    |
+| -------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Desktop runtime      | Electron, current supported release at implementation time    | Mature Windows desktop process model and direct fit for JS/TS plugins                                     |
+| Application language | TypeScript with strict compiler settings                      | Shared contracts across main, services, renderer, and SDK                                                 |
+| UI shell             | React with domain state kept outside React components         | Tabs, layouts, settings, plugin management, and predictable UI composition                                |
+| Chart engine         | klinecharts v10.0.3 integrated through `@erc-chart/renderer`  | Mature open-source financial charting with Canvas 2D, interactions, built-in overlays, and extension APIs |
+| Rendering            | klinecharts Canvas 2D pipeline, hardware acceleration enabled | Rendering internals remain upstream; ERC-chart validates behavior and visible-workload performance        |
+| Indicator isolation  | Node-disabled Chromium Web Workers                            | CPU work leaves UI thread; worker can be terminated on failure                                            |
+| Provider isolation   | Electron utility process supervised by main/data service      | Separate crash boundary and MessagePort IPC                                                               |
+| Local database       | SQLite in WAL mode                                            | Indexed local queries, transactions, schema migrations, multi-process readers                             |
+| Secrets              | Windows Credential Manager through a small core-owned bridge  | Meets the confirmed credential-storage requirement                                                        |
+| Installer            | electron-builder NSIS x64 `.exe`, per-user by default         | Produces the required Windows setup executable; automatic update remains disabled                         |
+| Validation           | JSON Schema plus runtime TypeScript validators                | Reject malformed plugin, IPC, and persisted documents at boundaries                                       |
 
 Architecture depends on explicit contracts and the pinned klinecharts version. Other library versions are pinned when implementation starts.
 
@@ -539,21 +539,28 @@ klinecharts supplies built-in overlays for Fibonacci, horizontal/vertical lines,
 
 ### 14.1 Authoring model
 
-The SDK is TypeScript-first and also usable from JavaScript. Authors declare:
+The SDK is TypeScript-first and also usable from JavaScript. The accepted authoring facade is defined by ADR-016 and `SDK-IMPLEMENTATION-DECISIONS.md`. Authors use direct series aliases and declarative helpers, for example:
+
+```ts
+const rsi = ta.rsi(14);
+const trend = ta.ema({ length: 50, value: close, tf: "1h" });
+```
+
+No public runtime `ctx`, renderer, provider adapter, transport, or klinecharts object is exposed. Authors declare:
 
 - plugin metadata and host API compatibility;
 - configuration schema;
-- input slots;
-- output series;
-- plot definitions;
-- whether live ticks are required;
-- lifecycle methods for history, bar, tick, and disposal.
+- typed calculation inputs and presentation styles;
+- output series and plot definitions;
+- `ta.*` dependencies, including multi-timeframe calls, through ordinary author expressions;
+- optional explicit cross-indicator bindings;
+- signal-candidate production where allowed by the current product phase.
 
 A distributable plugin contains precompiled ESM JavaScript. ERC-chart never runs arbitrary build scripts during installation.
 
 ### 14.2 Inputs and dependency graph
 
-An indicator input binds to one of:
+The runtime normalizes each `ta.*` call into a hidden dependency on canonical market data. Omitted source means `close`; omitted timeframe means the active chart timeframe. A declared input may bind to one of:
 
 - current chart candles;
 - a specific available timeframe;
@@ -570,9 +577,11 @@ The chart builds a directed graph from explicit instance bindings. It:
 
 Name-only lookup is not accepted because duplicate indicator names are ambiguous.
 
+Equivalent TA dependencies may share upstream canonical series/subscriptions while retaining isolated instance calculation state. Provider capabilities remain authoritative for native or safely derived timeframes, and background MTF access never changes the visible chart timeframe.
+
 ### 14.3 Output and plot contract
 
-Indicators publish named, typed numeric/boolean series and plot instructions. Supported MVP primitives:
+Indicators publish named, typed numeric/boolean results. The renderer maps those normalized, revision-tagged results into klinecharts technical-indicator/overlay APIs. Supported MVP presentation primitives:
 
 - line;
 - horizontal line;
@@ -583,12 +592,15 @@ Indicators publish named, typed numeric/boolean series and plot instructions. Su
 - box/rectangle;
 - text.
 
-The host, not plugin code, performs canvas drawing. Malformed coordinates, excessive object counts, unsupported styles, and stale revisions are rejected.
+The host, not plugin code, performs canvas drawing. Malformed coordinates, excessive object counts, unsupported styles, and stale revisions are rejected. The renderer's pinned klinecharts adapter validates `indicator.result`, correlates it with canonical candle timestamps/revisions, and fails closed on an unknown dependency layout; raw klinecharts objects never cross the plugin boundary.
 
 ### 14.4 Calculation lifecycle
 
 - Initial history calculation may process up to 100,000 candles inside the worker.
 - Incremental updates append/finalize one bar where the algorithm supports it.
+- Steady-state SMA, EMA, RSI, ATR, and crossover updates are O(1); highest/lowest updates are amortized O(1).
+- Initial history may be O(N); reconfiguration or corrected history may rebuild O(N) or the correctness-relevant dirty range.
+- A mutable building bar derives provisional state from the last committed bar; replacement does not compound provisional rolling state.
 - Building-candle recalculation is distinct from finalization.
 - A configuration change creates a new calculation generation.
 - Results from an older generation or data revision are discarded.
@@ -609,6 +621,8 @@ An indicator may create a `SignalCandidate` containing:
 - source-data revision.
 
 In the MVP this is an inert contract: there is no delivery bus, consumer configuration, retry, persistence, or external broadcast. Implementing those belongs to Post-MVP Phase 1.
+
+The host nevertheless maintains a bounded normalized result tail so future signal processing can read the latest result in O(1) or the last N results in O(N requested), without scanning complete candle history. Actionable reads default to finalized values; provisional reads must be explicit and retain provisional state.
 
 ## 15. Plugin package and trust model
 
@@ -674,18 +688,18 @@ Secrets are not stored in this tree.
 
 ### 16.2 Logical SQLite schema
 
-| Table | Key/purpose |
-|---|---|
-| `schema_migrations` | Applied database versions |
-| `provider_profiles` | Non-secret profile metadata and Credential Manager target reference |
-| `instruments` | Provider instrument catalogue and metadata |
-| `candles` | `(feed_id, instrument_id, timeframe_sec, open_time_ms)` unique finalized bars |
-| `series_cache_state` | Range, revision, last synchronization, and retention metadata |
-| `workspaces` | Versioned local workspace JSON and timestamps |
-| `plugins` | Installed versions, kind, trust, status, manifest, and hash |
-| `plugin_permissions` | Reviewed permission grants |
-| `app_settings` | Versioned application settings |
-| `diagnostic_events` | Bounded, redacted local events when local diagnostics are enabled |
+| Table                | Key/purpose                                                                   |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `schema_migrations`  | Applied database versions                                                     |
+| `provider_profiles`  | Non-secret profile metadata and Credential Manager target reference           |
+| `instruments`        | Provider instrument catalogue and metadata                                    |
+| `candles`            | `(feed_id, instrument_id, timeframe_sec, open_time_ms)` unique finalized bars |
+| `series_cache_state` | Range, revision, last synchronization, and retention metadata                 |
+| `workspaces`         | Versioned local workspace JSON and timestamps                                 |
+| `plugins`            | Installed versions, kind, trust, status, manifest, and hash                   |
+| `plugin_permissions` | Reviewed permission grants                                                    |
+| `app_settings`       | Versioned application settings                                                |
+| `diagnostic_events`  | Bounded, redacted local events when local diagnostics are enabled             |
 
 Raw ticks and session drawing objects are not persisted in the MVP.
 
@@ -736,20 +750,20 @@ The credential embedded in the supplied Python reference must be treated as comp
 
 ## 18. Security architecture and threat controls
 
-| Threat | Primary controls |
-|---|---|
-| Renderer/XSS obtains native access | Local custom protocol, CSP, sandbox, context isolation, Node disabled, narrow preload API |
-| IPC spoofing or malformed messages | Sender validation, allowlisted channels, schema validation, request generation/revision checks |
-| Malicious ZIP path traversal | Staging, canonical path checks, link/reparse rejection, quotas, atomic activation |
-| Malicious indicator | Node-disabled Web Worker, CSP network denial, typed API, output quotas, timeout/termination |
-| Malicious provider | Production trust/signature requirement, separate process, permission declaration, secret scoping, Developer Mode warning |
-| Credential theft from files/logs | Windows Credential Manager, redaction, no secret persistence or argv/env |
-| Network interception | HTTPS/WSS only, normal certificate verification, no insecure-content setting |
-| Provider protocol drift | Adapter isolation, contract tests, explicit incompatible state, no browser-hook fallback |
-| Resource exhaustion | Per-chart/plugin limits, worker budgets, bounded queues, bounded tick buffers, cache limits |
-| Database races/corruption | WAL, transactions, constraints, migrations, busy timeout, rebuildable cache |
-| Untrusted navigation | Deny arbitrary navigation, window creation, downloads, and external-protocol opening |
-| Supply-chain compromise | Locked dependencies, integrity checks, software composition analysis, reproducible release manifest, code signing |
+| Threat                             | Primary controls                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Renderer/XSS obtains native access | Local custom protocol, CSP, sandbox, context isolation, Node disabled, narrow preload API                                |
+| IPC spoofing or malformed messages | Sender validation, allowlisted channels, schema validation, request generation/revision checks                           |
+| Malicious ZIP path traversal       | Staging, canonical path checks, link/reparse rejection, quotas, atomic activation                                        |
+| Malicious indicator                | Node-disabled Web Worker, CSP network denial, typed API, output quotas, timeout/termination                              |
+| Malicious provider                 | Production trust/signature requirement, separate process, permission declaration, secret scoping, Developer Mode warning |
+| Credential theft from files/logs   | Windows Credential Manager, redaction, no secret persistence or argv/env                                                 |
+| Network interception               | HTTPS/WSS only, normal certificate verification, no insecure-content setting                                             |
+| Provider protocol drift            | Adapter isolation, contract tests, explicit incompatible state, no browser-hook fallback                                 |
+| Resource exhaustion                | Per-chart/plugin limits, worker budgets, bounded queues, bounded tick buffers, cache limits                              |
+| Database races/corruption          | WAL, transactions, constraints, migrations, busy timeout, rebuildable cache                                              |
+| Untrusted navigation               | Deny arbitrary navigation, window creation, downloads, and external-protocol opening                                     |
+| Supply-chain compromise            | Locked dependencies, integrity checks, software composition analysis, reproducible release manifest, code signing        |
 
 Local rotating logs are allowed for support, but remote crash reporting and analytics are excluded. Logs must default to metadata and error codes, not raw provider frames.
 
@@ -940,49 +954,49 @@ These phases are not permitted to leak trading/executor dependencies into MVP ch
 
 ## 25. Risks
 
-| Risk | Level | Mitigation |
-|---|---|---|
-| Binomo private protocol changes or distribution is not permitted | High | Early protocol/terms spike; adapter isolation; no browser-hook fallback |
-| Twenty active indicator instances exceed CPU/memory target | High | Incremental algorithms, worker budgets, typed arrays, benchmark before feature freeze |
-| Multiple processes contend on the same cache | Medium | SQLite WAL, short transactions, busy timeout, idempotent upserts, stress tests |
-| Unsigned Developer Mode plugin harms user data | High | Strong warning, off by default, indicator browser workers, provider trust disclosure |
-| Exact minimum PC remains unknown | Medium | Provisional benchmark and early measurement; obtain final target before release |
-| Drawing tools expand beyond MVP | Medium | Freeze six tool types and session-only persistence |
-| Feature-parity expectation pulls replay/executor into MVP | High | Maintain the reference catalogue and phase mapping |
-| Electron/native dependency security churn | Medium | Current supported Electron, locked dependencies, audits, release manifest |
+| Risk                                                             | Level  | Mitigation                                                                            |
+| ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------- |
+| Binomo private protocol changes or distribution is not permitted | High   | Early protocol/terms spike; adapter isolation; no browser-hook fallback               |
+| Twenty active indicator instances exceed CPU/memory target       | High   | Incremental algorithms, worker budgets, typed arrays, benchmark before feature freeze |
+| Multiple processes contend on the same cache                     | Medium | SQLite WAL, short transactions, busy timeout, idempotent upserts, stress tests        |
+| Unsigned Developer Mode plugin harms user data                   | High   | Strong warning, off by default, indicator browser workers, provider trust disclosure  |
+| Exact minimum PC remains unknown                                 | Medium | Provisional benchmark and early measurement; obtain final target before release       |
+| Drawing tools expand beyond MVP                                  | Medium | Freeze six tool types and session-only persistence                                    |
+| Feature-parity expectation pulls replay/executor into MVP        | High   | Maintain the reference catalogue and phase mapping                                    |
+| Electron/native dependency security churn                        | Medium | Current supported Electron, locked dependencies, audits, release manifest             |
 
 ## 26. Open decisions
 
 Architecture can proceed, but these need closure at the indicated gate.
 
-| ID | Decision | Needed by |
-|---|---|---|
-| OD-001 | Final minimum PC specification | Performance acceptance planning |
-| OD-002 | Exact Binomo credential capture/renewal UX | Provider implementation |
-| OD-003 | Binomo instrument discovery source and initial catalogue behavior | Provider implementation |
-| OD-004 | Verified native/derived Binomo timeframe list | Provider contract test |
-| OD-005 | Windows code-signing certificate and publisher name | Release candidate |
-| OD-006 | Trusted plugin signing authority/public key ownership | Plugin production-mode completion |
-| OD-007 | Final per-series/global cache disk limits | Storage feature freeze |
-| OD-008 | Single UI language for MVP | UI copy freeze |
-| OD-009 | Whether line/area charts use close only or allow OHLC-derived source selection in MVP | Chart UI feature freeze |
+| ID     | Decision                                                                              | Needed by                         |
+| ------ | ------------------------------------------------------------------------------------- | --------------------------------- |
+| OD-001 | Final minimum PC specification                                                        | Performance acceptance planning   |
+| OD-002 | Exact Binomo credential capture/renewal UX                                            | Provider implementation           |
+| OD-003 | Binomo instrument discovery source and initial catalogue behavior                     | Provider implementation           |
+| OD-004 | Verified native/derived Binomo timeframe list                                         | Provider contract test            |
+| OD-005 | Windows code-signing certificate and publisher name                                   | Release candidate                 |
+| OD-006 | Trusted plugin signing authority/public key ownership                                 | Plugin production-mode completion |
+| OD-007 | Final per-series/global cache disk limits                                             | Storage feature freeze            |
+| OD-008 | Single UI language for MVP                                                            | UI copy freeze                    |
+| OD-009 | Whether line/area charts use close only or allow OHLC-derived source selection in MVP | Chart UI feature freeze           |
 
 ## 27. Reference evidence
 
 Key supplied source paths used for this architecture:
 
-| Source path | Evidence used |
-|---|---|
-| `binomo-chart-demo.user.js` | Historical endpoint, pagination, timestamp adjustment, live asset message shape, custom timeframe aggregation |
-| `python/WSmimicCode.py` | Standalone authenticated and asset WebSocket proof of concept; insecure TLS/embedded secret explicitly rejected |
-| `src/core/CandlestickChart.js` | Chart state, current/final candles, MTF and indicator coordination |
-| `src/core/ChartInteraction.js` | Zoom, pan, axis drag/reset, crosshair, hover, latest navigation |
-| `src/core/CandleDataStore.js` and `CandleAccessor.js` | Typed-array and derived-series behavior |
-| `src/core/BaseIndicator.js`, `src/framework/IndicatorWrapper.js`, `src/core/MTFManager.js` | Indicator configuration, MTF, incremental calculation, other-indicator lookup |
-| `src/plot/` | Required indicator plot primitives |
-| `src/core/PluginManager.js` | Existing runtime registration and the gap to installable packages |
-| `src/storage/UnifiedIndexedDBStorage.js` | Existing local persistence behavior and the need for a desktop storage redesign |
-| replay/backtest/executor modules | Post-MVP feature-parity catalogue |
+| Source path                                                                                | Evidence used                                                                                                   |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `binomo-chart-demo.user.js`                                                                | Historical endpoint, pagination, timestamp adjustment, live asset message shape, custom timeframe aggregation   |
+| `python/WSmimicCode.py`                                                                    | Standalone authenticated and asset WebSocket proof of concept; insecure TLS/embedded secret explicitly rejected |
+| `src/core/CandlestickChart.js`                                                             | Chart state, current/final candles, MTF and indicator coordination                                              |
+| `src/core/ChartInteraction.js`                                                             | Zoom, pan, axis drag/reset, crosshair, hover, latest navigation                                                 |
+| `src/core/CandleDataStore.js` and `CandleAccessor.js`                                      | Typed-array and derived-series behavior                                                                         |
+| `src/core/BaseIndicator.js`, `src/framework/IndicatorWrapper.js`, `src/core/MTFManager.js` | Indicator configuration, MTF, incremental calculation, other-indicator lookup                                   |
+| `src/plot/`                                                                                | Required indicator plot primitives                                                                              |
+| `src/core/PluginManager.js`                                                                | Existing runtime registration and the gap to installable packages                                               |
+| `src/storage/UnifiedIndexedDBStorage.js`                                                   | Existing local persistence behavior and the need for a desktop storage redesign                                 |
+| replay/backtest/executor modules                                                           | Post-MVP feature-parity catalogue                                                                               |
 
 The reference test runner completed 96 tests successfully during inspection. One build-assets test could not run because the inspection environment did not have the project’s Rollup dependency installed; this does not validate or invalidate the new architecture.
 

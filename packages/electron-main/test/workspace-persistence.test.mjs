@@ -76,6 +76,11 @@ function createAdapters() {
         start: async () => undefined,
         shutdown: async () => undefined,
       },
+      providerUtilities: {
+        start: async () => undefined,
+        shutdown: async () => undefined,
+        shutdownAll: async () => undefined,
+      },
       workspacePersistence: {
         load: async () => workspace,
         save: async () => undefined,
