@@ -1,6 +1,7 @@
 import {
   isPersistedWorkspace,
   type PersistedWorkspace,
+  type PersistedWorkspaceChartSlot,
 } from "@erc-chart/contracts";
 import type { LayoutSize, WorkspaceState } from "./workspace.js";
 
@@ -54,17 +55,26 @@ export function toPersistedWorkspace(
     tabs: state.tabs.map((tab) => ({
       id: tab.id,
       title: tab.title,
+      ...(tab.providerProfileId === undefined
+        ? {}
+        : { providerProfileId: tab.providerProfileId }),
       layout: tab.persistedLayout ?? layoutForSize(tab.layoutSize),
-      chartSlots: tab.slots.map((slot) => ({
-        id: slot.id,
-        ...(slot.persisted ?? {
-          providerProfileId: defaultProviderProfileId,
-          instrumentId: defaultInstrumentId,
-          timeframeSeconds: defaultTimeframeSeconds,
-          chartType: "candlestick",
-          indicators: [],
-        }),
-      })),
+      chartSlots: tab.slots.map((slot) => {
+        const persisted: Omit<PersistedWorkspaceChartSlot, "id"> =
+          slot.persisted ?? {
+            providerProfileId: defaultProviderProfileId,
+            instrumentId: defaultInstrumentId,
+            timeframeSeconds: defaultTimeframeSeconds,
+            chartType: "candlestick",
+            indicators: [],
+          };
+        return {
+          id: slot.id,
+          ...persisted,
+          providerProfileId:
+            tab.providerProfileId ?? persisted.providerProfileId,
+        };
+      }),
     })),
     savedAtMs,
   };
@@ -79,19 +89,26 @@ export function fromPersistedWorkspace(
     value.tabs.some((tab) => layoutToSize[tab.layout] !== tab.chartSlots.length)
   )
     return undefined;
-  const tabs = value.tabs.map((tab) => ({
-    id: tab.id,
-    title: tab.title,
-    layoutSize: layoutToSize[tab.layout],
-    persistedLayout: tab.layout,
-    slots: tab.chartSlots.map(({ id, ...persisted }) => ({ id, persisted })),
-    nextWorkspaceNumber: nextNumber(
-      tab.chartSlots.map(({ id }) => id),
-      new RegExp(
-        `^${tab.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-chart-(\\d+)$`,
+  const tabs = value.tabs.map((tab) => {
+    const providerProfileId =
+      tab.providerProfileId ??
+      tab.chartSlots.find((slot) => slot.instrumentId !== defaultInstrumentId)
+        ?.providerProfileId;
+    return {
+      id: tab.id,
+      title: tab.title,
+      ...(providerProfileId === undefined ? {} : { providerProfileId }),
+      layoutSize: layoutToSize[tab.layout],
+      persistedLayout: tab.layout,
+      slots: tab.chartSlots.map(({ id, ...persisted }) => ({ id, persisted })),
+      nextWorkspaceNumber: nextNumber(
+        tab.chartSlots.map(({ id }) => id),
+        new RegExp(
+          `^${tab.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-chart-(\\d+)$`,
+        ),
       ),
-    ),
-  }));
+    };
+  });
   return {
     tabs,
     activeTabId: value.activeTabId,

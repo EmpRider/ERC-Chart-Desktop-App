@@ -32,7 +32,7 @@ const maximumHistoryBatches = 64;
 const retryAttempts = 3;
 const retryBaseDelayMs = 250;
 
-const timeframeSeconds: Readonly<Record<string, number>> = Object.freeze({
+const nativeTimeframeSeconds: Readonly<Record<string, number>> = Object.freeze({
   "5s": 5,
   "15s": 15,
   "30s": 30,
@@ -41,6 +41,19 @@ const timeframeSeconds: Readonly<Record<string, number>> = Object.freeze({
   "15m": 900,
   "30m": 1800,
 });
+
+const derivedTimeframes: Readonly<
+  Record<
+    string,
+    { readonly seconds: number; readonly baseTimeframeId: TimeframeId }
+  >
+> = Object.freeze({
+  "2m": { seconds: 120, baseTimeframeId: "1m" as TimeframeId },
+  "3m": { seconds: 180, baseTimeframeId: "1m" as TimeframeId },
+});
+
+const nativeTimeframeIds = Object.keys(nativeTimeframeSeconds) as TimeframeId[];
+const derivedTimeframeIds = Object.keys(derivedTimeframes) as TimeframeId[];
 
 const chunkMilliseconds: Readonly<Record<number, number>> = Object.freeze({
   5: 60 * 60 * 1000,
@@ -101,11 +114,56 @@ function requireNumberSetting(
 }
 
 function secondsForTimeframe(timeframeId: TimeframeId): number {
-  const seconds = timeframeSeconds[timeframeId];
+  const seconds =
+    nativeTimeframeSeconds[timeframeId] ??
+    derivedTimeframes[timeframeId]?.seconds;
   if (seconds === undefined) {
     throw new RangeError(`Unsupported Binomo timeframe: ${timeframeId}.`);
   }
   return seconds;
+}
+
+function aggregateCandles(
+  baseCandles: readonly Candle[],
+  instrumentId: InstrumentId,
+  timeframeId: TimeframeId,
+  seconds: number,
+): readonly Candle[] {
+  const timeframeMs = seconds * 1000;
+  const buckets = new Map<number, Candle>();
+  const sorted = [...baseCandles].sort(
+    (left, right) => left.openTimeMs - right.openTimeMs,
+  );
+  for (const candle of sorted) {
+    const openTimeMs =
+      Math.floor(candle.openTimeMs / timeframeMs) * timeframeMs;
+    const current = buckets.get(openTimeMs);
+    if (current === undefined) {
+      buckets.set(openTimeMs, {
+        instrumentId,
+        timeframeId,
+        openTimeMs,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        ...(candle.volume === undefined ? {} : { volume: candle.volume }),
+      });
+      continue;
+    }
+    buckets.set(openTimeMs, {
+      ...current,
+      high: Math.max(current.high, candle.high),
+      low: Math.min(current.low, candle.low),
+      close: candle.close,
+      ...(current.volume === undefined || candle.volume === undefined
+        ? {}
+        : { volume: current.volume + candle.volume }),
+    });
+  }
+  return [...buckets.values()].sort(
+    (left, right) => left.openTimeMs - right.openTimeMs,
+  );
 }
 
 function chunkMsForTimeframe(seconds: number): number {
@@ -353,16 +411,14 @@ function createBinomoAdapter(
   let phoenixSocket: ProviderWebSocketConnection | undefined;
   let phoenixPingTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const requestHistory = async (
-    request: ProviderHistoryRequest,
+  const requestNativeHistory = async (
+    timeframeId: TimeframeId,
+    seconds: number,
+    fromMs: number,
+    toMs: number,
+    requestedLimit: number,
   ): Promise<readonly Candle[]> => {
-    if (request.instrumentId !== instrumentId) return [];
-    const seconds = secondsForTimeframe(request.timeframeId);
     const chunkMs = chunkMsForTimeframe(seconds);
-    const toMs = request.toMs ?? host.now();
-    const requestedLimit = Math.max(1, Math.min(request.limit ?? 1000, 10_000));
-    const fromMs =
-      request.fromMs ?? Math.max(0, toMs - requestedLimit * seconds * 1000);
     const candles = new Map<number, Candle>();
     let cursor = Math.floor(toMs / chunkMs) * chunkMs;
 
@@ -377,7 +433,7 @@ function createBinomoAdapter(
         const candle = normalizeCandle(
           item,
           instrumentId,
-          request.timeframeId,
+          timeframeId,
           seconds,
         );
         if (candle === undefined) continue;
@@ -400,6 +456,52 @@ function createBinomoAdapter(
 
     return [...candles.values()]
       .sort((left, right) => left.openTimeMs - right.openTimeMs)
+      .slice(-requestedLimit);
+  };
+
+  const requestHistory = async (
+    request: ProviderHistoryRequest,
+  ): Promise<readonly Candle[]> => {
+    if (request.instrumentId !== instrumentId) return [];
+    const seconds = secondsForTimeframe(request.timeframeId);
+    const toMs = request.toMs ?? host.now();
+    const requestedLimit = Math.max(1, Math.min(request.limit ?? 1000, 10_000));
+    const fromMs =
+      request.fromMs ?? Math.max(0, toMs - requestedLimit * seconds * 1000);
+    const derived = derivedTimeframes[request.timeframeId];
+    if (derived === undefined) {
+      return requestNativeHistory(
+        request.timeframeId,
+        seconds,
+        fromMs,
+        toMs,
+        requestedLimit,
+      );
+    }
+
+    const baseSeconds = secondsForTimeframe(derived.baseTimeframeId);
+    const targetMs = seconds * 1000;
+    const alignedFromMs = Math.floor(fromMs / targetMs) * targetMs;
+    const baseCandles = await requestNativeHistory(
+      derived.baseTimeframeId,
+      baseSeconds,
+      alignedFromMs,
+      toMs,
+      Math.min(
+        10_000,
+        requestedLimit * Math.ceil(seconds / baseSeconds) +
+          Math.ceil(seconds / baseSeconds),
+      ),
+    );
+    return aggregateCandles(
+      baseCandles,
+      instrumentId,
+      request.timeframeId,
+      seconds,
+    )
+      .filter(
+        (candle) => candle.openTimeMs >= fromMs && candle.openTimeMs <= toMs,
+      )
       .slice(-requestedLimit);
   };
 
@@ -669,9 +771,10 @@ function createBinomoAdapter(
     },
     getCapabilities: async () => ({
       instruments: true,
-      nativeTimeframes: Object.keys(timeframeSeconds) as TimeframeId[],
+      nativeTimeframes: nativeTimeframeIds,
       liveData: true,
       derivedTimeframes: true,
+      derivedTimeframeIds,
     }),
     getInstruments: async () => [{ id: instrumentId, symbol, name: symbol }],
     requestHistory,
@@ -689,7 +792,7 @@ const provider: ProviderDefinition = defineProvider({
       maximumHostApiVersion: hostApiVersion,
     },
   },
-  version: "0.1.0",
+  version: "0.1.1",
   config: {
     symbol: config.string({
       label: "Symbol",

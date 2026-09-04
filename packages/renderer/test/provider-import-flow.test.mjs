@@ -6,7 +6,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { RuntimeApplicationShell } from "../dist/index.js";
 
-test("opens provider permission review from the runtime import control and cancels safely", async (t) => {
+test("opens provider permission review from provider manager and cancels safely", async (t) => {
   const { document, window } = parseHTML(
     '<!doctype html><html><body><main id="test-root"></main></body></html>',
   );
@@ -47,6 +47,10 @@ test("opens provider permission review from the runtime import control and cance
     }),
     approveProviderImport: async () => assert.fail("approval was not expected"),
     cancelProviderImport: async (requestId) => calls.push(requestId),
+    listProviderProfiles: async () => ({
+      installedProviders: [],
+      profiles: [],
+    }),
   };
   t.after(async () => {
     await act(async () => root.unmount());
@@ -59,7 +63,14 @@ test("opens provider permission review from the runtime import control and cance
     root.render(createElement(RuntimeApplicationShell, { bridge }));
   });
   await act(async () => Promise.resolve());
-  const importButton = document.querySelector(".provider-import");
+  assert.equal(document.querySelector(".provider-import"), null);
+  const providerManagerButton = document.querySelector(".provider-manage");
+  assert.ok(providerManagerButton);
+  await act(async () => providerManagerButton.click());
+  await act(async () => Promise.resolve());
+  const importButton = document.querySelector(
+    ".provider-manager .provider-import",
+  );
   assert.ok(importButton);
   await act(async () => importButton.click());
   await act(async () => Promise.resolve());

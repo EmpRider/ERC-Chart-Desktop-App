@@ -174,7 +174,12 @@ function inspectCapabilities(value: unknown): ProviderContractViolation[] {
     !Array.isArray(value.nativeTimeframes) ||
     value.nativeTimeframes.some(
       (item) => typeof item !== "string" || item.length === 0,
-    )
+    ) ||
+    (value.derivedTimeframeIds !== undefined &&
+      (!Array.isArray(value.derivedTimeframeIds) ||
+        value.derivedTimeframeIds.some(
+          (item) => typeof item !== "string" || item.length === 0,
+        )))
   ) {
     return [
       violation(
