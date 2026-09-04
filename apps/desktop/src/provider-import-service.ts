@@ -257,11 +257,17 @@ export function createProviderImportService(
       if (instrument === undefined) {
         throw new Error("Provider did not expose an instrument.");
       }
+      const availableTimeframeIds = [
+        ...capabilities.nativeTimeframes,
+        ...(capabilities.derivedTimeframeIds ?? []),
+      ].sort(
+        (left, right) => timeframeDurationMs(left) - timeframeDurationMs(right),
+      );
       const timeframeId =
-        capabilities.nativeTimeframes.find((value) => value === "1m") ??
-        capabilities.nativeTimeframes[0];
+        availableTimeframeIds.find((value) => value === "1m") ??
+        availableTimeframeIds[0];
       if (timeframeId === undefined) {
-        throw new Error("Provider did not expose a native timeframe.");
+        throw new Error("Provider did not expose a timeframe.");
       }
       const toMs = now();
       const candles = await options.controller.requestProviderHistory(
@@ -285,6 +291,7 @@ export function createProviderImportService(
           name: instrument.name,
         },
         timeframeId,
+        availableTimeframeIds,
         candles,
       };
     } catch (error) {

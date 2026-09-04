@@ -158,6 +158,7 @@ test("installs, starts, discovers and loads provider candles after approval", as
     assert.equal(session.providerId, "erc.provider.fixture");
     assert.equal(session.instrument.symbol, "FIX");
     assert.equal(session.timeframeId, "1m");
+    assert.deepEqual(session.availableTimeframeIds, ["1m"]);
     assert.equal(session.candles.length, 1);
     assert.equal(
       getPlugin(database, "erc.provider.fixture", "1.0.0")?.status,

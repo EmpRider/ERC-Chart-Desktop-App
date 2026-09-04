@@ -126,6 +126,7 @@ export interface ProviderCapabilities {
   readonly nativeTimeframes: readonly TimeframeId[];
   readonly liveData: boolean;
   readonly derivedTimeframes: boolean;
+  readonly derivedTimeframeIds?: readonly TimeframeId[];
 }
 
 export type ProviderStatus =

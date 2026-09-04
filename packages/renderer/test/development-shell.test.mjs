@@ -24,13 +24,12 @@ function renderShell(
       connection,
       workspace,
       onWorkspaceAction: () => undefined,
-      onProviderImport: () => undefined,
       ...overrides,
     }),
   );
 }
 
-async function mountShell(t, workspace, onWorkspaceAction) {
+async function mountShell(t, workspace, onWorkspaceAction, overrides = {}) {
   const { document, window } = parseHTML(
     '<!doctype html><html><body><main id="test-root"></main></body></html>',
   );
@@ -56,7 +55,7 @@ async function mountShell(t, workspace, onWorkspaceAction) {
         connection: connectingShellState,
         workspace,
         onWorkspaceAction,
-        onProviderImport: () => undefined,
+        ...overrides,
       }),
     );
   });
@@ -64,7 +63,7 @@ async function mountShell(t, workspace, onWorkspaceAction) {
   return document;
 }
 
-test("renders the semantic dark application shell with provider import available", () => {
+test("renders the semantic dark application shell without a global provider import action", () => {
   const markup = renderShell(connectingShellState);
 
   assert.match(markup, /<header/);
@@ -74,12 +73,19 @@ test("renders the semantic dark application shell with provider import available
   assert.match(markup, /Desktop workspace/);
   assert.match(markup, /Workspace ready/);
   assert.match(markup, /Connecting secure bridge/);
-  assert.match(markup, /Import provider/);
+  assert.doesNotMatch(markup, /Import provider/);
   assert.doesNotMatch(markup, /settings/i);
 });
 
 test("renders loaded provider candles in the primary chart workspace", () => {
-  const markup = renderShell(connectingShellState, createInitialWorkspace(), {
+  const workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  const markup = renderShell(connectingShellState, workspace, {
     providerSession: {
       profileId: "erc.provider.binomo.default",
       providerId: "erc.provider.binomo",
@@ -109,7 +115,138 @@ test("renders loaded provider candles in the primary chart workspace", () => {
   assert.match(markup, /Z-CRY\/IDX/);
   assert.match(markup, /1m · 1 candles/);
   assert.ok(document.querySelector("[data-provider-chart]"));
+  assert.equal(document.querySelector(".chart-provider-select"), null);
   assert.doesNotMatch(markup, /Awaiting market data/);
+});
+
+test("renders provider connection status before the provider manager action", () => {
+  const markup = renderShell(connectingShellState, createInitialWorkspace(), {
+    providerSession: {
+      profileId: "erc.provider.binomo.default",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "1m",
+      candles: [],
+    },
+    onProviderManagerOpen: () => undefined,
+  });
+  const { document } = parseHTML(markup);
+  const toolbar = document.querySelector(".workspace-toolbar");
+  const status = toolbar?.querySelector(".provider-loaded");
+  const manager = toolbar?.querySelector(".provider-manage");
+
+  assert.ok(status);
+  assert.ok(manager);
+  assert.equal(status.nextElementSibling, manager);
+});
+
+test("changes provider at chart-tab scope", async (t) => {
+  const workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-missing",
+    instrumentId: "EURUSD",
+    timeframeSeconds: 60,
+  });
+  const selections = [];
+  const document = await mountShell(t, workspace, () => undefined, {
+    providerSessions: [
+      {
+        profileId: "profile-a",
+        providerId: "erc.provider.fixture",
+        providerName: "Fixture",
+        instrument: { id: "EURUSD", symbol: "EURUSD", name: "EURUSD" },
+        timeframeId: "1m",
+        candles: [],
+      },
+      {
+        profileId: "profile-b",
+        providerId: "erc.provider.fixture",
+        providerName: "Fixture 2",
+        instrument: { id: "BTCUSD", symbol: "BTCUSD", name: "BTCUSD" },
+        timeframeId: "1m",
+        candles: [],
+      },
+    ],
+    onProviderSessionSelect: (tabId, profileId) =>
+      selections.push([tabId, profileId]),
+  });
+  const select = document.querySelector(".tab-provider-select select");
+  assert.ok(select);
+  assert.equal(select.getAttribute("aria-label"), "Provider for Chart 1");
+  assert.equal(document.querySelector(".chart-provider-select"), null);
+  Object.defineProperty(select, "value", {
+    configurable: true,
+    value: "profile-b",
+  });
+  await act(async () =>
+    select.dispatchEvent(
+      new globalThis.window.Event("change", { bubbles: true }),
+    ),
+  );
+  assert.deepEqual(selections, [["tab-1", "profile-b"]]);
+});
+
+test("renders an independent timeframe selector for each chart workspace", () => {
+  const withSecondWorkspace = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const configured = workspaceReducer(withSecondWorkspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  const secondAtThreeMinutes = workspaceReducer(configured, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      ...configured.tabs[0].slots[1].persisted,
+      timeframeSeconds: 180,
+    },
+  });
+  const baseSession = {
+    profileId: "profile-a",
+    providerId: "erc.provider.binomo",
+    providerName: "Binomo",
+    instrument: {
+      id: "Z-CRY/IDX",
+      symbol: "Z-CRY/IDX",
+      name: "Z-CRY/IDX",
+    },
+    availableTimeframeIds: ["1m", "2m", "3m", "5m"],
+    candles: [],
+  };
+  const markup = renderShell(connectingShellState, secondAtThreeMinutes, {
+    providerSessions: [
+      { ...baseSession, timeframeId: "1m" },
+      { ...baseSession, timeframeId: "3m" },
+    ],
+    onWorkspaceTimeframeSelect: () => undefined,
+  });
+  const { document } = parseHTML(markup);
+  const selectors = document.querySelectorAll(".provider-timeframe-select");
+
+  assert.equal(selectors.length, 2);
+  assert.equal(selectors[0]?.getAttribute("value"), null);
+  assert.equal(
+    selectors[0]?.querySelector("option[selected]")?.textContent,
+    "1m",
+  );
+  assert.equal(
+    selectors[1]?.querySelector("option[selected]")?.textContent,
+    "3m",
+  );
+  assert.match(markup, /1m · 0 candles/u);
+  assert.match(markup, /3m · 0 candles/u);
 });
 
 test("resolves and renders a connected secure bridge", async () => {

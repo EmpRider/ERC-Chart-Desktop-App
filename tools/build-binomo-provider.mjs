@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 export const binomoProviderPackageIdentity = Object.freeze({
   id: "erc.provider.binomo",
   name: "Binomo",
-  version: "0.1.0",
+  version: "0.1.1",
 });
 
 function sha256(value) {

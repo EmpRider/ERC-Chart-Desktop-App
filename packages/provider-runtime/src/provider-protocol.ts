@@ -652,13 +652,20 @@ function isCapabilities(value: unknown): value is ProviderCapabilities {
       "nativeTimeframes",
       "liveData",
       "derivedTimeframes",
+      ...(value.derivedTimeframeIds === undefined
+        ? []
+        : ["derivedTimeframeIds"]),
     ]) &&
     typeof value.instruments === "boolean" &&
     isStringArray(value.nativeTimeframes, 1_024, (item) =>
       dataIdPattern.test(item),
     ) &&
     typeof value.liveData === "boolean" &&
-    typeof value.derivedTimeframes === "boolean"
+    typeof value.derivedTimeframes === "boolean" &&
+    (value.derivedTimeframeIds === undefined ||
+      isStringArray(value.derivedTimeframeIds, 1_024, (item) =>
+        dataIdPattern.test(item),
+      ))
   );
 }
 

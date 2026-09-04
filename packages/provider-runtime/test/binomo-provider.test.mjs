@@ -163,6 +163,123 @@ test("loads Binomo candles with the userscript timestamp and chunk semantics", a
   assert.equal(fixture.statuses.at(-1), "disconnected");
 });
 
+test("advertises native and derived Binomo timeframes separately", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const fixture = createHost([]);
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 1000,
+  });
+
+  const capabilities = await adapter.getCapabilities();
+
+  assert.deepEqual(capabilities.nativeTimeframes, [
+    "5s",
+    "15s",
+    "30s",
+    "1m",
+    "5m",
+    "15m",
+    "30m",
+  ]);
+  assert.equal(capabilities.derivedTimeframes, true);
+  assert.deepEqual(capabilities.derivedTimeframeIds, ["2m", "3m"]);
+});
+
+test("aggregates derived 3m history from epoch-aligned 1m candles", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const fixture = createHost([
+    response({
+      data: [
+        {
+          open: 100,
+          high: 102,
+          low: 99,
+          close: 101,
+          created_at: "2026-09-03T12:01:00.000000Z",
+        },
+        {
+          open: 101,
+          high: 104,
+          low: 100,
+          close: 103,
+          created_at: "2026-09-03T12:02:00.000000Z",
+        },
+        {
+          open: 103,
+          high: 105,
+          low: 98,
+          close: 102,
+          created_at: "2026-09-03T12:03:00.000000Z",
+        },
+        {
+          open: 102,
+          high: 106,
+          low: 101,
+          close: 105,
+          created_at: "2026-09-03T12:04:00.000000Z",
+        },
+        {
+          open: 105,
+          high: 107,
+          low: 103,
+          close: 104,
+          created_at: "2026-09-03T12:05:00.000000Z",
+        },
+        {
+          open: 104,
+          high: 108,
+          low: 102,
+          close: 107,
+          created_at: "2026-09-03T12:06:00.000000Z",
+        },
+      ],
+      errors: [],
+      success: true,
+    }),
+  ]);
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 1000,
+  });
+
+  const candles = await adapter.requestHistory({
+    instrumentId: "Z-CRY/IDX",
+    timeframeId: "3m",
+    fromMs: Date.UTC(2026, 8, 3, 12, 0, 0),
+    toMs: Date.UTC(2026, 8, 3, 12, 6, 0),
+    limit: 2,
+  });
+
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(
+    fixture.requests[0].url,
+    "https://api.binomo.com/candles/v1/Z-CRY%2FIDX/2026-09-03T00:00:00/60?locale=en",
+  );
+  assert.deepEqual(candles, [
+    {
+      instrumentId: "Z-CRY/IDX",
+      timeframeId: "3m",
+      openTimeMs: Date.UTC(2026, 8, 3, 12, 0, 0),
+      open: 100,
+      high: 105,
+      low: 98,
+      close: 102,
+    },
+    {
+      instrumentId: "Z-CRY/IDX",
+      timeframeId: "3m",
+      openTimeMs: Date.UTC(2026, 8, 3, 12, 3, 0),
+      open: 102,
+      high: 108,
+      low: 101,
+      close: 107,
+    },
+  ]);
+});
+
 test("polling subscription emits the current Binomo candle and stops cleanly", async () => {
   const { default: definition } =
     await import("../../provider-examples/dist/binomo-provider.js");
@@ -298,4 +415,78 @@ test("authenticated Binomo websocket flow emits compressed live ticks and candle
   await adapter.disconnect();
   assert.equal(assetStream.closed.length, 1);
   assert.equal(phoenix.closed.length, 1);
+});
+
+test("derived 2m websocket subscription seeds from 1m history and updates the target bucket", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const now = Date.UTC(2026, 8, 3, 12, 1, 30);
+  const fixture = createWebSocketHost(
+    [
+      response({
+        data: [
+          {
+            open: 200,
+            high: 204,
+            low: 198,
+            close: 203,
+            created_at: "2026-09-03T12:01:00.000000Z",
+          },
+        ],
+        errors: [],
+        success: true,
+      }),
+      response({ data: [], errors: [], success: true }),
+    ],
+    now,
+  );
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 60_000,
+  });
+  const candles = [];
+  let subscription;
+
+  await adapter.connect();
+  try {
+    subscription = await adapter.subscribe(
+      { instrumentId: "Z-CRY/IDX", timeframeId: "2m" },
+      {
+        onCandles: (value) => candles.push(...value),
+        onTicks: () => undefined,
+        onError: (code) => assert.fail(`Unexpected provider error: ${code}`),
+      },
+    );
+    const assetStream = fixture.sockets[1];
+    const liveMessage = JSON.stringify({
+      success: true,
+      data: [
+        {
+          action: "assets",
+          assets: [
+            {
+              ric: "Z-CRY/IDX",
+              rate: "205.5",
+              created_at: "2026-09-03T12:01:15.000Z",
+            },
+          ],
+        },
+      ],
+    });
+    assetStream.handlers.onMessage(deflateRawSync(Buffer.from(liveMessage)));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(fixture.requests.length, 2);
+    assert.match(fixture.requests[0].url, /\/60\?locale=en$/u);
+    assert.equal(candles.at(-1).timeframeId, "2m");
+    assert.equal(candles.at(-1).openTimeMs, Date.UTC(2026, 8, 3, 12, 0, 0));
+    assert.equal(candles.at(-1).open, 200);
+    assert.equal(candles.at(-1).high, 205.5);
+    assert.equal(candles.at(-1).low, 198);
+    assert.equal(candles.at(-1).close, 205.5);
+  } finally {
+    await subscription?.unsubscribe();
+    await adapter.disconnect();
+  }
+  assert.equal(fixture.sockets[1].closed.length, 1);
 });

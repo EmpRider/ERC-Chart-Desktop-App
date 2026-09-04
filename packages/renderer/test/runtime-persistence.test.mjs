@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import {
   RuntimeApplicationShell,
   createInitialWorkspace,
+  providerSessionRestoreRequests,
   toPersistedWorkspace,
   workspaceReducer,
 } from "../dist/index.js";
@@ -80,6 +81,105 @@ test("persists each real workspace mutation", async (t) => {
   await act(async () => add.click());
   assert.equal(saves.length, 1);
   assert.equal(saves[0].tabs[0].chartSlots.length, 2);
+});
+
+test("restarts each provider profile referenced by restored chart tabs", async (t) => {
+  const starts = [];
+  let restored = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeSeconds: 60,
+  });
+  restored = workspaceReducer(restored, { type: "add-tab" });
+  restored = workspaceReducer(restored, {
+    type: "configure-tab-provider",
+    tabId: "tab-2",
+    providerProfileId: "profile-b",
+    instrumentId: "BTCUSD",
+    timeframeSeconds: 300,
+  });
+  restored = workspaceReducer(restored, { type: "add-tab" });
+  restored = workspaceReducer(restored, {
+    type: "configure-tab-provider",
+    tabId: "tab-3",
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeSeconds: 60,
+  });
+  const bridge = {
+    getRuntimeInfo: async () => ({
+      ipcContractVersion: 1,
+      applicationName: "ERC Chart",
+    }),
+    loadWorkspace: async () => toPersistedWorkspace(restored, 1),
+    saveWorkspace: async () => undefined,
+    flushWorkspace: async () => undefined,
+    startProviderProfile: async (profileId) => {
+      starts.push(profileId);
+      return new Promise(() => undefined);
+    },
+  };
+
+  await mountRuntimeShell(t, bridge);
+  await act(async () => Promise.resolve());
+
+  assert.deepEqual(starts.sort(), ["profile-a", "profile-b"]);
+});
+
+test("derives saved timeframe restore requests independently per workspace", () => {
+  let restored = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  restored = workspaceReducer(restored, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  restored = workspaceReducer(restored, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      ...restored.tabs[0].slots[1].persisted,
+      timeframeSeconds: 180,
+    },
+  });
+  const baseSession = {
+    profileId: "profile-a",
+    providerId: "erc.provider.binomo",
+    providerName: "Binomo",
+    instrument: {
+      id: "Z-CRY/IDX",
+      symbol: "Z-CRY/IDX",
+      name: "Z-CRY/IDX",
+    },
+    availableTimeframeIds: ["1m", "2m", "3m", "5m"],
+    timeframeId: "1m",
+    candles: [],
+  };
+
+  assert.deepEqual(
+    providerSessionRestoreRequests(restored, "profile-a", baseSession),
+    [
+      {
+        profileId: "profile-a",
+        instrumentId: "Z-CRY/IDX",
+        timeframeId: "3m",
+      },
+    ],
+  );
+  assert.deepEqual(
+    providerSessionRestoreRequests(restored, "profile-a", {
+      ...baseSession,
+      availableTimeframeIds: ["1m", "5m"],
+    }),
+    [],
+  );
 });
 
 test("does not overwrite invalid persisted data", async (t) => {
