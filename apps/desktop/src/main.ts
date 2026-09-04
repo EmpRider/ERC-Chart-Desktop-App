@@ -29,9 +29,24 @@ import {
   type ProviderDataService,
 } from "@erc-chart/data-service";
 import {
+  isProviderLiveSubscriptionId,
+  isProviderLiveSubscriptionRequest,
+  isProviderProfileCreateRequest,
+  isProviderProfileUpdateRequest,
+  isProviderSessionRequest,
   providerImportApproveChannel,
   providerImportCancelChannel,
   providerImportPreviewChannel,
+  providerLiveEventChannel,
+  providerLiveSubscribeChannel,
+  providerLiveUnsubscribeChannel,
+  providerProfileCreateChannel,
+  providerProfileDeleteChannel,
+  providerProfilesListChannel,
+  providerProfileStartChannel,
+  providerSessionLoadChannel,
+  providerProfileStopChannel,
+  providerProfileUpdateChannel,
   isProviderImportCredentialValues,
   runtimeInfoChannel,
   workspaceLoadChannel,
@@ -51,6 +66,8 @@ import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
 import { createDesktopProviderHostBroker } from "./provider-host-broker.js";
 import { createProviderImportService } from "./provider-import-service.js";
+import { createProviderLiveSubscriptionManager } from "./provider-live-subscriptions.js";
+import { createProviderManagementService } from "./provider-management-service.js";
 import { installWindowSecurity } from "./window-security.js";
 
 interface SmokeResult {
@@ -462,6 +479,53 @@ async function startDesktopMain(): Promise<void> {
     );
   resolveController(controller);
 
+  const providerLiveSubscriptions =
+    createProviderLiveSubscriptionManager(controller);
+  ipcMain.handle(
+    providerLiveSubscribeChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderLiveSubscriptionRequest(request)) {
+        throw new Error("Provider live subscription request is invalid.");
+      }
+      const sender = event.sender;
+      await providerLiveSubscriptions.start(request, {
+        ownerId: sender.id,
+        isClosed: (): boolean => sender.isDestroyed(),
+        send: (payload): void => {
+          if (!sender.isDestroyed())
+            sender.send(providerLiveEventChannel, payload);
+        },
+        onClosed: (listener): (() => void) => {
+          sender.once("destroyed", listener);
+          return (): void => {
+            sender.off("destroyed", listener);
+          };
+        },
+      });
+      return true;
+    },
+  );
+  ipcMain.handle(
+    providerLiveUnsubscribeChannel,
+    async (event, subscriptionId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderLiveSubscriptionId(subscriptionId)) {
+        throw new Error("Provider live subscription ID is invalid.");
+      }
+      if (
+        !(await providerLiveSubscriptions.stop(subscriptionId, event.sender.id))
+      ) {
+        throw new Error("Provider live subscription is unavailable.");
+      }
+      return true;
+    },
+  );
+  const removeProviderLiveHandlers = (): void => {
+    ipcMain.removeHandler(providerLiveSubscribeChannel);
+    ipcMain.removeHandler(providerLiveUnsubscribeChannel);
+  };
+
   const providerImportService = createProviderImportService({
     database: workspaceDatabase,
     controller,
@@ -469,6 +533,79 @@ async function startDesktopMain(): Promise<void> {
     stagingRoot: path.join(userDataRoot, "provider-staging"),
     installationRoot: path.join(userDataRoot, "provider-plugins"),
   });
+  const providerManagementService = createProviderManagementService({
+    database: workspaceDatabase,
+    controller,
+    credentialManager: providerCredentialManager,
+    installationRoot: path.join(userDataRoot, "provider-plugins"),
+    getStatus: (profileId) => providerUtilities.getStatus(profileId),
+  });
+  ipcMain.handle(providerProfilesListChannel, (event) => {
+    assertTrustedIpcSender(senderFromEvent(event));
+    return providerManagementService.snapshot();
+  });
+  ipcMain.handle(
+    providerProfileCreateChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderProfileCreateRequest(request)) {
+        throw new Error("Provider profile create request is invalid.");
+      }
+      return providerManagementService.create(request);
+    },
+  );
+  ipcMain.handle(
+    providerProfileUpdateChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderProfileUpdateRequest(request)) {
+        throw new Error("Provider profile update request is invalid.");
+      }
+      return providerManagementService.update(request);
+    },
+  );
+  ipcMain.handle(
+    providerProfileStartChannel,
+    async (event, profileId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof profileId !== "string") {
+        throw new Error("Provider profile ID is invalid.");
+      }
+      return providerManagementService.start(profileId);
+    },
+  );
+  ipcMain.handle(
+    providerSessionLoadChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderSessionRequest(request)) {
+        throw new Error("Provider session request is invalid.");
+      }
+      return providerManagementService.load(request);
+    },
+  );
+  ipcMain.handle(
+    providerProfileStopChannel,
+    async (event, profileId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof profileId !== "string") {
+        throw new Error("Provider profile ID is invalid.");
+      }
+      await providerManagementService.stop(profileId);
+      return true;
+    },
+  );
+  ipcMain.handle(
+    providerProfileDeleteChannel,
+    async (event, profileId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof profileId !== "string") {
+        throw new Error("Provider profile ID is invalid.");
+      }
+      await providerManagementService.delete(profileId);
+      return true;
+    },
+  );
   ipcMain.handle(providerImportPreviewChannel, async (event) => {
     assertTrustedIpcSender(senderFromEvent(event));
     const selection = await dialog.showOpenDialog({
@@ -512,18 +649,45 @@ async function startDesktopMain(): Promise<void> {
     ipcMain.removeHandler(providerImportApproveChannel);
     ipcMain.removeHandler(providerImportCancelChannel);
   };
+  const removeProviderManagementHandlers = (): void => {
+    ipcMain.removeHandler(providerProfilesListChannel);
+    ipcMain.removeHandler(providerProfileCreateChannel);
+    ipcMain.removeHandler(providerProfileUpdateChannel);
+    ipcMain.removeHandler(providerProfileStartChannel);
+    ipcMain.removeHandler(providerSessionLoadChannel);
+    ipcMain.removeHandler(providerProfileStopChannel);
+    ipcMain.removeHandler(providerProfileDeleteChannel);
+  };
 
   let quitting = false;
   app.on("before-quit", (event) => {
     if (quitting || (smokeMode && !workspaceSeedMode)) return;
     event.preventDefault();
     quitting = true;
-    void providerImportService
-      .shutdown()
-      .then(() => controller.shutdown())
-      .finally(removeProviderImportHandlers)
-      .then(() => app.quit())
-      .catch(() => app.exit(1));
+    void (async (): Promise<void> => {
+      let shutdownError: unknown;
+      try {
+        await providerImportService.shutdown();
+      } catch (error) {
+        shutdownError = error;
+      }
+      try {
+        await providerLiveSubscriptions.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
+      }
+      try {
+        await controller.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
+      } finally {
+        removeProviderLiveHandlers();
+        removeProviderImportHandlers();
+        removeProviderManagementHandlers();
+      }
+      if (shutdownError !== undefined) throw shutdownError;
+      app.quit();
+    })().catch(() => app.exit(1));
   });
 }
 

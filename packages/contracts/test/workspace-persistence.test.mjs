@@ -16,6 +16,7 @@ const workspace = {
     {
       id: "tab-1",
       title: "Chart 1",
+      providerProfileId: "local-default",
       layout: "split-horizontal",
       chartSlots: [
         {

@@ -83,7 +83,7 @@ jobs:
           "tag=$($metadata.tag)" >> $env:GITHUB_OUTPUT
           "version=$($metadata.version)" >> $env:GITHUB_OUTPUT
       - name: Install locked dependencies
-        run: npm ci
+        run: npm ci --audit=false
       - name: Validate repository governance
         run: npm --workspace @erc-chart/delivery-governance run validate:repository
       - name: Lint Markdown

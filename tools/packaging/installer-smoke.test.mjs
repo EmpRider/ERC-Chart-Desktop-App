@@ -92,7 +92,7 @@ test("preserves the application smoke failure when uninstall and cleanup fail", 
       accessFile: async () => undefined,
       extractPackagedFile: (_asarPath, filePath) =>
         filePath === "package.json"
-          ? Buffer.from(JSON.stringify({ version: "0.3.1" }))
+          ? Buffer.from(JSON.stringify({ version: "0.3.2" }))
           : Buffer.from("export const providerSdkVersion = 1;"),
       executeCommand: async () => {
         command += 1;
@@ -119,7 +119,7 @@ test("rejects an installed package without the unpacked utility runtime", async 
         }
       },
       extractPackagedFile: () =>
-        Buffer.from(JSON.stringify({ version: "0.3.1" })),
+        Buffer.from(JSON.stringify({ version: "0.3.2" })),
       executeCommand: async () => undefined,
       runProcesses: async () => assert.fail("Installed app must not launch"),
     }),

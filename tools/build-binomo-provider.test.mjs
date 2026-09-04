@@ -31,6 +31,7 @@ test("builds the Binomo provider in the supported import package shape", async (
 
     assert.deepEqual(storedManifest, manifest);
     assert.equal(manifest.id, binomoProviderPackageIdentity.id);
+    assert.equal(manifest.version, "0.1.1");
     assert.equal(manifest.kind, "provider");
     assert.equal(manifest.entry, "dist/index.js");
     assert.deepEqual(manifest.permissions.network, [

@@ -24,6 +24,8 @@ test("builds sandbox preload, browser renderer, and static assets", async (t) =>
   assert.match(html, /<main id="app"><\/main>/);
   assert.match(html, /<script type="module" src="\.\/renderer\.js"><\/script>/);
   assert.match(styles, /color-scheme: dark/);
+  assert.match(styles, /height: 100vh;/);
+  assert.match(styles, /grid-auto-rows: minmax\(0, 1fr\);/);
 });
 
 test("rejects an output directory that contains the repository root", async (t) => {

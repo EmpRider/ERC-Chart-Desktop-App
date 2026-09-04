@@ -63,6 +63,7 @@ export interface PersistedWorkspaceChartSlot {
 export interface PersistedWorkspaceTab {
   readonly id: string;
   readonly title: string;
+  readonly providerProfileId?: string;
   readonly layout:
     | "grid-1"
     | "split-horizontal"
@@ -254,9 +255,14 @@ function isChartSlot(value: unknown): value is PersistedWorkspaceChartSlot {
 function isTab(value: unknown): value is PersistedWorkspaceTab {
   return (
     isObject(value) &&
-    hasFields(value, ["id", "title", "layout", "chartSlots"]) &&
+    hasFields(
+      value,
+      ["id", "title", "layout", "chartSlots"],
+      ["providerProfileId"],
+    ) &&
     isId(value.id) &&
     isText(value.title, 100) &&
+    (value.providerProfileId === undefined || isId(value.providerProfileId)) &&
     typeof value.layout === "string" &&
     layouts.has(value.layout) &&
     isDenseArray(value.chartSlots) &&

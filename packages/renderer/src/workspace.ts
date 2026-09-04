@@ -15,6 +15,7 @@ export interface ChartSlot {
 export interface WorkspaceTab {
   readonly id: string;
   readonly title: string;
+  readonly providerProfileId?: string;
   readonly layoutSize: LayoutSize;
   readonly persistedLayout?: PersistedWorkspaceTab["layout"] | undefined;
   readonly slots: readonly ChartSlot[];
@@ -32,6 +33,20 @@ export type WorkspaceAction =
   | { readonly type: "select-tab"; readonly tabId: string }
   | { readonly type: "close-tab"; readonly tabId: string }
   | { readonly type: "add-workspace"; readonly tabId: string }
+  | {
+      readonly type: "configure-tab-provider";
+      readonly tabId: string;
+      readonly providerProfileId: string;
+      readonly instrumentId: string;
+      readonly timeframeSeconds: number;
+      readonly availableTimeframeSeconds?: readonly number[];
+    }
+  | {
+      readonly type: "configure-workspace";
+      readonly tabId: string;
+      readonly workspaceId: string;
+      readonly persisted: Omit<PersistedWorkspaceChartSlot, "id">;
+    }
   | {
       readonly type: "remove-workspace";
       readonly tabId: string;
@@ -132,6 +147,64 @@ export function workspaceReducer(
       };
       const tabs = [...state.tabs];
       tabs[index] = updated;
+      return { ...state, tabs };
+    }
+    case "configure-tab-provider": {
+      const tabIndex = state.tabs.findIndex((tab) => tab.id === action.tabId);
+      if (tabIndex === -1) return state;
+      const current = state.tabs[tabIndex];
+      if (current === undefined) return state;
+      const slots = current.slots.map((slot) => ({
+        ...slot,
+        persisted:
+          slot.persisted === undefined ||
+          slot.persisted.instrumentId === "UNCONFIGURED"
+            ? {
+                providerProfileId: action.providerProfileId,
+                instrumentId: action.instrumentId,
+                timeframeSeconds: action.timeframeSeconds,
+                chartType: "candlestick" as const,
+                indicators: [],
+              }
+            : {
+                ...slot.persisted,
+                providerProfileId: action.providerProfileId,
+                instrumentId: action.instrumentId,
+                timeframeSeconds:
+                  action.availableTimeframeSeconds === undefined ||
+                  action.availableTimeframeSeconds.includes(
+                    slot.persisted.timeframeSeconds,
+                  )
+                    ? slot.persisted.timeframeSeconds
+                    : action.timeframeSeconds,
+              },
+      }));
+      const tabs = [...state.tabs];
+      tabs[tabIndex] = {
+        ...current,
+        providerProfileId: action.providerProfileId,
+        slots,
+      };
+      return { ...state, tabs };
+    }
+    case "configure-workspace": {
+      const tabIndex = state.tabs.findIndex((tab) => tab.id === action.tabId);
+      if (tabIndex === -1) return state;
+      const current = state.tabs[tabIndex];
+      if (current === undefined) return state;
+      const workspaceIndex = current.slots.findIndex(
+        (slot) => slot.id === action.workspaceId,
+      );
+      if (workspaceIndex === -1) return state;
+      const currentSlot = current.slots[workspaceIndex];
+      if (currentSlot === undefined) return state;
+      const slots = [...current.slots];
+      slots[workspaceIndex] = {
+        ...currentSlot,
+        persisted: action.persisted,
+      };
+      const tabs = [...state.tabs];
+      tabs[tabIndex] = { ...current, slots };
       return { ...state, tabs };
     }
     case "remove-workspace": {

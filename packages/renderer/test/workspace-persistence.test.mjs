@@ -128,6 +128,11 @@ test("preserves restored chart configuration on the next save", () => {
   const restored = fromPersistedWorkspace(configured);
 
   assert.ok(restored);
+  assert.equal(restored.tabs[0].providerProfileId, "broker-primary");
+  assert.equal(
+    toPersistedWorkspace(restored, 2).tabs[0].providerProfileId,
+    "broker-primary",
+  );
   assert.deepEqual(toPersistedWorkspace(restored, 2).tabs[0].chartSlots[0], {
     ...configured.tabs[0].chartSlots[0],
   });

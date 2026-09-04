@@ -123,6 +123,183 @@ test("removes only added workspaces and never reuses a workspace ID", () => {
   );
 });
 
+test("binds provider configuration to one chart workspace", () => {
+  const initial = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const configured = workspaceReducer(initial, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      providerProfileId: "erc.provider.binomo.account-2",
+      instrumentId: "BTCUSD",
+      timeframeSeconds: 300,
+      chartType: "candlestick",
+      indicators: [],
+    },
+  });
+
+  assert.equal(configured.tabs[0].slots[0].persisted, undefined);
+  assert.deepEqual(configured.tabs[0].slots[1].persisted, {
+    providerProfileId: "erc.provider.binomo.account-2",
+    instrumentId: "BTCUSD",
+    timeframeSeconds: 300,
+    chartType: "candlestick",
+    indicators: [],
+  });
+  assert.equal(
+    workspaceReducer(configured, {
+      type: "configure-workspace",
+      tabId: "tab-1",
+      workspaceId: "missing",
+      persisted: configured.tabs[0].slots[1].persisted,
+    }),
+    configured,
+  );
+});
+
+test("binds one provider profile to the entire chart tab", () => {
+  const initial = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const configured = workspaceReducer(initial, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.account-2",
+    instrumentId: "BTCUSD",
+    timeframeSeconds: 300,
+  });
+
+  assert.equal(
+    configured.tabs[0].providerProfileId,
+    "erc.provider.binomo.account-2",
+  );
+  assert.deepEqual(
+    configured.tabs[0].slots.map((slot) => slot.persisted?.providerProfileId),
+    ["erc.provider.binomo.account-2", "erc.provider.binomo.account-2"],
+  );
+  assert.deepEqual(
+    configured.tabs[0].slots.map((slot) => slot.persisted?.instrumentId),
+    ["BTCUSD", "BTCUSD"],
+  );
+});
+
+test("changes timeframe for one workspace without changing its siblings", () => {
+  const withSecondWorkspace = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const configured = workspaceReducer(withSecondWorkspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  const updated = workspaceReducer(configured, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      ...configured.tabs[0].slots[1].persisted,
+      timeframeSeconds: 180,
+    },
+  });
+
+  assert.deepEqual(
+    updated.tabs[0].slots.map((slot) => slot.persisted?.timeframeSeconds),
+    [60, 180],
+  );
+  assert.equal(
+    updated.tabs[0].providerProfileId,
+    "erc.provider.binomo.default",
+  );
+});
+
+test("changing a tab provider preserves each configured workspace timeframe", () => {
+  const withSecondWorkspace = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  let configured = workspaceReducer(withSecondWorkspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeSeconds: 60,
+  });
+  configured = workspaceReducer(configured, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      ...configured.tabs[0].slots[1].persisted,
+      timeframeSeconds: 180,
+    },
+  });
+
+  const switched = workspaceReducer(configured, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-b",
+    instrumentId: "BTCUSD",
+    timeframeSeconds: 300,
+  });
+
+  assert.deepEqual(
+    switched.tabs[0].slots.map((slot) => slot.persisted?.timeframeSeconds),
+    [60, 180],
+  );
+  assert.deepEqual(
+    switched.tabs[0].slots.map((slot) => slot.persisted?.providerProfileId),
+    ["profile-b", "profile-b"],
+  );
+  assert.deepEqual(
+    switched.tabs[0].slots.map((slot) => slot.persisted?.instrumentId),
+    ["BTCUSD", "BTCUSD"],
+  );
+});
+
+test("changing provider falls back only unsupported workspace timeframes", () => {
+  const withSecondWorkspace = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  let configured = workspaceReducer(withSecondWorkspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeSeconds: 60,
+  });
+  configured = workspaceReducer(configured, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      ...configured.tabs[0].slots[1].persisted,
+      timeframeSeconds: 180,
+    },
+  });
+
+  const switched = workspaceReducer(configured, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-b",
+    instrumentId: "BTCUSD",
+    timeframeSeconds: 60,
+    availableTimeframeSeconds: [60, 300],
+  });
+
+  assert.deepEqual(
+    switched.tabs[0].slots.map((slot) => slot.persisted?.timeframeSeconds),
+    [60, 60],
+  );
+});
+
 test("fails closed when removal sees a malformed runtime layout size", () => {
   const malformed = {
     tabs: [

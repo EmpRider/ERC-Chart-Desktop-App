@@ -2,6 +2,44 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.3.2] - 2026-09-04
+
+### Provider management and live data
+
+- Added provider profile management across the desktop UI and runtime for
+  creating, editing, starting, stopping, restarting, and removing profiles while
+  keeping credential values out of renderer-visible state.
+- Added renderer-owned live provider subscriptions with automatic cleanup when a
+  renderer closes and incremental candle forwarding into KLineCharts.
+- Persisted provider bindings and per-workspace timeframes, restored referenced
+  provider profiles during workspace hydration, and preserved independent chart
+  workspace settings.
+- Extended Binomo provider/runtime handling and regression coverage for the live
+  data path.
+
+### v0.3.2 corrective release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
+## [0.3.1] - 2026-09-03
+
+### Binomo provider patch
+
+- Added the importable Binomo provider package and the desktop flow for provider
+  permission review, secure credential entry, installation, startup, instrument
+  discovery, and initial candle loading.
+- Preserved migrated historical-candle timestamp semantics and added brokered
+  authenticated WebSocket live updates with compressed tick handling, with REST
+  polling available when no Binomo cookie is supplied.
+- Stored credential values through Windows Credential Manager rather than
+  provider settings.
+
+### v0.3.1 corrective release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.3.0] - 2026-09-03
 
 ### Provider SDK and plugin runtime

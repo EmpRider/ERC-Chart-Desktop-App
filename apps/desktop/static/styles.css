@@ -22,7 +22,8 @@ html,
 body,
 #app {
   min-width: 20rem;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0;
 }
 
@@ -43,17 +44,19 @@ textarea {
 
 .app-shell {
   display: grid;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   grid-template-rows: auto 1fr auto;
+  overflow: hidden;
 }
 
 .app-header {
   display: flex;
-  min-height: 4.5rem;
+  min-height: 2.25rem;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  padding: 0.75rem 1.25rem;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem;
   border-bottom: 1px solid #1d2939;
   background: rgb(9 14 23 / 88%);
   box-shadow: 0 1px 0 rgb(255 255 255 / 2%) inset;
@@ -63,23 +66,23 @@ textarea {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.3rem;
 }
 
 .brand-mark {
   display: grid;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 1.55rem;
+  height: 1.55rem;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #256f9b;
-  border-radius: 0.7rem;
+  border-radius: 0.3rem;
   background: linear-gradient(145deg, #12334a, #0a1a2a);
   box-shadow:
     0 0 0 1px rgb(89 199 255 / 8%) inset,
     0 0.75rem 2rem rgb(0 0 0 / 24%);
   color: #8fddff;
-  font-size: 0.74rem;
+  font-size: 0.55rem;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -87,7 +90,7 @@ textarea {
 .brand-lockup h1 {
   margin: 0;
   overflow: hidden;
-  font-size: 1rem;
+  font-size: 0.76rem;
   font-weight: 680;
   letter-spacing: -0.015em;
   text-overflow: ellipsis;
@@ -95,27 +98,27 @@ textarea {
 }
 
 .brand-lockup p {
-  margin: 0.18rem 0 0;
+  margin: 0;
   color: #8492a6;
-  font-size: 0.72rem;
+  font-size: 0.58rem;
   letter-spacing: 0.03em;
 }
 
 .runtime-state {
   display: grid;
-  min-width: 13rem;
+  min-width: 10rem;
   grid-template-columns: auto 1fr;
   align-items: center;
-  column-gap: 0.55rem;
-  padding: 0.55rem 0.75rem;
+  column-gap: 0.25rem;
+  padding: 0.2rem 0.35rem;
   border: 1px solid #223148;
-  border-radius: 0.65rem;
+  border-radius: 0.3rem;
   background: #0c1420;
 }
 
 .status-dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.35rem;
+  height: 0.35rem;
   grid-row: 1 / 3;
   border-radius: 999px;
   background: #f2b84b;
@@ -124,7 +127,7 @@ textarea {
 
 [data-status] {
   color: #dce7f7;
-  font-size: 0.72rem;
+  font-size: 0.62rem;
   font-weight: 650;
 }
 
@@ -144,15 +147,15 @@ textarea {
 
 .status-detail {
   color: #718096;
-  font-size: 0.64rem;
+  font-size: 0.55rem;
 }
 
 .workspace {
   display: grid;
   min-height: 0;
   grid-template-rows: auto auto 1fr;
-  gap: 0.65rem;
-  padding: 0.75rem 1rem 1rem;
+  gap: 0.15rem;
+  padding: 0.15rem 0.2rem 0.2rem;
   overflow: hidden;
 }
 
@@ -160,13 +163,13 @@ textarea {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.15rem;
 }
 
 .tab-list {
   display: flex;
   min-width: 0;
-  gap: 0.3rem;
+  gap: 0.1rem;
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -176,7 +179,7 @@ textarea {
   flex: 0 0 auto;
   align-items: center;
   border: 1px solid #1b283b;
-  border-radius: 0.5rem;
+  border-radius: 0.25rem;
   background: #0a111c;
   overflow: hidden;
 }
@@ -198,9 +201,9 @@ textarea {
 }
 
 .tab-item [role="tab"] {
-  padding: 0.52rem 0.75rem;
+  padding: 0.25rem 0.4rem;
   color: #8998ac;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
 }
 
 .tab-item [aria-selected="true"] {
@@ -209,19 +212,41 @@ textarea {
 
 .tab-close {
   align-self: stretch;
-  padding: 0 0.55rem;
+  padding: 0 0.3rem;
   border-left: 1px solid #1b283b !important;
-  font-size: 0.9rem;
+  font-size: 0.72rem;
 }
 
 .add-tab {
-  width: 2rem;
-  height: 2rem;
+  width: 1.55rem;
+  height: 1.55rem;
   flex: 0 0 auto;
   border: 1px solid #1d2b40;
-  border-radius: 0.5rem;
+  border-radius: 0.25rem;
   background: #0a111c;
-  font-size: 1rem;
+  font-size: 0.78rem;
+}
+
+.tab-provider-select {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.15rem;
+  color: #6f8198;
+  font-size: 0.58rem;
+}
+
+.tab-provider-select select {
+  width: min(13rem, 24vw);
+  min-width: 8rem;
+  min-height: 1.55rem;
+  padding: 0.15rem 0.25rem;
+  border: 1px solid #27384e;
+  border-radius: 0.25rem;
+  background: #07101b;
+  color: #c8d4e3;
+  font-size: 0.64rem;
 }
 
 .tab-item button:hover,
@@ -241,30 +266,30 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 1rem;
+  gap: 0.25rem;
 }
 
 .workspace-toolbar > span {
   color: #5f6f83;
-  font-size: 0.64rem;
+  font-size: 0.58rem;
 }
 
 .workspace-add {
   display: inline-flex;
-  min-height: 2rem;
+  min-height: 1.55rem;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
+  gap: 0.2rem;
+  padding: 0.15rem 0.35rem;
   border: 1px solid #1d2b40;
-  border-radius: 0.5rem;
+  border-radius: 0.25rem;
   background: #0a111c;
   color: #8998ac;
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   font-weight: 650;
 }
 
 .workspace-add > span {
-  font-size: 1rem;
+  font-size: 0.78rem;
   line-height: 0;
 }
 
@@ -275,19 +300,25 @@ textarea {
   opacity: 0.65;
 }
 
-.provider-import {
+.provider-import,
+.provider-manage {
   display: inline-flex;
-  min-height: 2rem;
+  min-height: 1.55rem;
   align-items: center;
-  margin-left: auto;
-  padding: 0.5rem 0.8rem;
+  padding: 0.15rem 0.4rem;
   border: 1px solid #245c7a;
-  border-radius: 0.5rem;
+  border-radius: 0.25rem;
   background: #0b2231;
   color: #80d9ff;
   cursor: pointer;
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   font-weight: 700;
+}
+
+.provider-manage {
+  border-color: #2c3c52;
+  background: #0c1522;
+  color: #a8b7ca;
 }
 
 .provider-import:disabled {
@@ -296,6 +327,7 @@ textarea {
 }
 
 .provider-loaded {
+  margin-left: auto;
   color: #77d6aa !important;
 }
 
@@ -303,17 +335,263 @@ textarea {
   color: #eaa0a0 !important;
 }
 
+.provider-manager-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0.25rem;
+  background: rgb(2 6 12 / 78%);
+  backdrop-filter: blur(0.45rem);
+}
+
+.provider-manager {
+  display: flex;
+  width: min(86rem, 100%);
+  max-height: calc(100vh - 0.5rem);
+  flex-direction: column;
+  border: 1px solid #26364c;
+  border-radius: 0.3rem;
+  background: #08101b;
+  box-shadow: 0 2rem 7rem rgb(0 0 0 / 55%);
+  overflow: hidden;
+}
+
+.provider-manager > header,
+.provider-manager-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.provider-manager > header {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid #172235;
+  background: #0a121e;
+}
+
+.provider-manager > header h2,
+.provider-profile-create h3 {
+  margin: 0;
+  color: #eff6ff;
+}
+
+.provider-manager > header > button {
+  width: 1.55rem;
+  height: 1.55rem;
+  border: 1px solid #26364c;
+  border-radius: 0.25rem;
+  background: #0d1725;
+  color: #9cacbf;
+  cursor: pointer;
+}
+
+.provider-manager-toolbar {
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid #172235;
+  color: #7f90a6;
+  font-size: 0.62rem;
+}
+
+.provider-manager-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.provider-manager button,
+.provider-manager input,
+.provider-manager select,
+.provider-manager textarea {
+  font: inherit;
+}
+
+.provider-manager button {
+  border: 1px solid #2b4560;
+  border-radius: 0.25rem;
+  background: #0d2130;
+  color: #9edfff;
+  cursor: pointer;
+}
+
+.provider-manager button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.provider-manager-content {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(0, 2fr) minmax(16rem, 0.8fr);
+  gap: 0.3rem;
+  padding: 0.3rem;
+  overflow: auto;
+}
+
+.provider-manager-list {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+}
+
+.provider-manager-empty {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px dashed #26364c;
+  border-radius: 0.3rem;
+  color: #71839a;
+  text-align: center;
+}
+
+.provider-profile-card,
+.provider-profile-create {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.35rem;
+  border: 1px solid #1e2d41;
+  border-radius: 0.3rem;
+  background: #0a131f;
+}
+
+.provider-profile-create {
+  align-content: start;
+  position: sticky;
+  top: 0;
+}
+
+.provider-profile-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.provider-profile-heading > div {
+  display: grid;
+  gap: 0.05rem;
+}
+
+.provider-profile-heading strong {
+  color: #e8f2ff;
+}
+
+.provider-profile-heading span,
+.provider-profile-card label > span,
+.provider-profile-create label > span,
+.provider-profile-card legend {
+  color: #71839a;
+  font-size: 0.6rem;
+}
+
+.provider-status {
+  padding: 0.08rem 0.25rem;
+  border: 1px solid #34465c;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.provider-status[data-status="ready"] {
+  border-color: #2f7358;
+  color: #83dfb4;
+}
+
+.provider-status[data-status="failed"] {
+  border-color: #80484d;
+  color: #f0a5aa;
+}
+
+.provider-profile-card label,
+.provider-profile-create label {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.provider-profile-card input,
+.provider-profile-card select,
+.provider-profile-card textarea,
+.provider-profile-create input,
+.provider-profile-create select,
+.provider-profile-create textarea {
+  width: 100%;
+  border: 1px solid #27384e;
+  border-radius: 0.25rem;
+  background: #07101b;
+  color: #c8d4e3;
+}
+
+.provider-profile-card input,
+.provider-profile-card select,
+.provider-profile-create input,
+.provider-profile-create select {
+  min-height: 1.6rem;
+  padding: 0.15rem 0.25rem;
+  font-size: 0.64rem;
+}
+
+.provider-profile-card textarea,
+.provider-profile-create textarea {
+  padding: 0.2rem 0.25rem;
+  font-size: 0.62rem;
+  resize: vertical;
+}
+
+.provider-profile-card fieldset {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.3rem;
+  border: 1px solid #1d2a3d;
+  border-radius: 0.25rem;
+}
+
+.provider-profile-card [role="alert"],
+.provider-profile-create [role="alert"],
+.provider-manager > [role="alert"] {
+  margin: 0;
+  color: #f0a5aa;
+  font-size: 0.62rem;
+}
+
+.provider-manager > .provider-import-error {
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid #172235;
+}
+
+.provider-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+}
+
+.provider-profile-actions button,
+.provider-profile-create > button,
+.provider-manager-toolbar button {
+  min-height: 1.55rem;
+  padding: 0.12rem 0.35rem;
+  font-size: 0.62rem;
+}
+
+.provider-profile-actions .provider-danger {
+  margin-left: auto;
+  border-color: #63363d;
+  background: #251014;
+  color: #e9a1a8;
+}
+
 .workspace-close {
   position: absolute;
   z-index: 1;
-  top: 0.7rem;
-  right: 0.7rem;
+  top: 0.2rem;
+  right: 0.2rem;
   display: grid;
-  width: 1.8rem;
-  height: 1.8rem;
+  width: 1.4rem;
+  height: 1.4rem;
   place-items: center;
   border: 1px solid #24344a;
-  border-radius: 0.4rem;
+  border-radius: 0.2rem;
   background: #0a111c;
   color: #8998ac;
   cursor: pointer;
@@ -322,8 +600,11 @@ textarea {
 
 .chart-grid {
   display: grid;
+  height: 100%;
   min-height: 0;
-  gap: 0.65rem;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 0.15rem;
+  overflow: hidden;
 }
 
 .chart-grid[data-layout="2"],
@@ -350,9 +631,9 @@ textarea {
   min-height: 0;
   align-content: center;
   justify-items: center;
-  padding: 2rem;
+  padding: 0.5rem;
   border: 1px solid #172235;
-  border-radius: 0.75rem;
+  border-radius: 0.25rem;
   background-color: #090f19;
   background-image:
     linear-gradient(rgb(100 142 181 / 5%) 1px, transparent 1px),
@@ -375,47 +656,70 @@ textarea {
   display: flex;
   width: 100%;
   height: 100%;
-  min-height: 20rem;
+  min-height: 0;
   flex-direction: column;
   background: #090f19;
+  overflow: hidden;
 }
 
 .provider-chart-heading {
   display: flex;
-  min-height: 4.25rem;
+  min-height: 2.45rem;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
+  gap: 0.3rem;
+  padding: 0.2rem 0.35rem;
   border-bottom: 1px solid #172235;
   background: #0a111c;
 }
 
 .provider-chart-heading .eyebrow {
-  margin-bottom: 0.2rem;
+  margin-bottom: 0;
 }
 
 .provider-chart-heading h2 {
-  font-size: 1rem;
+  font-size: 0.82rem;
   letter-spacing: 0;
 }
 
 .provider-chart-meta {
   color: #78879b;
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   white-space: nowrap;
+}
+
+.provider-chart-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.provider-timeframe-select {
+  min-width: 2.8rem;
+  height: 1.35rem;
+  padding: 0 0.15rem;
+  border: 1px solid #27384e;
+  border-radius: 0.2rem;
+  background: #07101b;
+  color: #c8d4e3;
+  font-size: 0.58rem;
+  line-height: 1;
 }
 
 .provider-chart-canvas {
   width: 100%;
   min-height: 0;
   flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .workspace-add:not(:disabled):hover,
 .workspace-add:focus-visible,
 .provider-import:not(:disabled):hover,
 .provider-import:focus-visible,
+.provider-manage:hover,
+.provider-manage:focus-visible,
 .workspace-close:hover,
 .workspace-close:focus-visible {
   outline: 1px solid #59a7ca;
@@ -424,12 +728,12 @@ textarea {
 
 .slot-number {
   display: grid;
-  width: 2.15rem;
-  height: 2.15rem;
-  margin-bottom: 1rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-bottom: 0.25rem;
   place-items: center;
   border: 1px solid #245c7a;
-  border-radius: 0.55rem;
+  border-radius: 0.25rem;
   background: #0b2231;
   color: #80d9ff;
   font-size: 0.7rem;
@@ -437,9 +741,9 @@ textarea {
 }
 
 .eyebrow {
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.15rem;
   color: #6fc9ee;
-  font-size: 0.68rem;
+  font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -448,35 +752,35 @@ textarea {
 .chart-slot h2 {
   margin: 0;
   color: #f0f5fc;
-  font-size: clamp(1.55rem, 3vw, 2.2rem);
+  font-size: clamp(1rem, 2vw, 1.4rem);
   font-weight: 650;
   letter-spacing: -0.035em;
 }
 
 .workspace-copy {
   max-width: 25rem;
-  margin: 0.75rem 0 0;
+  margin: 0.2rem 0 0;
   color: #78879b;
-  font-size: 0.85rem;
-  line-height: 1.65;
+  font-size: 0.66rem;
+  line-height: 1.3;
 }
 
 .app-footer {
   display: flex;
-  min-height: 2rem;
+  min-height: 1.25rem;
   align-items: center;
   justify-content: space-between;
-  padding: 0 1.25rem;
+  padding: 0 0.35rem;
   border-top: 1px solid #182336;
   background: #080d15;
   color: #58677b;
-  font-size: 0.64rem;
+  font-size: 0.56rem;
   letter-spacing: 0.025em;
 }
 
 .permission-review-backdrop {
   position: fixed;
-  z-index: 20;
+  z-index: 30;
   inset: 0;
   display: grid;
   place-items: center;
@@ -689,8 +993,8 @@ textarea {
   .app-header {
     align-items: stretch;
     flex-direction: column;
-    gap: 0.7rem;
-    padding: 0.8rem 1rem;
+    gap: 0.2rem;
+    padding: 0.2rem;
   }
 
   .runtime-state {
@@ -698,7 +1002,7 @@ textarea {
   }
 
   .workspace {
-    padding: 0.65rem;
+    padding: 0.15rem;
   }
 
   .chart-grid[data-layout] {
@@ -719,8 +1023,20 @@ textarea {
     flex-wrap: wrap;
   }
 
-  .provider-import {
-    margin-left: 0;
+  .provider-manager-backdrop {
+    padding: 0.15rem;
+  }
+
+  .provider-manager {
+    max-height: calc(100vh - 0.3rem);
+  }
+
+  .provider-manager-content {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-profile-create {
+    position: static;
   }
 
   .provider-chart {

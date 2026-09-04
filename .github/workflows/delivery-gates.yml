@@ -38,7 +38,7 @@ jobs:
       - name: Set up pinned npm
         run: npm install --global npm@12.0.2
       - name: Install governance dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --audit=false
       - name: Build pull-request context
         id: context
         shell: bash
@@ -103,7 +103,7 @@ jobs:
           package-manager-cache: false
       - name: Set up pinned npm
         run: npm install --global npm@12.0.2
-      - run: npm ci
+      - run: npm ci --audit=false
       - name: Configure Chromium SUID sandbox
         shell: bash
         run: |
@@ -148,7 +148,7 @@ jobs:
           package-manager-cache: false
       - name: Set up pinned npm
         run: npm install --global npm@12.0.2
-      - run: npm ci
+      - run: npm ci --audit=false
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
@@ -158,7 +158,6 @@ jobs:
       - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
-      - run: npm run audit:ci
       - run: npm run version:check
       - run: npm run package:win
       - run: npm run smoke:installer

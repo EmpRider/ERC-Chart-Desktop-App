@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Binomo provider import and live-data patch
+const curatedNotes = `# Provider lifecycle and live-data patch
 
-This corrective release adds the importable Binomo provider package and completes the desktop UI path for provider permission review, secure credential entry, installation, startup, instrument discovery, and initial candle loading.
+This corrective release completes provider profile management across the desktop UI and runtime, including create, edit, start, stop, restart, removal, restored workspace bindings, and per-workspace timeframe persistence without exposing credential values.
 
-Binomo historical candles keep the migrated timestamp semantics, authenticated live updates use the brokered WebSocket host path with compressed tick handling, and REST polling remains available when no Binomo cookie is supplied. Credential values are stored through Windows Credential Manager rather than provider settings. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+Live provider subscriptions are owned per renderer, cleaned up when the renderer closes, and forwarded into the chart through the KLineCharts incremental candle path. The Binomo provider and runtime coverage are extended for the same live-data flow. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,

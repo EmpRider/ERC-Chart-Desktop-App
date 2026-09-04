@@ -21,6 +21,14 @@ test("exposes only the allowlisted application bridge methods", async () => {
     "previewProviderImport",
     "approveProviderImport",
     "cancelProviderImport",
+    "listProviderProfiles",
+    "createProviderProfile",
+    "updateProviderProfile",
+    "startProviderProfile",
+    "loadProviderSession",
+    "stopProviderProfile",
+    "deleteProviderProfile",
+    "subscribeProviderData",
   ]);
   assert.deepEqual(await bridge.getRuntimeInfo(), {
     ipcContractVersion,
@@ -73,9 +81,169 @@ test("installs one application-specific global", () => {
         "previewProviderImport",
         "approveProviderImport",
         "cancelProviderImport",
+        "listProviderProfiles",
+        "createProviderProfile",
+        "updateProviderProfile",
+        "startProviderProfile",
+        "loadProviderSession",
+        "stopProviderProfile",
+        "deleteProviderProfile",
+        "subscribeProviderData",
       ],
     ],
   ]);
+});
+
+test("validates provider management commands across the preload boundary", async () => {
+  const calls = [];
+  const session = {
+    profileId: "profile-a",
+    providerId: "erc.provider.fixture",
+    providerName: "Fixture",
+    instrument: { id: "BTCUSD", symbol: "BTCUSD", name: "Bitcoin" },
+    timeframeId: "1m",
+    candles: [],
+  };
+  const profile = {
+    profileId: "profile-a",
+    providerId: "erc.provider.fixture",
+    providerName: "Fixture",
+    version: "1.0.0",
+    displayName: "Primary",
+    status: "ready",
+    settings: { region: "eu" },
+    credentialKeys: ["auth_token"],
+  };
+  const snapshot = {
+    installedProviders: [
+      {
+        providerId: "erc.provider.fixture",
+        providerName: "Fixture",
+        version: "1.0.0",
+        credentialKeys: ["auth_token"],
+      },
+    ],
+    profiles: [profile],
+  };
+  const bridge = createErcChartBridge(async (...args) => {
+    calls.push(args);
+    if (args[0] === "erc-chart:provider-profiles-list") return snapshot;
+    if (args[0] === "erc-chart:provider-profile-update") return profile;
+    if (
+      args[0] === "erc-chart:provider-profile-create" ||
+      args[0] === "erc-chart:provider-profile-start" ||
+      args[0] === "erc-chart:provider-session-load"
+    )
+      return session;
+    return true;
+  });
+
+  assert.deepEqual(await bridge.listProviderProfiles(), snapshot);
+  assert.deepEqual(
+    await bridge.createProviderProfile({
+      providerId: "erc.provider.fixture",
+      displayName: "Primary",
+      settings: { region: "eu" },
+      credentials: { auth_token: "secret" },
+    }),
+    session,
+  );
+  assert.deepEqual(
+    await bridge.updateProviderProfile({
+      profileId: "profile-a",
+      displayName: "Primary",
+      settings: { region: "us" },
+    }),
+    profile,
+  );
+  assert.deepEqual(await bridge.startProviderProfile("profile-a"), session);
+  assert.deepEqual(
+    await bridge.loadProviderSession({
+      profileId: "profile-a",
+      instrumentId: "BTCUSD",
+      timeframeId: "3m",
+    }),
+    session,
+  );
+  await bridge.stopProviderProfile("profile-a");
+  await bridge.deleteProviderProfile("profile-a");
+  assert.deepEqual(
+    calls.map(([channel]) => channel),
+    [
+      "erc-chart:provider-profiles-list",
+      "erc-chart:provider-profile-create",
+      "erc-chart:provider-profile-update",
+      "erc-chart:provider-profile-start",
+      "erc-chart:provider-session-load",
+      "erc-chart:provider-profile-stop",
+      "erc-chart:provider-profile-delete",
+    ],
+  );
+});
+
+test("starts, filters, and stops provider live subscriptions", async () => {
+  const calls = [];
+  const listeners = new Map();
+  const events = [];
+  const bridge = createErcChartBridge(
+    async (...args) => {
+      calls.push(args);
+      return true;
+    },
+    (channel, listener) => {
+      listeners.set(channel, listener);
+      return () => listeners.delete(channel);
+    },
+  );
+
+  const unsubscribe = await bridge.subscribeProviderData(
+    {
+      profileId: "profile-a",
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+    },
+    (event) => events.push(event),
+  );
+  assert.equal(calls[0][0], "erc-chart:provider-live-subscribe");
+  const subscriptionId = calls[0][1].subscriptionId;
+  assert.match(subscriptionId, /^provider-live-/u);
+  const listener = listeners.get("erc-chart:provider-live-event");
+  assert.equal(typeof listener, "function");
+  listener({
+    subscriptionId: "another-subscription",
+    type: "error",
+    code: "IGNORED",
+  });
+  listener({
+    subscriptionId,
+    type: "candles",
+    candles: [
+      {
+        instrumentId: "BTCUSD",
+        timeframeId: "1m",
+        openTimeMs: 1_800_000_000_000,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100.5,
+      },
+    ],
+  });
+  assert.equal(events.length, 1);
+
+  await unsubscribe();
+  await unsubscribe();
+  assert.equal(listeners.size, 0);
+  assert.deepEqual(calls.at(-1), [
+    "erc-chart:provider-live-unsubscribe",
+    subscriptionId,
+  ]);
+  assert.equal(
+    calls.filter(
+      ([channel]) => channel === "erc-chart:provider-live-unsubscribe",
+    ).length,
+    1,
+  );
 });
 
 test("validates provider import IPC results without exposing local paths", async () => {
