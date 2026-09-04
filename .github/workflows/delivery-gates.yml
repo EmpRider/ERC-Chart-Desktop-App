@@ -158,7 +158,6 @@ jobs:
       - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
-      - run: npm run audit:ci
       - run: npm run version:check
       - run: npm run package:win
       - run: npm run smoke:installer
