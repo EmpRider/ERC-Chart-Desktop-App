@@ -6,6 +6,8 @@ import { createRoot } from "react-dom/client";
 import {
   RuntimeApplicationShell,
   createInitialWorkspace,
+  mergeProviderSessionCandles,
+  providerLiveRequestsForWorkspace,
   providerSessionRestoreRequests,
   toPersistedWorkspace,
   workspaceReducer,
@@ -180,6 +182,102 @@ test("derives saved timeframe restore requests independently per workspace", () 
     }),
     [],
   );
+});
+
+test("derives live provider demand from every chart tab, independent of focus", () => {
+  let workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 5,
+  });
+  workspace = workspaceReducer(workspace, { type: "add-tab" });
+  workspace = workspaceReducer(workspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-2",
+    providerProfileId: "profile-a",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 120,
+  });
+
+  const focusedOnChartTwo = providerLiveRequestsForWorkspace(workspace);
+  const focusedOnChartOne = providerLiveRequestsForWorkspace(
+    workspaceReducer(workspace, { type: "select-tab", tabId: "tab-1" }),
+  );
+
+  assert.deepEqual(focusedOnChartTwo, [
+    {
+      profileId: "profile-a",
+      instrumentId: "Z-CRY/IDX",
+      timeframeId: "5s",
+    },
+    {
+      profileId: "profile-a",
+      instrumentId: "Z-CRY/IDX",
+      timeframeId: "2m",
+    },
+  ]);
+  assert.deepEqual(focusedOnChartOne, focusedOnChartTwo);
+});
+
+test("merges background live candles into the provider session cache", () => {
+  const sessions = [
+    {
+      profileId: "profile-a",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "5s",
+      candles: [
+        {
+          instrumentId: "Z-CRY/IDX",
+          timeframeId: "5s",
+          openTimeMs: 1_000,
+          open: 100,
+          high: 101,
+          low: 99,
+          close: 100,
+        },
+      ],
+    },
+  ];
+  const updated = mergeProviderSessionCandles(
+    sessions,
+    {
+      profileId: "profile-a",
+      instrumentId: "Z-CRY/IDX",
+      timeframeId: "5s",
+    },
+    [
+      {
+        instrumentId: "Z-CRY/IDX",
+        timeframeId: "5s",
+        openTimeMs: 1_000,
+        open: 100,
+        high: 102,
+        low: 99,
+        close: 101,
+      },
+      {
+        instrumentId: "Z-CRY/IDX",
+        timeframeId: "5s",
+        openTimeMs: 6_000,
+        open: 101,
+        high: 103,
+        low: 100,
+        close: 102,
+      },
+    ],
+  );
+
+  assert.equal(updated[0].candles.length, 2);
+  assert.equal(updated[0].candles[0].close, 101);
+  assert.equal(updated[0].candles[1].openTimeMs, 6_000);
 });
 
 test("does not overwrite invalid persisted data", async (t) => {

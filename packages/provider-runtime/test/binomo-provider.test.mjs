@@ -323,6 +323,57 @@ test("polling subscription emits the current Binomo candle and stops cleanly", a
   assert.equal(received[0].close, 203);
 });
 
+test("polling subscription drops an in-flight candle after unsubscribe", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  let resolveRequest;
+  const fixture = createHost([]);
+  fixture.host.network.request = async (request) => {
+    fixture.requests.push(request);
+    return new Promise((resolve) => {
+      resolveRequest = resolve;
+    });
+  };
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 60_000,
+  });
+  const received = [];
+  const errors = [];
+
+  await adapter.connect();
+  const subscription = await adapter.subscribe(
+    { instrumentId: "Z-CRY/IDX", timeframeId: "1m" },
+    {
+      onCandles: (candles) => received.push(...candles),
+      onTicks: () => undefined,
+      onError: (code) => errors.push(code),
+    },
+  );
+  await subscription.unsubscribe();
+  assert.equal(typeof resolveRequest, "function");
+  resolveRequest(
+    response({
+      data: [
+        {
+          open: 200,
+          high: 204,
+          low: 199,
+          close: 203,
+          created_at: "2026-09-03T12:00:00.000000Z",
+        },
+      ],
+      errors: [],
+      success: true,
+    }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  await adapter.disconnect();
+
+  assert.deepEqual(received, []);
+  assert.deepEqual(errors, []);
+});
+
 test("authenticated Binomo websocket flow emits compressed live ticks and candle updates", async () => {
   const { default: definition } =
     await import("../../provider-examples/dist/binomo-provider.js");

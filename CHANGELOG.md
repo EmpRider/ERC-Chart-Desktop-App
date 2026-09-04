@@ -2,6 +2,24 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.3.3] - 2026-09-04
+
+### Realtime background-chart hotfix
+
+- Kept live provider demand active for configured workspaces across inactive
+  chart tabs and retained incoming candles in renderer state while chart views
+  are unmounted.
+- Reconciled live subscriptions incrementally so loading another timeframe does
+  not tear down and recreate healthy provider streams.
+- Prevented cancelled Binomo polls from emitting late candles and made the
+  provider utility ignore late events for retired subscription IDs instead of
+  terminating the provider process.
+
+### v0.3.3 hotfix release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.3.2] - 2026-09-04
 
 ### Provider management and live data

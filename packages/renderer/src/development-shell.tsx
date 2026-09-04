@@ -1,4 +1,5 @@
 import {
+  type Candle,
   type ImportedProviderSession,
   type ProviderLiveEvent,
   type ProviderLiveRequest,
@@ -13,7 +14,13 @@ import {
   type PersistedWorkspace,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
-import { useEffect, useState, useSyncExternalStore, type JSX } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type JSX,
+} from "react";
 import {
   createWorkspaceStore,
   maximumWorkspaces,
@@ -116,8 +123,6 @@ export interface ApplicationShellProps {
   readonly onWorkspaceTimeframeSelect?:
     | ((tabId: string, workspaceId: string, timeframeId: string) => void)
     | undefined;
-  readonly subscribeProviderData?:
-    RendererBridge["subscribeProviderData"] | undefined;
   readonly onProviderManagerOpen?: (() => void) | undefined;
   readonly providerManager?: ProviderManagerProps | undefined;
 }
@@ -131,7 +136,6 @@ export function ApplicationShell({
   providerSessions,
   onProviderSessionSelect,
   onWorkspaceTimeframeSelect,
-  subscribeProviderData,
   onProviderManagerOpen,
   providerManager,
 }: ApplicationShellProps): JSX.Element {
@@ -344,7 +348,6 @@ export function ApplicationShell({
                 {chartSession !== undefined ? (
                   <ProviderChart
                     session={chartSession}
-                    subscribeProviderData={subscribeProviderData}
                     selectedTimeframeId={
                       slotTimeframeId ?? chartSession.timeframeId
                     }
@@ -431,15 +434,124 @@ function providerSessionKey(session: ImportedProviderSession): string {
   );
 }
 
+const providerLiveCandleCacheMinimum = 500;
+
+function mergeCandles(
+  current: readonly Candle[],
+  incoming: readonly Candle[],
+): readonly Candle[] {
+  if (incoming.length === 0) return current;
+  const candlesByOpenTime = new Map<number, Candle>();
+  for (const candle of current)
+    candlesByOpenTime.set(candle.openTimeMs, candle);
+  for (const candle of incoming)
+    candlesByOpenTime.set(candle.openTimeMs, candle);
+  const merged = [...candlesByOpenTime.values()].sort(
+    (left, right) => left.openTimeMs - right.openTimeMs,
+  );
+  const limit = Math.max(providerLiveCandleCacheMinimum, current.length);
+  return merged.length > limit ? merged.slice(-limit) : merged;
+}
+
 function mergeProviderSession(
   current: readonly ImportedProviderSession[],
   session: ImportedProviderSession,
 ): readonly ImportedProviderSession[] {
   const key = providerSessionKey(session);
+  const existing = current.find(
+    (candidate) => providerSessionKey(candidate) === key,
+  );
+  const mergedSession =
+    existing === undefined
+      ? session
+      : {
+          ...session,
+          candles: mergeCandles(session.candles, existing.candles),
+        };
   return [
     ...current.filter((candidate) => providerSessionKey(candidate) !== key),
-    session,
+    mergedSession,
   ];
+}
+
+export function mergeProviderSessionCandles(
+  current: readonly ImportedProviderSession[],
+  request: ProviderLiveRequest,
+  candles: readonly Candle[],
+): readonly ImportedProviderSession[] {
+  let changed = false;
+  const next = current.map((session) => {
+    if (
+      session.profileId !== request.profileId ||
+      session.instrument.id !== request.instrumentId ||
+      session.timeframeId !== request.timeframeId
+    ) {
+      return session;
+    }
+    changed = true;
+    return { ...session, candles: mergeCandles(session.candles, candles) };
+  });
+  return changed ? next : current;
+}
+
+export function providerLiveRequestsForWorkspace(
+  workspace: WorkspaceState,
+): readonly ProviderLiveRequest[] {
+  const requests = workspace.tabs.flatMap((tab) =>
+    tab.slots.flatMap((slot) => {
+      const persisted = slot.persisted;
+      if (
+        persisted === undefined ||
+        persisted.instrumentId === "UNCONFIGURED"
+      ) {
+        return [];
+      }
+      return [
+        {
+          profileId: persisted.providerProfileId,
+          instrumentId: persisted.instrumentId,
+          timeframeId: timeframeIdForSeconds(persisted.timeframeSeconds),
+        },
+      ];
+    }),
+  );
+  return requests.filter(
+    (request, index) =>
+      requests.findIndex(
+        (candidate) =>
+          providerLiveRequestKey(candidate) === providerLiveRequestKey(request),
+      ) === index,
+  );
+}
+
+function providerLiveRequestKey(request: ProviderLiveRequest): string {
+  return JSON.stringify([
+    request.profileId,
+    request.instrumentId,
+    request.timeframeId,
+  ]);
+}
+
+function providerLiveRequestFromKey(
+  key: string,
+): ProviderLiveRequest | undefined {
+  try {
+    const value: unknown = JSON.parse(key);
+    if (
+      !Array.isArray(value) ||
+      value.length !== 3 ||
+      value.some((item) => typeof item !== "string")
+    ) {
+      return undefined;
+    }
+    return {
+      profileId: value[0] as string,
+      instrumentId: value[1] as string,
+      timeframeId: value[2] as string,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 export function providerSessionRestoreRequests(
@@ -600,6 +712,28 @@ function HydratedRuntimeApplicationShell({
   const [providerManagementError, setProviderManagementError] = useState<
     string | undefined
   >();
+  const liveSubscriptions = useRef(
+    new Map<
+      string,
+      {
+        readonly request: ProviderLiveRequest;
+        cancelled: boolean;
+        unsubscribe: (() => Promise<void>) | undefined;
+      }
+    >(),
+  );
+  const liveRequestSignature = providerLiveRequestsForWorkspace(workspace)
+    .filter((request) =>
+      providerSessions.some(
+        (session) =>
+          session.profileId === request.profileId &&
+          session.instrument.id === request.instrumentId &&
+          session.timeframeId === request.timeframeId,
+      ),
+    )
+    .map(providerLiveRequestKey)
+    .sort()
+    .join("\n");
   const dispatch = (action: WorkspaceAction): void => {
     const before = store.getSnapshot();
     store.dispatch(action);
@@ -716,6 +850,76 @@ function HydratedRuntimeApplicationShell({
       active = false;
     };
   }, [bridge, store]);
+
+  useEffect(() => {
+    const requests = liveRequestSignature
+      .split("\n")
+      .filter((key) => key.length > 0)
+      .map(providerLiveRequestFromKey)
+      .filter(
+        (request): request is ProviderLiveRequest => request !== undefined,
+      );
+    const desired = new Map(
+      requests.map((request) => [providerLiveRequestKey(request), request]),
+    );
+
+    for (const [key, current] of liveSubscriptions.current) {
+      if (desired.has(key)) continue;
+      liveSubscriptions.current.delete(key);
+      current.cancelled = true;
+      void current.unsubscribe?.().catch(() => undefined);
+    }
+
+    for (const [key, request] of desired) {
+      if (liveSubscriptions.current.has(key)) continue;
+      const current = {
+        request,
+        cancelled: false,
+        unsubscribe: undefined as (() => Promise<void>) | undefined,
+      };
+      liveSubscriptions.current.set(key, current);
+      void bridge
+        .subscribeProviderData(request, (event) => {
+          if (
+            current.cancelled ||
+            liveSubscriptions.current.get(key) !== current ||
+            event.type !== "candles"
+          ) {
+            return;
+          }
+          setProviderSessions((sessions) =>
+            mergeProviderSessionCandles(sessions, request, event.candles),
+          );
+        })
+        .then((unsubscribe) => {
+          if (
+            current.cancelled ||
+            liveSubscriptions.current.get(key) !== current
+          ) {
+            void unsubscribe().catch(() => undefined);
+            return;
+          }
+          current.unsubscribe = unsubscribe;
+        })
+        .catch(() => {
+          if (liveSubscriptions.current.get(key) === current) {
+            liveSubscriptions.current.delete(key);
+          }
+        });
+    }
+  }, [bridge, liveRequestSignature]);
+
+  useEffect(
+    () => () => {
+      const subscriptions = [...liveSubscriptions.current.values()];
+      liveSubscriptions.current.clear();
+      for (const current of subscriptions) {
+        current.cancelled = true;
+        void current.unsubscribe?.().catch(() => undefined);
+      }
+    },
+    [bridge],
+  );
 
   const bindActiveTabIfUnconfigured = (
     session: ImportedProviderSession,
@@ -896,7 +1100,6 @@ function HydratedRuntimeApplicationShell({
       providerSessions={providerSessions}
       onProviderSessionSelect={selectProviderSession}
       onWorkspaceTimeframeSelect={selectWorkspaceTimeframe}
-      subscribeProviderData={bridge.subscribeProviderData}
       onProviderManagerOpen={() => {
         setProviderManagerOpen(true);
         void refreshProviderManagement().catch(() => undefined);

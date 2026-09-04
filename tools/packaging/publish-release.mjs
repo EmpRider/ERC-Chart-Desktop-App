@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Provider lifecycle and live-data patch
+const curatedNotes = `# Realtime background-chart hotfix
 
-This corrective release completes provider profile management across the desktop UI and runtime, including create, edit, start, stop, restart, removal, restored workspace bindings, and per-workspace timeframe persistence without exposing credential values.
+This hotfix keeps live provider subscriptions active for configured workspaces while their chart tabs are unfocused and retains incoming candles outside mounted KLineCharts views so returning to a tab does not leave a realtime gap.
 
-Live provider subscriptions are owned per renderer, cleaned up when the renderer closes, and forwarded into the chart through the KLineCharts incremental candle path. The Binomo provider and runtime coverage are extended for the same live-data flow. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+It also removes subscription churn while timeframe sessions load and fixes the Binomo/provider-runtime cancellation race that could emit a late candle for a retired subscription and terminate the provider with PROVIDER_UTILITY_PROTOCOL_VIOLATION. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
