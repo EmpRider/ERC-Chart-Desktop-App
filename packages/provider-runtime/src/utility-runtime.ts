@@ -392,11 +392,14 @@ export function createProviderUtilityRuntime(
         }
         pendingSubscriptions.add(message.subscriptionId);
         try {
+          const subscriptionCanEmit = (): boolean =>
+            pendingSubscriptions.has(message.subscriptionId) ||
+            activeSubscriptions.has(message.subscriptionId);
           const subscription = await instance.adapter.subscribe(
             message.request,
             {
               onCandles: (candles): void => {
-                if (stopped) return;
+                if (stopped || !subscriptionCanEmit()) return;
                 port.postMessage({
                   type: "provider-subscription-candles",
                   contractVersion: ipcContractVersion,
@@ -405,7 +408,7 @@ export function createProviderUtilityRuntime(
                 });
               },
               onTicks: (ticks): void => {
-                if (stopped) return;
+                if (stopped || !subscriptionCanEmit()) return;
                 port.postMessage({
                   type: "provider-subscription-ticks",
                   contractVersion: ipcContractVersion,
@@ -414,7 +417,7 @@ export function createProviderUtilityRuntime(
                 });
               },
               onError: (code): void => {
-                if (stopped) return;
+                if (stopped || !subscriptionCanEmit()) return;
                 port.postMessage({
                   type: "provider-subscription-error",
                   contractVersion: ipcContractVersion,
@@ -453,8 +456,11 @@ export function createProviderUtilityRuntime(
         });
         return;
       }
-      await subscription.unsubscribe();
-      activeSubscriptions.delete(message.subscriptionId);
+      try {
+        await subscription.unsubscribe();
+      } finally {
+        activeSubscriptions.delete(message.subscriptionId);
+      }
       if (stopped) return;
       port.postMessage({
         type: "provider-unsubscribe-response",

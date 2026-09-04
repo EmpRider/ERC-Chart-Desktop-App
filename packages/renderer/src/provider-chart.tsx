@@ -70,6 +70,10 @@ export function ProviderChart({
   onTimeframeChange,
 }: ProviderChartProps): JSX.Element {
   const chartRoot = useRef<HTMLDivElement>(null);
+  const latestSession = useRef(session);
+  const updateData = useRef<((data: KLineData) => void) | undefined>(undefined);
+  const lastAppliedOpenTimeMs = useRef<number | undefined>(undefined);
+  latestSession.current = session;
   const timeframeOptions = availableTimeframeIds.includes(selectedTimeframeId)
     ? availableTimeframeIds
     : [...availableTimeframeIds, selectedTimeframeId];
@@ -80,7 +84,8 @@ export function ProviderChart({
     let disposed = false;
     let destroy: (() => void) | undefined;
     let unsubscribeProviderData: (() => Promise<void>) | undefined;
-    let updateData: ((data: KLineData) => void) | undefined;
+    updateData.current = undefined;
+    lastAppliedOpenTimeMs.current = undefined;
     void import("klinecharts").then((module) => {
       if (disposed) return;
       const chart = module.init(element);
@@ -96,36 +101,46 @@ export function ProviderChart({
           },
         },
       });
-      const data = toKLineData(session);
+      const initialSession = latestSession.current;
+      const data = toKLineData(initialSession);
+      lastAppliedOpenTimeMs.current = initialSession.candles.at(-1)?.openTimeMs;
       chart.setDataLoader({
         getBars: ({ callback }): void => {
           callback(data);
         },
         subscribeBar: ({ callback }): void => {
-          updateData = callback;
+          updateData.current = callback;
+          applyCachedCandles(
+            callback,
+            latestSession.current.candles,
+            lastAppliedOpenTimeMs,
+          );
         },
         unsubscribeBar: (): void => {
-          updateData = undefined;
+          updateData.current = undefined;
         },
       });
       chart.setSymbol({
-        ticker: session.instrument.symbol,
+        ticker: initialSession.instrument.symbol,
         pricePrecision: 8,
         volumePrecision: 2,
       });
-      chart.setPeriod(periodForTimeframe(session.timeframeId));
+      chart.setPeriod(periodForTimeframe(initialSession.timeframeId));
       if (subscribeProviderData !== undefined) {
         void subscribeProviderData(
           {
-            profileId: session.profileId,
-            instrumentId: session.instrument.id,
-            timeframeId: session.timeframeId,
+            profileId: initialSession.profileId,
+            instrumentId: initialSession.instrument.id,
+            timeframeId: initialSession.timeframeId,
           },
           (event): void => {
             if (disposed || event.type !== "candles") return;
-            const incrementalUpdate = updateData;
+            const incrementalUpdate = updateData.current;
             if (incrementalUpdate !== undefined) {
               updateChartData(incrementalUpdate, event.candles);
+              lastAppliedOpenTimeMs.current =
+                event.candles.at(-1)?.openTimeMs ??
+                lastAppliedOpenTimeMs.current;
             }
           },
         )
@@ -141,10 +156,27 @@ export function ProviderChart({
     });
     return (): void => {
       disposed = true;
+      updateData.current = undefined;
       void unsubscribeProviderData?.().catch(() => undefined);
       destroy?.();
     };
-  }, [session, subscribeProviderData]);
+  }, [
+    session.profileId,
+    session.instrument.id,
+    session.instrument.symbol,
+    session.timeframeId,
+    subscribeProviderData,
+  ]);
+
+  useEffect(() => {
+    const incrementalUpdate = updateData.current;
+    if (incrementalUpdate === undefined) return;
+    applyCachedCandles(
+      incrementalUpdate,
+      session.candles,
+      lastAppliedOpenTimeMs,
+    );
+  }, [session.candles]);
 
   return (
     <section className="provider-chart" aria-label="Provider market data">
@@ -184,4 +216,20 @@ export function ProviderChart({
       />
     </section>
   );
+}
+
+function applyCachedCandles(
+  updateData: (data: KLineData) => void,
+  candles: readonly Candle[],
+  lastAppliedOpenTimeMs: { current: number | undefined },
+): void {
+  if (candles.length === 0) return;
+  const lastApplied = lastAppliedOpenTimeMs.current;
+  const firstRelevantIndex =
+    lastApplied === undefined
+      ? 0
+      : candles.findIndex((candle) => candle.openTimeMs >= lastApplied);
+  if (firstRelevantIndex === -1) return;
+  updateChartData(updateData, candles.slice(firstRelevantIndex));
+  lastAppliedOpenTimeMs.current = candles.at(-1)?.openTimeMs;
 }
