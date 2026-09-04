@@ -17,7 +17,7 @@ All notable changes to ERC Chart are documented here.
 - Extended Binomo provider/runtime handling and regression coverage for the live
   data path.
 
-### Corrective release packaging
+### v0.3.2 corrective release packaging
 
 - Unsigned x64 per-user Windows installer.
 - Automatic updates and production code signing remain unavailable.
@@ -35,7 +35,7 @@ All notable changes to ERC Chart are documented here.
 - Stored credential values through Windows Credential Manager rather than
   provider settings.
 
-### Corrective release packaging
+### v0.3.1 corrective release packaging
 
 - Unsigned x64 per-user Windows installer.
 - Automatic updates and production code signing remain unavailable.
