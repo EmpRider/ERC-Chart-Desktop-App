@@ -533,6 +533,7 @@ function createBinomoAdapter(
           toMs: now,
           limit: 1,
         });
+        if (state.cancelled) return;
         const latest = candles.at(-1);
         if (latest !== undefined) {
           const fingerprint = `${latest.openTimeMs}:${latest.open}:${latest.high}:${latest.low}:${latest.close}`;
@@ -542,7 +543,7 @@ function createBinomoAdapter(
           }
         }
       } catch {
-        sink.onError("BINOMO_POLL_FAILED");
+        if (!state.cancelled) sink.onError("BINOMO_POLL_FAILED");
       } finally {
         if (!state.cancelled) {
           state.timer = setTimeout(() => void poll(), pollIntervalMs);

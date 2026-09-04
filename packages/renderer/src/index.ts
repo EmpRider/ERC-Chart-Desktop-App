@@ -2,6 +2,8 @@ export {
   ApplicationShell,
   RuntimeApplicationShell,
   connectingShellState,
+  mergeProviderSessionCandles,
+  providerLiveRequestsForWorkspace,
   providerSessionRestoreRequests,
   resolveShellState,
 } from "./development-shell.js";

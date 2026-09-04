@@ -114,7 +114,18 @@ async function withProviderEntry(callback) {
               close: 12
             }]);
             return {
-              unsubscribe: async () => host.logger.info("SUBSCRIPTION_UNSUBSCRIBED")
+              unsubscribe: async () => {
+                host.logger.info("SUBSCRIPTION_UNSUBSCRIBED");
+                setTimeout(() => sink.onCandles([{
+                  instrumentId: request.instrumentId,
+                  timeframeId: request.timeframeId,
+                  openTimeMs: 3000,
+                  open: 12,
+                  high: 14,
+                  low: 11,
+                  close: 13
+                }]), 0);
+              }
             };
           }
         };
@@ -515,6 +526,15 @@ test("executes provider discovery, history, live subscription, and disposal on t
       requestId: "data.5",
       ok: true,
     });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      fixture.sent.some(
+        (message) =>
+          message.type === "provider-subscription-candles" &&
+          message.candles?.[0]?.openTimeMs === 3000,
+      ),
+      false,
+    );
 
     fixture.receive({ type: "shutdown", contractVersion: ipcContractVersion });
     await flushTasks();
