@@ -44,5 +44,6 @@ export type {
 export { createProviderDataService } from "./provider-bridge.js";
 export type {
   ProviderDataService,
+  ProviderDataServiceOptions,
   ProviderDataUpstream,
 } from "./provider-bridge.js";

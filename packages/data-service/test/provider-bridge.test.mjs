@@ -273,3 +273,48 @@ test("rejects malformed or mismatched provider market data before delivery", asy
 
   await handle.unsubscribe();
 });
+
+test("keeps one canonical live series and bounded tick state for shared demand", async () => {
+  const fixture = createUpstream();
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 120_500,
+    tickBufferCapacity: 2,
+  });
+
+  await service.requestHistory("profile-a", {
+    ...request,
+    fromMs: 60_000,
+    toMs: 120_000,
+  });
+  const first = createSink();
+  const second = createSink();
+  const firstHandle = await service.subscribe("profile-a", request, first.sink);
+  const secondHandle = await service.subscribe(
+    "profile-a",
+    request,
+    second.sink,
+  );
+
+  assert.equal(fixture.subscriptions.length, 1);
+  fixture.subscriptions[0].sink.onTicks([
+    { instrumentId: "BTCUSD", timestampMs: 120_100, price: 12 },
+    { instrumentId: "BTCUSD", timestampMs: 120_200, price: 13 },
+    { instrumentId: "BTCUSD", timestampMs: 120_300, price: 14 },
+  ]);
+
+  const snapshot = await service.seriesSnapshot("profile-a", request);
+  assert.equal(snapshot.building.openTimeMs, 120_000);
+  assert.equal(snapshot.building.open, 12);
+  assert.equal(snapshot.building.close, 14);
+  assert.deepEqual(
+    service
+      .tickSnapshot("profile-a", "BTCUSD")
+      .map(({ timestampMs }) => timestampMs),
+    [120_200, 120_300],
+  );
+  assert.equal(first.ticks.length, 3);
+  assert.equal(second.ticks.length, 3);
+
+  await firstHandle.unsubscribe();
+  await secondHandle.unsubscribe();
+});
