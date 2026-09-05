@@ -7,6 +7,7 @@ import type {
   ProviderSubscription,
   ProviderSubscriptionRequest,
 } from "@erc-chart/provider-sdk";
+import { normalizeCandles, normalizeTicks } from "./market-data-validation.js";
 
 export interface ProviderDataUpstream {
   readonly getCapabilities: (
@@ -102,11 +103,21 @@ export function createProviderDataService(
       .subscribe(demand.providerProfileId, demand.request, {
         onCandles: (candles): void => {
           if (demand.generation !== generation || demand.invalidated) return;
-          notify(demand, (sink) => sink.onCandles(candles));
+          try {
+            const normalized = normalizeCandles(candles, demand.request);
+            notify(demand, (sink) => sink.onCandles(normalized));
+          } catch {
+            notify(demand, (sink) => sink.onError("PROVIDER_INVALID_CANDLE"));
+          }
         },
         onTicks: (ticks): void => {
           if (demand.generation !== generation || demand.invalidated) return;
-          notify(demand, (sink) => sink.onTicks(ticks));
+          try {
+            const normalized = normalizeTicks(ticks, demand.request);
+            notify(demand, (sink) => sink.onTicks(normalized));
+          } catch {
+            notify(demand, (sink) => sink.onError("PROVIDER_INVALID_TICK"));
+          }
         },
         onError: (code): void => {
           if (demand.generation !== generation || demand.invalidated) return;
@@ -232,9 +243,12 @@ export function createProviderDataService(
       upstream.getCapabilities(requireProviderProfileId(providerProfileId)),
     getInstruments: (providerProfileId) =>
       upstream.getInstruments(requireProviderProfileId(providerProfileId)),
-    requestHistory: (providerProfileId, request) =>
-      upstream.requestHistory(
-        requireProviderProfileId(providerProfileId),
+    requestHistory: async (providerProfileId, request) =>
+      normalizeCandles(
+        await upstream.requestHistory(
+          requireProviderProfileId(providerProfileId),
+          request,
+        ),
         request,
       ),
     subscribe,

@@ -225,3 +225,51 @@ test("counts repeated subscriptions independently even when they reuse the same 
   await second.unsubscribe();
   assert.equal(fixture.subscriptions[0].unsubscribeCount, 1);
 });
+
+test("rejects malformed or mismatched provider market data before delivery", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.requestHistory = async () => [
+    {
+      instrumentId: "ETHUSD",
+      timeframeId: "1m",
+      openTimeMs: 1_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+  ];
+  const service = createProviderDataService(fixture.upstream);
+
+  await assert.rejects(
+    service.requestHistory("profile-a", request),
+    /identity does not match the requested series/,
+  );
+
+  const target = createSink();
+  const handle = await service.subscribe("profile-a", request, target.sink);
+  const upstream = fixture.subscriptions[0];
+  upstream.sink.onCandles([
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 2_000,
+      open: 10,
+      high: Number.NaN,
+      low: 9,
+      close: 11,
+    },
+  ]);
+  upstream.sink.onTicks([
+    { instrumentId: "ETHUSD", timestampMs: 2_001, price: 12 },
+  ]);
+
+  assert.equal(target.candles.length, 0);
+  assert.equal(target.ticks.length, 0);
+  assert.deepEqual(target.errors, [
+    "PROVIDER_INVALID_CANDLE",
+    "PROVIDER_INVALID_TICK",
+  ]);
+
+  await handle.unsubscribe();
+});
