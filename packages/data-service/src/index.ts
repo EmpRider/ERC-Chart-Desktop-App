@@ -1,5 +1,14 @@
 export { createUtilityRuntime } from "./utility-runtime.js";
 export type { UtilityPort, UtilityRuntime } from "./utility-runtime.js";
+export { createCanonicalSeriesStore } from "./canonical-series.js";
+export type {
+  CanonicalCandle,
+  CanonicalSeriesDelta,
+  CanonicalSeriesDeltaKind,
+  CanonicalSeriesKey,
+  CanonicalSeriesSnapshot,
+  CanonicalSeriesStore,
+} from "./canonical-series.js";
 export {
   MarketDataValidationError,
   normalizeCandle,
