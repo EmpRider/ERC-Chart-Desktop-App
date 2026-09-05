@@ -27,6 +27,8 @@ export {
   timeframeCapabilities,
 } from "./timeframes.js";
 export type { TimeframePlan } from "./timeframes.js";
+export { createBoundedTickBuffer } from "./tick-buffer.js";
+export type { BoundedTickBuffer, TickBufferKey } from "./tick-buffer.js";
 export {
   MarketDataValidationError,
   normalizeCandle,
