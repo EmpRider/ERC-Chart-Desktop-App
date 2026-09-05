@@ -74,7 +74,7 @@ function createWebSocketHost(responses, now = Date.UTC(2026, 8, 3, 12, 0, 0)) {
   return { ...fixture, sockets };
 }
 
-test("Binomo provider is authored only against the public provider SDK", async () => {
+test("ECDD-98 acceptance: Binomo provider uses only host services and requires no browser tab or hook", async () => {
   const source = await readFile(
     new URL("../../provider-examples/src/binomo-provider.ts", import.meta.url),
     "utf8",
@@ -84,6 +84,13 @@ test("Binomo provider is authored only against the public provider SDK", async (
     source,
     /@erc-chart\/(?:contracts|provider-runtime|renderer|storage|data-service|electron-main)/u,
   );
+  assert.doesNotMatch(
+    source,
+    /\b(?:BrowserWindow|webContents|executeJavaScript|document|window|chrome|browser)\b/u,
+  );
+  assert.doesNotMatch(source, /\b(?:fetch|WebSocket)\s*\(/u);
+  assert.match(source, /host\.network/u);
+  assert.match(source, /host\.websocket/u);
 });
 
 test("loads Binomo candles with the userscript timestamp and chunk semantics", async () => {
