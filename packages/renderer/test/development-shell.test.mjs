@@ -115,6 +115,10 @@ test("renders loaded provider candles in the primary chart workspace", () => {
   assert.match(markup, /Z-CRY\/IDX/);
   assert.match(markup, /1m · 1 candles/);
   assert.ok(document.querySelector("[data-provider-chart]"));
+  assert.equal(
+    document.querySelector(".provider-indicator-button")?.textContent,
+    "Indicator",
+  );
   assert.equal(document.querySelector(".chart-provider-select"), null);
   assert.doesNotMatch(markup, /Awaiting market data/);
 });

@@ -653,6 +653,7 @@ textarea {
 }
 
 .provider-chart {
+  position: relative;
   display: flex;
   width: 100%;
   height: 100%;
@@ -689,6 +690,7 @@ textarea {
 }
 
 .provider-chart-controls {
+  position: relative;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -705,6 +707,165 @@ textarea {
   color: #c8d4e3;
   font-size: 0.58rem;
   line-height: 1;
+}
+
+.provider-indicator-control {
+  position: relative;
+}
+
+.provider-indicator-button {
+  height: 1.35rem;
+  padding: 0 0.42rem;
+  border: 1px solid #27384e;
+  border-radius: 0.2rem;
+  background: #07101b;
+  color: #c8d4e3;
+  font: inherit;
+  font-size: 0.58rem;
+  cursor: pointer;
+}
+
+.provider-indicator-button:hover,
+.provider-indicator-button:focus-visible {
+  border-color: #4d7997;
+  outline: none;
+}
+
+.provider-indicator-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  display: grid;
+  width: 15rem;
+  max-height: 19rem;
+  padding: 0.35rem;
+  border: 1px solid #27384e;
+  border-radius: 0.35rem;
+  background: #0a111c;
+  box-shadow: 0 1rem 2rem rgb(0 0 0 / 35%);
+  overflow-y: auto;
+}
+
+.provider-indicator-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.4rem;
+  color: #9fb2c8;
+  font-size: 0.62rem;
+}
+
+.provider-indicator-menu > button {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.42rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #d5e0ed;
+  text-align: left;
+  cursor: pointer;
+}
+
+.provider-indicator-menu > button:hover:not(:disabled),
+.provider-indicator-menu > button:focus-visible:not(:disabled) {
+  background: #101d2b;
+  outline: none;
+}
+
+.provider-indicator-menu > button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.provider-indicator-menu small {
+  color: #78879b;
+  font-size: 0.55rem;
+}
+
+.provider-indicator-settings {
+  position: absolute;
+  z-index: 40;
+  top: 3rem;
+  right: 0.55rem;
+  width: min(19rem, calc(100% - 1.1rem));
+  padding: 0.7rem;
+  border: 1px solid #2a3d55;
+  border-radius: 0.45rem;
+  background: #0a111c;
+  box-shadow: 0 1.2rem 3rem rgb(0 0 0 / 45%);
+  color: #d5e0ed;
+}
+
+.provider-indicator-settings-header,
+.provider-indicator-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.provider-indicator-settings-header p {
+  margin: 0 0 0.12rem;
+  color: #78879b;
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.provider-indicator-settings-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.provider-indicator-settings-header > button,
+.provider-indicator-settings-actions button {
+  min-height: 1.55rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #2a3d55;
+  border-radius: 0.25rem;
+  background: #0d1825;
+  color: #c8d4e3;
+  cursor: pointer;
+}
+
+.provider-indicator-settings-fields {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.75rem 0;
+}
+
+.provider-indicator-settings-fields label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7rem;
+  align-items: center;
+  gap: 0.6rem;
+  color: #9fb2c8;
+  font-size: 0.62rem;
+}
+
+.provider-indicator-settings-fields input,
+.provider-indicator-settings-fields select {
+  width: 100%;
+  min-width: 0;
+  height: 1.55rem;
+  padding: 0 0.35rem;
+  border: 1px solid #2a3d55;
+  border-radius: 0.25rem;
+  background: #07101b;
+  color: #d5e0ed;
+  font-size: 0.62rem;
+}
+
+.provider-indicator-settings-actions {
+  justify-content: flex-end;
+}
+
+.provider-indicator-settings-actions .primary {
+  border-color: #2e769c;
+  background: #0d4562;
+  color: #e7f6ff;
 }
 
 .provider-chart-canvas {

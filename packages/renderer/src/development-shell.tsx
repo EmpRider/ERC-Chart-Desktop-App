@@ -348,6 +348,7 @@ export function ApplicationShell({
                 {chartSession !== undefined ? (
                   <ProviderChart
                     session={chartSession}
+                    indicators={slot.persisted?.indicators ?? []}
                     selectedTimeframeId={
                       slotTimeframeId ?? chartSession.timeframeId
                     }
@@ -371,6 +372,51 @@ export function ApplicationShell({
                               slot.id,
                               timeframeId,
                             )
+                    }
+                    onIndicatorAdd={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (indicator) =>
+                            onWorkspaceAction({
+                              type: "add-workspace-indicator",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              indicator,
+                            })
+                    }
+                    onIndicatorUpdate={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (indicator) =>
+                            onWorkspaceAction({
+                              type: "update-workspace-indicator",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              indicator,
+                            })
+                    }
+                    onIndicatorEnabledChange={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (instanceId, enabled) =>
+                            onWorkspaceAction({
+                              type: "set-workspace-indicator-enabled",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              instanceId,
+                              enabled,
+                            })
+                    }
+                    onIndicatorRemove={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (instanceId) =>
+                            onWorkspaceAction({
+                              type: "remove-workspace-indicator",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              instanceId,
+                            })
                     }
                   />
                 ) : (
