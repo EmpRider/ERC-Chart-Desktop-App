@@ -66,6 +66,7 @@ function runtimeIndicatorCreate(
     name: spec.name,
     shortName: spec.shortName,
     calcParams: [...spec.calcParams],
+    ...(spec.precision === undefined ? {} : { precision: spec.precision }),
     visible: spec.visible,
     ...(spec.placement === "overlay" ? { paneId: "candle_pane" } : {}),
   };

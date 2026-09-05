@@ -35,6 +35,7 @@ export interface BuiltInKLineIndicatorSpec {
   readonly shortName: string;
   readonly placement: BuiltInIndicatorPlacement;
   readonly calcParams: readonly number[];
+  readonly precision?: number;
   readonly visible: boolean;
 }
 
@@ -425,6 +426,7 @@ export function toBuiltInKLineIndicatorSpecs(
             parameters.slow as number,
             parameters.signal as number,
           ],
+          precision: 8,
         },
       ];
     case "bollinger":

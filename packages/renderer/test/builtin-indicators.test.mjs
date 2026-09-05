@@ -66,6 +66,14 @@ test("maps Signal built-ins onto native KLineCharts indicators", () => {
   }
 });
 
+test("keeps native MACD precision above KLineCharts' four-decimal default", () => {
+  const [spec] = toBuiltInKLineIndicatorSpecs(
+    createBuiltInWorkspaceIndicator("macd", "macd-precision"),
+  );
+
+  assert.equal(spec.precision, 8);
+});
+
 test("uses application built-ins only where KLineCharts core lacks the primitive", () => {
   const registered = [];
   const supported = ["MA", "EMA", "SMA", "BOLL", "MACD", "RSI", "DMI", "KDJ"];
@@ -237,6 +245,15 @@ test("reconciles only persisted built-in instances with the KLineCharts runtime"
   reconcileBuiltInIndicators(chart, [], second.managedRuntimeIds);
   assert.deepEqual(chart.calls, [["remove", "rsi-1"]]);
   assert.equal(chart.indicators.size, 0);
+});
+
+test("passes MACD precision through to the native KLineCharts indicator", () => {
+  const chart = createFakeChart();
+  const macd = createBuiltInWorkspaceIndicator("macd", "macd-1");
+
+  reconcileBuiltInIndicators(chart, [macd]);
+
+  assert.equal(chart.indicators.get("macd-1").precision, 8);
 });
 
 test("recreates a native moving average when its KLineCharts primitive changes", () => {
