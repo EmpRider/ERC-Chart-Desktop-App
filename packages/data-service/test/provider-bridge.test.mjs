@@ -428,7 +428,7 @@ test("derives declared target history and live state from one native provider fe
   await handle.unsubscribe();
 });
 
-test("restore repairs deliberate canonical gaps before resubscribing", async () => {
+test("ECDD-95 acceptance: reconnect repairs a deliberately created gap", async () => {
   const fixture = createUpstream();
   let repairing = false;
   fixture.upstream.requestHistory = async (
