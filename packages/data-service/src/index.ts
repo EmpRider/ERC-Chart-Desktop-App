@@ -9,6 +9,11 @@ export type {
   CanonicalSeriesSnapshot,
   CanonicalSeriesStore,
 } from "./canonical-series.js";
+export { createCanonicalCandleState } from "./candle-state.js";
+export type {
+  CandleStateOptions,
+  CanonicalCandleState,
+} from "./candle-state.js";
 export {
   createHistoricalCandleCache,
   findCandleGaps,
