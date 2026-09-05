@@ -297,7 +297,27 @@ export function createProviderDataService(
               },
               normalized,
             );
-            candleState.applyTicks(demand.seriesKey, accepted);
+            const deltas = candleState.applyTicks(demand.seriesKey, accepted);
+            const generatedCandles = deltas.flatMap(({ candle }) =>
+              candle === undefined
+                ? []
+                : [
+                    Object.freeze({
+                      instrumentId: candle.instrumentId,
+                      timeframeId: candle.timeframeId,
+                      openTimeMs: candle.openTimeMs,
+                      open: candle.open,
+                      high: candle.high,
+                      low: candle.low,
+                      close: candle.close,
+                      ...(candle.volume === undefined
+                        ? {}
+                        : { volume: candle.volume }),
+                    }),
+                  ],
+            );
+            if (generatedCandles.length > 0)
+              notify(demand, (sink) => sink.onCandles(generatedCandles));
             if (accepted.length > 0)
               notify(demand, (sink) => sink.onTicks(accepted));
           } catch {

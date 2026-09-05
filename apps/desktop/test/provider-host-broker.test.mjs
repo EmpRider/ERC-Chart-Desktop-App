@@ -297,9 +297,15 @@ test("ECDD-97 acceptance: provider transports require TLS and keep certificate v
     now: () => 1234,
   });
   const handlers = {
-    onMessage() {},
-    onClose() {},
-    onError() {},
+    onMessage() {
+      return undefined;
+    },
+    onClose() {
+      return undefined;
+    },
+    onError() {
+      return undefined;
+    },
   };
 
   assert.throws(

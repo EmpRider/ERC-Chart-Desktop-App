@@ -306,6 +306,10 @@ test("ECDD-94 acceptance: a profile loads history and updates a building candle"
   assert.equal(snapshot.building.openTimeMs, 120_000);
   assert.equal(snapshot.building.open, 12);
   assert.equal(snapshot.building.close, 14);
+  assert.equal(first.candles.length, 3);
+  assert.equal(second.candles.length, 3);
+  assert.equal(first.candles.at(-1).openTimeMs, 120_000);
+  assert.equal(first.candles.at(-1).close, 14);
   assert.deepEqual(
     service
       .tickSnapshot("profile-a", "BTCUSD")

@@ -503,7 +503,6 @@ function createBinomoAdapter(
       sink.onTicks(ticks);
     };
 
-    let connectAssetStream: () => Promise<void>;
     const scheduleReconnect = (): void => {
       if (
         state.cancelled ||
@@ -525,7 +524,7 @@ function createBinomoAdapter(
       }, delayMs);
     };
 
-    connectAssetStream = async (): Promise<void> => {
+    async function connectAssetStream(): Promise<void> {
       if (
         state.cancelled ||
         host.websocket === undefined ||
@@ -587,7 +586,7 @@ function createBinomoAdapter(
           scheduleReconnect();
         }
       }
-    };
+    }
 
     if (host.websocket !== undefined && sessionCookie !== null) {
       const seed = await requestHistory({
