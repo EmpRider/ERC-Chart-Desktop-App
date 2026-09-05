@@ -16,6 +16,7 @@ export type {
 export {
   createInitialWorkspace,
   createWorkspaceStore,
+  maximumIndicatorsPerWorkspace,
   maximumWorkspaces,
   workspaceReducer,
 } from "./workspace.js";
