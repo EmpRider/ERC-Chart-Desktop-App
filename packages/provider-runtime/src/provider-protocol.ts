@@ -644,6 +644,45 @@ function isTickArray(value: unknown): value is readonly Tick[] {
   return Array.isArray(value) && value.length <= 100_000 && value.every(isTick);
 }
 
+function isBarAlignment(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["mode", "originMs", "timeZone"]) &&
+    (value.mode === "epoch" || value.mode === "session") &&
+    isSafeInteger(value.originMs) &&
+    typeof value.timeZone === "string" &&
+    value.timeZone.length > 0 &&
+    value.timeZone.length <= 128
+  );
+}
+
+function isTimeframeCapability(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const optionalKeys =
+    value.derivedFromTimeframeId === undefined
+      ? []
+      : ["derivedFromTimeframeId"];
+  return (
+    hasExactKeys(
+      value,
+      ["id", "seconds", "historical", "live", "native", "alignment"],
+      optionalKeys,
+    ) &&
+    typeof value.id === "string" &&
+    dataIdPattern.test(value.id) &&
+    isSafeInteger(value.seconds) &&
+    value.seconds > 0 &&
+    typeof value.historical === "boolean" &&
+    typeof value.live === "boolean" &&
+    typeof value.native === "boolean" &&
+    isBarAlignment(value.alignment) &&
+    (value.native
+      ? value.derivedFromTimeframeId === undefined
+      : typeof value.derivedFromTimeframeId === "string" &&
+        dataIdPattern.test(value.derivedFromTimeframeId))
+  );
+}
+
 function isCapabilities(value: unknown): value is ProviderCapabilities {
   return (
     isRecord(value) &&
@@ -655,6 +694,7 @@ function isCapabilities(value: unknown): value is ProviderCapabilities {
       ...(value.derivedTimeframeIds === undefined
         ? []
         : ["derivedTimeframeIds"]),
+      ...(value.timeframes === undefined ? [] : ["timeframes"]),
     ]) &&
     typeof value.instruments === "boolean" &&
     isStringArray(value.nativeTimeframes, 1_024, (item) =>
@@ -665,7 +705,11 @@ function isCapabilities(value: unknown): value is ProviderCapabilities {
     (value.derivedTimeframeIds === undefined ||
       isStringArray(value.derivedTimeframeIds, 1_024, (item) =>
         dataIdPattern.test(item),
-      ))
+      )) &&
+    (value.timeframes === undefined ||
+      (Array.isArray(value.timeframes) &&
+        value.timeframes.length <= 1_024 &&
+        value.timeframes.every(isTimeframeCapability)))
   );
 }
 

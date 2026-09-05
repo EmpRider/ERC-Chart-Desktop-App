@@ -17,7 +17,13 @@ import type {
   CanonicalSeriesSnapshot,
 } from "./canonical-series.js";
 import { createBoundedTickBuffer } from "./tick-buffer.js";
-import { timeframeCapabilities } from "./timeframes.js";
+import {
+  aggregateTimeframeCandles,
+  alignedOpenTime,
+  resolveTimeframePlan,
+  timeframeCapabilities,
+  type TimeframePlan,
+} from "./timeframes.js";
 
 export interface ProviderDataUpstream {
   readonly getCapabilities: (
@@ -66,6 +72,9 @@ interface LogicalDemand {
   readonly providerProfileId: string;
   readonly request: ProviderSubscriptionRequest;
   seriesKey: CanonicalSeriesKey;
+  plan: TimeframePlan;
+  sourceRequest: ProviderSubscriptionRequest;
+  readonly sourceCandles: Map<number, Candle>;
   readonly sinks: Map<number, ProviderDataSink>;
   generation: number;
   invalidated: boolean;
@@ -155,6 +164,47 @@ export function createProviderDataService(
     });
   };
 
+  const planFor = async (
+    providerProfileId: string,
+    timeframeId: string,
+  ): Promise<TimeframePlan> =>
+    resolveTimeframePlan(await capabilitiesFor(providerProfileId), timeframeId);
+
+  const sourceRequestFor = (
+    request: ProviderSubscriptionRequest,
+    plan: TimeframePlan,
+  ): ProviderSubscriptionRequest =>
+    Object.freeze({
+      instrumentId: request.instrumentId,
+      timeframeId: plan.source.id,
+    });
+
+  const derivedCandlesForLiveBatch = (
+    demand: LogicalDemand,
+    sourceCandles: readonly Candle[],
+  ): readonly Candle[] => {
+    if (demand.plan.target.native) return sourceCandles;
+    for (const candle of sourceCandles)
+      demand.sourceCandles.set(candle.openTimeMs, candle);
+    while (demand.sourceCandles.size > 10_000) {
+      const oldest = Math.min(...demand.sourceCandles.keys());
+      demand.sourceCandles.delete(oldest);
+    }
+    const touched = new Set(
+      sourceCandles.map((candle) =>
+        alignedOpenTime(
+          candle.openTimeMs,
+          demand.plan.target.seconds,
+          demand.plan.target.alignment,
+        ),
+      ),
+    );
+    return aggregateTimeframeCandles(
+      [...demand.sourceCandles.values()],
+      demand.plan.target,
+    ).filter((candle) => touched.has(candle.openTimeMs));
+  };
+
   const connectDemand = (demand: LogicalDemand): Promise<void> => {
     if (
       demand.invalidated ||
@@ -167,13 +217,22 @@ export function createProviderDataService(
 
     const generation = demand.generation;
     const connection = upstream
-      .subscribe(demand.providerProfileId, demand.request, {
+      .subscribe(demand.providerProfileId, demand.sourceRequest, {
         onCandles: (candles): void => {
           if (demand.generation !== generation || demand.invalidated) return;
           try {
-            const normalized = normalizeCandles(candles, demand.request);
-            candleState.applyCandles(demand.seriesKey, normalized, now());
-            notify(demand, (sink) => sink.onCandles(normalized));
+            const normalizedSource = normalizeCandles(
+              candles,
+              demand.sourceRequest,
+            );
+            const normalized = normalizeCandles(
+              derivedCandlesForLiveBatch(demand, normalizedSource),
+              demand.request,
+            );
+            if (normalized.length > 0) {
+              candleState.applyCandles(demand.seriesKey, normalized, now());
+              notify(demand, (sink) => sink.onCandles(normalized));
+            }
           } catch {
             notify(demand, (sink) => sink.onError("PROVIDER_INVALID_CANDLE"));
           }
@@ -244,10 +303,14 @@ export function createProviderDataService(
     const key = demandKey(providerProfileId, request);
     let demand = demands.get(key);
     if (demand === undefined) {
+      const plan = await planFor(providerProfileId, request.timeframeId);
       demand = {
         providerProfileId,
         request: Object.freeze({ ...request }),
         seriesKey: await seriesKeyFor(providerProfileId, request),
+        plan,
+        sourceRequest: sourceRequestFor(request, plan),
+        sourceCandles: new Map(),
         sinks: new Map(),
         generation: 0,
         invalidated: false,
@@ -305,7 +368,13 @@ export function createProviderDataService(
       (demand) => demand.providerProfileId === providerProfileId,
     );
     for (const demand of matching) {
+      demand.plan = await planFor(
+        providerProfileId,
+        demand.request.timeframeId,
+      );
       demand.seriesKey = await seriesKeyFor(providerProfileId, demand.request);
+      demand.sourceRequest = sourceRequestFor(demand.request, demand.plan);
+      demand.sourceCandles.clear();
       demand.invalidated = false;
     }
     try {
@@ -329,8 +398,46 @@ export function createProviderDataService(
       const providerProfileId = requireProviderProfileId(
         providerProfileIdValue,
       );
+      const plan = await planFor(providerProfileId, request.timeframeId);
+      const ratio = Math.max(
+        1,
+        Math.ceil(plan.target.seconds / plan.source.seconds),
+      );
+      const sourceRequest: ProviderHistoryRequest = plan.target.native
+        ? request
+        : {
+            instrumentId: request.instrumentId,
+            timeframeId: plan.source.id,
+            ...(request.fromMs === undefined
+              ? {}
+              : {
+                  fromMs: alignedOpenTime(
+                    request.fromMs,
+                    plan.target.seconds,
+                    plan.target.alignment,
+                  ),
+                }),
+            ...(request.toMs === undefined ? {} : { toMs: request.toMs }),
+            ...(request.limit === undefined
+              ? {}
+              : { limit: Math.min(100_000, request.limit * ratio + ratio) }),
+          };
+      const source = normalizeCandles(
+        await upstream.requestHistory(providerProfileId, sourceRequest),
+        sourceRequest,
+      );
       const normalized = normalizeCandles(
-        await upstream.requestHistory(providerProfileId, request),
+        plan.target.native
+          ? source
+          : aggregateTimeframeCandles(source, plan.target)
+              .filter(
+                (candle) =>
+                  (request.fromMs === undefined ||
+                    candle.openTimeMs >= request.fromMs) &&
+                  (request.toMs === undefined ||
+                    candle.openTimeMs <= request.toMs),
+              )
+              .slice(-(request.limit ?? Number.MAX_SAFE_INTEGER)),
         request,
       );
       candleState.loadHistory(

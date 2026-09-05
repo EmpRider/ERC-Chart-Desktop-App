@@ -14,6 +14,7 @@ import {
   type ProviderId,
   type ProviderSubscription,
   type ProviderSubscriptionRequest,
+  type ProviderTimeframeCapability,
   type ProviderWebSocketConnection,
   type ProviderWebSocketData,
   type Tick,
@@ -54,6 +55,31 @@ const derivedTimeframes: Readonly<
 
 const nativeTimeframeIds = Object.keys(nativeTimeframeSeconds) as TimeframeId[];
 const derivedTimeframeIds = Object.keys(derivedTimeframes) as TimeframeId[];
+const epochAlignment = Object.freeze({
+  mode: "epoch" as const,
+  originMs: 0,
+  timeZone: "UTC",
+});
+const timeframeCapabilities: readonly ProviderTimeframeCapability[] =
+  Object.freeze([
+    ...nativeTimeframeIds.map((id) => ({
+      id,
+      seconds: nativeTimeframeSeconds[id] ?? 0,
+      historical: true,
+      live: true,
+      native: true,
+      alignment: epochAlignment,
+    })),
+    ...derivedTimeframeIds.map((id) => ({
+      id,
+      seconds: derivedTimeframes[id]?.seconds ?? 0,
+      historical: true,
+      live: true,
+      native: false,
+      derivedFromTimeframeId: derivedTimeframes[id]?.baseTimeframeId,
+      alignment: epochAlignment,
+    })),
+  ]);
 
 const chunkMilliseconds: Readonly<Record<number, number>> = Object.freeze({
   5: 60 * 60 * 1000,
@@ -113,57 +139,14 @@ function requireNumberSetting(
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function secondsForTimeframe(timeframeId: TimeframeId): number {
-  const seconds =
-    nativeTimeframeSeconds[timeframeId] ??
-    derivedTimeframes[timeframeId]?.seconds;
+function nativeSecondsForTimeframe(timeframeId: TimeframeId): number {
+  const seconds = nativeTimeframeSeconds[timeframeId];
   if (seconds === undefined) {
-    throw new RangeError(`Unsupported Binomo timeframe: ${timeframeId}.`);
+    throw new RangeError(
+      `Unsupported native Binomo timeframe: ${timeframeId}.`,
+    );
   }
   return seconds;
-}
-
-function aggregateCandles(
-  baseCandles: readonly Candle[],
-  instrumentId: InstrumentId,
-  timeframeId: TimeframeId,
-  seconds: number,
-): readonly Candle[] {
-  const timeframeMs = seconds * 1000;
-  const buckets = new Map<number, Candle>();
-  const sorted = [...baseCandles].sort(
-    (left, right) => left.openTimeMs - right.openTimeMs,
-  );
-  for (const candle of sorted) {
-    const openTimeMs =
-      Math.floor(candle.openTimeMs / timeframeMs) * timeframeMs;
-    const current = buckets.get(openTimeMs);
-    if (current === undefined) {
-      buckets.set(openTimeMs, {
-        instrumentId,
-        timeframeId,
-        openTimeMs,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        ...(candle.volume === undefined ? {} : { volume: candle.volume }),
-      });
-      continue;
-    }
-    buckets.set(openTimeMs, {
-      ...current,
-      high: Math.max(current.high, candle.high),
-      low: Math.min(current.low, candle.low),
-      close: candle.close,
-      ...(current.volume === undefined || candle.volume === undefined
-        ? {}
-        : { volume: current.volume + candle.volume }),
-    });
-  }
-  return [...buckets.values()].sort(
-    (left, right) => left.openTimeMs - right.openTimeMs,
-  );
 }
 
 function chunkMsForTimeframe(seconds: number): number {
@@ -283,33 +266,6 @@ function parseAssetTicks(
     }
   }
   return ticks;
-}
-
-function updateCandleFromTick(
-  current: Candle | undefined,
-  tick: Tick,
-  timeframeId: TimeframeId,
-  seconds: number,
-): Candle {
-  const timeframeMs = seconds * 1000;
-  const openTimeMs = Math.floor(tick.timestampMs / timeframeMs) * timeframeMs;
-  if (current === undefined || current.openTimeMs !== openTimeMs) {
-    return {
-      instrumentId: tick.instrumentId,
-      timeframeId,
-      openTimeMs,
-      open: tick.price,
-      high: tick.price,
-      low: tick.price,
-      close: tick.price,
-    };
-  }
-  return {
-    ...current,
-    high: Math.max(current.high, tick.price),
-    low: Math.min(current.low, tick.price),
-    close: tick.price,
-  };
 }
 
 function parsePayload(body: Uint8Array): readonly BinomoCandlePayload[] {
@@ -463,46 +419,18 @@ function createBinomoAdapter(
     request: ProviderHistoryRequest,
   ): Promise<readonly Candle[]> => {
     if (request.instrumentId !== instrumentId) return [];
-    const seconds = secondsForTimeframe(request.timeframeId);
+    const seconds = nativeSecondsForTimeframe(request.timeframeId);
     const toMs = request.toMs ?? host.now();
     const requestedLimit = Math.max(1, Math.min(request.limit ?? 1000, 10_000));
     const fromMs =
       request.fromMs ?? Math.max(0, toMs - requestedLimit * seconds * 1000);
-    const derived = derivedTimeframes[request.timeframeId];
-    if (derived === undefined) {
-      return requestNativeHistory(
-        request.timeframeId,
-        seconds,
-        fromMs,
-        toMs,
-        requestedLimit,
-      );
-    }
-
-    const baseSeconds = secondsForTimeframe(derived.baseTimeframeId);
-    const targetMs = seconds * 1000;
-    const alignedFromMs = Math.floor(fromMs / targetMs) * targetMs;
-    const baseCandles = await requestNativeHistory(
-      derived.baseTimeframeId,
-      baseSeconds,
-      alignedFromMs,
-      toMs,
-      Math.min(
-        10_000,
-        requestedLimit * Math.ceil(seconds / baseSeconds) +
-          Math.ceil(seconds / baseSeconds),
-      ),
-    );
-    return aggregateCandles(
-      baseCandles,
-      instrumentId,
+    return requestNativeHistory(
       request.timeframeId,
       seconds,
-    )
-      .filter(
-        (candle) => candle.openTimeMs >= fromMs && candle.openTimeMs <= toMs,
-      )
-      .slice(-requestedLimit);
+      fromMs,
+      toMs,
+      requestedLimit,
+    );
   };
 
   const subscribe = async (
@@ -512,7 +440,7 @@ function createBinomoAdapter(
     if (request.instrumentId !== instrumentId) {
       throw new RangeError("Binomo instrument is unavailable.");
     }
-    const seconds = secondsForTimeframe(request.timeframeId);
+    const seconds = nativeSecondsForTimeframe(request.timeframeId);
     const state: ActiveBinomoSubscription = {
       cancelled: false,
       timer: undefined,
@@ -520,7 +448,6 @@ function createBinomoAdapter(
     };
     activeSubscriptions.add(state);
     let lastFingerprint = "";
-    let currentCandle: Candle | undefined;
 
     const poll = async (): Promise<void> => {
       if (state.cancelled) return;
@@ -565,17 +492,6 @@ function createBinomoAdapter(
       const ticks = parseAssetTicks(messageData, instrumentId, symbol);
       if (ticks.length === 0) return;
       sink.onTicks(ticks);
-      const updates: Candle[] = [];
-      for (const tick of ticks) {
-        currentCandle = updateCandleFromTick(
-          currentCandle,
-          tick,
-          request.timeframeId,
-          seconds,
-        );
-        updates.push(currentCandle);
-      }
-      sink.onCandles(updates);
     };
 
     if (host.websocket !== undefined && sessionCookie !== null) {
@@ -587,7 +503,7 @@ function createBinomoAdapter(
           toMs: host.now(),
           limit: 1,
         });
-        currentCandle = seed.at(-1);
+        const currentCandle = seed.at(-1);
         if (currentCandle !== undefined) sink.onCandles([currentCandle]);
 
         const socket = await host.websocket.connect(
@@ -776,6 +692,7 @@ function createBinomoAdapter(
       liveData: true,
       derivedTimeframes: true,
       derivedTimeframeIds,
+      timeframes: timeframeCapabilities,
     }),
     getInstruments: async () => [{ id: instrumentId, symbol, name: symbol }],
     requestHistory,

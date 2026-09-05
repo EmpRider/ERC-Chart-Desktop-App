@@ -318,3 +318,112 @@ test("keeps one canonical live series and bounded tick state for shared demand",
   await firstHandle.unsubscribe();
   await secondHandle.unsubscribe();
 });
+
+test("derives declared target history and live state from one native provider feed", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+    derivedTimeframeIds: ["3m"],
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+      {
+        id: "3m",
+        seconds: 180,
+        historical: true,
+        live: true,
+        native: false,
+        derivedFromTimeframeId: "1m",
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+    ],
+  });
+  fixture.upstream.requestHistory = async (
+    providerProfileId,
+    historyRequest,
+  ) => {
+    fixture.calls.history.push({ providerProfileId, request: historyRequest });
+    return [0, 1, 2, 3, 4, 5].map((index) => ({
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: index * 60_000,
+      open: 10 + index,
+      high: 12 + index,
+      low: 9 + index,
+      close: 11 + index,
+    }));
+  };
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 390_000,
+  });
+  const derivedRequest = {
+    instrumentId: "BTCUSD",
+    timeframeId: "3m",
+    fromMs: 0,
+    toMs: 360_000,
+    limit: 2,
+  };
+
+  const history = await service.requestHistory("profile-a", derivedRequest);
+  assert.equal(fixture.calls.history[0].request.timeframeId, "1m");
+  assert.equal(fixture.calls.history[0].request.limit, 9);
+  assert.deepEqual(
+    history.map(({ timeframeId, openTimeMs, open, high, low, close }) => ({
+      timeframeId,
+      openTimeMs,
+      open,
+      high,
+      low,
+      close,
+    })),
+    [
+      {
+        timeframeId: "3m",
+        openTimeMs: 0,
+        open: 10,
+        high: 14,
+        low: 9,
+        close: 13,
+      },
+      {
+        timeframeId: "3m",
+        openTimeMs: 180_000,
+        open: 13,
+        high: 17,
+        low: 12,
+        close: 16,
+      },
+    ],
+  );
+
+  const sink = createSink();
+  const handle = await service.subscribe(
+    "profile-a",
+    { instrumentId: "BTCUSD", timeframeId: "3m" },
+    sink.sink,
+  );
+  assert.equal(fixture.subscriptions[0].request.timeframeId, "1m");
+  fixture.subscriptions[0].sink.onTicks([
+    { instrumentId: "BTCUSD", timestampMs: 360_100, price: 20 },
+    { instrumentId: "BTCUSD", timestampMs: 360_200, price: 22 },
+  ]);
+  const snapshot = await service.seriesSnapshot("profile-a", {
+    instrumentId: "BTCUSD",
+    timeframeId: "3m",
+  });
+  assert.equal(snapshot.building.openTimeMs, 360_000);
+  assert.equal(snapshot.building.open, 20);
+  assert.equal(snapshot.building.close, 22);
+  assert.equal(sink.ticks.length, 2);
+
+  await handle.unsubscribe();
+});
