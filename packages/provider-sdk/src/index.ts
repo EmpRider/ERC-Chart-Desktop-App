@@ -121,12 +121,29 @@ export interface ProviderInstrument {
   readonly name: string;
 }
 
+export interface ProviderBarAlignment {
+  readonly mode: "epoch" | "session";
+  readonly originMs: number;
+  readonly timeZone: string;
+}
+
+export interface ProviderTimeframeCapability {
+  readonly id: TimeframeId;
+  readonly seconds: number;
+  readonly historical: boolean;
+  readonly live: boolean;
+  readonly native: boolean;
+  readonly derivedFromTimeframeId?: TimeframeId;
+  readonly alignment: ProviderBarAlignment;
+}
+
 export interface ProviderCapabilities {
   readonly instruments: boolean;
   readonly nativeTimeframes: readonly TimeframeId[];
   readonly liveData: boolean;
   readonly derivedTimeframes: boolean;
   readonly derivedTimeframeIds?: readonly TimeframeId[];
+  readonly timeframes?: readonly ProviderTimeframeCapability[];
 }
 
 export type ProviderStatus =

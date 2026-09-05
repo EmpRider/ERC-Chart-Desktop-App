@@ -20,6 +20,14 @@ export {
 } from "./history-cache.js";
 export type { CandleGap, HistoricalCandleCache } from "./history-cache.js";
 export {
+  aggregateTimeframeCandles,
+  alignedOpenTime,
+  parseTimeframeSeconds,
+  resolveTimeframePlan,
+  timeframeCapabilities,
+} from "./timeframes.js";
+export type { TimeframePlan } from "./timeframes.js";
+export {
   MarketDataValidationError,
   normalizeCandle,
   normalizeCandles,
