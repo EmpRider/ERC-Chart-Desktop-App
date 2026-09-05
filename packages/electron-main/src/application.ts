@@ -26,6 +26,7 @@ export interface DesktopArtifactPaths {
 
 export interface DesktopWindow {
   readonly loadURL: (url: string) => Promise<void>;
+  readonly waitUntilRendererReady: () => Promise<boolean>;
   readonly flushWorkspace: () => Promise<void>;
   readonly show: () => void;
   readonly destroy: () => void;
@@ -174,6 +175,12 @@ export async function startDesktopApplication<ProviderLaunch>(
     currentWindow = window;
     try {
       await window.loadURL(paths.rendererEntryUrl);
+      let rendererReady = await window.waitUntilRendererReady();
+      if (!rendererReady) {
+        await window.loadURL(paths.rendererEntryUrl);
+        rendererReady = await window.waitUntilRendererReady();
+      }
+      if (!rendererReady) throw new Error("Renderer UI failed to mount.");
       window.show();
     } catch (error) {
       window.destroy();

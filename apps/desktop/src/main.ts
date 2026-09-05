@@ -212,6 +212,7 @@ providerDataReference.current = providerData;
 
 function createWindow(options: SecureWindowOptions): {
   loadURL: (url: string) => Promise<void>;
+  waitUntilRendererReady: () => Promise<boolean>;
   flushWorkspace: () => Promise<void>;
   show: () => void;
   destroy: () => void;
@@ -318,6 +319,38 @@ function createWindow(options: SecureWindowOptions): {
   }
   return {
     loadURL: (url: string): Promise<void> => window.loadURL(url),
+    waitUntilRendererReady: async (): Promise<boolean> => {
+      if (window.isDestroyed()) return false;
+      try {
+        const ready: unknown = await window.webContents.executeJavaScript(`
+          new Promise((resolve) => {
+            const root = document.getElementById('app');
+            if (!(root instanceof HTMLElement)) {
+              resolve(false);
+              return;
+            }
+            if (root.childElementCount > 0) {
+              resolve(true);
+              return;
+            }
+            const observer = new MutationObserver(() => {
+              if (root.childElementCount === 0) return;
+              observer.disconnect();
+              clearTimeout(timeout);
+              resolve(true);
+            });
+            const timeout = setTimeout(() => {
+              observer.disconnect();
+              resolve(false);
+            }, 5000);
+            observer.observe(root, { childList: true });
+          });
+        `);
+        return ready === true;
+      } catch {
+        return false;
+      }
+    },
     flushWorkspace: async (): Promise<void> => {
       if (window.isDestroyed()) return;
       await window.webContents.executeJavaScript(
