@@ -5,7 +5,14 @@ import type {
   ProviderLiveRequest,
   WorkspaceIndicator,
 } from "@erc-chart/contracts";
-import { useEffect, useRef, useState, type JSX } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type JSX,
+  type SetStateAction,
+} from "react";
 import type {
   Chart,
   Indicator,
@@ -30,6 +37,20 @@ export type ProviderDataSubscriber = (
   request: ProviderLiveRequest,
   listener: (event: ProviderLiveEvent) => void,
 ) => Promise<() => Promise<void>>;
+
+type IndicatorSettingsDraft = Readonly<Record<string, string>>;
+
+export function queueIndicatorSettingsDraftChange(
+  parameterKey: string,
+  event: { readonly currentTarget: { readonly value: string } },
+  setSettingsDraft: Dispatch<SetStateAction<IndicatorSettingsDraft>>,
+): void {
+  const value = event.currentTarget.value;
+  setSettingsDraft((draft) => ({
+    ...draft,
+    [parameterKey]: value,
+  }));
+}
 
 export interface ProviderChartProps {
   readonly session: ImportedProviderSession;
@@ -208,9 +229,9 @@ export function ProviderChart({
   const [settingsInstanceId, setSettingsInstanceId] = useState<
     string | undefined
   >();
-  const [settingsDraft, setSettingsDraft] = useState<
-    Readonly<Record<string, string>>
-  >({});
+  const [settingsDraft, setSettingsDraft] = useState<IndicatorSettingsDraft>(
+    {},
+  );
   latestSession.current = session;
   latestIndicators.current = indicators;
   latestIndicatorCallbacks.current = {
@@ -566,10 +587,11 @@ export function ProviderChart({
                     step={parameter.step}
                     value={settingsDraft[parameter.key] ?? ""}
                     onChange={(event) =>
-                      setSettingsDraft((draft) => ({
-                        ...draft,
-                        [parameter.key]: event.currentTarget.value,
-                      }))
+                      queueIndicatorSettingsDraftChange(
+                        parameter.key,
+                        event,
+                        setSettingsDraft,
+                      )
                     }
                   />
                 ) : (
@@ -578,10 +600,11 @@ export function ProviderChart({
                       settingsDraft[parameter.key] ?? parameter.defaultValue
                     }
                     onChange={(event) =>
-                      setSettingsDraft((draft) => ({
-                        ...draft,
-                        [parameter.key]: event.currentTarget.value,
-                      }))
+                      queueIndicatorSettingsDraftChange(
+                        parameter.key,
+                        event,
+                        setSettingsDraft,
+                      )
                     }
                   >
                     {parameter.options.map((option) => (

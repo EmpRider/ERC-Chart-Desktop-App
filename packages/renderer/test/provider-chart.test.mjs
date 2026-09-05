@@ -1,6 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { updateChartData } from "../dist/index.js";
+import { queueIndicatorSettingsDraftChange } from "../dist/provider-chart.js";
+
+test("captures indicator setting values before React releases the event target", () => {
+  let queuedUpdate;
+  let currentTarget = { value: "13" };
+  const event = {
+    get currentTarget() {
+      return currentTarget;
+    },
+  };
+
+  queueIndicatorSettingsDraftChange("length", event, (update) => {
+    queuedUpdate = update;
+  });
+
+  currentTarget = null;
+  assert.equal(typeof queuedUpdate, "function");
+  assert.deepEqual(queuedUpdate({ length: "14" }), { length: "13" });
+});
 
 test("forwards live candles through the KLineCharts incremental bar callback", () => {
   const updates = [];
