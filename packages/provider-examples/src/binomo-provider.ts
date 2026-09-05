@@ -102,6 +102,8 @@ interface BinomoCandlePayload {
 interface ActiveBinomoSubscription {
   cancelled: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
+  reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  reconnectAttempt: number;
   socket: ProviderWebSocketConnection | undefined;
 }
 
@@ -444,6 +446,8 @@ function createBinomoAdapter(
     const state: ActiveBinomoSubscription = {
       cancelled: false,
       timer: undefined,
+      reconnectTimer: undefined,
+      reconnectAttempt: 0,
       socket: undefined,
     };
     activeSubscriptions.add(state);
@@ -483,6 +487,11 @@ function createBinomoAdapter(
       void poll();
     };
 
+    const stopPollingFallback = (): void => {
+      if (state.timer !== undefined) clearTimeout(state.timer);
+      state.timer = undefined;
+    };
+
     const handleAssetMessage = async (
       data: ProviderWebSocketData,
     ): Promise<void> => {
@@ -494,18 +503,37 @@ function createBinomoAdapter(
       sink.onTicks(ticks);
     };
 
-    if (host.websocket !== undefined && sessionCookie !== null) {
-      try {
-        const seed = await requestHistory({
-          instrumentId,
-          timeframeId: request.timeframeId,
-          fromMs: Math.max(0, host.now() - seconds * 3000),
-          toMs: host.now(),
-          limit: 1,
-        });
-        const currentCandle = seed.at(-1);
-        if (currentCandle !== undefined) sink.onCandles([currentCandle]);
+    let connectAssetStream: () => Promise<void>;
+    const scheduleReconnect = (): void => {
+      if (
+        state.cancelled ||
+        state.reconnectTimer !== undefined ||
+        host.websocket === undefined ||
+        sessionCookie === null
+      ) {
+        return;
+      }
+      const delayMs = Math.min(
+        10_000,
+        retryBaseDelayMs * 2 ** Math.min(state.reconnectAttempt, 6),
+      );
+      state.reconnectAttempt += 1;
+      host.reportStatus("reconnecting");
+      state.reconnectTimer = setTimeout(() => {
+        state.reconnectTimer = undefined;
+        void connectAssetStream();
+      }, delayMs);
+    };
 
+    connectAssetStream = async (): Promise<void> => {
+      if (
+        state.cancelled ||
+        host.websocket === undefined ||
+        sessionCookie === null
+      ) {
+        return;
+      }
+      try {
         const socket = await host.websocket.connect(
           {
             url: assetStreamEndpoint,
@@ -516,13 +544,23 @@ function createBinomoAdapter(
               void handleAssetMessage(data);
             },
             onError: (): void => {
-              if (!state.cancelled) sink.onError("BINOMO_WEBSOCKET_ERROR");
+              if (!state.cancelled) {
+                sink.onError("BINOMO_WEBSOCKET_ERROR");
+                host.reportStatus("degraded");
+              }
             },
-            onClose: (): void => {
+            onClose: (event): void => {
               state.socket = undefined;
               if (state.cancelled) return;
+              if (event.code === 4401 || event.code === 4403) {
+                sink.onError("BINOMO_AUTHENTICATION_FAILED");
+                host.reportStatus("degraded");
+                startPollingFallback();
+                return;
+              }
               sink.onError("BINOMO_WEBSOCKET_CLOSED");
               startPollingFallback();
+              scheduleReconnect();
             },
           },
         );
@@ -530,6 +568,9 @@ function createBinomoAdapter(
           socket.close(1000, "Subscription cancelled");
         } else {
           state.socket = socket;
+          state.reconnectAttempt = 0;
+          stopPollingFallback();
+          host.reportStatus("connected");
           socket.send(JSON.stringify({ action: "subscribe", rics: [symbol] }));
           socket.send(
             JSON.stringify({
@@ -541,10 +582,27 @@ function createBinomoAdapter(
       } catch {
         if (!state.cancelled) {
           sink.onError("BINOMO_WEBSOCKET_CONNECT_FAILED");
+          host.reportStatus("degraded");
           startPollingFallback();
+          scheduleReconnect();
         }
       }
+    };
+
+    if (host.websocket !== undefined && sessionCookie !== null) {
+      const seed = await requestHistory({
+        instrumentId,
+        timeframeId: request.timeframeId,
+        fromMs: Math.max(0, host.now() - seconds * 3000),
+        toMs: host.now(),
+        limit: 1,
+      });
+      const currentCandle = seed.at(-1);
+      if (currentCandle !== undefined) sink.onCandles([currentCandle]);
+      await connectAssetStream();
     } else {
+      if (sessionCookie === null)
+        host.logger.warn("BINOMO_WEBSOCKET_CREDENTIAL_NOT_CONFIGURED");
       startPollingFallback();
     }
 
@@ -553,6 +611,9 @@ function createBinomoAdapter(
         if (state.cancelled) return;
         state.cancelled = true;
         if (state.timer !== undefined) clearTimeout(state.timer);
+        if (state.reconnectTimer !== undefined)
+          clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = undefined;
         state.socket?.close(1000, "Subscription cancelled");
         state.socket = undefined;
         activeSubscriptions.delete(state);
@@ -676,6 +737,8 @@ function createBinomoAdapter(
       for (const state of activeSubscriptions) {
         state.cancelled = true;
         if (state.timer !== undefined) clearTimeout(state.timer);
+        if (state.reconnectTimer !== undefined)
+          clearTimeout(state.reconnectTimer);
         state.socket?.close(1000, "Provider disconnected");
       }
       activeSubscriptions.clear();

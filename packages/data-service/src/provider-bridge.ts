@@ -17,6 +17,7 @@ import type {
   CanonicalSeriesSnapshot,
 } from "./canonical-series.js";
 import { createBoundedTickBuffer } from "./tick-buffer.js";
+import { findCandleGaps } from "./history-cache.js";
 import {
   aggregateTimeframeCandles,
   alignedOpenTime,
@@ -178,6 +179,54 @@ export function createProviderDataService(
       instrumentId: request.instrumentId,
       timeframeId: plan.source.id,
     });
+
+  const requestNormalizedHistory = async (
+    providerProfileId: string,
+    request: ProviderHistoryRequest,
+  ): Promise<readonly Candle[]> => {
+    const plan = await planFor(providerProfileId, request.timeframeId);
+    const ratio = Math.max(
+      1,
+      Math.ceil(plan.target.seconds / plan.source.seconds),
+    );
+    const sourceRequest: ProviderHistoryRequest = plan.target.native
+      ? request
+      : {
+          instrumentId: request.instrumentId,
+          timeframeId: plan.source.id,
+          ...(request.fromMs === undefined
+            ? {}
+            : {
+                fromMs: alignedOpenTime(
+                  request.fromMs,
+                  plan.target.seconds,
+                  plan.target.alignment,
+                ),
+              }),
+          ...(request.toMs === undefined ? {} : { toMs: request.toMs }),
+          ...(request.limit === undefined
+            ? {}
+            : { limit: Math.min(100_000, request.limit * ratio + ratio) }),
+        };
+    const source = normalizeCandles(
+      await upstream.requestHistory(providerProfileId, sourceRequest),
+      sourceRequest,
+    );
+    return normalizeCandles(
+      plan.target.native
+        ? source
+        : aggregateTimeframeCandles(source, plan.target)
+            .filter(
+              (candle) =>
+                (request.fromMs === undefined ||
+                  candle.openTimeMs >= request.fromMs) &&
+                (request.toMs === undefined ||
+                  candle.openTimeMs <= request.toMs),
+            )
+            .slice(-(request.limit ?? Number.MAX_SAFE_INTEGER)),
+      request,
+    );
+  };
 
   const derivedCandlesForLiveBatch = (
     demand: LogicalDemand,
@@ -378,6 +427,66 @@ export function createProviderDataService(
       demand.invalidated = false;
     }
     try {
+      for (const demand of matching) {
+        const snapshot = candleState.snapshot(demand.seriesKey);
+        const known = [
+          ...candleState.finalizedCandles(demand.seriesKey),
+          ...(snapshot.building === undefined ? [] : [snapshot.building]),
+        ];
+        const firstOpenTimeMs = known[0]?.openTimeMs;
+        if (firstOpenTimeMs === undefined) continue;
+
+        const currentOpenTimeMs = alignedOpenTime(
+          now(),
+          demand.plan.target.seconds,
+          demand.plan.target.alignment,
+        );
+        const gaps = findCandleGaps(known, demand.plan.target.seconds, {
+          fromOpenTimeMs: firstOpenTimeMs,
+          toOpenTimeMs: currentOpenTimeMs,
+        });
+        if (gaps.length === 0) continue;
+
+        const repaired: Candle[] = [];
+        for (const gap of gaps) {
+          const count =
+            Math.floor(
+              (gap.toOpenTimeMs - gap.fromOpenTimeMs) /
+                (demand.plan.target.seconds * 1000),
+            ) + 1;
+          repaired.push(
+            ...(await requestNormalizedHistory(providerProfileId, {
+              instrumentId: demand.request.instrumentId,
+              timeframeId: demand.request.timeframeId,
+              fromMs: gap.fromOpenTimeMs,
+              toMs: gap.toOpenTimeMs,
+              limit: Math.min(100_000, count),
+            })),
+          );
+        }
+        if (repaired.length === 0) continue;
+
+        const merged = new Map<number, Candle>();
+        for (const candle of [...known, ...repaired]) {
+          merged.set(candle.openTimeMs, {
+            instrumentId: candle.instrumentId,
+            timeframeId: candle.timeframeId,
+            openTimeMs: candle.openTimeMs,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            ...(candle.volume === undefined ? {} : { volume: candle.volume }),
+          });
+        }
+        candleState.loadHistory(demand.seriesKey, [...merged.values()], now());
+        const delivered = Object.freeze(
+          [...repaired].sort(
+            (left, right) => left.openTimeMs - right.openTimeMs,
+          ),
+        );
+        notify(demand, (sink) => sink.onCandles(delivered));
+      }
       await Promise.all(matching.map((demand) => connectDemand(demand)));
     } catch (error) {
       for (const demand of matching) {
@@ -398,46 +507,8 @@ export function createProviderDataService(
       const providerProfileId = requireProviderProfileId(
         providerProfileIdValue,
       );
-      const plan = await planFor(providerProfileId, request.timeframeId);
-      const ratio = Math.max(
-        1,
-        Math.ceil(plan.target.seconds / plan.source.seconds),
-      );
-      const sourceRequest: ProviderHistoryRequest = plan.target.native
-        ? request
-        : {
-            instrumentId: request.instrumentId,
-            timeframeId: plan.source.id,
-            ...(request.fromMs === undefined
-              ? {}
-              : {
-                  fromMs: alignedOpenTime(
-                    request.fromMs,
-                    plan.target.seconds,
-                    plan.target.alignment,
-                  ),
-                }),
-            ...(request.toMs === undefined ? {} : { toMs: request.toMs }),
-            ...(request.limit === undefined
-              ? {}
-              : { limit: Math.min(100_000, request.limit * ratio + ratio) }),
-          };
-      const source = normalizeCandles(
-        await upstream.requestHistory(providerProfileId, sourceRequest),
-        sourceRequest,
-      );
-      const normalized = normalizeCandles(
-        plan.target.native
-          ? source
-          : aggregateTimeframeCandles(source, plan.target)
-              .filter(
-                (candle) =>
-                  (request.fromMs === undefined ||
-                    candle.openTimeMs >= request.fromMs) &&
-                  (request.toMs === undefined ||
-                    candle.openTimeMs <= request.toMs),
-              )
-              .slice(-(request.limit ?? Number.MAX_SAFE_INTEGER)),
+      const normalized = await requestNormalizedHistory(
+        providerProfileId,
         request,
       );
       candleState.loadHistory(

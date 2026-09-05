@@ -427,3 +427,69 @@ test("derives declared target history and live state from one native provider fe
 
   await handle.unsubscribe();
 });
+
+test("restore repairs deliberate canonical gaps before resubscribing", async () => {
+  const fixture = createUpstream();
+  let repairing = false;
+  fixture.upstream.requestHistory = async (
+    providerProfileId,
+    historyRequest,
+  ) => {
+    fixture.calls.history.push({ providerProfileId, request: historyRequest });
+    if (!repairing) {
+      return [0, 120_000].map((openTimeMs, index) => ({
+        instrumentId: "BTCUSD",
+        timeframeId: "1m",
+        openTimeMs,
+        open: 10 + index,
+        high: 12 + index,
+        low: 9 + index,
+        close: 11 + index,
+      }));
+    }
+    return [
+      {
+        instrumentId: "BTCUSD",
+        timeframeId: "1m",
+        openTimeMs: historyRequest.fromMs,
+        open: 20,
+        high: 22,
+        low: 19,
+        close: 21,
+      },
+    ];
+  };
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 180_500,
+  });
+  const sink = createSink();
+
+  await service.requestHistory("profile-a", {
+    ...request,
+    fromMs: 0,
+    toMs: 120_000,
+  });
+  const handle = await service.subscribe("profile-a", request, sink.sink);
+  await service.invalidateProfile("profile-a");
+  repairing = true;
+  await service.restoreProfile("profile-a");
+
+  const repairRequests = fixture.calls.history.slice(1).map(({ request }) => ({
+    fromMs: request.fromMs,
+    toMs: request.toMs,
+  }));
+  assert.deepEqual(repairRequests, [
+    { fromMs: 60_000, toMs: 60_000 },
+    { fromMs: 180_000, toMs: 180_000 },
+  ]);
+  assert.equal(fixture.subscriptions.length, 2);
+  const snapshot = await service.seriesSnapshot("profile-a", request);
+  assert.deepEqual([...snapshot.timeMs], [0, 60_000, 120_000]);
+  assert.equal(snapshot.building.openTimeMs, 180_000);
+  assert.deepEqual(
+    sink.candles.slice(-2).map(({ openTimeMs }) => openTimeMs),
+    [60_000, 180_000],
+  );
+
+  await handle.unsubscribe();
+});

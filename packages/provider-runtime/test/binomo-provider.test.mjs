@@ -436,6 +436,96 @@ test("authenticated Binomo websocket flow emits compressed live ticks without bu
   assert.equal(phoenix.closed.length, 1);
 });
 
+test("Binomo websocket reconnects with backoff and resubscribes after an unexpected close", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const fixture = createWebSocketHost([
+    response({
+      data: [
+        {
+          open: 200,
+          high: 204,
+          low: 198,
+          close: 203,
+          created_at: "2026-09-03T12:01:00.000000Z",
+        },
+      ],
+      errors: [],
+      success: true,
+    }),
+    response({ data: [], errors: [], success: true }),
+  ]);
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 60_000,
+  });
+  const errors = [];
+
+  await adapter.connect();
+  const subscription = await adapter.subscribe(
+    { instrumentId: "Z-CRY/IDX", timeframeId: "1m" },
+    {
+      onCandles: () => undefined,
+      onTicks: () => undefined,
+      onError: (code) => errors.push(code),
+    },
+  );
+  const firstAssetStream = fixture.sockets[1];
+  firstAssetStream.handlers.onClose({ code: 1006, reason: "network lost" });
+
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.equal(fixture.sockets.length, 3);
+  const reconnected = fixture.sockets[2];
+  assert.equal(reconnected.request.url, "wss://as.binomo.com/");
+  assert.deepEqual(
+    reconnected.sent.map((message) => JSON.parse(message)),
+    [
+      { action: "subscribe", rics: ["Z-CRY/IDX"] },
+      { action: "subscribe", event_type: "reconnect_request" },
+    ],
+  );
+  assert.ok(errors.includes("BINOMO_WEBSOCKET_CLOSED"));
+  assert.ok(fixture.statuses.includes("reconnecting"));
+  assert.equal(fixture.statuses.at(-1), "connected");
+
+  await subscription.unsubscribe();
+  await adapter.disconnect();
+});
+
+test("Binomo authentication close is surfaced without reconnecting with the same credential", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const fixture = createWebSocketHost([
+    response({ data: [], errors: [], success: true }),
+    response({ data: [], errors: [], success: true }),
+  ]);
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 60_000,
+  });
+  const errors = [];
+
+  await adapter.connect();
+  const subscription = await adapter.subscribe(
+    { instrumentId: "Z-CRY/IDX", timeframeId: "1m" },
+    {
+      onCandles: () => undefined,
+      onTicks: () => undefined,
+      onError: (code) => errors.push(code),
+    },
+  );
+  fixture.sockets[1].handlers.onClose({ code: 4401, reason: "unauthorized" });
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.deepEqual(errors, ["BINOMO_AUTHENTICATION_FAILED"]);
+  assert.equal(fixture.sockets.length, 2);
+  assert.equal(fixture.statuses.at(-1), "degraded");
+
+  await subscription.unsubscribe();
+  await adapter.disconnect();
+});
+
 test("leaves derived live subscription ownership to the data service", async () => {
   const { default: definition } =
     await import("../../provider-examples/dist/binomo-provider.js");
