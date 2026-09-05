@@ -10,6 +10,11 @@ export type {
   CanonicalSeriesStore,
 } from "./canonical-series.js";
 export {
+  createHistoricalCandleCache,
+  findCandleGaps,
+} from "./history-cache.js";
+export type { CandleGap, HistoricalCandleCache } from "./history-cache.js";
+export {
   MarketDataValidationError,
   normalizeCandle,
   normalizeCandles,

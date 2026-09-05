@@ -9,11 +9,14 @@ import {
   activatePlugin,
   createProviderProfile,
   deleteAppSetting,
+  deleteCandlesBefore,
   deletePlugin,
   deleteProviderProfile,
   disablePlugin,
   getAppSetting,
   getCandles,
+  getCandlesInRange,
+  getNewestCandles,
   getPlugin,
   getProviderProfile,
   listAppSettings,
@@ -25,6 +28,7 @@ import {
   putAppSetting,
   putPlugin,
   recoverStorageDatabase,
+  retainNewestCandles,
   rollbackPlugin,
   saveWorkspace,
   serializeWorkspaceV1,
@@ -1083,6 +1087,61 @@ test("upserts and reads a validated candle series", async () => {
             },
           ]),
         /timeframeSec/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("queries newest/ranged candles, rejects stale revisions, and applies retention", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    const key = {
+      feedId: "feed-main",
+      instrumentId: "EURUSD",
+      timeframeSec: 60,
+    };
+    try {
+      upsertCandles(
+        database,
+        Array.from({ length: 5 }, (_, index) => ({
+          ...key,
+          openTimeMs: index * 60_000,
+          open: index + 1,
+          high: index + 2,
+          low: index,
+          close: index + 1.5,
+          revision: 5,
+        })),
+      );
+      upsertCandles(database, [
+        {
+          ...key,
+          openTimeMs: 120_000,
+          open: 99,
+          high: 100,
+          low: 98,
+          close: 99.5,
+          revision: 4,
+        },
+      ]);
+      assert.equal(getCandles(database, key)[2].open, 3);
+      assert.deepEqual(
+        getNewestCandles(database, key, 2).map(({ openTimeMs }) => openTimeMs),
+        [180_000, 240_000],
+      );
+      assert.deepEqual(
+        getCandlesInRange(database, key, 60_000, 180_000).map(
+          ({ openTimeMs }) => openTimeMs,
+        ),
+        [60_000, 120_000, 180_000],
+      );
+      assert.equal(deleteCandlesBefore(database, key, 60_000), 1);
+      assert.equal(retainNewestCandles(database, key, 2), 2);
+      assert.deepEqual(
+        getCandles(database, key).map(({ openTimeMs }) => openTimeMs),
+        [180_000, 240_000],
       );
     } finally {
       database.close();
