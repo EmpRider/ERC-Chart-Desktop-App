@@ -274,7 +274,7 @@ test("rejects malformed or mismatched provider market data before delivery", asy
   await handle.unsubscribe();
 });
 
-test("keeps one canonical live series and bounded tick state for shared demand", async () => {
+test("ECDD-94 acceptance: a profile loads history and updates a building candle", async () => {
   const fixture = createUpstream();
   const service = createProviderDataService(fixture.upstream, {
     now: () => 120_500,
