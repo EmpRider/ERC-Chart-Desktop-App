@@ -226,7 +226,7 @@ test("counts repeated subscriptions independently even when they reuse the same 
   assert.equal(fixture.subscriptions[0].unsubscribeCount, 1);
 });
 
-test("rejects malformed or mismatched provider market data before delivery", async () => {
+test("ECDD-96 acceptance: rejects malformed or mismatched provider market data before delivery", async () => {
   const fixture = createUpstream();
   fixture.upstream.requestHistory = async () => [
     {

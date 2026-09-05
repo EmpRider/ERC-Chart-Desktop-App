@@ -74,6 +74,15 @@ export function createBoundedTickBuffer(capacity = 4096): BoundedTickBuffer {
       ].sort((left, right) => left.timestampMs - right.timestampMs);
       for (const tick of ticks) {
         if (tick.timestampMs < state.latestTimestampMs) continue;
+        const latest = state.values.at(-1);
+        if (
+          latest !== undefined &&
+          latest.timestampMs === tick.timestampMs &&
+          latest.price === tick.price &&
+          latest.volume === tick.volume
+        ) {
+          continue;
+        }
         const frozen = Object.freeze({ ...tick });
         state.values.push(frozen);
         state.latestTimestampMs = tick.timestampMs;

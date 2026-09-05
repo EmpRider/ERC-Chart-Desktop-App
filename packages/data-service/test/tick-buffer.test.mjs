@@ -18,15 +18,26 @@ test("keeps only the configured live tick tail", () => {
   );
 });
 
-test("drops obsolete ticks before they reach canonical consumers", () => {
+test("ECDD-96 acceptance: drops duplicate, out-of-order, and obsolete ticks deterministically", () => {
   const buffer = createBoundedTickBuffer(4);
   buffer.append(key, [{ instrumentId: "BTCUSD", timestampMs: 10, price: 10 }]);
   assert.deepEqual(
     buffer.append(key, [
+      { instrumentId: "BTCUSD", timestampMs: 10, price: 10 },
       { instrumentId: "BTCUSD", timestampMs: 9, price: 99 },
       { instrumentId: "BTCUSD", timestampMs: 11, price: 11 },
+      { instrumentId: "BTCUSD", timestampMs: 8, price: 98 },
     ]),
     [{ instrumentId: "BTCUSD", timestampMs: 11, price: 11 }],
+  );
+  assert.deepEqual(
+    buffer
+      .snapshot(key)
+      .map(({ timestampMs, price }) => ({ timestampMs, price })),
+    [
+      { timestampMs: 10, price: 10 },
+      { timestampMs: 11, price: 11 },
+    ],
   );
 });
 
