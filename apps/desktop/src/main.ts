@@ -66,6 +66,7 @@ import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
 import { createDesktopProviderHostBroker } from "./provider-host-broker.js";
 import { createProviderImportService } from "./provider-import-service.js";
+import { selectProviderImportSource } from "./provider-import-picker.js";
 import { createProviderLiveSubscriptionManager } from "./provider-live-subscriptions.js";
 import { createProviderManagementService } from "./provider-management-service.js";
 import { installWindowSecurity } from "./window-security.js";
@@ -608,16 +609,12 @@ async function startDesktopMain(): Promise<void> {
   );
   ipcMain.handle(providerImportPreviewChannel, async (event) => {
     assertTrustedIpcSender(senderFromEvent(event));
-    const selection = await dialog.showOpenDialog({
-      title: "Import ERC Chart provider",
-      properties: ["openDirectory"],
+    const source = await selectProviderImportSource({
+      showMessageBox: (options) => dialog.showMessageBox(options),
+      showOpenDialog: (options) => dialog.showOpenDialog(options),
     });
-    const selectedPath = selection.filePaths[0];
-    if (selection.canceled || selectedPath === undefined) return null;
-    return providerImportService.preview({
-      kind: "folder",
-      path: selectedPath,
-    });
+    if (source === null) return null;
+    return providerImportService.preview(source);
   });
   ipcMain.handle(
     providerImportApproveChannel,

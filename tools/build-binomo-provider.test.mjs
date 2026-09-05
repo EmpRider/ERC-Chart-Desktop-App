@@ -20,7 +20,7 @@ test("builds the Binomo provider in the supported import package shape", async (
   );
   await rm(outputRoot, { recursive: true, force: true });
   try {
-    const { manifest } = await buildBinomoProviderPackage({
+    const { archivePath, manifest } = await buildBinomoProviderPackage({
       root: process.cwd(),
       outputRoot,
     });
@@ -69,8 +69,21 @@ test("builds the Binomo provider in the supported import package shape", async (
     );
     assert.equal(staged.manifest.id, "erc.provider.binomo");
     await discardStagedPlugin(staged);
+
+    const stagedArchive = await stagePluginPackage(
+      { kind: "zip", path: archivePath },
+      {
+        stagingRoot: `${outputRoot}-zip-staging`,
+        trustPolicy: { mode: "developer", trustedPublisherKeys: {} },
+      },
+    );
+    assert.equal(stagedArchive.sourceKind, "zip");
+    assert.equal(stagedArchive.manifest.id, "erc.provider.binomo");
+    await discardStagedPlugin(stagedArchive);
   } finally {
     await rm(outputRoot, { recursive: true, force: true });
+    await rm(`${outputRoot}.zip`, { force: true });
     await rm(`${outputRoot}-staging`, { recursive: true, force: true });
+    await rm(`${outputRoot}-zip-staging`, { recursive: true, force: true });
   }
 });
