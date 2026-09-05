@@ -5,6 +5,7 @@ import type {
   ProviderImportCredentialValues,
   ProviderImportPreview,
 } from "@erc-chart/contracts";
+import { createProviderSelectorData } from "@erc-chart/data-service";
 import {
   windowsCredentialTarget,
   type DesktopApplicationController,
@@ -105,22 +106,6 @@ function normalizeCredentialValues(
     throw new Error("Provider credentials are invalid.");
   }
   return Object.freeze(Object.fromEntries(entries));
-}
-
-function timeframeDurationMs(timeframeId: string): number {
-  const match = /^(\d+)(s|m|h|d)$/u.exec(timeframeId);
-  if (match === null) return 60_000;
-  const amount = Number(match[1]);
-  const unit = match[2];
-  const multiplier =
-    unit === "s"
-      ? 1_000
-      : unit === "m"
-        ? 60_000
-        : unit === "h"
-          ? 3_600_000
-          : 86_400_000;
-  return amount * multiplier;
 }
 
 export function createProviderImportService(
@@ -253,29 +238,26 @@ export function createProviderImportService(
         options.controller.getProviderCapabilities(profile.id),
         options.controller.getProviderInstruments(profile.id),
       ]);
-      const instrument = instruments[0];
+      const selector = createProviderSelectorData(capabilities, instruments);
+      const instrument = selector.instruments[0];
       if (instrument === undefined) {
         throw new Error("Provider did not expose an instrument.");
       }
-      const availableTimeframeIds = [
-        ...capabilities.nativeTimeframes,
-        ...(capabilities.derivedTimeframeIds ?? []),
-      ].sort(
-        (left, right) => timeframeDurationMs(left) - timeframeDurationMs(right),
-      );
-      const timeframeId =
-        availableTimeframeIds.find((value) => value === "1m") ??
-        availableTimeframeIds[0];
-      if (timeframeId === undefined) {
+      const availableTimeframeIds = selector.timeframes.map(({ id }) => id);
+      const timeframe =
+        selector.timeframes.find(({ id }) => id === "1m") ??
+        selector.timeframes[0];
+      if (timeframe === undefined) {
         throw new Error("Provider did not expose a timeframe.");
       }
+      const timeframeId = timeframe.id;
       const toMs = now();
       const candles = await options.controller.requestProviderHistory(
         profile.id,
         {
           instrumentId: instrument.id,
           timeframeId,
-          fromMs: Math.max(0, toMs - timeframeDurationMs(timeframeId) * 500),
+          fromMs: Math.max(0, toMs - timeframe.seconds * 1000 * 500),
           toMs,
           limit: 500,
         },

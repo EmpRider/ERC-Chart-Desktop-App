@@ -65,6 +65,34 @@ test("creates, edits, stops, restarts, and removes provider profiles", async () 
           liveData: true,
           derivedTimeframes: true,
           derivedTimeframeIds: ["2m", "3m"],
+          timeframes: [
+            {
+              id: "1m",
+              seconds: 60,
+              historical: true,
+              live: true,
+              native: true,
+              alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+            },
+            {
+              id: "2m",
+              seconds: 120,
+              historical: true,
+              live: true,
+              native: false,
+              derivedFromTimeframeId: "1m",
+              alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+            },
+            {
+              id: "3m",
+              seconds: 180,
+              historical: true,
+              live: true,
+              native: false,
+              derivedFromTimeframeId: "1m",
+              alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+            },
+          ],
         };
       },
       async getProviderInstruments() {
