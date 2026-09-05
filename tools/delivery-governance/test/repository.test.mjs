@@ -174,11 +174,27 @@ test("malformed Markdown percent encoding is a deterministic validation error", 
   );
 });
 
-test("symlinks fail closed instead of bypassing repository scans", async () => {
+test("symlinks fail closed instead of bypassing repository scans", async (t) => {
   const root = await fixture({});
   const outside = `${root}-target.txt`;
   await writeFile(outside, "outside\n");
-  await symlink(outside, path.join(root, "linked.txt"));
+  try {
+    await symlink(
+      outside,
+      path.join(root, "linked.txt"),
+      process.platform === "win32" ? "file" : undefined,
+    );
+  } catch (error) {
+    const code = error?.code;
+    if (
+      process.platform === "win32" &&
+      (code === "EPERM" || code === "EACCES")
+    ) {
+      t.skip("Windows account cannot create symbolic links.");
+      return;
+    }
+    throw error;
+  }
   const errors = await validateRepository(root);
   assert.ok(
     errors.some((error) => error === "linked.txt: symlinks are forbidden"),
