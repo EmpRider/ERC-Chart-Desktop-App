@@ -6,13 +6,16 @@ function createSink() {
   const candles = [];
   const ticks = [];
   const errors = [];
+  const series = [];
   return {
     candles,
     ticks,
     errors,
+    series,
     sink: {
-      onCandles(value) {
+      onCandles(value, change) {
         candles.push(...value);
+        series.push(change);
       },
       onTicks(value) {
         ticks.push(...value);
@@ -135,6 +138,38 @@ test("forwards discovery/capabilities/history and multiplexes compatible live de
   assert.deepEqual(fixture.calls.capabilities, ["profile-a"]);
   assert.deepEqual(fixture.calls.instruments, ["profile-a"]);
   assert.equal(fixture.calls.history.length, 1);
+});
+
+test("publishes canonical rebuild metadata when live data corrects finalized history", async () => {
+  const fixture = createUpstream();
+  const service = createProviderDataService(fixture.upstream);
+  await service.requestHistory("profile-a", request);
+  const target = createSink();
+  const handle = await service.subscribe("profile-a", request, target.sink);
+  const upstream = fixture.subscriptions[0];
+
+  upstream.sink.onCandles([
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 1_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 10.5,
+    },
+  ]);
+
+  assert.equal(target.candles.length, 1);
+  assert.equal(target.series.length, 1);
+  assert.equal(target.series[0].kind, "rebuild");
+  assert.equal(target.series[0].dirtyFromOpenTimeMs, 1_000);
+  assert.equal(target.series[0].revision > 1, true);
+  const snapshot = await service.seriesSnapshot("profile-a", request);
+  assert.equal(snapshot.close[snapshot.close.length - 1], 10.5);
+
+  await handle.unsubscribe();
+  await service.shutdown();
 });
 
 test("invalidates and restores only the affected provider profile while retaining demand", async () => {
@@ -490,9 +525,11 @@ test("ECDD-95 acceptance: reconnect repairs a deliberately created gap", async (
   const snapshot = await service.seriesSnapshot("profile-a", request);
   assert.deepEqual([...snapshot.timeMs], [0, 60_000, 120_000]);
   assert.equal(snapshot.building.openTimeMs, 180_000);
+  assert.equal(sink.series.at(-1).kind, "rebuild");
+  assert.equal(sink.series.at(-1).dirtyFromOpenTimeMs, 60_000);
   assert.deepEqual(
-    sink.candles.slice(-2).map(({ openTimeMs }) => openTimeMs),
-    [60_000, 180_000],
+    sink.candles.slice(-4).map(({ openTimeMs }) => openTimeMs),
+    [0, 60_000, 120_000, 180_000],
   );
 
   await handle.unsubscribe();

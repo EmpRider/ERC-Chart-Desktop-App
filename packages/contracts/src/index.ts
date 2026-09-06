@@ -14,9 +14,6 @@ export {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
-  indicatorRuntimeDisposeChannel,
-  indicatorRuntimeSyncChannel,
-  indicatorRuntimeUpdateChannel,
   indicatorsListChannel,
   isIndicatorImportPreview,
   isIndicatorImportPreviewResult,
@@ -89,6 +86,7 @@ export type {
   ProviderLiveErrorEvent,
   ProviderLiveEvent,
   ProviderLiveRequest,
+  ProviderSeriesChange,
   ProviderSessionRequest,
   ProviderLiveSubscriptionRequest,
   InstalledProviderSummary,
@@ -105,7 +103,10 @@ export type {
 } from "./provider-management.js";
 export {
   inspectPluginManifest,
+  isPluginId,
   isPluginManifest,
+  isPluginPackagePath,
+  isPluginVersion,
   pluginManifestSchema,
 } from "./plugins.js";
 export type {

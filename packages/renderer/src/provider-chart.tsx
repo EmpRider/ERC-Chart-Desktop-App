@@ -5,6 +5,7 @@ import type {
   ProviderHistoryLoadRequest,
   ProviderLiveEvent,
   ProviderLiveRequest,
+  ProviderSeriesChange,
   WorkspaceIndicator,
 } from "@erc-chart/contracts";
 import {
@@ -37,6 +38,8 @@ import {
 import { registerApplicationBuiltInIndicators } from "./kline-builtins.js";
 import {
   createPluginWorkspaceIndicator,
+  disposePluginIndicatorContexts,
+  markPluginIndicatorSeriesChange,
   normalizePluginIndicatorParameters,
   pluginIndicatorSettingsFields,
   reconcilePluginIndicators,
@@ -379,6 +382,28 @@ export function updateChartData(
   for (const data of toHeikinAshiData(candles, seed)) updateData(data);
 }
 
+export function applyProviderSeriesUpdate(
+  chart: Pick<Chart, "getDataList" | "resetData">,
+  updateData: (data: KLineData) => void,
+  candles: readonly Candle[],
+  series: ProviderSeriesChange,
+  chartType: ProviderChartType,
+  lastAppliedOpenTimeMs: { current: number | undefined },
+  authoritativeResetCandles: { current: readonly Candle[] | undefined },
+  dataLoadGeneration: { current: number },
+): void {
+  if (series.kind === "rebuild") {
+    authoritativeResetCandles.current = Object.freeze([...candles]);
+    dataLoadGeneration.current += 1;
+    lastAppliedOpenTimeMs.current = candles.at(-1)?.openTimeMs;
+    chart.resetData();
+    return;
+  }
+  updateChartData(updateData, candles, chartType, chart.getDataList());
+  lastAppliedOpenTimeMs.current =
+    candles.at(-1)?.openTimeMs ?? lastAppliedOpenTimeMs.current;
+}
+
 function toKLineData(
   session: ImportedProviderSession,
   chartType: ProviderChartType,
@@ -538,6 +563,9 @@ export function ProviderChart({
   );
   const updateData = useRef<((data: KLineData) => void) | undefined>(undefined);
   const lastAppliedOpenTimeMs = useRef<number | undefined>(undefined);
+  const authoritativeResetCandles = useRef<readonly Candle[] | undefined>(
+    undefined,
+  );
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [timezone, setTimezone] = useState("Etc/UTC");
@@ -716,6 +744,7 @@ export function ProviderChart({
         managedRuntimeIds.current = new Set();
         const pluginInstanceIds = [...pluginManagedRuntimeIds.current];
         pluginManagedRuntimeIds.current = new Set();
+        disposePluginIndicatorContexts(pluginInstanceIds);
         for (const instanceId of pluginInstanceIds) {
           void latestDisposeIndicator
             .current?.(instanceId)
@@ -786,10 +815,18 @@ export function ProviderChart({
           const requestSession = latestSession.current;
           const requestKey = sessionDataKey(requestSession);
           const requestGeneration = dataLoadGeneration.current;
+          const resetCandles =
+            params.type === "init"
+              ? authoritativeResetCandles.current
+              : undefined;
+          const dataSession =
+            resetCandles === undefined
+              ? requestSession
+              : { ...requestSession, candles: resetCandles };
           try {
             const page = await loadKLineHistoryPage(
               params,
-              requestSession,
+              dataSession,
               latestRequestProviderHistory.current,
               latestChartType.current,
             );
@@ -801,6 +838,12 @@ export function ProviderChart({
               return;
             }
             params.callback(page.data, page.more);
+            if (
+              resetCandles !== undefined &&
+              authoritativeResetCandles.current === resetCandles
+            ) {
+              authoritativeResetCandles.current = undefined;
+            }
           } catch {
             if (
               !disposed &&
@@ -839,6 +882,7 @@ export function ProviderChart({
         initialSession.instrument.id,
         initialSession.timeframeId,
         pluginManagedRuntimeIds.current,
+        initialSession.profileId,
       );
       pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
       for (const instanceId of pluginReconciliation.removedInstanceIds) {
@@ -872,6 +916,7 @@ export function ProviderChart({
     const timeframeChanged =
       previous === undefined || previous[3] !== session.timeframeId;
     lastAppliedOpenTimeMs.current = session.candles.at(-1)?.openTimeMs;
+    authoritativeResetCandles.current = undefined;
     appliedChartSessionKey.current = nextKey;
     if (symbolChanged) {
       dataLoadGeneration.current += 1;
@@ -929,15 +974,19 @@ export function ProviderChart({
       (event): void => {
         if (disposed || event.type !== "candles") return;
         const incrementalUpdate = updateData.current;
-        if (incrementalUpdate !== undefined) {
-          updateChartData(
+        const chart = chartInstance.current;
+        if (incrementalUpdate !== undefined && chart !== undefined) {
+          markPluginIndicatorSeriesChange(chart, event.series);
+          applyProviderSeriesUpdate(
+            chart,
             incrementalUpdate,
             event.candles,
+            event.series,
             latestChartType.current,
-            chartInstance.current?.getDataList() ?? [],
+            lastAppliedOpenTimeMs,
+            authoritativeResetCandles,
+            dataLoadGeneration,
           );
-          lastAppliedOpenTimeMs.current =
-            event.candles.at(-1)?.openTimeMs ?? lastAppliedOpenTimeMs.current;
         }
       },
     )
@@ -979,6 +1028,7 @@ export function ProviderChart({
       session.instrument.id,
       session.timeframeId,
       pluginManagedRuntimeIds.current,
+      session.profileId,
     );
     pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
     for (const instanceId of pluginReconciliation.removedInstanceIds) {
@@ -993,6 +1043,7 @@ export function ProviderChart({
     installedIndicators,
     syncIndicator,
     disposeIndicator,
+    session.profileId,
     session.instrument.id,
     session.timeframeId,
   ]);

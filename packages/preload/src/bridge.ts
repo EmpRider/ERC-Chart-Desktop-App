@@ -2,15 +2,8 @@ import {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
-  indicatorRuntimeDisposeChannel,
-  indicatorRuntimeSyncChannel,
-  indicatorRuntimeUpdateChannel,
   indicatorsListChannel,
   isIndicatorImportPreviewResult,
-  isIndicatorRuntimeInstanceId,
-  isIndicatorRuntimeSnapshot,
-  isIndicatorRuntimeSyncRequest,
-  isIndicatorRuntimeUpdateRequest,
   isInstalledIndicatorList,
   isInstalledIndicatorSummary,
   isImportedProviderSession,
@@ -48,9 +41,6 @@ import {
   workspaceSaveChannel,
   type Candle,
   type IndicatorImportPreview,
-  type IndicatorRuntimeSnapshot,
-  type IndicatorRuntimeSyncRequest,
-  type IndicatorRuntimeUpdateRequest,
   type ImportedProviderSession,
   type InstalledIndicatorSummary,
   type ProviderHistoryLoadRequest,
@@ -89,13 +79,6 @@ export interface ErcChartBridge {
   ) => Promise<InstalledIndicatorSummary>;
   readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
   readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
-  readonly syncIndicator: (
-    request: IndicatorRuntimeSyncRequest,
-  ) => Promise<IndicatorRuntimeSnapshot>;
-  readonly updateIndicator: (
-    request: IndicatorRuntimeUpdateRequest,
-  ) => Promise<IndicatorRuntimeSnapshot>;
-  readonly disposeIndicator: (instanceId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -291,45 +274,6 @@ export function createErcChartBridge(
         return result;
       } catch {
         throw new Error("Installed indicators could not be loaded.");
-      }
-    },
-    syncIndicator: async (
-      request: IndicatorRuntimeSyncRequest,
-    ): Promise<IndicatorRuntimeSnapshot> => {
-      if (!isIndicatorRuntimeSyncRequest(request)) {
-        throw new Error("Indicator runtime request is invalid.");
-      }
-      try {
-        const result = await invoke(indicatorRuntimeSyncChannel, request);
-        if (!isIndicatorRuntimeSnapshot(result)) throw new Error();
-        return result;
-      } catch {
-        throw new Error("Indicator could not be initialized.");
-      }
-    },
-    updateIndicator: async (
-      request: IndicatorRuntimeUpdateRequest,
-    ): Promise<IndicatorRuntimeSnapshot> => {
-      if (!isIndicatorRuntimeUpdateRequest(request)) {
-        throw new Error("Indicator runtime update is invalid.");
-      }
-      try {
-        const result = await invoke(indicatorRuntimeUpdateChannel, request);
-        if (!isIndicatorRuntimeSnapshot(result)) throw new Error();
-        return result;
-      } catch {
-        throw new Error("Indicator could not be updated.");
-      }
-    },
-    disposeIndicator: async (instanceId: string): Promise<void> => {
-      if (!isIndicatorRuntimeInstanceId(instanceId)) {
-        throw new Error("Indicator instance is invalid.");
-      }
-      try {
-        const result = await invoke(indicatorRuntimeDisposeChannel, instanceId);
-        if (result !== true) throw new Error();
-      } catch {
-        throw new Error("Indicator instance could not be disposed.");
       }
     },
     listProviderProfiles: async (): Promise<ProviderManagementSnapshot> => {

@@ -100,13 +100,25 @@ export function createCanonicalCandleState(
     );
   }
 
-  const persistAndRetain = (key: CanonicalSeriesKey): void => {
-    const finalized = store.finalizedCandles(key);
+  const persistAndRetain = (
+    key: CanonicalSeriesKey,
+    finalized: readonly CanonicalCandle[],
+  ): void => {
     if (cache !== undefined && finalized.length > 0)
       cache.upsert(key, finalized);
     const trim = store.trimFinalized(key, maximumFinalizedBars);
     if (trim !== undefined) cache?.retain(key, maximumFinalizedBars);
   };
+
+  const changedFinalizedCandles = (
+    deltas: readonly CanonicalSeriesDelta[],
+  ): readonly CanonicalCandle[] =>
+    deltas.flatMap((delta) =>
+      (delta.kind === "bar-finalized" || delta.kind === "bar-revised") &&
+      delta.candle !== undefined
+        ? [delta.candle]
+        : [],
+    );
 
   const loadHistory = (
     key: CanonicalSeriesKey,
@@ -131,7 +143,7 @@ export function createCanonicalCandleState(
       }
     }
     const delta = store.replaceHistory(key, finalized, building);
-    persistAndRetain(key);
+    persistAndRetain(key, store.finalizedCandles(key));
     return Object.freeze([delta]);
   };
 
@@ -151,6 +163,8 @@ export function createCanonicalCandleState(
         latestFinalized !== undefined &&
         candle.openTimeMs <= latestFinalized.openTimeMs
       ) {
+        const revised = store.upsertFinalized(key, candle);
+        if (revised !== undefined) deltas.push(revised);
         continue;
       }
       const building = store.buildingCandle(key);
@@ -167,8 +181,8 @@ export function createCanonicalCandleState(
         if (updated !== undefined) deltas.push(updated);
       }
     }
-    if (deltas.some(({ kind }) => kind === "bar-finalized"))
-      persistAndRetain(key);
+    const changedFinalized = changedFinalizedCandles(deltas);
+    if (changedFinalized.length > 0) persistAndRetain(key, changedFinalized);
     return Object.freeze(deltas);
   };
 
@@ -202,8 +216,8 @@ export function createCanonicalCandleState(
       );
       if (updated !== undefined) deltas.push(updated);
     }
-    if (deltas.some(({ kind }) => kind === "bar-finalized"))
-      persistAndRetain(key);
+    const changedFinalized = changedFinalizedCandles(deltas);
+    if (changedFinalized.length > 0) persistAndRetain(key, changedFinalized);
     return Object.freeze(deltas);
   };
 

@@ -1,39 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createIndicatorRuntimeHost } from "@erc-chart/indicator-runtime";
-import { getPlugin, openStorageDatabase } from "@erc-chart/storage";
+import { isInstalledIndicatorSummary } from "@erc-chart/contracts";
+import { getPlugin, openStorageDatabase, putPlugin } from "@erc-chart/storage";
 import { createIndicatorImportService } from "../dist/indicator-import-service.js";
 import { buildAtrRopeUtBotIndicatorPackage } from "../../../tools/build-atr-rope-utbot-indicator.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 
-function candles(count = 120) {
-  return Array.from({ length: count }, (_, index) => {
-    const base = 100 + Math.sin(index / 5) * 2 + index * 0.01;
-    return {
-      instrumentId: "fixture.instrument",
-      timeframeId: "1m",
-      openTimeMs: 1_810_000_000_000 + index * 60_000,
-      open: base - 0.2,
-      high: base + 0.5,
-      low: base - 0.5,
-      close: base + 0.2,
-      volume: 1_000 + index,
-    };
-  });
-}
-
-test("previews, installs, lists and executes an indicator package", async () => {
+test("previews, installs and lists an indicator package without executing it in Electron main", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-indicator-import-"));
   const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
-  const runtimeHost = createIndicatorRuntimeHost();
   const service = createIndicatorImportService({
     database,
-    runtimeHost,
     stagingRoot: path.join(root, "staging"),
     installationRoot: path.join(root, "installed"),
     createRequestId: () => "indicator-request-1",
@@ -60,26 +42,64 @@ test("previews, installs, lists and executes an indicator package", async () => 
 
     const installed = await service.approve(preview.requestId);
     assert.equal(installed.pluginId, preview.pluginId);
+    assert.equal(isInstalledIndicatorSummary(installed), true);
+    assert.match(installed.runtimeEntryUrl, /^erc-plugin:\/\/plugin\//u);
     assert.equal(
       getPlugin(database, installed.pluginId, installed.version)?.status,
       "active",
     );
     assert.deepEqual(await service.list(), [installed]);
-
-    const snapshot = runtimeHost.sync({
-      instanceId: "imported-indicator",
-      pluginId: installed.pluginId,
-      definitionId: installed.definition.id,
-      instrumentId: "fixture.instrument",
-      timeframeId: "1m",
-      parameters: {},
-      candles: candles(),
-    });
-    assert.equal(snapshot.points.length, 120);
-    assert.ok(
-      snapshot.points.some((point) =>
-        Object.values(point.values).some((value) => typeof value === "number"),
+    await access(
+      path.join(
+        root,
+        "installed",
+        installed.pluginId,
+        installed.version,
+        "dist",
+        "index.js",
       ),
+    );
+  } finally {
+    await service.shutdown();
+    database.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("quarantines an active legacy indicator that has no manifest definition", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-indicator-legacy-"));
+  const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
+  const service = createIndicatorImportService({
+    database,
+    stagingRoot: path.join(root, "staging"),
+    installationRoot: path.join(root, "installed"),
+  });
+  try {
+    putPlugin(database, {
+      pluginId: "erc.indicator.legacy",
+      version: "0.1.0",
+      kind: "indicator",
+      trust: "unsigned",
+      status: "active",
+      manifest: {
+        manifestVersion: 1,
+        id: "erc.indicator.legacy",
+        kind: "indicator",
+        name: "Legacy Indicator",
+        version: "0.1.0",
+        apiVersion: "^1.0.0",
+        entry: "dist/index.js",
+        authoringLanguage: "typescript",
+        permissions: { network: [], credentials: [], storage: [] },
+      },
+      integrityHash: `sha256:${"a".repeat(64)}`,
+      permissions: [],
+    });
+
+    assert.deepEqual(await service.list(), []);
+    assert.equal(
+      getPlugin(database, "erc.indicator.legacy", "0.1.0")?.status,
+      "incompatible",
     );
   } finally {
     await service.shutdown();

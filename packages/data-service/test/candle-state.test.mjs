@@ -89,3 +89,78 @@ test("treats duplicate live candles as no-op revisions", () => {
   assert.deepEqual(state.applyCandles(key, [candle(60_000, 11)], 90_000), []);
   assert.equal(state.snapshot(key).revision, before);
 });
+
+test("persists only changed finalized candles and retains incremental history", () => {
+  const upserts = [];
+  const retains = [];
+  const cache = {
+    newest: () => [],
+    range: () => [],
+    upsert: (_key, candles) => {
+      upserts.push(
+        candles.map(({ openTimeMs, close, revision }) => ({
+          openTimeMs,
+          close,
+          revision,
+        })),
+      );
+      return candles.length;
+    },
+    retain: (_key, maximumBars) => {
+      retains.push(maximumBars);
+      return 0;
+    },
+  };
+  const state = createCanonicalCandleState({
+    cache,
+    maximumFinalizedBars: 2,
+  });
+
+  state.loadHistory(
+    key,
+    [
+      candle(0, 10),
+      candle(60_000, 11),
+      candle(120_000, 12),
+      candle(180_000, 13),
+    ],
+    210_000,
+  );
+  assert.equal(upserts[0].length, 3);
+  assert.deepEqual(retains, [2]);
+  upserts.length = 0;
+  retains.length = 0;
+
+  const revisionDeltas = state.applyCandles(key, [candle(60_000, 99)], 210_000);
+  assert.deepEqual(
+    revisionDeltas.map(({ kind }) => kind),
+    ["bar-revised"],
+  );
+  assert.deepEqual(
+    upserts.map((batch) =>
+      batch.map(({ openTimeMs, close }) => ({ openTimeMs, close })),
+    ),
+    [[{ openTimeMs: 60_000, close: 99 }]],
+  );
+  assert.deepEqual(retains, []);
+
+  upserts.length = 0;
+  const rolloverDeltas = state.applyCandles(
+    key,
+    [candle(240_000, 14)],
+    250_000,
+  );
+  assert.deepEqual(
+    rolloverDeltas.map(({ kind }) => kind),
+    ["bar-finalized", "building-updated"],
+  );
+  assert.deepEqual(
+    upserts.map((batch) => batch.map(({ openTimeMs }) => openTimeMs)),
+    [[180_000]],
+  );
+  assert.deepEqual(retains, [2]);
+  assert.deepEqual(
+    state.finalizedCandles(key).map(({ openTimeMs }) => openTimeMs),
+    [120_000, 180_000],
+  );
+});

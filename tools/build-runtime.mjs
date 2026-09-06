@@ -44,6 +44,17 @@ export async function buildRuntime({ root, outputRoot }) {
     target: "chrome150",
     logLevel: "silent",
   });
+  await build({
+    entryPoints: [
+      path.join(root, "packages/indicator-runtime/src/worker-entry.ts"),
+    ],
+    outfile: path.join(outputRoot, "indicator-worker.js"),
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "chrome150",
+    logLevel: "silent",
+  });
 
   await Promise.all(
     ["index.html", "styles.css"].map((fileName) =>

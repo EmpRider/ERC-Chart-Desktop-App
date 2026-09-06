@@ -44,6 +44,7 @@ export interface CanonicalSeriesDelta {
   readonly generation: number;
   readonly revision: number;
   readonly candle?: CanonicalCandle;
+  readonly dirtyFromOpenTimeMs?: number;
 }
 
 export interface CanonicalSeriesStore {
@@ -464,6 +465,10 @@ export function createCanonicalSeriesStore(): CanonicalSeriesStore {
   ): CanonicalSeriesDelta | undefined => {
     const state = stateFor(inputKey);
     const candle = normalizedForKey(state.key, inputCandle);
+    const previousLatest = state.finalized.get(
+      state.finalized.length - 1,
+      state.key,
+    );
     const existing = state.finalized.getByOpenTime(
       candle.openTimeMs,
       state.key,
@@ -479,11 +484,18 @@ export function createCanonicalSeriesStore(): CanonicalSeriesStore {
     if (state.building?.openTimeMs === candle.openTimeMs)
       state.building = undefined;
     const canonical = canonicalCandle(state.key, candle, revision, true);
+    const dirtyFromOpenTimeMs =
+      outcome === "revised" ||
+      (previousLatest !== undefined &&
+        candle.openTimeMs < previousLatest.openTimeMs)
+        ? candle.openTimeMs
+        : undefined;
     return Object.freeze({
       kind: outcome === "revised" ? "bar-revised" : "bar-finalized",
       generation: state.generation,
       revision,
       candle: canonical,
+      ...(dirtyFromOpenTimeMs === undefined ? {} : { dirtyFromOpenTimeMs }),
     });
   };
 

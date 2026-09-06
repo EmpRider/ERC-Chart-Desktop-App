@@ -1,6 +1,6 @@
 {
   "name": "erc-chart-desktop-app",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "type": "module",
   "description": "ERC Chart Windows desktop charting application monorepo",
@@ -26,6 +26,7 @@
     "build:atr-rope-utbot-indicator": "npm run build && node tools/build-atr-rope-utbot-indicator.mjs",
     "start": "npm run build:runtime && electron apps/desktop/dist/main.js",
     "smoke:electron": "npm run build:runtime && node tools/electron-smoke.mjs",
+    "smoke:indicator-worker": "npm run build:runtime && node tools/electron-indicator-worker-smoke.mjs",
     "smoke:workspace-restart": "npm run build:runtime && node tools/electron-workspace-restart.mjs",
     "smoke:multi-instance": "npm run build:runtime && node tools/electron-multi-instance.mjs",
     "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",

@@ -90,12 +90,13 @@ export function createProviderLiveSubscriptionManager(
               request.timeframeId as ProviderSubscriptionRequest["timeframeId"],
           },
           {
-            onCandles: (candles): void => {
+            onCandles: (candles, series): void => {
               if (closed || sink.isClosed()) return;
               sink.send({
                 subscriptionId: request.subscriptionId,
                 type: "candles",
                 candles,
+                series,
               });
             },
             onTicks: (): void => undefined,

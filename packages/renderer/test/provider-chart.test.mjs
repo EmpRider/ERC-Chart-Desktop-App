@@ -2,12 +2,65 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { updateChartData } from "../dist/index.js";
 import {
+  applyProviderSeriesUpdate,
   applyProviderChartType,
   groupIndicatorSettingsFields,
   loadKLineHistoryPage,
   queueIndicatorSettingsDraftChange,
   toHeikinAshiData,
 } from "../dist/provider-chart.js";
+
+test("reloads authoritative canonical candles for rebuild series changes", () => {
+  const updates = [];
+  const resets = [];
+  const chart = {
+    getDataList: () => [
+      { timestamp: 60_000, open: 1, high: 2, low: 0, close: 1 },
+    ],
+    resetData: () => resets.push(true),
+  };
+  const lastAppliedOpenTimeMs = { current: 60_000 };
+  const authoritativeResetCandles = { current: undefined };
+  const dataLoadGeneration = { current: 4 };
+  const candles = [
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 0,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 60_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+
+  applyProviderSeriesUpdate(
+    chart,
+    (data) => updates.push(data),
+    candles,
+    { generation: 2, revision: 8, kind: "rebuild", dirtyFromOpenTimeMs: 0 },
+    "candlestick",
+    lastAppliedOpenTimeMs,
+    authoritativeResetCandles,
+    dataLoadGeneration,
+  );
+
+  assert.deepEqual(updates, []);
+  assert.deepEqual(resets, [true]);
+  assert.deepEqual(authoritativeResetCandles.current, candles);
+  assert.notEqual(authoritativeResetCandles.current, candles);
+  assert.equal(lastAppliedOpenTimeMs.current, 60_000);
+  assert.equal(dataLoadGeneration.current, 5);
+});
 
 test("groups indicator settings into Inputs and Style while preserving group order", () => {
   const fields = [

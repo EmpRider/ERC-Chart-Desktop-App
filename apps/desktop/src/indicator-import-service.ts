@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
+  isInstalledIndicatorDefinition,
   isPluginManifest,
   type IndicatorImportPreview,
   type InstalledIndicatorSummary,
+  type PluginManifest,
 } from "@erc-chart/contracts";
-import type { IndicatorRuntimeHost } from "@erc-chart/indicator-runtime";
-import { createIndicatorRuntimeHost } from "@erc-chart/indicator-runtime";
 import {
   discardStagedPlugin,
   installStagedPlugin,
@@ -27,7 +26,6 @@ import {
 
 export interface IndicatorImportServiceOptions {
   readonly database: DatabaseSync;
-  readonly runtimeHost: IndicatorRuntimeHost;
   readonly stagingRoot: string;
   readonly installationRoot: string;
   readonly createRequestId?: () => string;
@@ -83,24 +81,49 @@ function toSummary(
   pluginId: string,
   pluginName: string,
   version: string,
+  entry: string,
   definition: IndicatorImportPreview["definition"],
 ): InstalledIndicatorSummary {
-  return { pluginId, pluginName, version, definition };
+  const runtimeEntryUrl = [
+    "erc-plugin://plugin",
+    encodeURIComponent(pluginId),
+    encodeURIComponent(version),
+    ...entry.split("/").map((part) => encodeURIComponent(part)),
+  ].join("/");
+  return { pluginId, pluginName, version, runtimeEntryUrl, definition };
 }
 
-async function inspectStagedIndicator(
-  staged: StagedPluginPackage,
-): Promise<IndicatorImportPreview["definition"]> {
-  const inspector = createIndicatorRuntimeHost();
-  try {
-    const loaded = await inspector.loadPlugin({
-      installationPath: staged.stagingPath,
-      manifest: staged.manifest,
-    });
-    return loaded.definition;
-  } finally {
-    inspector.dispose();
+function indicatorDefinitionFromManifest(
+  manifest: PluginManifest,
+): IndicatorImportPreview["definition"] {
+  const definition = manifest.capabilities?.indicatorDefinition;
+  if (!isInstalledIndicatorDefinition(definition)) {
+    throw new Error(
+      "Indicator manifest must declare capabilities.indicatorDefinition using the supported indicator definition contract.",
+    );
   }
+  if (!definition.id.startsWith(`${manifest.id}.`)) {
+    throw new Error(
+      "Indicator definition does not belong to the plugin manifest.",
+    );
+  }
+  return definition;
+}
+
+function markIndicatorIncompatible(
+  database: DatabaseSync,
+  entry: ReturnType<typeof listPlugins>[number],
+): void {
+  putPlugin(database, {
+    pluginId: entry.pluginId,
+    version: entry.version,
+    kind: entry.kind,
+    trust: entry.trust,
+    status: "incompatible",
+    manifest: entry.manifest,
+    integrityHash: entry.integrityHash,
+    permissions: entry.permissions,
+  });
 }
 
 export function createIndicatorImportService(
@@ -113,40 +136,27 @@ export function createIndicatorImportService(
     const registry = listPlugins(options.database).filter(
       (entry) => entry.kind === "indicator" && entry.status === "active",
     );
-    const activeIds = new Set(registry.map((entry) => entry.pluginId));
-    for (const loaded of options.runtimeHost.listPlugins()) {
-      if (!activeIds.has(loaded.pluginId)) {
-        options.runtimeHost.unloadPlugin(loaded.pluginId);
-      }
-    }
     const summaries: InstalledIndicatorSummary[] = [];
     for (const entry of registry) {
       const manifest = entry.manifest;
-      if (!isPluginManifest(manifest) || manifest.kind !== "indicator")
+      if (!isPluginManifest(manifest) || manifest.kind !== "indicator") {
+        markIndicatorIncompatible(options.database, entry);
         continue;
-      let loaded = options.runtimeHost
-        .listPlugins()
-        .find(
-          (plugin) =>
-            plugin.pluginId === entry.pluginId &&
-            plugin.version === entry.version,
-        );
-      if (loaded === undefined) {
-        loaded = await options.runtimeHost.loadPlugin({
-          installationPath: path.join(
-            options.installationRoot,
-            entry.pluginId,
-            entry.version,
-          ),
-          manifest,
-        });
+      }
+      let definition: IndicatorImportPreview["definition"];
+      try {
+        definition = indicatorDefinitionFromManifest(manifest);
+      } catch {
+        markIndicatorIncompatible(options.database, entry);
+        continue;
       }
       summaries.push(
         toSummary(
           entry.pluginId,
           manifest.name,
           entry.version,
-          loaded.definition,
+          manifest.entry,
+          definition,
         ),
       );
     }
@@ -165,7 +175,7 @@ export function createIndicatorImportService(
         throw new Error("Selected package is not an indicator plugin.");
       }
       assertIndicatorPermissions(staged);
-      const definition = await inspectStagedIndicator(staged);
+      const definition = indicatorDefinitionFromManifest(staged.manifest);
       const requestId = requireRequestId(createRequestId());
       if (pending.has(requestId)) {
         throw new Error("Indicator import request ID collided.");
@@ -222,21 +232,15 @@ export function createIndicatorImportService(
         permissions: registryPermissions(staged),
       });
       registryCreated = true;
-      const loaded = await options.runtimeHost.loadPlugin({
-        installationPath: installed.installationPath,
-        manifest: installed.manifest,
-      });
       activatePlugin(options.database, installed.pluginId, installed.version);
       return toSummary(
         installed.pluginId,
         installed.manifest.name,
         installed.version,
-        loaded.definition,
+        installed.manifest.entry,
+        request.definition,
       );
     } catch (error) {
-      if (installed !== undefined) {
-        options.runtimeHost.unloadPlugin(installed.pluginId);
-      }
       if (registryCreated && installed !== undefined) {
         try {
           disablePlugin(
@@ -275,7 +279,6 @@ export function createIndicatorImportService(
       const staged = [...pending.values()].map((request) => request.staged);
       pending.clear();
       await Promise.all(staged.map((item) => discardStagedPlugin(item)));
-      options.runtimeHost.dispose();
     },
   };
 }

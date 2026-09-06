@@ -186,6 +186,7 @@ test("validates provider live subscription requests and candle events", () => {
       subscriptionId: subscriptionRequest.subscriptionId,
       type: "candles",
       candles: [candle],
+      series: { generation: 1, revision: 2, kind: "incremental" },
     }),
     true,
   );
@@ -202,6 +203,7 @@ test("validates provider live subscription requests and candle events", () => {
       subscriptionId: subscriptionRequest.subscriptionId,
       type: "candles",
       candles: [{ ...candle, close: Number.NaN }],
+      series: { generation: 1, revision: 2, kind: "incremental" },
     }),
     false,
   );

@@ -1,12 +1,23 @@
 import {
   indicatorContractVersion,
   indicatorHostVersion,
+  candlesWithPriceSource,
+  inputOptions,
+  movingAverageTypes,
+  priceSeries,
+  priceSources,
+  ta,
   type Candle,
+  type CandleTaKernel,
   type IndicatorDefinition,
   type IndicatorInputValue,
   type IndicatorInstanceContext,
   type IndicatorPluginModule,
   type IndicatorSnapshot,
+  type DmiSeries,
+  type MovingAverageType,
+  type NumericTaKernel,
+  type PriceSource,
   type RuntimeIndicatorInstance,
   type SignalCandidate,
 } from "@erc-chart/indicator-sdk";
@@ -14,15 +25,6 @@ import {
 const pluginId = "erc.indicator.atr-rope-utbot";
 const definitionId = `${pluginId}.unified`;
 
-const priceSources = [
-  "close",
-  "open",
-  "high",
-  "low",
-  "hl2",
-  "hlc3",
-  "ohlc4",
-] as const;
 const ropeModes = [
   "original",
   "partial",
@@ -31,28 +33,6 @@ const ropeModes = [
   "ema",
   "adaptive",
   "zerolag",
-] as const;
-const directionMaTypes = [
-  "sma",
-  "ema",
-  "wma",
-  "rma",
-  "smma",
-  "arma",
-  "a2rma",
-  "dema",
-  "tema",
-  "zlema",
-  "hma",
-  "kama",
-  "t3",
-  "vidya",
-  "mcginley",
-  "jma",
-  "lsma",
-  "tma",
-  "swma",
-  "alma",
 ] as const;
 const utModes = ["original", "0lag"] as const;
 const signalModes = [
@@ -71,9 +51,8 @@ const suppressionModes = [
 const drawModes = ["Line + Band", "Line", "Band"] as const;
 const bandMergeModes = ["Inside Band", "Band Overlap"] as const;
 
-type PriceSource = (typeof priceSources)[number];
 type RopeMode = (typeof ropeModes)[number];
-type DirectionMaType = (typeof directionMaTypes)[number];
+type DirectionMaType = MovingAverageType;
 type UtMode = (typeof utModes)[number];
 type SignalMode = (typeof signalModes)[number];
 type SuppressionMode = (typeof suppressionModes)[number];
@@ -146,12 +125,6 @@ interface UtResult {
   readonly position: number[];
 }
 
-interface DmiResult {
-  readonly adx: number[];
-  readonly plusDI: number[];
-  readonly minusDI: number[];
-}
-
 interface PocCandidate {
   readonly barIndex: number;
   readonly center: number;
@@ -163,6 +136,7 @@ interface PocCandidate {
   readonly velocity: number;
   readonly scoreLookup: readonly {
     readonly center: number;
+    readonly score: number;
     readonly projectedScore: number;
   }[];
 }
@@ -200,12 +174,34 @@ interface SuppressionBand {
 
 interface CalculationResult extends IndicatorSnapshot {
   readonly finalizedBarIndex: number;
+  readonly pocZones: readonly PocZone[];
 }
 
-function options(
-  values: readonly string[],
-): readonly { readonly value: string; readonly label: string }[] {
-  return values.map((value) => ({ value, label: value }));
+interface RopePoint {
+  readonly rope: number;
+  readonly upper: number;
+  readonly lower: number;
+  readonly directionUpper: number;
+  readonly directionLower: number;
+  readonly direction: number;
+}
+
+interface UtPoint {
+  readonly stop: number;
+  readonly position: number;
+}
+
+interface LiveTailState {
+  readonly ropeAtr: CandleTaKernel<number>;
+  readonly directionMa: NumericTaKernel;
+  readonly utAtr: CandleTaKernel<number>;
+  finalizedCount: number;
+  previousRope: number;
+  bandAtr: number;
+  previousAtr: number;
+  previousUtStop: number;
+  previousUtPosition: number;
+  previousUtClose: number;
 }
 
 export const definition: IndicatorDefinition = {
@@ -247,7 +243,7 @@ export const definition: IndicatorDefinition = {
       group: "ATR Rope",
       type: "string",
       defaultValue: "close",
-      options: options(priceSources),
+      options: inputOptions(priceSources),
     },
     {
       key: "ropeSensitivityMode",
@@ -255,7 +251,7 @@ export const definition: IndicatorDefinition = {
       group: "ATR Rope",
       type: "string",
       defaultValue: "original",
-      options: options(ropeModes),
+      options: inputOptions(ropeModes),
     },
     {
       key: "ropeDirectionMaType",
@@ -263,7 +259,7 @@ export const definition: IndicatorDefinition = {
       group: "ATR Rope Direction",
       type: "string",
       defaultValue: "sma",
-      options: options(directionMaTypes),
+      options: inputOptions(movingAverageTypes),
     },
     {
       key: "ropeDirectionLookback",
@@ -311,7 +307,7 @@ export const definition: IndicatorDefinition = {
       group: "UT Bot",
       type: "string",
       defaultValue: "close",
-      options: options(priceSources),
+      options: inputOptions(priceSources),
     },
     {
       key: "utbotMode",
@@ -319,7 +315,7 @@ export const definition: IndicatorDefinition = {
       group: "UT Bot",
       type: "string",
       defaultValue: "original",
-      options: options(utModes),
+      options: inputOptions(utModes),
     },
     {
       key: "signalIssueMode",
@@ -327,7 +323,7 @@ export const definition: IndicatorDefinition = {
       group: "Signals",
       type: "string",
       defaultValue: "original",
-      options: options(signalModes),
+      options: inputOptions(signalModes),
     },
     {
       key: "mgStepCount",
@@ -363,7 +359,7 @@ export const definition: IndicatorDefinition = {
       group: "ADX POC",
       type: "string",
       defaultValue: "close",
-      options: options(priceSources),
+      options: inputOptions(priceSources),
     },
     {
       key: "profilePeriod",
@@ -521,7 +517,7 @@ export const definition: IndicatorDefinition = {
       group: "ADX POC Band",
       type: "string",
       defaultValue: "Inside Band",
-      options: options(bandMergeModes),
+      options: inputOptions(bandMergeModes),
     },
     {
       key: "maxBandExpansionRows",
@@ -539,7 +535,7 @@ export const definition: IndicatorDefinition = {
       group: "ADX POC Suppression",
       type: "string",
       defaultValue: "off",
-      options: options(suppressionModes),
+      options: inputOptions(suppressionModes),
     },
     {
       key: "drawMode",
@@ -547,7 +543,7 @@ export const definition: IndicatorDefinition = {
       group: "ADX POC Style",
       type: "string",
       defaultValue: "Line + Band",
-      options: options(drawModes),
+      options: inputOptions(drawModes),
       effect: "presentation",
     },
     {
@@ -867,451 +863,9 @@ function toParams(
   };
 }
 
-function price(candle: Candle, source: PriceSource): number {
-  switch (source) {
-    case "open":
-      return candle.open;
-    case "high":
-      return candle.high;
-    case "low":
-      return candle.low;
-    case "hl2":
-      return (candle.high + candle.low) / 2;
-    case "hlc3":
-      return (candle.high + candle.low + candle.close) / 3;
-    case "ohlc4":
-      return (candle.open + candle.high + candle.low + candle.close) / 4;
-    case "close":
-      return candle.close;
-  }
-}
-
-function sourceSeries(
-  candles: readonly Candle[],
-  source: PriceSource,
-): number[] {
-  return candles.map((candle) => price(candle, source));
-}
-
-function trueRange(candles: readonly Candle[]): number[] {
-  return candles.map((candle, index) => {
-    const previousClose =
-      index === 0 ? candle.close : (candles[index - 1]?.close ?? candle.close);
-    return Math.max(
-      candle.high - candle.low,
-      Math.abs(candle.high - previousClose),
-      Math.abs(candle.low - previousClose),
-    );
-  });
-}
-
-function sma(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  let sum = 0;
-  let invalid = 0;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index] ?? Number.NaN;
-    if (Number.isFinite(value)) sum += value;
-    else invalid += 1;
-    if (index >= period) {
-      const expired = values[index - period] ?? Number.NaN;
-      if (Number.isFinite(expired)) sum -= expired;
-      else invalid -= 1;
-    }
-    if (index >= period - 1 && invalid === 0) result[index] = sum / period;
-  }
-  return result;
-}
-
-function ema(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const seed = sma(values, period);
-  const alpha = 2 / (period + 1);
-  let previous = Number.NaN;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index] ?? Number.NaN;
-    if (!Number.isFinite(previous)) {
-      if (Number.isFinite(seed[index])) {
-        previous = seed[index] as number;
-        result[index] = previous;
-      }
-      continue;
-    }
-    if (!Number.isFinite(value)) continue;
-    previous = alpha * value + (1 - alpha) * previous;
-    result[index] = previous;
-  }
-  return result;
-}
-
-function rma(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const seed = sma(values, period);
-  let previous = Number.NaN;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index] ?? Number.NaN;
-    if (!Number.isFinite(previous)) {
-      if (Number.isFinite(seed[index])) {
-        previous = seed[index] as number;
-        result[index] = previous;
-      }
-      continue;
-    }
-    if (!Number.isFinite(value)) continue;
-    previous = (previous * (period - 1) + value) / period;
-    result[index] = previous;
-  }
-  return result;
-}
-
-function wma(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const denominator = (period * (period + 1)) / 2;
-  for (let index = period - 1; index < values.length; index += 1) {
-    let weighted = 0;
-    let valid = true;
-    for (let offset = 0; offset < period; offset += 1) {
-      const value = values[index - period + 1 + offset] ?? Number.NaN;
-      if (!Number.isFinite(value)) {
-        valid = false;
-        break;
-      }
-      weighted += value * (offset + 1);
-    }
-    if (valid) result[index] = weighted / denominator;
-  }
-  return result;
-}
-
-function combine(
-  length: number,
-  callback: (index: number) => number,
-): number[] {
-  return Array.from({ length }, (_, index) => callback(index));
-}
-
-function movingAverage(
-  values: readonly number[],
-  type: DirectionMaType,
-  period: number,
-): number[] {
-  switch (type) {
-    case "sma":
-      return sma(values, period);
-    case "ema":
-      return ema(values, period);
-    case "wma":
-      return wma(values, period);
-    case "rma":
-    case "smma":
-      return rma(values, period);
-    case "dema": {
-      const first = ema(values, period);
-      const second = ema(first, period);
-      return combine(
-        values.length,
-        (index) =>
-          2 * (first[index] ?? Number.NaN) - (second[index] ?? Number.NaN),
-      );
-    }
-    case "tema": {
-      const first = ema(values, period);
-      const second = ema(first, period);
-      const third = ema(second, period);
-      return combine(
-        values.length,
-        (index) =>
-          3 * (first[index] ?? Number.NaN) -
-          3 * (second[index] ?? Number.NaN) +
-          (third[index] ?? Number.NaN),
-      );
-    }
-    case "zlema": {
-      const lag = Math.floor((period - 1) / 2);
-      const adjusted = values.map((value, index) => {
-        if (lag === 0 || index < lag) return value;
-        const lagged = values[index - lag] ?? value;
-        return value + (value - lagged);
-      });
-      return ema(adjusted, period);
-    }
-    case "hma": {
-      const half = wma(values, Math.max(1, Math.floor(period / 2)));
-      const full = wma(values, period);
-      const diff = combine(
-        values.length,
-        (index) =>
-          2 * (half[index] ?? Number.NaN) - (full[index] ?? Number.NaN),
-      );
-      return wma(diff, Math.max(1, Math.floor(Math.sqrt(period))));
-    }
-    case "tma":
-      return sma(
-        sma(values, Math.ceil((period + 1) / 2)),
-        Math.floor((period + 1) / 2),
-      );
-    case "t3": {
-      const e1 = ema(values, period);
-      const e2 = ema(e1, period);
-      const e3 = ema(e2, period);
-      const e4 = ema(e3, period);
-      const e5 = ema(e4, period);
-      const e6 = ema(e5, period);
-      const factor = 0.7;
-      const c1 = -(factor ** 3);
-      const c2 = 3 * factor ** 2 + 3 * factor ** 3;
-      const c3 = -6 * factor ** 2 - 3 * factor - 3 * factor ** 3;
-      const c4 = 1 + 3 * factor + factor ** 3 + 3 * factor ** 2;
-      return combine(
-        values.length,
-        (index) =>
-          c1 * (e6[index] ?? Number.NaN) +
-          c2 * (e5[index] ?? Number.NaN) +
-          c3 * (e4[index] ?? Number.NaN) +
-          c4 * (e3[index] ?? Number.NaN),
-      );
-    }
-    case "kama":
-      return adaptiveKama(values, period);
-    case "vidya":
-      return adaptiveVidya(values, period);
-    case "mcginley":
-      return mcGinley(values, period);
-    case "jma":
-      return jurikApproximation(values, period);
-    case "lsma":
-      return leastSquaresMa(values, period);
-    case "swma":
-      return swma(values, period);
-    case "alma":
-      return alma(values, period);
-    case "arma": {
-      const basis = ema(values, period);
-      const result = Array<number>(values.length).fill(Number.NaN);
-      let previous = Number.NaN;
-      for (let index = 0; index < values.length; index += 1) {
-        const current = basis[index] ?? Number.NaN;
-        if (!Number.isFinite(current)) continue;
-        previous = Number.isFinite(previous)
-          ? previous + (current - previous) / 3
-          : current;
-        result[index] = previous;
-      }
-      return result;
-    }
-    case "a2rma":
-      return a2rma(values, period);
-  }
-}
-
-function adaptiveKama(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  let previous = Number.NaN;
-  for (let index = period; index < values.length; index += 1) {
-    const current = values[index] ?? Number.NaN;
-    const old = values[index - period] ?? Number.NaN;
-    if (!Number.isFinite(current) || !Number.isFinite(old)) continue;
-    let volatility = 0;
-    for (let cursor = index - period + 1; cursor <= index; cursor += 1) {
-      const a = values[cursor] ?? Number.NaN;
-      const b = values[cursor - 1] ?? Number.NaN;
-      if (Number.isFinite(a) && Number.isFinite(b))
-        volatility += Math.abs(a - b);
-    }
-    const efficiency =
-      volatility > 0 ? Math.abs(current - old) / volatility : 0;
-    const smoothing = (efficiency * (2 / 3 - 2 / 31) + 2 / 31) ** 2;
-    const seed = sma(values.slice(0, index + 1), period)[index] ?? Number.NaN;
-    previous = Number.isFinite(previous) ? previous : seed;
-    if (!Number.isFinite(previous)) continue;
-    previous += smoothing * (current - previous);
-    result[index] = previous;
-  }
-  return result;
-}
-
-function adaptiveVidya(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  let previous = Number.NaN;
-  for (let index = period; index < values.length; index += 1) {
-    let up = 0;
-    let down = 0;
-    for (let cursor = index - period + 1; cursor <= index; cursor += 1) {
-      const change =
-        (values[cursor] ?? Number.NaN) - (values[cursor - 1] ?? Number.NaN);
-      if (!Number.isFinite(change)) continue;
-      if (change > 0) up += change;
-      else down -= change;
-    }
-    const current = values[index] ?? Number.NaN;
-    if (!Number.isFinite(current)) continue;
-    const cmo = up + down > 0 ? Math.abs((up - down) / (up + down)) : 0;
-    const alpha = (2 / (period + 1)) * cmo;
-    const seed = sma(values.slice(0, index + 1), period)[index] ?? Number.NaN;
-    previous = Number.isFinite(previous) ? previous : seed;
-    if (!Number.isFinite(previous)) continue;
-    previous = alpha * current + (1 - alpha) * previous;
-    result[index] = previous;
-  }
-  return result;
-}
-
-function mcGinley(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const seed = sma(values, period);
-  let previous = Number.NaN;
-  for (let index = 0; index < values.length; index += 1) {
-    const current = values[index] ?? Number.NaN;
-    if (!Number.isFinite(previous)) previous = seed[index] ?? Number.NaN;
-    if (!Number.isFinite(previous) || !Number.isFinite(current)) continue;
-    if (previous !== 0 && current !== 0) {
-      const denominator = period * (current / previous) ** 4;
-      if (
-        Number.isFinite(denominator) &&
-        Math.abs(denominator) > Number.EPSILON
-      ) {
-        previous += (current - previous) / denominator;
-      }
-    }
-    result[index] = previous;
-  }
-  return result;
-}
-
-function jurikApproximation(
-  values: readonly number[],
-  period: number,
-): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const betaDenominator = 0.45 * (period - 1) + 2;
-  const beta =
-    betaDenominator === 0 ? 0 : (0.45 * (period - 1)) / betaDenominator;
-  const alpha = beta ** 2;
-  let e0 = Number.NaN;
-  let e1 = 0;
-  let e2 = 0;
-  let previous = Number.NaN;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index] ?? Number.NaN;
-    if (!Number.isFinite(value)) continue;
-    e0 = (1 - alpha) * value + alpha * (Number.isFinite(e0) ? e0 : value);
-    e1 = (value - e0) * (1 - beta) + beta * e1;
-    const base = Number.isFinite(previous) ? previous : value;
-    e2 = (e0 + 0.5 * e1 - base) * (1 - alpha) ** 2 + alpha ** 2 * e2;
-    previous = base + e2;
-    result[index] = previous;
-  }
-  return result;
-}
-
-function leastSquaresMa(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const xSum = (period * (period - 1)) / 2;
-  const x2Sum = ((period - 1) * period * (2 * period - 1)) / 6;
-  const denominator = period * x2Sum - xSum * xSum;
-  for (let index = period - 1; index < values.length; index += 1) {
-    let ySum = 0;
-    let xySum = 0;
-    let valid = denominator !== 0;
-    for (let offset = 0; offset < period; offset += 1) {
-      const value = values[index - period + 1 + offset] ?? Number.NaN;
-      if (!Number.isFinite(value)) {
-        valid = false;
-        break;
-      }
-      ySum += value;
-      xySum += offset * value;
-    }
-    if (!valid) continue;
-    const slope = (period * xySum - xSum * ySum) / denominator;
-    result[index] = (ySum - slope * xSum) / period + slope * (period - 1);
-  }
-  return result;
-}
-
-function swma(values: readonly number[], period: number): number[] {
-  const length = Math.min(4, period);
-  const result = Array<number>(values.length).fill(Number.NaN);
-  for (let index = length - 1; index < values.length; index += 1) {
-    const window = values.slice(index - length + 1, index + 1);
-    if (!window.every(Number.isFinite)) continue;
-    result[index] =
-      length < 4
-        ? window.reduce((sum, value) => sum + value, 0) / length
-        : ((window[0] ?? 0) +
-            (window[3] ?? 0) +
-            2 * (window[1] ?? 0) +
-            2 * (window[2] ?? 0)) /
-          6;
-  }
-  return result;
-}
-
-function alma(values: readonly number[], period: number): number[] {
-  const result = Array<number>(values.length).fill(Number.NaN);
-  const m = 0.85 * (period - 1);
-  const sigma = period / 6;
-  for (let index = period - 1; index < values.length; index += 1) {
-    let sum = 0;
-    let norm = 0;
-    let valid = sigma > 0;
-    for (let offset = 0; offset < period; offset += 1) {
-      const value = values[index - period + 1 + offset] ?? Number.NaN;
-      if (!Number.isFinite(value)) {
-        valid = false;
-        break;
-      }
-      const weight = Math.exp(-((offset - m) ** 2) / (2 * sigma ** 2));
-      norm += weight;
-      sum += value * weight;
-    }
-    if (valid && norm > 0) result[index] = sum / norm;
-  }
-  return result;
-}
-
-function a2rma(values: readonly number[], period: number): number[] {
-  const raw = movingAverage(values, "arma", period);
-  const result = Array<number>(values.length).fill(Number.NaN);
-  let ama1 = Number.NaN;
-  let ama2 = Number.NaN;
-  for (let index = period; index < values.length; index += 1) {
-    const current = values[index] ?? Number.NaN;
-    const old = values[index - period] ?? Number.NaN;
-    const rawValue = raw[index] ?? Number.NaN;
-    if (
-      !Number.isFinite(current) ||
-      !Number.isFinite(old) ||
-      !Number.isFinite(rawValue)
-    )
-      continue;
-    let volatility = 0;
-    for (let cursor = index - period + 1; cursor <= index; cursor += 1) {
-      const a = values[cursor] ?? Number.NaN;
-      const b = values[cursor - 1] ?? Number.NaN;
-      if (Number.isFinite(a) && Number.isFinite(b))
-        volatility += Math.abs(a - b);
-    }
-    const efficiency =
-      volatility > 0 ? Math.abs(current - old) / volatility : 0;
-    ama1 = Number.isFinite(ama1)
-      ? efficiency * rawValue + (1 - efficiency) * ama1
-      : rawValue;
-    ama2 = Number.isFinite(ama2)
-      ? efficiency * ama1 + (1 - efficiency) * ama2
-      : ama1;
-    result[index] = ama2;
-  }
-  return result;
-}
-
-function atr(candles: readonly Candle[], period: number): number[] {
-  return rma(trueRange(candles), period);
-}
-
 function computeRope(candles: readonly Candle[], params: Params): RopeResult {
-  const source = sourceSeries(candles, params.ropeSource);
-  const atrValues = atr(candles, params.ropePeriod);
+  const source = priceSeries(candles, params.ropeSource);
+  const atrValues = ta.atr(candles, params.ropePeriod);
   const rope = Array<number>(candles.length).fill(Number.NaN);
   const upper = Array<number>(candles.length).fill(Number.NaN);
   const lower = Array<number>(candles.length).fill(Number.NaN);
@@ -1401,7 +955,7 @@ function computeRope(candles: readonly Candle[], params: Params): RopeResult {
   const directionInput = rope.map((value, index) =>
     index === 0 ? (source[0] ?? value) : (rope[index - 1] ?? value),
   );
-  const directionBase = movingAverage(
+  const directionBase = ta.movingAverage(
     directionInput,
     params.ropeDirectionMaType,
     params.ropeDirectionLookback,
@@ -1433,8 +987,8 @@ function computeRope(candles: readonly Candle[], params: Params): RopeResult {
 }
 
 function computeUtBot(candles: readonly Candle[], params: Params): UtResult {
-  const source = sourceSeries(candles, params.utbotSource);
-  const atrValues = atr(candles, params.utbotAtrPeriod);
+  const source = priceSeries(candles, params.utbotSource);
+  const atrValues = ta.atr(candles, params.utbotAtrPeriod);
   const stop = Array<number>(candles.length).fill(Number.NaN);
   const position = Array<number>(candles.length).fill(0);
   const lag = Math.floor((params.utbotAtrPeriod - 1) / 2);
@@ -1477,57 +1031,9 @@ function computeUtBot(candles: readonly Candle[], params: Params): UtResult {
   return { stop, position };
 }
 
-function computeDmi(candles: readonly Candle[], length: number): DmiResult {
-  const plusDm = Array<number>(candles.length).fill(Number.NaN);
-  const minusDm = Array<number>(candles.length).fill(Number.NaN);
-  plusDm[0] = 0;
-  minusDm[0] = 0;
-  for (let index = 1; index < candles.length; index += 1) {
-    const current = candles[index];
-    const previous = candles[index - 1];
-    if (current === undefined || previous === undefined) continue;
-    const upMove = current.high - previous.high;
-    const downMove = previous.low - current.low;
-    plusDm[index] = upMove > downMove && upMove > 0 ? upMove : 0;
-    minusDm[index] = downMove > upMove && downMove > 0 ? downMove : 0;
-  }
-  const smoothedPlus = rma(plusDm, length);
-  const smoothedMinus = rma(minusDm, length);
-  const smoothedTr = rma(trueRange(candles), length);
-  const plusDI = combine(candles.length, (index) => {
-    const denominator = smoothedTr[index] ?? Number.NaN;
-    const numerator = smoothedPlus[index] ?? Number.NaN;
-    return Number.isFinite(denominator) &&
-      denominator > Number.EPSILON &&
-      Number.isFinite(numerator)
-      ? (100 * numerator) / denominator
-      : Number.NaN;
-  });
-  const minusDI = combine(candles.length, (index) => {
-    const denominator = smoothedTr[index] ?? Number.NaN;
-    const numerator = smoothedMinus[index] ?? Number.NaN;
-    return Number.isFinite(denominator) &&
-      denominator > Number.EPSILON &&
-      Number.isFinite(numerator)
-      ? (100 * numerator) / denominator
-      : Number.NaN;
-  });
-  const dx = combine(candles.length, (index) => {
-    const plus = plusDI[index] ?? Number.NaN;
-    const minus = minusDI[index] ?? Number.NaN;
-    const sum = plus + minus;
-    return Number.isFinite(sum)
-      ? sum === 0
-        ? 0
-        : (100 * Math.abs(plus - minus)) / sum
-      : Number.NaN;
-  });
-  return { adx: rma(dx, length), plusDI, minusDI };
-}
-
 function projectedPocCandidate(
   candles: readonly Candle[],
-  dmi: DmiResult,
+  dmi: DmiSeries,
   params: Params,
   barIndex: number,
   previousScores: readonly {
@@ -1584,8 +1090,8 @@ function projectedPocCandidate(
         Math.floor((candle.high - low) / rowHeight),
       ),
     );
-    const bodyLow = Math.min(candle.open, price(candle, params.adxPocSource));
-    const bodyHigh = Math.max(candle.open, price(candle, params.adxPocSource));
+    const bodyLow = Math.min(candle.open, candle.close);
+    const bodyHigh = Math.max(candle.open, candle.close);
     const totalRows = Math.max(1, endRow - startRow + 1);
     const bodyRows: number[] = [];
     for (let row = startRow; row <= endRow; row += 1) {
@@ -1632,7 +1138,7 @@ function projectedPocCandidate(
     const projected = Math.max(0, row.score + velocity * params.projectionBars);
     if (best === undefined || projected > best.projected)
       best = { row: rowIndex, projected, previous };
-    return { center: row.center, projectedScore: projected };
+    return { center: row.center, score: row.score, projectedScore: projected };
   });
   if (best === undefined || best.projected <= 0) return undefined;
   const row = rows[best.row];
@@ -1651,14 +1157,40 @@ function projectedPocCandidate(
   };
 }
 
+function candidateMatchesBand(
+  candidate: PocCandidate,
+  band: Pick<PocCandidate, "center" | "bandLow" | "bandHigh">,
+  mode: BandMergeMode,
+): boolean {
+  return mode === "Band Overlap"
+    ? candidate.bandLow <= band.bandHigh && candidate.bandHigh >= band.bandLow
+    : candidate.center >= band.bandLow && candidate.center <= band.bandHigh;
+}
+
 function zoneMatches(
   candidate: PocCandidate,
   zone: PocZone,
   mode: BandMergeMode,
 ): boolean {
-  return mode === "Band Overlap"
-    ? candidate.bandLow <= zone.bandHigh && candidate.bandHigh >= zone.bandLow
-    : candidate.center >= zone.bandLow && candidate.center <= zone.bandHigh;
+  return candidateMatchesBand(candidate, zone, mode);
+}
+
+function zonePriority(zone: PocZone): number {
+  if (zone.activeRank === 0 && !zone.frozen) return 0;
+  if (zone.activeRank > 0 && !zone.frozen) return 1;
+  return 2;
+}
+
+function findMatchingZone(
+  candidate: PocCandidate,
+  zones: readonly PocZone[],
+  excluded: PocZone,
+  mode: BandMergeMode,
+): PocZone | undefined {
+  return [...zones]
+    .filter((zone) => zone !== excluded)
+    .sort((left, right) => zonePriority(left) - zonePriority(right))
+    .find((zone) => zoneMatches(candidate, zone, mode));
 }
 
 function buildPocZones(
@@ -1668,19 +1200,24 @@ function buildPocZones(
 ): PocZone[] {
   if (lastClosedIndex < Math.max(params.dmiLength, params.minEarlyBars) - 1)
     return [];
-  const dmi = computeDmi(candles, params.dmiLength);
+  const pocCandles = candlesWithPriceSource(candles, params.adxPocSource);
+  const dmi = ta.dmi(candles, params.dmiLength);
   const zones: PocZone[] = [];
   let current: PocZone | undefined;
   let previousScores: readonly {
     readonly center: number;
     readonly score: number;
   }[] = [];
-  let pendingCenter = Number.NaN;
-  let pendingHits = 0;
-  const startIndex = Math.max(params.minEarlyBars - 1, lastClosedIndex - 3_000);
+  let pendingMigration:
+    { readonly candidate: PocCandidate; readonly hitCount: number } | undefined;
+  const startIndex = Math.max(
+    0,
+    params.minEarlyBars - 1,
+    lastClosedIndex - 3_000,
+  );
   for (let barIndex = startIndex; barIndex <= lastClosedIndex; barIndex += 1) {
     const candidate = projectedPocCandidate(
-      candles,
+      pocCandles,
       dmi,
       params,
       barIndex,
@@ -1689,7 +1226,7 @@ function buildPocZones(
     if (candidate === undefined) continue;
     previousScores = candidate.scoreLookup.map((item) => ({
       center: item.center,
-      score: item.projectedScore,
+      score: item.score,
     }));
     if (current === undefined) {
       current = createZone(candidate);
@@ -1699,8 +1236,7 @@ function buildPocZones(
     }
     if (zoneMatches(candidate, current, params.bandMergeMode)) {
       updateZone(current, candidate, params);
-      pendingCenter = Number.NaN;
-      pendingHits = 0;
+      pendingMigration = undefined;
       rankZones(zones, current, barIndex, params.activeHistoricalPocCount);
       extendZones(zones, current, barIndex, params.activeHistoricalPocCount);
       continue;
@@ -1715,34 +1251,57 @@ function buildPocZones(
       candidate.velocity > 0 &&
       candidate.projectedScore > params.migrationStrength * comparison;
     if (migrate) {
+      const previousPending = pendingMigration;
       const samePending =
-        Number.isFinite(pendingCenter) &&
-        Math.abs(candidate.center - pendingCenter) <=
-          Math.max(candidate.rowHeight, Number.EPSILON);
-      pendingCenter = candidate.center;
-      pendingHits = samePending ? pendingHits + 1 : 1;
-      if (pendingHits >= params.migrationConfirmBars) {
-        current.frozen = true;
-        const matching = zones.find(
-          (zone) =>
-            zone !== current &&
-            zoneMatches(candidate, zone, params.bandMergeMode),
+        previousPending !== undefined &&
+        candidateMatchesBand(
+          candidate,
+          previousPending.candidate,
+          params.bandMergeMode,
         );
-        current = matching ?? createZone(candidate);
-        if (matching === undefined) zones.push(current);
-        updateZone(current, candidate, params);
-        pendingCenter = Number.NaN;
-        pendingHits = 0;
+      pendingMigration = samePending
+        ? {
+            candidate: {
+              ...candidate,
+              bandLow: Math.min(
+                previousPending.candidate.bandLow,
+                candidate.bandLow,
+              ),
+              bandHigh: Math.max(
+                previousPending.candidate.bandHigh,
+                candidate.bandHigh,
+              ),
+            },
+            hitCount: previousPending.hitCount + 1,
+          }
+        : { candidate, hitCount: 1 };
+      if (pendingMigration.hitCount >= params.migrationConfirmBars) {
+        current.frozen = true;
+        const matching = findMatchingZone(
+          candidate,
+          zones,
+          current,
+          params.bandMergeMode,
+        );
+        if (matching === undefined) {
+          current = createZone(candidate);
+          zones.push(current);
+        } else {
+          current = matching;
+          updateZone(current, candidate, params);
+        }
+        pendingMigration = undefined;
         rankZones(zones, current, barIndex, params.activeHistoricalPocCount);
       }
     } else {
-      pendingCenter = Number.NaN;
-      pendingHits = 0;
+      pendingMigration = undefined;
     }
     extendZones(zones, current, barIndex, params.activeHistoricalPocCount);
   }
   const active = zones.filter((zone) => !zone.frozen);
-  const frozen = zones.filter((zone) => zone.frozen);
+  const frozen = zones
+    .filter((zone) => zone.frozen)
+    .sort((left, right) => left.lastSeenIndex - right.lastSeenIndex);
   const keepFrozen = Math.max(0, params.maxStoredZones - active.length);
   return [...frozen.slice(-keepFrozen), ...active].sort(
     (left, right) => left.createdAt - right.createdAt,
@@ -2174,16 +1733,303 @@ function finiteOrNull(value: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function ropeTailStep(
+  state: LiveTailState,
+  candles: readonly Candle[],
+  index: number,
+  params: Params,
+  phase: "building" | "finalized",
+): RopePoint {
+  const candle = candles[index];
+  if (candle === undefined) {
+    return {
+      rope: Number.NaN,
+      upper: Number.NaN,
+      lower: Number.NaN,
+      directionUpper: Number.NaN,
+      directionLower: Number.NaN,
+      direction: 0,
+    };
+  }
+  const current = priceSeries([candle], params.ropeSource)[0] ?? Number.NaN;
+  const currentAtr = state.ropeAtr.update(candle, phase);
+  const previousRope = Number.isFinite(state.previousRope)
+    ? state.previousRope
+    : current;
+  const directionInput = index === 0 ? current : previousRope;
+  const directionBase = state.directionMa.update(directionInput, phase);
+  let ropeValue = previousRope;
+  let upper = Number.NaN;
+  let lower = Number.NaN;
+  let directionUpper = Number.NaN;
+  let directionLower = Number.NaN;
+  let direction = 0;
+  let nextBandAtr = state.bandAtr;
+
+  if (Number.isFinite(current)) {
+    if (!Number.isFinite(currentAtr)) {
+      ropeValue = current;
+    } else {
+      const threshold = Math.max(0, currentAtr * params.ropeMultiplier);
+      const move = current - previousRope;
+      const absMove = Math.abs(move);
+      const sign = Math.sign(move);
+      let amount = 0;
+      switch (params.ropeSensitivityMode) {
+        case "original":
+          amount = absMove > threshold ? (absMove - threshold) * sign : 0;
+          break;
+        case "partial":
+          amount =
+            absMove < threshold ? move * 0.4 : (absMove - threshold) * sign;
+          break;
+        case "reduced":
+          amount =
+            absMove > threshold * 0.5 ? (absMove - threshold * 0.5) * sign : 0;
+          break;
+        case "momentum": {
+          const old =
+            index >= 3
+              ? (priceSeries(
+                  [candles[index - 3] as Candle],
+                  params.ropeSource,
+                )[0] ?? current)
+              : current;
+          const momentum = Math.abs(current - old);
+          const denominator = threshold * 3;
+          const normalized =
+            denominator > Number.EPSILON ? momentum / denominator : 0;
+          const factor = 1 + Math.min(normalized, 1) * 0.5;
+          amount =
+            absMove < threshold
+              ? move * 0.3
+              : (absMove - threshold * 0.6) * sign * factor;
+          break;
+        }
+        case "ema":
+          amount =
+            absMove < threshold
+              ? move * 0.15
+              : (absMove - threshold * 0.7) * sign + move * 0.075;
+          break;
+        case "adaptive": {
+          const old =
+            index >= 5
+              ? (priceSeries(
+                  [candles[index - 5] as Candle],
+                  params.ropeSource,
+                )[0] ?? current)
+              : current;
+          const change = Math.abs(current - old);
+          const denominator = threshold * 5;
+          const normalized =
+            denominator > Number.EPSILON ? change / denominator : 0;
+          const adaptiveThreshold =
+            threshold * (1 - Math.min(normalized * 0.4, 0.6));
+          amount =
+            absMove > adaptiveThreshold
+              ? (absMove - adaptiveThreshold) * sign
+              : 0;
+          break;
+        }
+        case "zerolag": {
+          const lag = Math.floor((params.ropePeriod - 1) / 2);
+          const lagged =
+            lag === 0 || index < lag
+              ? current
+              : (priceSeries(
+                  [candles[index - lag] as Candle],
+                  params.ropeSource,
+                )[0] ?? current);
+          const zeroLag = lag === 0 ? current : current + (current - lagged);
+          const lagMove = zeroLag - previousRope;
+          const magnitude = Math.abs(lagMove);
+          amount =
+            magnitude > threshold
+              ? (magnitude - threshold) * Math.sign(lagMove)
+              : 0;
+          break;
+        }
+      }
+      ropeValue = previousRope + (Number.isFinite(amount) ? amount : 0);
+      upper = ropeValue + threshold;
+      lower = ropeValue - threshold;
+      if (Number.isFinite(directionBase)) {
+        const bandAtr = Number.isFinite(state.bandAtr)
+          ? state.bandAtr
+          : currentAtr;
+        const band = bandAtr * params.ropeDirectionThreshold;
+        directionUpper = directionBase + band;
+        directionLower = directionBase - band;
+        direction =
+          ropeValue > directionUpper ? 1 : ropeValue < directionLower ? -1 : 0;
+        nextBandAtr = direction === 0 ? currentAtr : bandAtr;
+      }
+    }
+  }
+
+  if (phase === "finalized") {
+    state.previousRope = ropeValue;
+    state.previousAtr = currentAtr;
+    if (Number.isFinite(nextBandAtr)) state.bandAtr = nextBandAtr;
+    state.finalizedCount = Math.max(state.finalizedCount, index + 1);
+  }
+  return {
+    rope: ropeValue,
+    upper,
+    lower,
+    directionUpper,
+    directionLower,
+    direction,
+  };
+}
+
+function utTailStep(
+  state: LiveTailState,
+  candles: readonly Candle[],
+  index: number,
+  params: Params,
+  phase: "building" | "finalized",
+): UtPoint {
+  const candle = candles[index];
+  if (candle === undefined) return { stop: Number.NaN, position: 0 };
+  const raw = priceSeries([candle], params.utbotSource)[0] ?? Number.NaN;
+  const lag = Math.floor((params.utbotAtrPeriod - 1) / 2);
+  const lagged =
+    lag === 0 || index < lag
+      ? raw
+      : (priceSeries([candles[index - lag] as Candle], params.utbotSource)[0] ??
+        raw);
+  const current =
+    params.utbotMode === "0lag" && lag > 0 ? raw + (raw - lagged) : raw;
+  const currentAtr = state.utAtr.update(candle, phase);
+  if (!Number.isFinite(current) || !Number.isFinite(currentAtr)) {
+    if (phase === "finalized" && Number.isFinite(current)) {
+      state.previousUtClose = current;
+      state.finalizedCount = Math.max(state.finalizedCount, index + 1);
+    }
+    return { stop: Number.NaN, position: state.previousUtPosition };
+  }
+  const loss = Math.max(0, currentAtr * params.utbotKeyValue);
+  const previousClose = Number.isFinite(state.previousUtClose)
+    ? state.previousUtClose
+    : current;
+  const previousStop = state.previousUtStop;
+  const stopPrev = Number.isFinite(previousStop)
+    ? previousStop
+    : current - loss;
+  let stop: number;
+  if (!Number.isFinite(previousStop)) stop = current - loss;
+  else if (current > previousStop && previousClose > previousStop) {
+    stop = Math.max(previousStop, current - loss);
+  } else if (current < previousStop && previousClose < previousStop) {
+    stop = Math.min(previousStop, current + loss);
+  } else {
+    stop = current > previousStop ? current - loss : current + loss;
+  }
+  let position = state.previousUtPosition;
+  if (index > 0 && Number.isFinite(stopPrev)) {
+    if (previousClose < stopPrev && current > stopPrev) position = 1;
+    else if (previousClose > stopPrev && current < stopPrev) position = -1;
+  }
+  if (phase === "finalized") {
+    state.previousUtStop = stop;
+    state.previousUtPosition = position;
+    state.previousUtClose = current;
+    state.finalizedCount = Math.max(state.finalizedCount, index + 1);
+  }
+  return { stop, position };
+}
+
+function createLiveTailState(params: Params): LiveTailState {
+  return {
+    ropeAtr: ta.createAtrKernel(params.ropePeriod),
+    directionMa: ta.createMovingAverageKernel(
+      params.ropeDirectionMaType,
+      params.ropeDirectionLookback,
+    ),
+    utAtr: ta.createAtrKernel(params.utbotAtrPeriod),
+    finalizedCount: 0,
+    previousRope: Number.NaN,
+    bandAtr: Number.NaN,
+    previousAtr: Number.NaN,
+    previousUtStop: Number.NaN,
+    previousUtPosition: 0,
+    previousUtClose: Number.NaN,
+  };
+}
+
+function rebuildLiveTailState(
+  candles: readonly Candle[],
+  finalizedCount: number,
+  params: Params,
+): LiveTailState {
+  const state = createLiveTailState(params);
+  const end = Math.min(finalizedCount, candles.length);
+  for (let index = 0; index < end; index += 1) {
+    ropeTailStep(state, candles, index, params, "finalized");
+    utTailStep(state, candles, index, params, "finalized");
+  }
+  state.finalizedCount = end;
+  return state;
+}
+
+function livePoint(
+  candle: Candle,
+  rope: RopePoint,
+  ut: UtPoint,
+  params: Params,
+): IndicatorSnapshot["points"][number] {
+  return {
+    openTimeMs: candle.openTimeMs,
+    values: {
+      rope: finiteOrNull(rope.rope),
+      directionUpper: finiteOrNull(rope.directionUpper),
+      directionLower: finiteOrNull(rope.directionLower),
+      utStop: params.showTrailingStop ? finiteOrNull(ut.stop) : null,
+      buyMarker: null,
+      sellMarker: null,
+    },
+    colors: {
+      rope:
+        rope.direction > 0
+          ? params.ropeUpColor
+          : rope.direction < 0
+            ? params.ropeDownColor
+            : params.ropeFlatColor,
+      utStop:
+        ut.position > 0
+          ? params.utbotUpTrendColor
+          : ut.position < 0
+            ? params.utbotDownTrendColor
+            : params.utbotTrailingStopColor,
+      buyMarker: params.buySignalColor,
+      sellMarker: params.sellSignalColor,
+    },
+    sizes: { rope: params.ropeWidth },
+  };
+}
+
 function calculate(
   candles: readonly Candle[],
   params: Params,
   context: IndicatorInstanceContext,
+  requestedFinalizedBarIndex = Math.max(-1, candles.length - 2),
 ): CalculationResult {
   if (candles.length === 0)
-    return { points: [], overlays: [], signals: [], finalizedBarIndex: -1 };
+    return {
+      points: [],
+      overlays: [],
+      signals: [],
+      finalizedBarIndex: -1,
+      pocZones: [],
+    };
   const rope = computeRope(candles, params);
   const ut = computeUtBot(candles, params);
-  const finalizedBarIndex = Math.max(-1, candles.length - 2);
+  const finalizedBarIndex = Math.min(
+    candles.length - 1,
+    Math.max(-1, requestedFinalizedBarIndex),
+  );
   const zones = buildPocZones(candles, params, finalizedBarIndex);
   const bands = suppressionBands(zones, params);
   const signalFlags = calculateSignals(
@@ -2194,7 +2040,7 @@ function calculate(
     bands,
     finalizedBarIndex,
   );
-  const markerAtr = atr(
+  const markerAtr = ta.atr(
     candles,
     Math.max(params.ropePeriod, params.utbotAtrPeriod),
   );
@@ -2265,6 +2111,7 @@ function calculate(
     overlays: renderZones(candles, zones, params),
     signals,
     finalizedBarIndex,
+    pocZones: zones,
   };
 }
 
@@ -2288,26 +2135,56 @@ export function createInstance(
     overlays: [],
     signals: [],
     finalizedBarIndex: -1,
+    pocZones: [],
   };
+  let liveTail = createLiveTailState(params);
   let disposed = false;
-  const recalculate = (): void => {
+
+  const rebuild = (finalizedBarIndex: number): void => {
     if (disposed) return;
-    current = calculate(candles, params, context);
+    current = calculate(candles, params, context, finalizedBarIndex);
+    liveTail = rebuildLiveTailState(
+      candles,
+      Math.max(0, finalizedBarIndex + 1),
+      params,
+    );
   };
+
   return {
     onHistory: (history): void => {
       candles = [...history].sort(
         (left, right) => left.openTimeMs - right.openTimeMs,
       );
-      recalculate();
+      rebuild(Math.max(-1, candles.length - 2));
     },
     onBuildingBar: (candle): void => {
+      if (disposed) return;
       candles = upsertCandle(candles, candle);
-      recalculate();
+      const index = candles.findIndex(
+        (item) => item.openTimeMs === candle.openTimeMs,
+      );
+      if (index < 0 || index !== liveTail.finalizedCount) {
+        rebuild(Math.max(-1, candles.length - 2));
+        return;
+      }
+      const rope = ropeTailStep(liveTail, candles, index, params, "building");
+      const ut = utTailStep(liveTail, candles, index, params, "building");
+      const points = [...current.points];
+      points[index] = livePoint(candle, rope, ut, params);
+      current = {
+        ...current,
+        points,
+        overlays: renderZones(candles, current.pocZones, params),
+        finalizedBarIndex: index - 1,
+      };
     },
     onFinalizedBar: (candle): void => {
+      if (disposed) return;
       candles = upsertCandle(candles, candle);
-      recalculate();
+      const index = candles.findIndex(
+        (item) => item.openTimeMs === candle.openTimeMs,
+      );
+      rebuild(index < 0 ? Math.max(-1, candles.length - 2) : index);
     },
     snapshot: (): IndicatorSnapshot => ({
       points: current.points,
@@ -2317,15 +2194,16 @@ export function createInstance(
     dispose: (): void => {
       disposed = true;
       candles = [];
+      liveTail = createLiveTailState(params);
       current = {
         points: [],
         overlays: [],
         signals: [],
         finalizedBarIndex: -1,
+        pocZones: [],
       };
     },
   };
 }
-
 const plugin: IndicatorPluginModule = { definition, createInstance };
 export default plugin;

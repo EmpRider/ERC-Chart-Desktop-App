@@ -174,3 +174,40 @@ export interface SignalCandidate {
   readonly confidence?: number;
   readonly finalized: boolean;
 }
+export {
+  candlesWithPriceSource,
+  inputOptions,
+  priceSeries,
+  priceSources,
+  priceValue,
+  type PriceSource,
+} from "./series.js";
+export {
+  atr,
+  createAtrKernel,
+  createDmiKernel,
+  createRsiKernel,
+  createHighestKernel,
+  createLowestKernel,
+  createCrossoverKernel,
+  createCrossunderKernel,
+  crossover,
+  crossunder,
+  createMovingAverageKernel,
+  dmi,
+  highest,
+  lowest,
+  movingAverage,
+  movingAverageTypes,
+  rsi,
+  ta,
+  trueRange,
+  type CandleTaKernel,
+  type CrossKernel,
+  type DmiPoint,
+  type DmiSeries,
+  type MovingAverageType,
+  type NumericTaKernel,
+  type TaUpdatePhase,
+  type TechnicalAnalysisApi,
+} from "./ta.js";

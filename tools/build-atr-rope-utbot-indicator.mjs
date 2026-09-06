@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
 export const atrRopeUtBotPackageIdentity = Object.freeze({
   id: "erc.indicator.atr-rope-utbot",
   name: "ATR Rope + UT Bot Unified",
-  version: "0.1.1",
+  version: "0.1.2",
 });
 
 function sha256(value) {
@@ -18,6 +18,7 @@ export async function buildAtrRopeUtBotIndicatorPackage({ root, outputRoot }) {
   const packageRoot = path.resolve(outputRoot);
   const entryDirectory = path.join(packageRoot, "dist");
   const entryPath = path.join(entryDirectory, "index.js");
+  const metadataPath = path.join(entryDirectory, "metadata.mjs");
   await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
   await build({
@@ -33,11 +34,35 @@ export async function buildAtrRopeUtBotIndicatorPackage({ root, outputRoot }) {
     outfile: entryPath,
     bundle: true,
     platform: "neutral",
-    format: "iife",
-    globalName: "__ERC_INDICATOR_PLUGIN__",
+    format: "esm",
     target: "es2022",
     minify: false,
   });
+  await build({
+    entryPoints: [
+      path.join(
+        root,
+        "packages",
+        "indicator-examples",
+        "src",
+        "atr-rope-utbot.ts",
+      ),
+    ],
+    outfile: metadataPath,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    minify: false,
+  });
+  const metadataModule = await import(
+    `${pathToFileURL(metadataPath).href}?build=${Date.now()}`
+  );
+  const indicatorDefinition = metadataModule.default?.definition;
+  if (indicatorDefinition === undefined) {
+    throw new Error("ATR Rope indicator definition could not be extracted.");
+  }
+  await rm(metadataPath, { force: true });
   const entry = await readFile(entryPath);
   const manifest = {
     manifestVersion: 1,
@@ -54,6 +79,9 @@ export async function buildAtrRopeUtBotIndicatorPackage({ root, outputRoot }) {
       network: [],
       credentials: [],
       storage: [],
+    },
+    capabilities: {
+      indicatorDefinition,
     },
     integrity: {
       algorithm: "sha256",

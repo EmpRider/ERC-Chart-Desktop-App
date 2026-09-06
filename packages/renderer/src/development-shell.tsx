@@ -1,8 +1,6 @@
 import {
   type Candle,
   type IndicatorImportPreview,
-  type IndicatorRuntimeSnapshot,
-  type IndicatorRuntimeSyncRequest,
   type ImportedProviderSession,
   type InstalledIndicatorSummary,
   type ProviderHistoryLoadRequest,
@@ -44,6 +42,11 @@ import {
 } from "./permission-review.js";
 import { ProviderChart } from "./provider-chart.js";
 import { PluginManager, type PluginManagerProps } from "./provider-manager.js";
+import {
+  createBrowserIndicatorRuntime,
+  type BrowserIndicatorRuntime,
+} from "./indicator-worker-runtime.js";
+import type { PluginIndicatorSync } from "./plugin-indicators.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
@@ -66,10 +69,6 @@ export interface RendererBridge {
   ) => Promise<InstalledIndicatorSummary>;
   readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
   readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
-  readonly syncIndicator: (
-    request: IndicatorRuntimeSyncRequest,
-  ) => Promise<IndicatorRuntimeSnapshot>;
-  readonly disposeIndicator: (instanceId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -140,11 +139,7 @@ export interface ApplicationShellProps {
   readonly providerSessions?: readonly ImportedProviderSession[] | undefined;
   readonly installedIndicators?:
     readonly InstalledIndicatorSummary[] | undefined;
-  readonly syncIndicator?:
-    | ((
-        request: IndicatorRuntimeSyncRequest,
-      ) => Promise<IndicatorRuntimeSnapshot>)
-    | undefined;
+  readonly syncIndicator?: PluginIndicatorSync | undefined;
   readonly disposeIndicator?:
     ((instanceId: string) => Promise<void>) | undefined;
   readonly requestProviderHistory?:
@@ -555,6 +550,20 @@ function mergeCandles(
   return merged.length > limit ? merged.slice(-limit) : merged;
 }
 
+function replaceCandles(
+  current: readonly Candle[],
+  incoming: readonly Candle[],
+): readonly Candle[] {
+  const candlesByOpenTime = new Map<number, Candle>();
+  for (const candle of incoming)
+    candlesByOpenTime.set(candle.openTimeMs, candle);
+  const replacement = [...candlesByOpenTime.values()].sort(
+    (left, right) => left.openTimeMs - right.openTimeMs,
+  );
+  const limit = Math.max(providerLiveCandleCacheMinimum, current.length);
+  return replacement.length > limit ? replacement.slice(-limit) : replacement;
+}
+
 function mergeProviderSession(
   current: readonly ImportedProviderSession[],
   session: ImportedProviderSession,
@@ -580,6 +589,7 @@ export function mergeProviderSessionCandles(
   current: readonly ImportedProviderSession[],
   request: ProviderLiveRequest,
   candles: readonly Candle[],
+  kind: "incremental" | "rebuild" = "incremental",
 ): readonly ImportedProviderSession[] {
   let changed = false;
   const next = current.map((session) => {
@@ -591,7 +601,13 @@ export function mergeProviderSessionCandles(
       return session;
     }
     changed = true;
-    return { ...session, candles: mergeCandles(session.candles, candles) };
+    return {
+      ...session,
+      candles:
+        kind === "rebuild"
+          ? replaceCandles(session.candles, candles)
+          : mergeCandles(session.candles, candles),
+    };
   });
   return changed ? next : current;
 }
@@ -824,6 +840,19 @@ function HydratedRuntimeApplicationShell({
   const [indicatorImportError, setIndicatorImportError] = useState<
     string | undefined
   >();
+  const indicatorRuntimeRef = useRef<BrowserIndicatorRuntime | undefined>(
+    undefined,
+  );
+  if (indicatorRuntimeRef.current === undefined) {
+    indicatorRuntimeRef.current = createBrowserIndicatorRuntime();
+  }
+  const indicatorRuntime = indicatorRuntimeRef.current;
+  useEffect(
+    () => () => {
+      indicatorRuntime.dispose();
+    },
+    [indicatorRuntime],
+  );
   const liveSubscriptions = useRef(
     new Map<
       string,
@@ -1012,7 +1041,12 @@ function HydratedRuntimeApplicationShell({
             return;
           }
           setProviderSessions((sessions) =>
-            mergeProviderSessionCandles(sessions, request, event.candles),
+            mergeProviderSessionCandles(
+              sessions,
+              request,
+              event.candles,
+              event.series.kind,
+            ),
           );
         })
         .then((unsubscribe) => {
@@ -1279,8 +1313,10 @@ function HydratedRuntimeApplicationShell({
       pluginPermissionReview={pluginPermissionReview}
       providerSessions={providerSessions}
       installedIndicators={installedIndicators}
-      syncIndicator={bridge.syncIndicator}
-      disposeIndicator={bridge.disposeIndicator}
+      syncIndicator={indicatorRuntime.sync}
+      disposeIndicator={async (instanceId): Promise<void> => {
+        indicatorRuntime.disposeInstance(instanceId);
+      }}
       requestProviderHistory={bridge.requestProviderHistory}
       onProviderSessionSelect={selectProviderSession}
       onWorkspaceTimeframeSelect={selectWorkspaceTimeframe}

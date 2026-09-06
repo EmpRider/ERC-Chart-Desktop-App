@@ -406,7 +406,10 @@ export async function validateWorkspace(root, contract = undefined) {
         errors.push(`${relativeFile}: source contains invalid syntax`);
         continue;
       }
-      if (hasNonLiteralDynamicImport) {
+      if (
+        hasNonLiteralDynamicImport &&
+        !(contract.dynamicImportFiles ?? []).includes(relativeFile)
+      ) {
         errors.push(`${relativeFile}: non-literal dynamic import is forbidden`);
       }
       for (const specifier of specifiers) {

@@ -151,3 +151,122 @@ test("keeps rope and trailing-stop series continuous while their colors change",
     instance.dispose();
   }
 });
+
+test("keeps DMI/ADX semantics independent from the POC price source", () => {
+  const context = { instrumentId: "edge.instrument", timeframeId: "1m" };
+  const history = candles();
+  const common = {
+    dmiLength: 5,
+    profilePeriod: 24,
+    fastPocPeriod: 8,
+    minEarlyBars: 5,
+    bodyWeight: 0,
+  };
+  const closeSource = atrRopeUtBotIndicator.createInstance(
+    defaults({ ...common, adxPocSource: "close" }),
+    context,
+  );
+  const highSource = atrRopeUtBotIndicator.createInstance(
+    defaults({ ...common, adxPocSource: "high" }),
+    context,
+  );
+  try {
+    closeSource.onHistory(history);
+    highSource.onHistory(history);
+
+    assert.deepEqual(highSource.snapshot(), closeSource.snapshot());
+  } finally {
+    closeSource.dispose();
+    highSource.dispose();
+  }
+});
+
+test("uses the configured POC price source for profile placement", () => {
+  const context = { instrumentId: "edge.instrument", timeframeId: "1m" };
+  const history = candles();
+  const common = {
+    dmiLength: 5,
+    profilePeriod: 24,
+    fastPocPeriod: 8,
+    minEarlyBars: 5,
+    bodyWeight: 0.7,
+  };
+  const closeSource = atrRopeUtBotIndicator.createInstance(
+    defaults({ ...common, adxPocSource: "close" }),
+    context,
+  );
+  const highSource = atrRopeUtBotIndicator.createInstance(
+    defaults({ ...common, adxPocSource: "high" }),
+    context,
+  );
+  try {
+    closeSource.onHistory(history);
+    highSource.onHistory(history);
+
+    assert.notDeepEqual(
+      highSource.snapshot().overlays,
+      closeSource.snapshot().overlays,
+    );
+  } finally {
+    closeSource.dispose();
+    highSource.dispose();
+  }
+});
+
+test("incremental building-bar updates match a fresh full-history calculation", () => {
+  const parameters = defaults({
+    ropePeriod: 5,
+    ropeDirectionLookback: 4,
+    ropeDirectionThreshold: 0.03,
+    ropeDirectionMaType: "tema",
+    utbotAtrPeriod: 4,
+    utbotMode: "0lag",
+    dmiLength: 5,
+    profilePeriod: 24,
+    fastPocPeriod: 8,
+    minEarlyBars: 5,
+  });
+  const context = { instrumentId: "edge.instrument", timeframeId: "1m" };
+  const history = candles();
+  const incremental = atrRopeUtBotIndicator.createInstance(parameters, context);
+  const reference = atrRopeUtBotIndicator.createInstance(parameters, context);
+  try {
+    const prior = history.slice(0, -1);
+    const finalized = prior.at(-1);
+    const building = history.at(-1);
+    incremental.onHistory(prior);
+    incremental.onFinalizedBar(finalized);
+    incremental.onBuildingBar(building);
+    reference.onHistory(history);
+
+    assert.deepEqual(
+      incremental.snapshot().points.at(-1),
+      reference.snapshot().points.at(-1),
+    );
+
+    const replacement = {
+      ...building,
+      high: building.high + 0.07,
+      low: building.low - 0.03,
+      close: building.close + 0.05,
+    };
+    incremental.onBuildingBar(replacement);
+    reference.onHistory([...history.slice(0, -1), replacement]);
+
+    assert.deepEqual(
+      incremental.snapshot().points.at(-1),
+      reference.snapshot().points.at(-1),
+    );
+    assert.deepEqual(
+      incremental.snapshot().signals,
+      reference.snapshot().signals,
+    );
+    assert.deepEqual(
+      incremental.snapshot().overlays,
+      reference.snapshot().overlays,
+    );
+  } finally {
+    incremental.dispose();
+    reference.dispose();
+  }
+});
