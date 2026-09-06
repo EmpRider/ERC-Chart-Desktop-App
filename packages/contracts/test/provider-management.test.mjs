@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isImportedProviderSession,
+  isProviderHistoryLoadRequest,
+  isProviderHistoryResult,
   isProviderLiveEvent,
   isProviderLiveRequest,
   isProviderLiveSubscriptionRequest,
@@ -14,6 +16,7 @@ import {
   providerImportApproveChannel,
   providerImportCancelChannel,
   providerImportPreviewChannel,
+  providerHistoryLoadChannel,
   providerLiveEventChannel,
   providerLiveSubscribeChannel,
   providerLiveUnsubscribeChannel,
@@ -44,6 +47,7 @@ test("pins the provider import IPC contract to narrow application channels", () 
     "erc-chart:provider-live-unsubscribe",
   );
   assert.equal(providerLiveEventChannel, "erc-chart:provider-live-event");
+  assert.equal(providerHistoryLoadChannel, "erc-chart:provider-history-load");
   assert.equal(providerProfilesListChannel, "erc-chart:provider-profiles-list");
   assert.equal(
     providerProfileCreateChannel,
@@ -109,6 +113,42 @@ test("validates provider management snapshots and profile mutations", () => {
       settings: { auth_token: "must-not-persist" },
     }),
     true,
+  );
+});
+
+test("validates bounded provider history requests and results", () => {
+  const request = {
+    profileId: "profile-a",
+    instrumentId: "BTCUSD",
+    timeframeId: "1m",
+    fromMs: 60_000,
+    toMs: 120_000,
+    limit: 500,
+  };
+  const candle = {
+    instrumentId: "BTCUSD",
+    timeframeId: "1m",
+    openTimeMs: 60_000,
+    open: 100,
+    high: 102,
+    low: 99,
+    close: 101,
+  };
+
+  assert.equal(isProviderHistoryLoadRequest(request), true);
+  assert.equal(isProviderHistoryLoadRequest({ ...request, fromMs: -1 }), false);
+  assert.equal(
+    isProviderHistoryLoadRequest({ ...request, fromMs: 121_000 }),
+    false,
+  );
+  assert.equal(
+    isProviderHistoryLoadRequest({ ...request, limit: 100_001 }),
+    false,
+  );
+  assert.equal(isProviderHistoryResult([candle]), true);
+  assert.equal(
+    isProviderHistoryResult([{ ...candle, close: Number.NaN }]),
+    false,
   );
 });
 

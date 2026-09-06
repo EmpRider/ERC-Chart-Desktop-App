@@ -107,7 +107,40 @@ test("adds workspaces one at a time and stops at four", () => {
   );
 });
 
-test("removes only added workspaces and never reuses a workspace ID", () => {
+test("new workspaces inherit chart configuration and start with independent indicators", () => {
+  let configured = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  configured = workspaceReducer(configured, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-1",
+    persisted: {
+      ...configured.tabs[0].slots[0].persisted,
+      chartType: "heikin-ashi",
+      indicators: [createIndicator("rsi-existing")],
+    },
+  });
+
+  const added = workspaceReducer(configured, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+
+  assert.deepEqual(added.tabs[0].slots[1].persisted, {
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+    chartType: "heikin-ashi",
+    indicators: [],
+  });
+});
+
+test("removes any workspace while keeping one workspace and never reuses an ID", () => {
   const initial = createInitialWorkspace();
   const two = workspaceReducer(initial, {
     type: "add-workspace",
@@ -130,13 +163,23 @@ test("removes only added workspaces and never reuses a workspace ID", () => {
   );
   assert.equal(removed.tabs[0].layoutSize, 2);
   assert.equal(removed.tabs[0].nextWorkspaceNumber, 4);
+  const removedFirst = workspaceReducer(removed, {
+    type: "remove-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-1",
+  });
+  assert.deepEqual(
+    removedFirst.tabs[0].slots.map((slot) => slot.id),
+    ["tab-1-chart-3"],
+  );
+  assert.equal(removedFirst.tabs[0].layoutSize, 1);
   assert.equal(
-    workspaceReducer(removed, {
+    workspaceReducer(removedFirst, {
       type: "remove-workspace",
       tabId: "tab-1",
-      workspaceId: "tab-1-chart-1",
+      workspaceId: "tab-1-chart-3",
     }),
-    removed,
+    removedFirst,
   );
 
   const addedAgain = workspaceReducer(removed, {

@@ -11,7 +11,7 @@ const layouts = new Set([
   "grid-3-top",
   "grid-4",
 ]);
-const chartTypes = new Set(["candlestick", "line", "area"]);
+const chartTypes = new Set(["candlestick", "heikin_ashi", "line", "area"]);
 
 type JsonValue =
   | null
@@ -55,7 +55,7 @@ export interface PersistedWorkspaceChartSlot {
   readonly providerProfileId: string;
   readonly instrumentId: string;
   readonly timeframeSeconds: number;
-  readonly chartType: "candlestick" | "line" | "area";
+  readonly chartType: "candlestick" | "heikin_ashi" | "line" | "area";
   readonly viewport?: WorkspaceViewport;
   readonly indicators: readonly WorkspaceIndicator[];
 }

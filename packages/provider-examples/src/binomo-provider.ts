@@ -772,7 +772,7 @@ const provider: ProviderDefinition = defineProvider({
       maximumHostApiVersion: hostApiVersion,
     },
   },
-  version: "0.1.1",
+  version: "0.1.2",
   config: {
     symbol: config.string({
       label: "Symbol",

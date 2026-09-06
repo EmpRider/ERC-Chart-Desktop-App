@@ -67,6 +67,7 @@ function createAdapters() {
       registerRendererProtocol: async () => () => undefined,
       createWindow: () => ({
         loadURL: async () => undefined,
+        waitUntilRendererReady: async () => true,
         flushWorkspace: async () => undefined,
         show: () => undefined,
         destroy: () => undefined,

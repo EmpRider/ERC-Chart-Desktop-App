@@ -46,17 +46,17 @@ textarea {
   display: grid;
   height: 100vh;
   min-height: 0;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1.7rem 1fr 0;
   overflow: hidden;
 }
 
 .app-header {
   display: flex;
-  min-height: 2.25rem;
+  min-height: 1.7rem;
   align-items: center;
   justify-content: space-between;
   gap: 0.35rem;
-  padding: 0.2rem 0.35rem;
+  padding: 0.1rem 0.3rem;
   border-bottom: 1px solid #1d2939;
   background: rgb(9 14 23 / 88%);
   box-shadow: 0 1px 0 rgb(255 255 255 / 2%) inset;
@@ -71,8 +71,8 @@ textarea {
 
 .brand-mark {
   display: grid;
-  width: 1.55rem;
-  height: 1.55rem;
+  width: 1.15rem;
+  height: 1.15rem;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #256f9b;
@@ -82,7 +82,7 @@ textarea {
     0 0 0 1px rgb(89 199 255 / 8%) inset,
     0 0.75rem 2rem rgb(0 0 0 / 24%);
   color: #8fddff;
-  font-size: 0.55rem;
+  font-size: 0.43rem;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -90,7 +90,7 @@ textarea {
 .brand-lockup h1 {
   margin: 0;
   overflow: hidden;
-  font-size: 0.76rem;
+  font-size: 0.66rem;
   font-weight: 680;
   letter-spacing: -0.015em;
   text-overflow: ellipsis;
@@ -98,28 +98,22 @@ textarea {
 }
 
 .brand-lockup p {
-  margin: 0;
-  color: #8492a6;
-  font-size: 0.58rem;
-  letter-spacing: 0.03em;
+  display: none;
 }
 
 .runtime-state {
-  display: grid;
-  min-width: 10rem;
-  grid-template-columns: auto 1fr;
+  display: flex;
+  min-width: 0;
   align-items: center;
-  column-gap: 0.25rem;
-  padding: 0.2rem 0.35rem;
-  border: 1px solid #223148;
-  border-radius: 0.3rem;
-  background: #0c1420;
+  gap: 0.25rem;
+  padding: 0.1rem 0.25rem;
+  border: 0;
+  background: transparent;
 }
 
 .status-dot {
   width: 0.35rem;
   height: 0.35rem;
-  grid-row: 1 / 3;
   border-radius: 999px;
   background: #f2b84b;
   box-shadow: 0 0 0 0.2rem rgb(242 184 75 / 10%);
@@ -146,16 +140,16 @@ textarea {
 }
 
 .status-detail {
-  color: #718096;
-  font-size: 0.55rem;
+  display: none;
 }
 
 .workspace {
+  position: relative;
   display: grid;
   min-height: 0;
-  grid-template-rows: auto auto 1fr;
-  gap: 0.15rem;
-  padding: 0.15rem 0.2rem 0.2rem;
+  grid-template-rows: 1.75rem 1fr;
+  gap: 0;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -164,6 +158,9 @@ textarea {
   min-width: 0;
   align-items: center;
   gap: 0.15rem;
+  padding: 0 15rem 0 0.2rem;
+  border-bottom: 1px solid #172235;
+  background: #090f18;
 }
 
 .tab-list {
@@ -263,9 +260,14 @@ textarea {
 }
 
 .workspace-toolbar {
+  position: absolute;
+  z-index: 24;
+  top: 0;
+  right: 0.2rem;
   display: flex;
+  height: 1.75rem;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 0.25rem;
 }
 
@@ -337,7 +339,7 @@ textarea {
 
 .provider-manager-backdrop {
   position: fixed;
-  z-index: 20;
+  z-index: 1000;
   inset: 0;
   display: grid;
   place-items: center;
@@ -583,19 +585,32 @@ textarea {
 
 .workspace-close {
   position: absolute;
-  z-index: 1;
-  top: 0.2rem;
-  right: 0.2rem;
+  z-index: 50;
+  top: 0;
+  right: 0;
   display: grid;
-  width: 1.4rem;
-  height: 1.4rem;
+  width: 2rem;
+  height: 2.35rem;
   place-items: center;
-  border: 1px solid #24344a;
-  border-radius: 0.2rem;
-  background: #0a111c;
-  color: #8998ac;
+  border: 0;
+  border-left: 1px solid #142033;
+  border-radius: 0;
+  background: transparent;
+  color: #728196;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.74rem;
+}
+
+.workspace-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.workspace-close:not(:disabled):hover,
+.workspace-close:not(:disabled):focus-visible {
+  background: #24151b;
+  color: #ff9ca7;
+  outline: none;
 }
 
 .chart-grid {
@@ -653,6 +668,7 @@ textarea {
 }
 
 .provider-chart {
+  position: relative;
   display: flex;
   width: 100%;
   height: 100%;
@@ -662,49 +678,463 @@ textarea {
   overflow: hidden;
 }
 
+.provider-chart:fullscreen {
+  background: #090f19;
+}
+
 .provider-chart-heading {
+  position: relative;
+  z-index: 20;
   display: flex;
-  min-height: 2.45rem;
+  min-height: 2.35rem;
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border-bottom: 1px solid #1c2838;
+  background: #0b111b;
+  overflow: visible;
+}
+
+.provider-symbol-control {
+  display: flex;
+  min-width: 8.75rem;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.3rem;
-  padding: 0.2rem 0.35rem;
-  border-bottom: 1px solid #172235;
-  background: #0a111c;
+  gap: 0.42rem;
+  padding: 0 0.65rem;
+  border-right: 1px solid #1c2838;
 }
 
-.provider-chart-heading .eyebrow {
-  margin-bottom: 0;
+.provider-symbol-badge {
+  display: grid;
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  background: #f1a513;
+  color: #111827;
+  font-size: 0.66rem;
+  font-weight: 800;
 }
 
-.provider-chart-heading h2 {
-  font-size: 0.82rem;
-  letter-spacing: 0;
+.provider-symbol-control > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.05rem;
 }
 
-.provider-chart-meta {
-  color: #78879b;
-  font-size: 0.6rem;
+.provider-symbol-control strong {
+  max-width: 10rem;
+  overflow: hidden;
+  color: #edf3fb;
+  font-size: 0.72rem;
+  font-weight: 720;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.provider-chart-controls {
+.provider-symbol-control small {
+  max-width: 10rem;
+  overflow: hidden;
+  color: #67778d;
+  font-size: 0.49rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-timeframe-group {
+  position: relative;
   display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.2rem;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-right: 1px solid #1c2838;
 }
 
 .provider-timeframe-select {
-  min-width: 2.8rem;
-  height: 1.35rem;
-  padding: 0 0.15rem;
-  border: 1px solid #27384e;
-  border-radius: 0.2rem;
-  background: #07101b;
-  color: #c8d4e3;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.provider-timeframe-button,
+.provider-toolbar-button,
+.provider-timezone-control select {
+  min-width: 2.25rem;
+  height: 100%;
+  padding: 0 0.55rem;
+  border: 0;
+  border-right: 1px solid #172235;
+  border-radius: 0;
+  background: transparent;
+  color: #aab7c8;
+  font-size: 0.61rem;
+  font-weight: 540;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.provider-timeframe-button:hover,
+.provider-timeframe-button:focus-visible,
+.provider-toolbar-button:hover,
+.provider-toolbar-button:focus-visible,
+.provider-timezone-control select:hover,
+.provider-timezone-control select:focus-visible {
+  background: #111c2a;
+  color: #eef6ff;
+  outline: none;
+}
+
+.provider-timeframe-button.active {
+  background: #102f4c;
+  color: #6fc9ff;
+}
+
+.provider-timeframe-button:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.provider-chart-controls {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.provider-indicator-control,
+.provider-chart-settings-control,
+.provider-timezone-control {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.provider-indicator-button::before {
+  content: "ƒx";
+  margin-right: 0.28rem;
+  color: #78bfff;
   font-size: 0.58rem;
-  line-height: 1;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.provider-timezone-control select {
+  min-width: 6.8rem;
+  appearance: none;
+  padding-right: 1.25rem;
+}
+
+.provider-timezone-control::after {
+  position: absolute;
+  top: 50%;
+  right: 0.45rem;
+  content: "⌄";
+  color: #61738a;
+  font-size: 0.6rem;
+  pointer-events: none;
+  transform: translateY(-55%);
+}
+
+.provider-indicator-menu,
+.provider-chart-settings-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.2rem);
+  left: 0;
+  min-width: 13.5rem;
+  max-height: min(26rem, 70vh);
+  border: 1px solid #26384d;
+  border-radius: 0.28rem;
+  background: #0d1623;
+  box-shadow: 0 1rem 2rem rgb(0 0 0 / 38%);
+  overflow-y: auto;
+}
+
+.provider-indicator-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid #1d2b3d;
+  color: #9fb2c8;
+  font-size: 0.6rem;
+}
+
+.provider-indicator-menu > button,
+.provider-chart-settings-menu > button {
+  display: grid;
+  width: 100%;
+  gap: 0.1rem;
+  padding: 0.48rem 0.55rem;
+  border: 0;
+  background: transparent;
+  color: #dbe6f3;
+  font-size: 0.61rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.provider-indicator-menu > button:hover:not(:disabled),
+.provider-indicator-menu > button:focus-visible:not(:disabled),
+.provider-chart-settings-menu > button:hover,
+.provider-chart-settings-menu > button:focus-visible,
+.provider-chart-settings-menu > button.active {
+  background: #122236;
+  outline: none;
+}
+
+.provider-indicator-menu > button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.provider-indicator-menu small {
+  color: #708299;
+  font-size: 0.52rem;
+}
+
+.provider-chart-settings-menu {
+  min-width: 8.5rem;
+}
+
+.provider-chart-settings-menu p {
+  margin: 0;
+  padding: 0.42rem 0.55rem 0.28rem;
+  color: #66788f;
+  font-size: 0.52rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+}
+
+.provider-chart-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.provider-drawing-toolbar {
+  display: flex;
+  width: 2rem;
+  flex: 0 0 2rem;
+  flex-direction: column;
+  align-items: stretch;
+  border-right: 1px solid #1b2838;
+  background: #0a111b;
+}
+
+.provider-drawing-toolbar button {
+  display: grid;
+  width: 100%;
+  min-height: 2rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid #142033;
+  background: transparent;
+  color: #8291a5;
+  font-size: 0.74rem;
+  cursor: crosshair;
+}
+
+.provider-drawing-toolbar button:hover,
+.provider-drawing-toolbar button:focus-visible {
+  background: #122136;
+  color: #d9ebff;
+  outline: none;
+}
+
+.provider-drawing-toolbar .provider-drawing-clear {
+  margin-top: auto;
+  color: #728196;
+  cursor: pointer;
+}
+
+.provider-drawing-toolbar .provider-drawing-clear:hover,
+.provider-drawing-toolbar .provider-drawing-clear:focus-visible {
+  background: #24151b;
+  color: #ff9ca7;
+}
+
+.provider-indicator-settings {
+  position: absolute;
+  z-index: 40;
+  top: 3rem;
+  right: 0.55rem;
+  width: min(19rem, calc(100% - 1.1rem));
+  max-height: min(78vh, calc(100% - 3.55rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #2a3d55;
+  border-radius: 0.45rem;
+  background: #0a111c;
+  box-shadow: 0 1.2rem 3rem rgb(0 0 0 / 45%);
+  color: #d5e0ed;
+}
+
+.provider-indicator-settings-header,
+.provider-indicator-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem;
+}
+
+.provider-indicator-settings-header p {
+  margin: 0 0 0.12rem;
+  color: #78879b;
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.provider-indicator-settings-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.provider-indicator-settings-header > button,
+.provider-indicator-settings-actions button,
+.provider-indicator-settings-tabs button,
+.provider-indicator-settings-group-toggle {
+  min-height: 1.55rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #2a3d55;
+  border-radius: 0.25rem;
+  background: #0d1825;
+  color: #c8d4e3;
+  cursor: pointer;
+}
+
+.provider-indicator-settings-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  padding: 0 0.7rem 0.55rem;
+  border-bottom: 1px solid #1d2b3d;
+}
+
+.provider-indicator-settings-tabs button {
+  border-color: transparent;
+  background: transparent;
+  color: #78879b;
+}
+
+.provider-indicator-settings-tabs button.active {
+  border-color: #2e769c;
+  background: #0d2638;
+  color: #d9ebff;
+}
+
+.provider-indicator-settings-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.55rem 0.7rem 0.7rem;
+  scrollbar-gutter: stable;
+}
+
+.provider-indicator-settings-group + .provider-indicator-settings-group {
+  margin-top: 0.45rem;
+}
+
+.provider-indicator-settings-group {
+  overflow: hidden;
+  border: 1px solid #1d2b3d;
+  border-radius: 0.35rem;
+  background: #08121e;
+}
+
+.provider-indicator-settings-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 0;
+  background: #0d1825;
+  color: #aebfd2;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-align: left;
+}
+
+.provider-indicator-settings-empty {
+  margin: 0.35rem 0;
+  color: #78879b;
+  font-size: 0.62rem;
+  text-align: center;
+}
+
+.provider-indicator-settings-fields {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.55rem;
+}
+
+.provider-indicator-settings-fields label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7rem;
+  align-items: center;
+  gap: 0.6rem;
+  color: #9fb2c8;
+  font-size: 0.62rem;
+}
+
+.provider-indicator-settings-fields label small {
+  grid-column: 1 / -1;
+  margin-top: -0.3rem;
+  color: #6f8096;
+  font-size: 0.54rem;
+  line-height: 1.35;
+}
+
+.provider-indicator-settings-fields input,
+.provider-indicator-settings-fields select {
+  width: 100%;
+  min-width: 0;
+  height: 1.55rem;
+  padding: 0 0.35rem;
+  border: 1px solid #2a3d55;
+  border-radius: 0.25rem;
+  background: #07101b;
+  color: #d5e0ed;
+  font-size: 0.62rem;
+}
+
+.provider-indicator-settings-actions {
+  justify-content: flex-end;
+  border-top: 1px solid #1d2b3d;
+}
+
+.provider-indicator-settings-actions .primary {
+  border-color: #2e769c;
+  background: #0d4562;
+  color: #e7f6ff;
 }
 
 .provider-chart-canvas {
@@ -766,8 +1196,8 @@ textarea {
 }
 
 .app-footer {
-  display: flex;
-  min-height: 1.25rem;
+  display: none;
+  min-height: 0;
   align-items: center;
   justify-content: space-between;
   padding: 0 0.35rem;
@@ -1019,8 +1449,20 @@ textarea {
     min-height: 12rem;
   }
 
+  .workspace {
+    grid-template-rows: auto auto 1fr;
+    padding: 0.15rem;
+  }
+
+  .tab-strip {
+    padding-right: 0.15rem;
+  }
+
   .workspace-toolbar {
+    position: static;
+    height: auto;
     flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .provider-manager-backdrop {

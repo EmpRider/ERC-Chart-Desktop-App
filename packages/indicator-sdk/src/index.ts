@@ -1,4 +1,5 @@
 import {
+  hostApiVersion,
   indicatorContractVersion,
   type Candle,
   type CompatibilityRange,
@@ -8,23 +9,53 @@ import {
   type TimeframeId,
 } from "@erc-chart/contracts";
 
-export { indicatorContractVersion } from "@erc-chart/contracts";
+export {
+  hostApiVersion as indicatorHostApiVersion,
+  indicatorContractVersion,
+} from "@erc-chart/contracts";
+export type {
+  Candle,
+  InstrumentId,
+  Tick,
+  TimeframeId,
+} from "@erc-chart/contracts";
 
 export const indicatorSdkVersion: ContractVersion = indicatorContractVersion;
+export const indicatorHostVersion: ContractVersion = hostApiVersion;
 
 export type IndicatorInputValue = boolean | number | string;
 export type IndicatorInputKind = "boolean" | "number" | "string";
+export type IndicatorInputEffect = "calculation" | "presentation";
+
+export interface IndicatorInputOption {
+  readonly value: string;
+  readonly label: string;
+}
 
 interface IndicatorInputMetadata {
   readonly key: string;
   readonly label: string;
+  readonly group?: string;
+  readonly description?: string;
+  readonly effect?: IndicatorInputEffect;
 }
 
 export type IndicatorInputDefinition = IndicatorInputMetadata &
   (
     | { readonly type: "boolean"; readonly defaultValue: boolean }
-    | { readonly type: "number"; readonly defaultValue: number }
-    | { readonly type: "string"; readonly defaultValue: string }
+    | {
+        readonly type: "number";
+        readonly defaultValue: number;
+        readonly min?: number;
+        readonly max?: number;
+        readonly step?: number;
+      }
+    | {
+        readonly type: "string";
+        readonly defaultValue: string;
+        readonly options?: readonly IndicatorInputOption[];
+        readonly editor?: "text" | "color" | "timeframe";
+      }
   );
 
 export interface IndicatorOutputDefinition {
@@ -46,17 +77,82 @@ export type IndicatorPlotKind =
 export interface IndicatorPlotDefinition {
   readonly key: string;
   readonly kind: IndicatorPlotKind;
+  readonly outputKey?: string;
+  readonly label?: string;
+  readonly color?: string;
+  readonly width?: number;
+  readonly style?: "solid" | "dashed" | "dotted";
+  readonly direction?: "up" | "down";
 }
+
+export type IndicatorPlacement = "overlay" | "pane";
 
 export interface IndicatorDefinition {
   readonly id: string;
   readonly name: string;
+  readonly description?: string;
   readonly indicatorContractVersion: ContractVersion;
   readonly hostCompatibility: CompatibilityRange;
+  readonly placement?: IndicatorPlacement;
   readonly inputs: readonly IndicatorInputDefinition[];
   readonly outputs: readonly IndicatorOutputDefinition[];
   readonly plots: readonly IndicatorPlotDefinition[];
   readonly requiresLiveTicks: boolean;
+}
+
+export interface IndicatorResultPoint {
+  readonly openTimeMs: number;
+  readonly values: Readonly<Record<string, number | null>>;
+  readonly colors?: Readonly<Record<string, string>>;
+  readonly sizes?: Readonly<Record<string, number>>;
+}
+
+export interface IndicatorLineSegment {
+  readonly id: string;
+  readonly kind: "line-segment";
+  readonly startTimeMs: number;
+  readonly endTimeMs: number;
+  readonly startValue: number;
+  readonly endValue: number;
+  readonly color: string;
+  readonly width: number;
+  readonly style: "solid" | "dashed" | "dotted";
+}
+
+export interface IndicatorBox {
+  readonly id: string;
+  readonly kind: "box";
+  readonly startTimeMs: number;
+  readonly endTimeMs: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly color: string;
+  readonly borderColor?: string;
+}
+
+export type IndicatorOverlay = IndicatorLineSegment | IndicatorBox;
+
+export interface IndicatorSnapshot {
+  readonly points: readonly IndicatorResultPoint[];
+  readonly overlays: readonly IndicatorOverlay[];
+  readonly signals?: readonly SignalCandidate[];
+}
+
+export interface IndicatorInstanceContext {
+  readonly instrumentId: InstrumentId;
+  readonly timeframeId: TimeframeId;
+}
+
+export interface RuntimeIndicatorInstance extends IndicatorInstance {
+  readonly snapshot: () => IndicatorSnapshot;
+}
+
+export interface IndicatorPluginModule {
+  readonly definition: IndicatorDefinition;
+  readonly createInstance: (
+    parameters: Readonly<Record<string, IndicatorInputValue>>,
+    context: IndicatorInstanceContext,
+  ) => RuntimeIndicatorInstance;
 }
 
 export interface IndicatorInstance {

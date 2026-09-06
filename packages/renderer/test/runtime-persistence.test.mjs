@@ -49,6 +49,7 @@ test("hydrates before showing workspace UI", async (t) => {
     loadWorkspace: async () => loaded,
     saveWorkspace: async () => undefined,
     flushWorkspace: async () => undefined,
+    listIndicators: async () => [],
   };
   const document = await mountRuntimeShell(t, bridge);
 
@@ -74,6 +75,7 @@ test("persists each real workspace mutation", async (t) => {
     loadWorkspace: async () => null,
     saveWorkspace: async (workspace) => saves.push(workspace),
     flushWorkspace: async () => undefined,
+    listIndicators: async () => [],
   };
   const document = await mountRuntimeShell(t, bridge);
   await act(async () => undefined);
@@ -118,6 +120,7 @@ test("restarts each provider profile referenced by restored chart tabs", async (
     loadWorkspace: async () => toPersistedWorkspace(restored, 1),
     saveWorkspace: async () => undefined,
     flushWorkspace: async () => undefined,
+    listIndicators: async () => [],
     startProviderProfile: async (profileId) => {
       starts.push(profileId);
       return new Promise(() => undefined);

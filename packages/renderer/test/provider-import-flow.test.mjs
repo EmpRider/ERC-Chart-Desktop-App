@@ -47,6 +47,7 @@ test("opens provider permission review from provider manager and cancels safely"
     }),
     approveProviderImport: async () => assert.fail("approval was not expected"),
     cancelProviderImport: async (requestId) => calls.push(requestId),
+    listIndicators: async () => [],
     listProviderProfiles: async () => ({
       installedProviders: [],
       profiles: [],

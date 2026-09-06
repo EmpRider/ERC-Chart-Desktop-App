@@ -1,9 +1,9 @@
 {
-  "name": "@erc-chart/indicator-runtime",
+  "name": "@erc-chart/indicator-examples",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Worker lifecycle, dependency graph, budgets, and output validation",
+  "description": "Public-SDK-only example indicator plugins",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -12,7 +12,6 @@
     }
   },
   "dependencies": {
-    "@erc-chart/contracts": "0.0.0",
     "@erc-chart/indicator-sdk": "0.0.0"
   }
 }
