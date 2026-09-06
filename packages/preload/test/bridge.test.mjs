@@ -21,11 +21,19 @@ test("exposes only the allowlisted application bridge methods", async () => {
     "previewProviderImport",
     "approveProviderImport",
     "cancelProviderImport",
+    "previewIndicatorImport",
+    "approveIndicatorImport",
+    "cancelIndicatorImport",
+    "listIndicators",
+    "syncIndicator",
+    "updateIndicator",
+    "disposeIndicator",
     "listProviderProfiles",
     "createProviderProfile",
     "updateProviderProfile",
     "startProviderProfile",
     "loadProviderSession",
+    "requestProviderHistory",
     "stopProviderProfile",
     "deleteProviderProfile",
     "subscribeProviderData",
@@ -81,11 +89,19 @@ test("installs one application-specific global", () => {
         "previewProviderImport",
         "approveProviderImport",
         "cancelProviderImport",
+        "previewIndicatorImport",
+        "approveIndicatorImport",
+        "cancelIndicatorImport",
+        "listIndicators",
+        "syncIndicator",
+        "updateIndicator",
+        "disposeIndicator",
         "listProviderProfiles",
         "createProviderProfile",
         "updateProviderProfile",
         "startProviderProfile",
         "loadProviderSession",
+        "requestProviderHistory",
         "stopProviderProfile",
         "deleteProviderProfile",
         "subscribeProviderData",
@@ -129,6 +145,7 @@ test("validates provider management commands across the preload boundary", async
     calls.push(args);
     if (args[0] === "erc-chart:provider-profiles-list") return snapshot;
     if (args[0] === "erc-chart:provider-profile-update") return profile;
+    if (args[0] === "erc-chart:provider-history-load") return [];
     if (
       args[0] === "erc-chart:provider-profile-create" ||
       args[0] === "erc-chart:provider-profile-start" ||
@@ -165,6 +182,17 @@ test("validates provider management commands across the preload boundary", async
     }),
     session,
   );
+  assert.deepEqual(
+    await bridge.requestProviderHistory({
+      profileId: "profile-a",
+      instrumentId: "BTCUSD",
+      timeframeId: "3m",
+      fromMs: 60_000,
+      toMs: 120_000,
+      limit: 500,
+    }),
+    [],
+  );
   await bridge.stopProviderProfile("profile-a");
   await bridge.deleteProviderProfile("profile-a");
   assert.deepEqual(
@@ -175,6 +203,7 @@ test("validates provider management commands across the preload boundary", async
       "erc-chart:provider-profile-update",
       "erc-chart:provider-profile-start",
       "erc-chart:provider-session-load",
+      "erc-chart:provider-history-load",
       "erc-chart:provider-profile-stop",
       "erc-chart:provider-profile-delete",
     ],

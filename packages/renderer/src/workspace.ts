@@ -1,11 +1,13 @@
 import type {
   PersistedWorkspaceChartSlot,
   PersistedWorkspaceTab,
+  WorkspaceIndicator,
 } from "@erc-chart/contracts";
 
 export type LayoutSize = 1 | 2 | 3 | 4;
 
 export const maximumWorkspaces = 4 as const;
+export const maximumIndicatorsPerWorkspace = 5 as const;
 
 export interface ChartSlot {
   readonly id: string;
@@ -46,6 +48,31 @@ export type WorkspaceAction =
       readonly tabId: string;
       readonly workspaceId: string;
       readonly persisted: Omit<PersistedWorkspaceChartSlot, "id">;
+    }
+  | {
+      readonly type: "add-workspace-indicator";
+      readonly tabId: string;
+      readonly workspaceId: string;
+      readonly indicator: WorkspaceIndicator;
+    }
+  | {
+      readonly type: "update-workspace-indicator";
+      readonly tabId: string;
+      readonly workspaceId: string;
+      readonly indicator: WorkspaceIndicator;
+    }
+  | {
+      readonly type: "set-workspace-indicator-enabled";
+      readonly tabId: string;
+      readonly workspaceId: string;
+      readonly instanceId: string;
+      readonly enabled: boolean;
+    }
+  | {
+      readonly type: "remove-workspace-indicator";
+      readonly tabId: string;
+      readonly workspaceId: string;
+      readonly instanceId: string;
     }
   | {
       readonly type: "remove-workspace";
@@ -97,6 +124,32 @@ function decrementLayoutSize(layoutSize: LayoutSize): LayoutSize | undefined {
   }
 }
 
+function updateWorkspaceSlot(
+  state: WorkspaceState,
+  tabId: string,
+  workspaceId: string,
+  update: (slot: ChartSlot) => ChartSlot | undefined,
+): WorkspaceState {
+  const tabIndex = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (tabIndex === -1) return state;
+  const current = state.tabs[tabIndex];
+  if (current === undefined) return state;
+  const workspaceIndex = current.slots.findIndex(
+    (slot) => slot.id === workspaceId,
+  );
+  if (workspaceIndex === -1) return state;
+  const currentSlot = current.slots[workspaceIndex];
+  if (currentSlot === undefined) return state;
+  const updatedSlot = update(currentSlot);
+  if (updatedSlot === undefined || updatedSlot === currentSlot) return state;
+
+  const slots = [...current.slots];
+  slots[workspaceIndex] = updatedSlot;
+  const tabs = [...state.tabs];
+  tabs[tabIndex] = { ...current, slots };
+  return { ...state, tabs };
+}
+
 export function workspaceReducer(
   state: WorkspaceState,
   action: WorkspaceAction,
@@ -135,14 +188,28 @@ export function workspaceReducer(
       const layoutSize = incrementLayoutSize(current.layoutSize);
       if (layoutSize === undefined) return state;
       const workspaceNumber = current.nextWorkspaceNumber;
+      const template = [...current.slots]
+        .reverse()
+        .find((slot) => slot.persisted !== undefined)?.persisted;
+      const newSlot: ChartSlot =
+        template === undefined
+          ? { id: `${current.id}-chart-${workspaceNumber}` }
+          : {
+              id: `${current.id}-chart-${workspaceNumber}`,
+              persisted: {
+                providerProfileId:
+                  current.providerProfileId ?? template.providerProfileId,
+                instrumentId: template.instrumentId,
+                timeframeSeconds: template.timeframeSeconds,
+                chartType: template.chartType,
+                indicators: [],
+              },
+            };
       const updated = {
         ...current,
         layoutSize,
         persistedLayout: undefined,
-        slots: [
-          ...current.slots,
-          { id: `${current.id}-chart-${workspaceNumber}` },
-        ],
+        slots: [...current.slots, newSlot],
         nextWorkspaceNumber: workspaceNumber + 1,
       };
       const tabs = [...state.tabs];
@@ -188,24 +255,117 @@ export function workspaceReducer(
       return { ...state, tabs };
     }
     case "configure-workspace": {
-      const tabIndex = state.tabs.findIndex((tab) => tab.id === action.tabId);
-      if (tabIndex === -1) return state;
-      const current = state.tabs[tabIndex];
-      if (current === undefined) return state;
-      const workspaceIndex = current.slots.findIndex(
-        (slot) => slot.id === action.workspaceId,
+      return updateWorkspaceSlot(
+        state,
+        action.tabId,
+        action.workspaceId,
+        (slot) => ({
+          ...slot,
+          persisted: action.persisted,
+        }),
       );
-      if (workspaceIndex === -1) return state;
-      const currentSlot = current.slots[workspaceIndex];
-      if (currentSlot === undefined) return state;
-      const slots = [...current.slots];
-      slots[workspaceIndex] = {
-        ...currentSlot,
-        persisted: action.persisted,
-      };
-      const tabs = [...state.tabs];
-      tabs[tabIndex] = { ...current, slots };
-      return { ...state, tabs };
+    }
+    case "add-workspace-indicator": {
+      return updateWorkspaceSlot(
+        state,
+        action.tabId,
+        action.workspaceId,
+        (slot) => {
+          if (slot.persisted === undefined) return undefined;
+          if (
+            slot.persisted.indicators.length >= maximumIndicatorsPerWorkspace ||
+            slot.persisted.indicators.some(
+              (indicator) =>
+                indicator.instanceId === action.indicator.instanceId,
+            )
+          ) {
+            return undefined;
+          }
+          return {
+            ...slot,
+            persisted: {
+              ...slot.persisted,
+              indicators: [...slot.persisted.indicators, action.indicator],
+            },
+          };
+        },
+      );
+    }
+    case "update-workspace-indicator": {
+      return updateWorkspaceSlot(
+        state,
+        action.tabId,
+        action.workspaceId,
+        (slot) => {
+          if (slot.persisted === undefined) return undefined;
+          const indicatorIndex = slot.persisted.indicators.findIndex(
+            (indicator) => indicator.instanceId === action.indicator.instanceId,
+          );
+          if (indicatorIndex === -1) return undefined;
+          const indicators = [...slot.persisted.indicators];
+          indicators[indicatorIndex] = action.indicator;
+          return {
+            ...slot,
+            persisted: { ...slot.persisted, indicators },
+          };
+        },
+      );
+    }
+    case "set-workspace-indicator-enabled": {
+      return updateWorkspaceSlot(
+        state,
+        action.tabId,
+        action.workspaceId,
+        (slot) => {
+          if (slot.persisted === undefined) return undefined;
+          const indicatorIndex = slot.persisted.indicators.findIndex(
+            (indicator) => indicator.instanceId === action.instanceId,
+          );
+          if (indicatorIndex === -1) return undefined;
+          const currentIndicator = slot.persisted.indicators[indicatorIndex];
+          if (
+            currentIndicator === undefined ||
+            currentIndicator.enabled === action.enabled
+          ) {
+            return undefined;
+          }
+          const indicators = [...slot.persisted.indicators];
+          indicators[indicatorIndex] = {
+            ...currentIndicator,
+            enabled: action.enabled,
+          };
+          return {
+            ...slot,
+            persisted: { ...slot.persisted, indicators },
+          };
+        },
+      );
+    }
+    case "remove-workspace-indicator": {
+      return updateWorkspaceSlot(
+        state,
+        action.tabId,
+        action.workspaceId,
+        (slot) => {
+          if (slot.persisted === undefined) return undefined;
+          if (
+            !slot.persisted.indicators.some(
+              (indicator) => indicator.instanceId === action.instanceId,
+            )
+          ) {
+            return undefined;
+          }
+          return {
+            ...slot,
+            persisted: {
+              ...slot.persisted,
+              indicators: slot.persisted.indicators.filter(
+                (indicator) => indicator.instanceId !== action.instanceId,
+              ),
+            },
+          };
+        },
+      );
     }
     case "remove-workspace": {
       const tabIndex = state.tabs.findIndex((tab) => tab.id === action.tabId);
@@ -215,7 +375,7 @@ export function workspaceReducer(
       const workspaceIndex = current.slots.findIndex(
         (slot) => slot.id === action.workspaceId,
       );
-      if (workspaceIndex <= 0) return state;
+      if (workspaceIndex === -1 || current.slots.length <= 1) return state;
       const layoutSize = decrementLayoutSize(current.layoutSize);
       if (layoutSize === undefined) return state;
       const updated = {

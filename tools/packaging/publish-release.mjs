@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Realtime background-chart hotfix
+const curatedNotes = `# Chart controls and indicator runtime
 
-This hotfix keeps live provider subscriptions active for configured workspaces while their chart tabs are unfocused and retains incoming candles outside mounted KLineCharts views so returning to a tab does not leave a realtime gap.
+This release expands the KLineCharts workspace with chart-native timeframe and chart controls, drawing tools, screenshot/fullscreen support, persisted indicator instances, and the indicator plugin import/runtime path with SDK metadata-driven settings.
 
-It also removes subscription churn while timeframe sessions load and fixes the Binomo/provider-runtime cancellation race that could emit a late candle for a retired subscription and terminate the provider with PROVIDER_UTILITY_PROTOCOL_VIOLATION. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+It also adds the ATR Rope + UT Bot example indicator, grouped Inputs/Style settings, dynamic presentation metadata, and fixes color-transition line gaps by keeping logical indicator lines continuous across state changes. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,

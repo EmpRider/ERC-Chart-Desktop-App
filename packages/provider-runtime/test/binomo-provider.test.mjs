@@ -74,7 +74,7 @@ function createWebSocketHost(responses, now = Date.UTC(2026, 8, 3, 12, 0, 0)) {
   return { ...fixture, sockets };
 }
 
-test("Binomo provider is authored only against the public provider SDK", async () => {
+test("ECDD-98 acceptance: Binomo provider uses only host services and requires no browser tab or hook", async () => {
   const source = await readFile(
     new URL("../../provider-examples/src/binomo-provider.ts", import.meta.url),
     "utf8",
@@ -84,6 +84,13 @@ test("Binomo provider is authored only against the public provider SDK", async (
     source,
     /@erc-chart\/(?:contracts|provider-runtime|renderer|storage|data-service|electron-main)/u,
   );
+  assert.doesNotMatch(
+    source,
+    /\b(?:BrowserWindow|webContents|executeJavaScript|document|window|chrome|browser)\b/u,
+  );
+  assert.doesNotMatch(source, /\b(?:fetch|WebSocket)\s*\(/u);
+  assert.match(source, /host\.network/u);
+  assert.match(source, /host\.websocket/u);
 });
 
 test("loads Binomo candles with the userscript timestamp and chunk semantics", async () => {
@@ -185,99 +192,69 @@ test("advertises native and derived Binomo timeframes separately", async () => {
   ]);
   assert.equal(capabilities.derivedTimeframes, true);
   assert.deepEqual(capabilities.derivedTimeframeIds, ["2m", "3m"]);
+  assert.deepEqual(
+    capabilities.timeframes.map(
+      ({ id, seconds, native, derivedFromTimeframeId, alignment }) => ({
+        id,
+        seconds,
+        native,
+        derivedFromTimeframeId,
+        alignment,
+      }),
+    ),
+    [
+      ["5s", 5],
+      ["15s", 15],
+      ["30s", 30],
+      ["1m", 60],
+      ["5m", 300],
+      ["15m", 900],
+      ["30m", 1800],
+    ]
+      .map(([id, seconds]) => ({
+        id,
+        seconds,
+        native: true,
+        derivedFromTimeframeId: undefined,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      }))
+      .concat([
+        {
+          id: "2m",
+          seconds: 120,
+          native: false,
+          derivedFromTimeframeId: "1m",
+          alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+        },
+        {
+          id: "3m",
+          seconds: 180,
+          native: false,
+          derivedFromTimeframeId: "1m",
+          alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+        },
+      ]),
+  );
 });
 
-test("aggregates derived 3m history from epoch-aligned 1m candles", async () => {
+test("leaves derived history ownership to the data service", async () => {
   const { default: definition } =
     await import("../../provider-examples/dist/binomo-provider.js");
-  const fixture = createHost([
-    response({
-      data: [
-        {
-          open: 100,
-          high: 102,
-          low: 99,
-          close: 101,
-          created_at: "2026-09-03T12:01:00.000000Z",
-        },
-        {
-          open: 101,
-          high: 104,
-          low: 100,
-          close: 103,
-          created_at: "2026-09-03T12:02:00.000000Z",
-        },
-        {
-          open: 103,
-          high: 105,
-          low: 98,
-          close: 102,
-          created_at: "2026-09-03T12:03:00.000000Z",
-        },
-        {
-          open: 102,
-          high: 106,
-          low: 101,
-          close: 105,
-          created_at: "2026-09-03T12:04:00.000000Z",
-        },
-        {
-          open: 105,
-          high: 107,
-          low: 103,
-          close: 104,
-          created_at: "2026-09-03T12:05:00.000000Z",
-        },
-        {
-          open: 104,
-          high: 108,
-          low: 102,
-          close: 107,
-          created_at: "2026-09-03T12:06:00.000000Z",
-        },
-      ],
-      errors: [],
-      success: true,
-    }),
-  ]);
+  const fixture = createHost([]);
   const adapter = await definition.create(fixture.host, {
     symbol: "Z-CRY/IDX",
     pollIntervalMs: 1000,
   });
 
-  const candles = await adapter.requestHistory({
-    instrumentId: "Z-CRY/IDX",
-    timeframeId: "3m",
-    fromMs: Date.UTC(2026, 8, 3, 12, 0, 0),
-    toMs: Date.UTC(2026, 8, 3, 12, 6, 0),
-    limit: 2,
-  });
-
-  assert.equal(fixture.requests.length, 1);
-  assert.equal(
-    fixture.requests[0].url,
-    "https://api.binomo.com/candles/v1/Z-CRY%2FIDX/2026-09-03T00:00:00/60?locale=en",
+  await assert.rejects(
+    adapter.requestHistory({
+      instrumentId: "Z-CRY/IDX",
+      timeframeId: "3m",
+      limit: 2,
+    }),
+    /Unsupported native Binomo timeframe/u,
   );
-  assert.deepEqual(candles, [
-    {
-      instrumentId: "Z-CRY/IDX",
-      timeframeId: "3m",
-      openTimeMs: Date.UTC(2026, 8, 3, 12, 0, 0),
-      open: 100,
-      high: 105,
-      low: 98,
-      close: 102,
-    },
-    {
-      instrumentId: "Z-CRY/IDX",
-      timeframeId: "3m",
-      openTimeMs: Date.UTC(2026, 8, 3, 12, 3, 0),
-      open: 102,
-      high: 108,
-      low: 101,
-      close: 107,
-    },
-  ]);
+  assert.equal(fixture.requests.length, 0);
 });
 
 test("polling subscription emits the current Binomo candle and stops cleanly", async () => {
@@ -374,7 +351,7 @@ test("polling subscription drops an in-flight candle after unsubscribe", async (
   assert.deepEqual(errors, []);
 });
 
-test("authenticated Binomo websocket flow emits compressed live ticks and candle updates", async () => {
+test("authenticated Binomo websocket flow emits compressed live ticks without building candles", async () => {
   const { default: definition } =
     await import("../../provider-examples/dist/binomo-provider.js");
   const fixture = createWebSocketHost([
@@ -456,11 +433,9 @@ test("authenticated Binomo websocket flow emits compressed live ticks and candle
       price: 205.5,
     },
   ]);
-  assert.equal(candles.at(-1).openTimeMs, Date.UTC(2026, 8, 3, 12, 0, 0));
-  assert.equal(candles.at(-1).open, 200);
-  assert.equal(candles.at(-1).high, 205.5);
-  assert.equal(candles.at(-1).low, 198);
-  assert.equal(candles.at(-1).close, 205.5);
+  assert.equal(candles.length, 1);
+  assert.equal(candles[0].openTimeMs, Date.UTC(2026, 8, 3, 12, 0, 0));
+  assert.equal(candles[0].close, 203);
 
   await subscription.unsubscribe();
   await adapter.disconnect();
@@ -468,76 +443,114 @@ test("authenticated Binomo websocket flow emits compressed live ticks and candle
   assert.equal(phoenix.closed.length, 1);
 });
 
-test("derived 2m websocket subscription seeds from 1m history and updates the target bucket", async () => {
+test("Binomo websocket reconnects with backoff and resubscribes after an unexpected close", async () => {
   const { default: definition } =
     await import("../../provider-examples/dist/binomo-provider.js");
-  const now = Date.UTC(2026, 8, 3, 12, 1, 30);
-  const fixture = createWebSocketHost(
-    [
-      response({
-        data: [
-          {
-            open: 200,
-            high: 204,
-            low: 198,
-            close: 203,
-            created_at: "2026-09-03T12:01:00.000000Z",
-          },
-        ],
-        errors: [],
-        success: true,
-      }),
-      response({ data: [], errors: [], success: true }),
-    ],
-    now,
-  );
+  const fixture = createWebSocketHost([
+    response({
+      data: [
+        {
+          open: 200,
+          high: 204,
+          low: 198,
+          close: 203,
+          created_at: "2026-09-03T12:01:00.000000Z",
+        },
+      ],
+      errors: [],
+      success: true,
+    }),
+    response({ data: [], errors: [], success: true }),
+  ]);
   const adapter = await definition.create(fixture.host, {
     symbol: "Z-CRY/IDX",
     pollIntervalMs: 60_000,
   });
-  const candles = [];
-  let subscription;
+  const errors = [];
 
   await adapter.connect();
-  try {
-    subscription = await adapter.subscribe(
+  const subscription = await adapter.subscribe(
+    { instrumentId: "Z-CRY/IDX", timeframeId: "1m" },
+    {
+      onCandles: () => undefined,
+      onTicks: () => undefined,
+      onError: (code) => errors.push(code),
+    },
+  );
+  const firstAssetStream = fixture.sockets[1];
+  firstAssetStream.handlers.onClose({ code: 1006, reason: "network lost" });
+
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.equal(fixture.sockets.length, 3);
+  const reconnected = fixture.sockets[2];
+  assert.equal(reconnected.request.url, "wss://as.binomo.com/");
+  assert.deepEqual(
+    reconnected.sent.map((message) => JSON.parse(message)),
+    [
+      { action: "subscribe", rics: ["Z-CRY/IDX"] },
+      { action: "subscribe", event_type: "reconnect_request" },
+    ],
+  );
+  assert.ok(errors.includes("BINOMO_WEBSOCKET_CLOSED"));
+  assert.ok(fixture.statuses.includes("reconnecting"));
+  assert.equal(fixture.statuses.at(-1), "connected");
+
+  await subscription.unsubscribe();
+  await adapter.disconnect();
+});
+
+test("Binomo authentication close is surfaced without reconnecting with the same credential", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const fixture = createWebSocketHost([
+    response({ data: [], errors: [], success: true }),
+    response({ data: [], errors: [], success: true }),
+  ]);
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 60_000,
+  });
+  const errors = [];
+
+  await adapter.connect();
+  const subscription = await adapter.subscribe(
+    { instrumentId: "Z-CRY/IDX", timeframeId: "1m" },
+    {
+      onCandles: () => undefined,
+      onTicks: () => undefined,
+      onError: (code) => errors.push(code),
+    },
+  );
+  fixture.sockets[1].handlers.onClose({ code: 4401, reason: "unauthorized" });
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.deepEqual(errors, ["BINOMO_AUTHENTICATION_FAILED"]);
+  assert.equal(fixture.sockets.length, 2);
+  assert.equal(fixture.statuses.at(-1), "degraded");
+
+  await subscription.unsubscribe();
+  await adapter.disconnect();
+});
+
+test("leaves derived live subscription ownership to the data service", async () => {
+  const { default: definition } =
+    await import("../../provider-examples/dist/binomo-provider.js");
+  const fixture = createHost([]);
+  const adapter = await definition.create(fixture.host, {
+    symbol: "Z-CRY/IDX",
+    pollIntervalMs: 60_000,
+  });
+
+  await assert.rejects(
+    adapter.subscribe(
       { instrumentId: "Z-CRY/IDX", timeframeId: "2m" },
       {
-        onCandles: (value) => candles.push(...value),
+        onCandles: () => undefined,
         onTicks: () => undefined,
-        onError: (code) => assert.fail(`Unexpected provider error: ${code}`),
+        onError: () => undefined,
       },
-    );
-    const assetStream = fixture.sockets[1];
-    const liveMessage = JSON.stringify({
-      success: true,
-      data: [
-        {
-          action: "assets",
-          assets: [
-            {
-              ric: "Z-CRY/IDX",
-              rate: "205.5",
-              created_at: "2026-09-03T12:01:15.000Z",
-            },
-          ],
-        },
-      ],
-    });
-    assetStream.handlers.onMessage(deflateRawSync(Buffer.from(liveMessage)));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    assert.equal(fixture.requests.length, 2);
-    assert.match(fixture.requests[0].url, /\/60\?locale=en$/u);
-    assert.equal(candles.at(-1).timeframeId, "2m");
-    assert.equal(candles.at(-1).openTimeMs, Date.UTC(2026, 8, 3, 12, 0, 0));
-    assert.equal(candles.at(-1).open, 200);
-    assert.equal(candles.at(-1).high, 205.5);
-    assert.equal(candles.at(-1).low, 198);
-    assert.equal(candles.at(-1).close, 205.5);
-  } finally {
-    await subscription?.unsubscribe();
-    await adapter.disconnect();
-  }
-  assert.equal(fixture.sockets[1].closed.length, 1);
+    ),
+    /Unsupported native Binomo timeframe/u,
+  );
 });

@@ -10,6 +10,7 @@ import {
   type ProviderProfileUpdateRequest,
   type ProviderSessionRequest,
 } from "@erc-chart/contracts";
+import { createProviderSelectorData } from "@erc-chart/data-service";
 import {
   windowsCredentialTarget,
   type DesktopApplicationController,
@@ -147,23 +148,6 @@ function launchDescriptor(
   };
 }
 
-function timeframeDurationMs(timeframeId: string): number {
-  const match = /^(\d+)(s|m|h|d)$/u.exec(timeframeId);
-  if (match === null) return 60_000;
-  const amount = Number(match[1]);
-  const unit = match[2];
-  return (
-    amount *
-    (unit === "s"
-      ? 1_000
-      : unit === "m"
-        ? 60_000
-        : unit === "h"
-          ? 3_600_000
-          : 86_400_000)
-  );
-}
-
 function checkedCredentials(
   plugin: PluginRegistryEntry,
   credentials: Readonly<Record<string, string>>,
@@ -216,24 +200,23 @@ export function createProviderManagementService(
       options.controller.getProviderCapabilities(profile.id),
       options.controller.getProviderInstruments(profile.id),
     ]);
-    const availableTimeframeIds = [
-      ...capabilities.nativeTimeframes,
-      ...(capabilities.derivedTimeframeIds ?? []),
-    ].sort(
-      (left, right) => timeframeDurationMs(left) - timeframeDurationMs(right),
-    );
+    const selector = createProviderSelectorData(capabilities, instruments);
+    const availableTimeframeIds = selector.timeframes.map(({ id }) => id);
     const instrument =
       request === undefined
-        ? instruments[0]
-        : instruments.find((value) => value.id === request.instrumentId);
-    const timeframeId =
+        ? selector.instruments[0]
+        : selector.instruments.find(
+            (value) => value.id === request.instrumentId,
+          );
+    const timeframe =
       request === undefined
-        ? (availableTimeframeIds.find((value) => value === "1m") ??
-          availableTimeframeIds[0])
-        : availableTimeframeIds.find((value) => value === request.timeframeId);
-    if (instrument === undefined || timeframeId === undefined) {
+        ? (selector.timeframes.find(({ id }) => id === "1m") ??
+          selector.timeframes[0])
+        : selector.timeframes.find(({ id }) => id === request.timeframeId);
+    if (instrument === undefined || timeframe === undefined) {
       throw new Error("Provider does not expose chartable market data.");
     }
+    const timeframeId = timeframe.id;
     if (request !== undefined && timeframeId !== request.timeframeId) {
       throw new Error("Provider timeframe is unavailable.");
     }
@@ -243,7 +226,7 @@ export function createProviderManagementService(
       {
         instrumentId: instrument.id,
         timeframeId,
-        fromMs: Math.max(0, toMs - timeframeDurationMs(timeframeId) * 500),
+        fromMs: Math.max(0, toMs - timeframe.seconds * 1000 * 500),
         toMs,
         limit: 500,
       },

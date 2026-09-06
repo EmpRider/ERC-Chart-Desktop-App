@@ -179,7 +179,29 @@ function inspectCapabilities(value: unknown): ProviderContractViolation[] {
       (!Array.isArray(value.derivedTimeframeIds) ||
         value.derivedTimeframeIds.some(
           (item) => typeof item !== "string" || item.length === 0,
-        )))
+        ))) ||
+    (value.timeframes !== undefined &&
+      (!Array.isArray(value.timeframes) ||
+        value.timeframes.some((item) => {
+          if (!record(item) || !record(item.alignment)) return true;
+          return (
+            typeof item.id !== "string" ||
+            item.id.length === 0 ||
+            !Number.isSafeInteger(item.seconds) ||
+            (item.seconds as number) <= 0 ||
+            typeof item.historical !== "boolean" ||
+            typeof item.live !== "boolean" ||
+            typeof item.native !== "boolean" ||
+            (item.derivedFromTimeframeId !== undefined &&
+              (typeof item.derivedFromTimeframeId !== "string" ||
+                item.derivedFromTimeframeId.length === 0)) ||
+            (item.alignment.mode !== "epoch" &&
+              item.alignment.mode !== "session") ||
+            !Number.isSafeInteger(item.alignment.originMs) ||
+            typeof item.alignment.timeZone !== "string" ||
+            item.alignment.timeZone.length === 0
+          );
+        })))
   ) {
     return [
       violation(

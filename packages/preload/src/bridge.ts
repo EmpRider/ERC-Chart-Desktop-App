@@ -1,5 +1,21 @@
 import {
+  indicatorImportApproveChannel,
+  indicatorImportCancelChannel,
+  indicatorImportPreviewChannel,
+  indicatorRuntimeDisposeChannel,
+  indicatorRuntimeSyncChannel,
+  indicatorRuntimeUpdateChannel,
+  indicatorsListChannel,
+  isIndicatorImportPreviewResult,
+  isIndicatorRuntimeInstanceId,
+  isIndicatorRuntimeSnapshot,
+  isIndicatorRuntimeSyncRequest,
+  isIndicatorRuntimeUpdateRequest,
+  isInstalledIndicatorList,
+  isInstalledIndicatorSummary,
   isImportedProviderSession,
+  isProviderHistoryLoadRequest,
+  isProviderHistoryResult,
   isProviderLiveEvent,
   isProviderLiveRequest,
   isProviderSessionRequest,
@@ -15,6 +31,7 @@ import {
   providerImportApproveChannel,
   providerImportCancelChannel,
   providerImportPreviewChannel,
+  providerHistoryLoadChannel,
   providerLiveEventChannel,
   providerLiveSubscribeChannel,
   providerLiveUnsubscribeChannel,
@@ -28,7 +45,14 @@ import {
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
+  type Candle,
+  type IndicatorImportPreview,
+  type IndicatorRuntimeSnapshot,
+  type IndicatorRuntimeSyncRequest,
+  type IndicatorRuntimeUpdateRequest,
   type ImportedProviderSession,
+  type InstalledIndicatorSummary,
+  type ProviderHistoryLoadRequest,
   type ProviderLiveEvent,
   type ProviderLiveRequest,
   type ProviderManagementSnapshot,
@@ -53,6 +77,19 @@ export interface ErcChartBridge {
     credentials?: ProviderImportCredentialValues,
   ) => Promise<ImportedProviderSession>;
   readonly cancelProviderImport: (requestId: string) => Promise<void>;
+  readonly previewIndicatorImport: () => Promise<IndicatorImportPreview | null>;
+  readonly approveIndicatorImport: (
+    requestId: string,
+  ) => Promise<InstalledIndicatorSummary>;
+  readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
+  readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
+  readonly syncIndicator: (
+    request: IndicatorRuntimeSyncRequest,
+  ) => Promise<IndicatorRuntimeSnapshot>;
+  readonly updateIndicator: (
+    request: IndicatorRuntimeUpdateRequest,
+  ) => Promise<IndicatorRuntimeSnapshot>;
+  readonly disposeIndicator: (instanceId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -66,6 +103,9 @@ export interface ErcChartBridge {
   readonly loadProviderSession: (
     request: ProviderSessionRequest,
   ) => Promise<ImportedProviderSession>;
+  readonly requestProviderHistory: (
+    request: ProviderHistoryLoadRequest,
+  ) => Promise<readonly Candle[]>;
   readonly stopProviderProfile: (profileId: string) => Promise<void>;
   readonly deleteProviderProfile: (profileId: string) => Promise<void>;
   readonly subscribeProviderData: (
@@ -196,6 +236,91 @@ export function createErcChartBridge(
         throw new Error("Provider import could not be cancelled.");
       }
     },
+    previewIndicatorImport:
+      async (): Promise<IndicatorImportPreview | null> => {
+        try {
+          const result = await invoke(indicatorImportPreviewChannel);
+          if (!isIndicatorImportPreviewResult(result)) throw new Error();
+          return result;
+        } catch {
+          throw new Error("Indicator import could not be prepared.");
+        }
+      },
+    approveIndicatorImport: async (
+      requestId: string,
+    ): Promise<InstalledIndicatorSummary> => {
+      const checkedRequestId = requireRequestId(requestId);
+      try {
+        const result = await invoke(
+          indicatorImportApproveChannel,
+          checkedRequestId,
+        );
+        if (!isInstalledIndicatorSummary(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Indicator could not be installed.");
+      }
+    },
+    cancelIndicatorImport: async (requestId: string): Promise<void> => {
+      const checkedRequestId = requireRequestId(requestId);
+      try {
+        const result = await invoke(
+          indicatorImportCancelChannel,
+          checkedRequestId,
+        );
+        if (result !== true) throw new Error();
+      } catch {
+        throw new Error("Indicator import could not be cancelled.");
+      }
+    },
+    listIndicators: async (): Promise<readonly InstalledIndicatorSummary[]> => {
+      try {
+        const result = await invoke(indicatorsListChannel);
+        if (!isInstalledIndicatorList(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Installed indicators could not be loaded.");
+      }
+    },
+    syncIndicator: async (
+      request: IndicatorRuntimeSyncRequest,
+    ): Promise<IndicatorRuntimeSnapshot> => {
+      if (!isIndicatorRuntimeSyncRequest(request)) {
+        throw new Error("Indicator runtime request is invalid.");
+      }
+      try {
+        const result = await invoke(indicatorRuntimeSyncChannel, request);
+        if (!isIndicatorRuntimeSnapshot(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Indicator could not be initialized.");
+      }
+    },
+    updateIndicator: async (
+      request: IndicatorRuntimeUpdateRequest,
+    ): Promise<IndicatorRuntimeSnapshot> => {
+      if (!isIndicatorRuntimeUpdateRequest(request)) {
+        throw new Error("Indicator runtime update is invalid.");
+      }
+      try {
+        const result = await invoke(indicatorRuntimeUpdateChannel, request);
+        if (!isIndicatorRuntimeSnapshot(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Indicator could not be updated.");
+      }
+    },
+    disposeIndicator: async (instanceId: string): Promise<void> => {
+      if (!isIndicatorRuntimeInstanceId(instanceId)) {
+        throw new Error("Indicator instance is invalid.");
+      }
+      try {
+        const result = await invoke(indicatorRuntimeDisposeChannel, instanceId);
+        if (result !== true) throw new Error();
+      } catch {
+        throw new Error("Indicator instance could not be disposed.");
+      }
+    },
     listProviderProfiles: async (): Promise<ProviderManagementSnapshot> => {
       try {
         const result = await invoke(providerProfilesListChannel);
@@ -260,6 +385,20 @@ export function createErcChartBridge(
         return result;
       } catch {
         throw new Error("Provider timeframe could not be loaded.");
+      }
+    },
+    requestProviderHistory: async (
+      request: ProviderHistoryLoadRequest,
+    ): Promise<readonly Candle[]> => {
+      if (!isProviderHistoryLoadRequest(request)) {
+        throw new Error("Provider history request is invalid.");
+      }
+      try {
+        const result = await invoke(providerHistoryLoadChannel, request);
+        if (!isProviderHistoryResult(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Provider history could not be loaded.");
       }
     },
     stopProviderProfile: async (profileId: string): Promise<void> => {

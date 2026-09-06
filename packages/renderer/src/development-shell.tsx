@@ -1,6 +1,11 @@
 import {
   type Candle,
+  type IndicatorImportPreview,
+  type IndicatorRuntimeSnapshot,
+  type IndicatorRuntimeSyncRequest,
   type ImportedProviderSession,
+  type InstalledIndicatorSummary,
+  type ProviderHistoryLoadRequest,
   type ProviderLiveEvent,
   type ProviderLiveRequest,
   type ProviderImportCredentialValues,
@@ -53,6 +58,16 @@ export interface RendererBridge {
     credentials?: ProviderImportCredentialValues,
   ) => Promise<ImportedProviderSession>;
   readonly cancelProviderImport: (requestId: string) => Promise<void>;
+  readonly previewIndicatorImport: () => Promise<IndicatorImportPreview | null>;
+  readonly approveIndicatorImport: (
+    requestId: string,
+  ) => Promise<InstalledIndicatorSummary>;
+  readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
+  readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
+  readonly syncIndicator: (
+    request: IndicatorRuntimeSyncRequest,
+  ) => Promise<IndicatorRuntimeSnapshot>;
+  readonly disposeIndicator: (instanceId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -66,6 +81,9 @@ export interface RendererBridge {
   readonly loadProviderSession: (
     request: ProviderSessionRequest,
   ) => Promise<ImportedProviderSession>;
+  readonly requestProviderHistory: (
+    request: ProviderHistoryLoadRequest,
+  ) => Promise<readonly Candle[]>;
   readonly stopProviderProfile: (profileId: string) => Promise<void>;
   readonly deleteProviderProfile: (profileId: string) => Promise<void>;
   readonly subscribeProviderData: (
@@ -118,6 +136,19 @@ export interface ApplicationShellProps {
     PluginPermissionReviewPresentation | undefined;
   readonly providerSession?: ImportedProviderSession | undefined;
   readonly providerSessions?: readonly ImportedProviderSession[] | undefined;
+  readonly installedIndicators?:
+    readonly InstalledIndicatorSummary[] | undefined;
+  readonly onIndicatorImport?: (() => void) | undefined;
+  readonly syncIndicator?:
+    | ((
+        request: IndicatorRuntimeSyncRequest,
+      ) => Promise<IndicatorRuntimeSnapshot>)
+    | undefined;
+  readonly disposeIndicator?:
+    ((instanceId: string) => Promise<void>) | undefined;
+  readonly requestProviderHistory?:
+    | ((request: ProviderHistoryLoadRequest) => Promise<readonly Candle[]>)
+    | undefined;
   readonly onProviderSessionSelect?:
     ((tabId: string, profileId: string) => void) | undefined;
   readonly onWorkspaceTimeframeSelect?:
@@ -134,6 +165,11 @@ export function ApplicationShell({
   pluginPermissionReview,
   providerSession,
   providerSessions,
+  installedIndicators,
+  onIndicatorImport,
+  syncIndicator,
+  disposeIndicator,
+  requestProviderHistory,
   onProviderSessionSelect,
   onWorkspaceTimeframeSelect,
   onProviderManagerOpen,
@@ -283,13 +319,11 @@ export function ApplicationShell({
           {workspaceLimitReached ? (
             <span role="status">Maximum 4 workspaces</span>
           ) : null}
-          {availableProviderSessions.length === 0 ? null : (
+          {availableProviderSessions.length === 1 ? (
             <span className="provider-loaded" role="status">
-              {availableProviderSessions.length === 1
-                ? `${availableProviderSessions[0]?.providerName ?? "Provider"} connected`
-                : `${availableProviderSessions.length} provider profiles connected`}
+              {`${availableProviderSessions[0]?.providerName ?? "Provider"} connected`}
             </span>
-          )}
+          ) : null}
           {onProviderManagerOpen === undefined ? null : (
             <button
               type="button"
@@ -327,27 +361,50 @@ export function ApplicationShell({
                 ? activeProviderSession
                 : undefined;
             const chartSession = exactSession ?? fallbackSession;
+            const persistedSlot = slot.persisted;
             return (
               <article className="chart-slot" data-chart-slot key={slot.id}>
-                {index > 0 ? (
-                  <button
-                    type="button"
-                    className="workspace-close"
-                    aria-label={`Close workspace ${index + 1}`}
-                    onClick={() =>
-                      onWorkspaceAction({
-                        type: "remove-workspace",
-                        tabId: activeTab.id,
-                        workspaceId: slot.id,
-                      })
-                    }
-                  >
-                    ×
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className="workspace-close"
+                  aria-label={`Close workspace ${index + 1}`}
+                  title={
+                    activeTab.slots.length === 1
+                      ? "At least one workspace must remain"
+                      : `Close workspace ${index + 1}`
+                  }
+                  disabled={activeTab.slots.length === 1}
+                  onClick={() =>
+                    onWorkspaceAction({
+                      type: "remove-workspace",
+                      tabId: activeTab.id,
+                      workspaceId: slot.id,
+                    })
+                  }
+                >
+                  ×
+                </button>
                 {chartSession !== undefined ? (
                   <ProviderChart
                     session={chartSession}
+                    chartType={persistedSlot?.chartType ?? "candlestick"}
+                    onChartTypeChange={
+                      persistedSlot === undefined
+                        ? undefined
+                        : (chartType) =>
+                            onWorkspaceAction({
+                              type: "configure-workspace",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              persisted: { ...persistedSlot, chartType },
+                            })
+                    }
+                    requestProviderHistory={requestProviderHistory}
+                    indicators={slot.persisted?.indicators ?? []}
+                    installedIndicators={installedIndicators}
+                    onIndicatorImport={onIndicatorImport}
+                    syncIndicator={syncIndicator}
+                    disposeIndicator={disposeIndicator}
                     selectedTimeframeId={
                       slotTimeframeId ?? chartSession.timeframeId
                     }
@@ -371,6 +428,51 @@ export function ApplicationShell({
                               slot.id,
                               timeframeId,
                             )
+                    }
+                    onIndicatorAdd={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (indicator) =>
+                            onWorkspaceAction({
+                              type: "add-workspace-indicator",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              indicator,
+                            })
+                    }
+                    onIndicatorUpdate={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (indicator) =>
+                            onWorkspaceAction({
+                              type: "update-workspace-indicator",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              indicator,
+                            })
+                    }
+                    onIndicatorEnabledChange={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (instanceId, enabled) =>
+                            onWorkspaceAction({
+                              type: "set-workspace-indicator-enabled",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              instanceId,
+                              enabled,
+                            })
+                    }
+                    onIndicatorRemove={
+                      slot.persisted === undefined
+                        ? undefined
+                        : (instanceId) =>
+                            onWorkspaceAction({
+                              type: "remove-workspace-indicator",
+                              tabId: activeTab.id,
+                              workspaceId: slot.id,
+                              instanceId,
+                            })
                     }
                   />
                 ) : (
@@ -695,6 +797,12 @@ function HydratedRuntimeApplicationShell({
   const [providerPreview, setProviderPreview] = useState<
     ProviderImportPreview | undefined
   >();
+  const [indicatorPreview, setIndicatorPreview] = useState<
+    IndicatorImportPreview | undefined
+  >();
+  const [installedIndicators, setInstalledIndicators] = useState<
+    readonly InstalledIndicatorSummary[]
+  >([]);
   const [providerSessions, setProviderSessions] = useState<
     readonly ImportedProviderSession[]
   >([]);
@@ -702,6 +810,7 @@ function HydratedRuntimeApplicationShell({
   const [providerImportError, setProviderImportError] = useState<
     string | undefined
   >();
+  const [indicatorImportBusy, setIndicatorImportBusy] = useState(false);
   const [providerManagerOpen, setProviderManagerOpen] = useState(false);
   const [providerManagement, setProviderManagement] =
     useState<ProviderManagementSnapshot>({
@@ -722,6 +831,18 @@ function HydratedRuntimeApplicationShell({
       }
     >(),
   );
+  useEffect(() => {
+    let active = true;
+    void bridge
+      .listIndicators()
+      .then((indicators) => {
+        if (active) setInstalledIndicators(indicators);
+      })
+      .catch(() => undefined);
+    return (): void => {
+      active = false;
+    };
+  }, [bridge]);
   const liveRequestSignature = providerLiveRequestsForWorkspace(workspace)
     .filter((request) =>
       providerSessions.some(
@@ -1044,10 +1165,21 @@ function HydratedRuntimeApplicationShell({
       .finally(() => setProviderImportBusy(false));
   };
 
+  const beginIndicatorImport = (): void => {
+    if (indicatorImportBusy) return;
+    setIndicatorImportBusy(true);
+    void bridge
+      .previewIndicatorImport()
+      .then((preview) => {
+        if (preview !== null) setIndicatorPreview(preview);
+      })
+      .catch(() => undefined)
+      .finally(() => setIndicatorImportBusy(false));
+  };
+
   const pluginPermissionReview: PluginPermissionReviewPresentation | undefined =
-    providerPreview === undefined
-      ? undefined
-      : {
+    providerPreview !== undefined
+      ? {
           request: {
             requestId: providerPreview.requestId,
             pluginId: providerPreview.pluginId,
@@ -1089,7 +1221,44 @@ function HydratedRuntimeApplicationShell({
               })
               .finally(() => setProviderImportBusy(false));
           },
-        };
+        }
+      : indicatorPreview !== undefined
+        ? {
+            request: {
+              requestId: indicatorPreview.requestId,
+              pluginId: indicatorPreview.pluginId,
+              pluginName: indicatorPreview.pluginName,
+              pluginVersion: indicatorPreview.pluginVersion,
+              kind: "indicator",
+              mode: indicatorPreview.mode,
+              trust: indicatorPreview.trust,
+              reason: "install",
+              permissions: indicatorPreview.permissions,
+            },
+            busy: indicatorImportBusy,
+            onDecision: (requestId, decision): void => {
+              if (indicatorImportBusy) return;
+              setIndicatorImportBusy(true);
+              if (decision === "reject") {
+                void bridge
+                  .cancelIndicatorImport(requestId)
+                  .catch(() => undefined)
+                  .finally(() => {
+                    setIndicatorPreview(undefined);
+                    setIndicatorImportBusy(false);
+                  });
+                return;
+              }
+              void bridge
+                .approveIndicatorImport(requestId)
+                .then(async () => {
+                  setInstalledIndicators(await bridge.listIndicators());
+                  setIndicatorPreview(undefined);
+                })
+                .finally(() => setIndicatorImportBusy(false));
+            },
+          }
+        : undefined;
 
   return (
     <ApplicationShell
@@ -1098,6 +1267,11 @@ function HydratedRuntimeApplicationShell({
       onWorkspaceAction={dispatch}
       pluginPermissionReview={pluginPermissionReview}
       providerSessions={providerSessions}
+      installedIndicators={installedIndicators}
+      onIndicatorImport={beginIndicatorImport}
+      syncIndicator={bridge.syncIndicator}
+      disposeIndicator={bridge.disposeIndicator}
+      requestProviderHistory={bridge.requestProviderHistory}
       onProviderSessionSelect={selectProviderSession}
       onWorkspaceTimeframeSelect={selectWorkspaceTimeframe}
       onProviderManagerOpen={() => {

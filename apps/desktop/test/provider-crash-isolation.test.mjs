@@ -82,6 +82,7 @@ test("a provider utility crash leaves the renderer window alive", async () => {
           shown: false,
           destroyed: false,
           loadURL: async () => undefined,
+          waitUntilRendererReady: async () => true,
           flushWorkspace: async () => undefined,
           show() {
             this.shown = true;

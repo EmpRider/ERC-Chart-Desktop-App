@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   createDesktopProviderHostBroker,
@@ -263,6 +264,74 @@ test("rejects websocket URLs from the one-shot HTTP request broker", () => {
     new Error("Provider network request protocol is not supported."),
   );
   assert.equal(fetches, 0);
+});
+
+test("ECDD-97 acceptance: provider transports require TLS and keep certificate validation enabled", async () => {
+  const insecureLaunch = launch();
+  insecureLaunch.permissions.network = [
+    "http://api.example.com/",
+    "ws://stream.example.com/",
+  ];
+  const broker = createDesktopProviderHostBroker({
+    launches: new Map([["profile-a", insecureLaunch]]),
+    credentialManager: {
+      async write() {
+        return undefined;
+      },
+      async read() {
+        return undefined;
+      },
+      async delete() {
+        return true;
+      },
+    },
+    async fetch() {
+      throw new Error("insecure HTTP must not reach fetch");
+    },
+    log() {
+      return undefined;
+    },
+    reportStatus() {
+      return undefined;
+    },
+    now: () => 1234,
+  });
+  const handlers = {
+    onMessage() {
+      return undefined;
+    },
+    onClose() {
+      return undefined;
+    },
+    onError() {
+      return undefined;
+    },
+  };
+
+  assert.throws(
+    () =>
+      broker.requestNetwork("profile-a", { url: "http://api.example.com/v1" }),
+    new Error("Provider network request is not permitted."),
+  );
+  await assert.rejects(
+    broker.openWebSocket(
+      "profile-a",
+      { url: "ws://stream.example.com/live" },
+      handlers,
+    ),
+    new Error("Provider websocket request is not permitted."),
+  );
+
+  const source = await readFile(
+    new URL("../src/provider-host-broker.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED|setCertificateVerifyProc|ignore-certificate-errors/u,
+  );
+  assert.match(source, /protocol !== "https:"/u);
+  assert.match(source, /protocol !== "wss:"/u);
 });
 
 test("enforces websocket permissions and host-managed handshake headers", async () => {

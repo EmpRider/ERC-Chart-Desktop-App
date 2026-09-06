@@ -2,6 +2,25 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.3.4] - 2026-09-06
+
+### Chart controls and indicator runtime
+
+- Expanded the KLineCharts workspace controls with chart-native timeframes,
+  chart types, timezone selection, drawing tools, screenshots, and fullscreen
+  behavior while preserving independent workspace state.
+- Added the indicator plugin import/runtime path, SDK metadata-driven settings,
+  persisted indicator instances, and the ATR Rope + UT Bot example package.
+- Added grouped Inputs/Style indicator settings and runtime presentation metadata
+  for dynamic colors and line widths.
+- Fixed ATR Rope and UT Bot color-transition gaps by keeping each logical line on
+  one continuous series and rendering clean line joins across state changes.
+
+### v0.3.4 release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.3.3] - 2026-09-04
 
 ### Realtime background-chart hotfix

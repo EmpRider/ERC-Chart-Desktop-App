@@ -32,6 +32,7 @@ test("mounts the runtime React shell into the required application root", async 
       loadWorkspace: async () => null,
       saveWorkspace: async () => undefined,
       flushWorkspace: async () => undefined,
+      listIndicators: async () => [],
     };
     runtimeEntry = await import(`../dist/runtime-entry.js?test=${Date.now()}`);
   });

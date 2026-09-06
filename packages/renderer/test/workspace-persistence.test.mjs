@@ -138,6 +138,47 @@ test("preserves restored chart configuration on the next save", () => {
   });
 });
 
+test("round-trips indicators for each workspace independently", () => {
+  const withSecondWorkspace = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  let configured = workspaceReducer(withSecondWorkspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  configured = workspaceReducer(configured, {
+    type: "add-workspace-indicator",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    indicator: {
+      instanceId: "rsi-1",
+      pluginId: "erc.indicator.rsi",
+      definitionId: "rsi",
+      enabled: true,
+      parameters: { length: 14 },
+      inputs: { source: { kind: "candles" } },
+    },
+  });
+
+  const restored = fromPersistedWorkspace(toPersistedWorkspace(configured, 1));
+  assert.ok(restored);
+  assert.deepEqual(restored.tabs[0].slots[0].persisted.indicators, []);
+  assert.deepEqual(restored.tabs[0].slots[1].persisted.indicators, [
+    {
+      instanceId: "rsi-1",
+      pluginId: "erc.indicator.rsi",
+      definitionId: "rsi",
+      enabled: true,
+      parameters: { length: 14 },
+      inputs: { source: { kind: "candles" } },
+    },
+  ]);
+});
+
 test("preserves persisted layout orientation on the next save", () => {
   const document = toPersistedWorkspace(
     workspaceReducer(createInitialWorkspace(), {

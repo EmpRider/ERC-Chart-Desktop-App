@@ -51,6 +51,21 @@ test("validates workspace load and save IPC payloads", () => {
   assert.equal(isWorkspaceLoadResult(workspace), true);
   assert.equal(isWorkspaceSaveRequest(workspace), true);
   assert.equal(
+    isWorkspaceSaveRequest({
+      ...workspace,
+      tabs: [
+        {
+          ...workspace.tabs[0],
+          chartSlots: [
+            { ...workspace.tabs[0].chartSlots[0], chartType: "heikin_ashi" },
+            workspace.tabs[0].chartSlots[1],
+          ],
+        },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
     isWorkspaceLoadResult({ ...workspace, activeTabId: "missing" }),
     false,
   );

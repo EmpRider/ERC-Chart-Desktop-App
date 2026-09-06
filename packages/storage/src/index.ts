@@ -259,6 +259,7 @@ export function upsertCandles(
         close = excluded.close,
         volume = excluded.volume,
         revision = excluded.revision
+      WHERE excluded.revision >= candles.revision
     `);
     let changes = 0;
     for (const candle of checked) {
@@ -303,6 +304,148 @@ export function getCandles(
         checked.timeframeSec,
       ) as unknown as CandleRow[]
   ).map(toStoredCandle);
+}
+
+function requirePositiveLimit(value: number, field = "limit"): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000)
+    throw new Error(`${field} must be a positive bounded integer.`);
+  return value;
+}
+
+export function getNewestCandles(
+  database: DatabaseSync,
+  key: CandleSeriesKey,
+  limit: number,
+): readonly StoredCandle[] {
+  const checked = validateSeriesKey(key);
+  const checkedLimit = requirePositiveLimit(limit);
+  return (
+    database
+      .prepare(
+        `SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
+          open, high, low, close, volume, revision
+        FROM (
+          SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
+            open, high, low, close, volume, revision
+          FROM candles
+          WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+          ORDER BY open_time_ms DESC
+          LIMIT ?
+        )
+        ORDER BY open_time_ms`,
+      )
+      .all(
+        checked.feedId,
+        checked.instrumentId,
+        checked.timeframeSec,
+        checkedLimit,
+      ) as unknown as CandleRow[]
+  ).map(toStoredCandle);
+}
+
+export function getCandlesInRange(
+  database: DatabaseSync,
+  key: CandleSeriesKey,
+  fromOpenTimeMs: number,
+  toOpenTimeMs: number,
+  limit = 100_000,
+): readonly StoredCandle[] {
+  const checked = validateSeriesKey(key);
+  const fromMs = requireNonnegativeInteger(fromOpenTimeMs, "fromOpenTimeMs");
+  const toMs = requireNonnegativeInteger(toOpenTimeMs, "toOpenTimeMs");
+  const checkedLimit = requirePositiveLimit(limit);
+  if (toMs < fromMs)
+    throw new Error("Candle range end must not precede its start.");
+  return (
+    database
+      .prepare(
+        `SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
+          open, high, low, close, volume, revision
+        FROM candles
+        WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+          AND open_time_ms >= ? AND open_time_ms <= ?
+        ORDER BY open_time_ms
+        LIMIT ?`,
+      )
+      .all(
+        checked.feedId,
+        checked.instrumentId,
+        checked.timeframeSec,
+        fromMs,
+        toMs,
+        checkedLimit,
+      ) as unknown as CandleRow[]
+  ).map(toStoredCandle);
+}
+
+export function deleteCandlesBefore(
+  database: DatabaseSync,
+  key: CandleSeriesKey,
+  beforeOpenTimeMs: number,
+): number {
+  const checked = validateSeriesKey(key);
+  const beforeMs = requireNonnegativeInteger(
+    beforeOpenTimeMs,
+    "beforeOpenTimeMs",
+  );
+  return Number(
+    database
+      .prepare(
+        `DELETE FROM candles
+         WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+           AND open_time_ms < ?`,
+      )
+      .run(checked.feedId, checked.instrumentId, checked.timeframeSec, beforeMs)
+      .changes,
+  );
+}
+
+export function retainNewestCandles(
+  database: DatabaseSync,
+  key: CandleSeriesKey,
+  maximumBars: number,
+): number {
+  const checked = validateSeriesKey(key);
+  if (
+    !Number.isSafeInteger(maximumBars) ||
+    maximumBars < 0 ||
+    maximumBars > 1_000_000
+  )
+    throw new Error("maximumBars must be a non-negative bounded integer.");
+  if (maximumBars === 0) {
+    return Number(
+      database
+        .prepare(
+          `DELETE FROM candles
+           WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?`,
+        )
+        .run(checked.feedId, checked.instrumentId, checked.timeframeSec)
+        .changes,
+    );
+  }
+  return Number(
+    database
+      .prepare(
+        `DELETE FROM candles
+         WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+           AND open_time_ms < COALESCE((
+             SELECT open_time_ms
+             FROM candles
+             WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+             ORDER BY open_time_ms DESC
+             LIMIT 1 OFFSET ?
+           ), 0)`,
+      )
+      .run(
+        checked.feedId,
+        checked.instrumentId,
+        checked.timeframeSec,
+        checked.feedId,
+        checked.instrumentId,
+        checked.timeframeSec,
+        maximumBars - 1,
+      ).changes,
+  );
 }
 
 export interface ProviderProfile {

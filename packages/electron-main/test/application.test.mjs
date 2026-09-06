@@ -16,6 +16,8 @@ function createFixture(platform = "win32") {
   const providerDataCalls = [];
   let quitCount = 0;
   let loadUrlError;
+  let rendererReadyResults = [true];
+  let rendererReadyIndex = 0;
   let shutdownError;
 
   const adapters = {
@@ -60,6 +62,15 @@ function createFixture(platform = "win32") {
         async loadURL(url) {
           events.push(`window:load:${url}`);
           if (loadUrlError !== undefined) throw loadUrlError;
+        },
+        async waitUntilRendererReady() {
+          events.push("window:renderer-ready");
+          const index = Math.min(
+            rendererReadyIndex,
+            rendererReadyResults.length - 1,
+          );
+          rendererReadyIndex += 1;
+          return rendererReadyResults[index];
         },
         async flushWorkspace() {
           events.push("window:flush");
@@ -167,6 +178,10 @@ function createFixture(platform = "win32") {
     setLoadUrlError: (error) => {
       loadUrlError = error;
     },
+    setRendererReadyResults: (results) => {
+      rendererReadyResults = results;
+      rendererReadyIndex = 0;
+    },
     setShutdownError: (error) => {
       shutdownError = error;
     },
@@ -195,6 +210,7 @@ test("registers fixed IPC before loading one secure window", async () => {
     "data:start:/runtime/data-utility.js:0",
     "window:create",
     "window:load:erc-app://app/index.html",
+    "window:renderer-ready",
     "window:show",
   ]);
   assert.deepEqual(
@@ -374,6 +390,39 @@ test("cleans a failed initial window load without exposing partial UI", async ()
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,
   );
+  assert.equal(fixture.windows.length, 1);
+  assert.equal(fixture.windows[0].shown, false);
+  assert.equal(fixture.windows[0].destroyed, true);
+});
+
+test("retries one renderer load before showing a window with an empty UI", async () => {
+  const fixture = createFixture();
+  fixture.setRendererReadyResults([false, true]);
+
+  await startDesktopApplication(fixture.adapters, paths);
+
+  assert.deepEqual(
+    fixture.events.filter((event) => event.startsWith("window:")),
+    [
+      "window:create",
+      "window:load:erc-app://app/index.html",
+      "window:renderer-ready",
+      "window:load:erc-app://app/index.html",
+      "window:renderer-ready",
+      "window:show",
+    ],
+  );
+});
+
+test("never shows a window when the renderer stays empty after retry", async () => {
+  const fixture = createFixture();
+  fixture.setRendererReadyResults([false, false]);
+
+  await assert.rejects(
+    startDesktopApplication(fixture.adapters, paths),
+    new Error("Desktop application failed to start."),
+  );
+
   assert.equal(fixture.windows.length, 1);
   assert.equal(fixture.windows[0].shown, false);
   assert.equal(fixture.windows[0].destroyed, true);
