@@ -63,6 +63,7 @@ export {
   isProviderProfileSummary,
   isProviderProfileUpdateRequest,
   isProviderImportCredentialValues,
+  isPluginImportSourceKind,
   isProviderImportPreview,
   isProviderImportPreviewResult,
   providerHistoryLoadChannel,
@@ -100,6 +101,7 @@ export type {
   ProviderProfileUpdateRequest,
   ProviderImportCredentialValues,
   ProviderImportPreview,
+  PluginImportSourceKind,
 } from "./provider-management.js";
 export {
   inspectPluginManifest,

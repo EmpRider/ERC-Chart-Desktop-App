@@ -6,7 +6,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { RuntimeApplicationShell } from "../dist/index.js";
 
-test("opens provider permission review from provider manager and cancels safely", async (t) => {
+test("opens provider permission review from plugin manager and cancels safely", async (t) => {
   const { document, window } = parseHTML(
     '<!doctype html><html><body><main id="test-root"></main></body></html>',
   );
@@ -65,13 +65,13 @@ test("opens provider permission review from provider manager and cancels safely"
   });
   await act(async () => Promise.resolve());
   assert.equal(document.querySelector(".provider-import"), null);
-  const providerManagerButton = document.querySelector(".provider-manage");
-  assert.ok(providerManagerButton);
-  await act(async () => providerManagerButton.click());
+  const pluginManagerButton = document.querySelector(".plugin-manage");
+  assert.ok(pluginManagerButton);
+  await act(async () => pluginManagerButton.click());
   await act(async () => Promise.resolve());
-  const importButton = document.querySelector(
-    ".provider-manager .provider-import",
-  );
+  const importButton = [
+    ...document.querySelectorAll(".plugin-import-actions button"),
+  ].find((button) => button.textContent?.trim() === "Import folder");
   assert.ok(importButton);
   await act(async () => importButton.click());
   await act(async () => Promise.resolve());

@@ -310,7 +310,7 @@ test("validates provider import IPC results without exposing local paths", async
     throw new Error("unexpected");
   });
 
-  assert.deepEqual(await bridge.previewProviderImport(), preview);
+  assert.deepEqual(await bridge.previewProviderImport("folder"), preview);
   assert.deepEqual(
     await bridge.approveProviderImport("request-1", {
       binomo_cookie: "fixture-cookie",
@@ -319,7 +319,7 @@ test("validates provider import IPC results without exposing local paths", async
   );
   await bridge.cancelProviderImport("request-1");
   assert.deepEqual(calls, [
-    ["erc-chart:provider-import-preview"],
+    ["erc-chart:provider-import-preview", "folder"],
     [
       "erc-chart:provider-import-approve",
       "request-1",

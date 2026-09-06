@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Chart controls and indicator runtime
+const curatedNotes = `# Plugin Manager redesign
 
-This release expands the KLineCharts workspace with chart-native timeframe and chart controls, drawing tools, screenshot/fullscreen support, persisted indicator instances, and the indicator plugin import/runtime path with SDK metadata-driven settings.
+This release introduces a dedicated Plugin Manager for provider and indicator plugins, with ZIP/folder import actions and a consistent installed-item list plus detail/settings layout.
 
-It also adds the ATR Rope + UT Bot example indicator, grouped Inputs/Style settings, dynamic presentation metadata, and fixes color-transition line gaps by keeping logical indicator lines continuous across state changes. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+Provider management now separates Installed Providers from Installed Profiles. Profiles can be selected and edited in the same left-list/right-detail workflow, including settings, credentials, start/stop, removal, and creation against an installed provider. Indicator instance parameters remain configured per chart. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
@@ -95,7 +95,7 @@ const release =
         name: tag,
         body: notes,
         draft: true,
-        prerelease: true,
+        prerelease: false,
       }),
     },
     [201],
@@ -145,7 +145,7 @@ const published = await request(`${apiRoot}/releases/${release.id}`, {
     name: tag,
     body: notes,
     draft: false,
-    prerelease: true,
+    prerelease: false,
     target_commitish: commitSha,
   }),
 });

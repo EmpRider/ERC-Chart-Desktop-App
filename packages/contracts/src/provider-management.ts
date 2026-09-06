@@ -7,6 +7,14 @@ export const providerImportApproveChannel =
   "erc-chart:provider-import-approve" as const;
 export const providerImportCancelChannel =
   "erc-chart:provider-import-cancel" as const;
+
+export type PluginImportSourceKind = "folder" | "zip";
+
+export function isPluginImportSourceKind(
+  value: unknown,
+): value is PluginImportSourceKind {
+  return value === "folder" || value === "zip";
+}
 export const providerLiveSubscribeChannel =
   "erc-chart:provider-live-subscribe" as const;
 export const providerLiveUnsubscribeChannel =

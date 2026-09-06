@@ -10,6 +10,7 @@ import {
   type ProviderLiveRequest,
   type ProviderImportCredentialValues,
   type ProviderImportPreview,
+  type PluginImportSourceKind,
   type ProviderManagementSnapshot,
   type ProviderProfileCreateRequest,
   type ProviderProfileSummary,
@@ -42,23 +43,24 @@ import {
   type PluginPermissionReviewPresentation,
 } from "./permission-review.js";
 import { ProviderChart } from "./provider-chart.js";
-import {
-  ProviderManager,
-  type ProviderManagerProps,
-} from "./provider-manager.js";
+import { PluginManager, type PluginManagerProps } from "./provider-manager.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
   readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
   readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
   readonly flushWorkspace: () => Promise<void>;
-  readonly previewProviderImport: () => Promise<ProviderImportPreview | null>;
+  readonly previewProviderImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<ProviderImportPreview | null>;
   readonly approveProviderImport: (
     requestId: string,
     credentials?: ProviderImportCredentialValues,
   ) => Promise<ImportedProviderSession>;
   readonly cancelProviderImport: (requestId: string) => Promise<void>;
-  readonly previewIndicatorImport: () => Promise<IndicatorImportPreview | null>;
+  readonly previewIndicatorImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<IndicatorImportPreview | null>;
   readonly approveIndicatorImport: (
     requestId: string,
   ) => Promise<InstalledIndicatorSummary>;
@@ -138,7 +140,6 @@ export interface ApplicationShellProps {
   readonly providerSessions?: readonly ImportedProviderSession[] | undefined;
   readonly installedIndicators?:
     readonly InstalledIndicatorSummary[] | undefined;
-  readonly onIndicatorImport?: (() => void) | undefined;
   readonly syncIndicator?:
     | ((
         request: IndicatorRuntimeSyncRequest,
@@ -154,8 +155,8 @@ export interface ApplicationShellProps {
   readonly onWorkspaceTimeframeSelect?:
     | ((tabId: string, workspaceId: string, timeframeId: string) => void)
     | undefined;
-  readonly onProviderManagerOpen?: (() => void) | undefined;
-  readonly providerManager?: ProviderManagerProps | undefined;
+  readonly onPluginManagerOpen?: (() => void) | undefined;
+  readonly pluginManager?: PluginManagerProps | undefined;
 }
 
 export function ApplicationShell({
@@ -166,14 +167,13 @@ export function ApplicationShell({
   providerSession,
   providerSessions,
   installedIndicators,
-  onIndicatorImport,
   syncIndicator,
   disposeIndicator,
   requestProviderHistory,
   onProviderSessionSelect,
   onWorkspaceTimeframeSelect,
-  onProviderManagerOpen,
-  providerManager,
+  onPluginManagerOpen,
+  pluginManager,
 }: ApplicationShellProps): JSX.Element {
   const availableProviderSessions =
     providerSessions ??
@@ -221,6 +221,11 @@ export function ApplicationShell({
         <div className="runtime-state" role="status" aria-live="polite">
           <span className="status-dot" aria-hidden="true" />
           <span data-status={connection.kind}>{connection.label}</span>
+          {availableProviderSessions.length === 1 ? (
+            <span className="provider-loaded">
+              {`${availableProviderSessions[0]?.providerName ?? "Provider"} connected`}
+            </span>
+          ) : null}
           <span className="status-detail">{connection.message}</span>
         </div>
       </header>
@@ -319,18 +324,14 @@ export function ApplicationShell({
           {workspaceLimitReached ? (
             <span role="status">Maximum 4 workspaces</span>
           ) : null}
-          {availableProviderSessions.length === 1 ? (
-            <span className="provider-loaded" role="status">
-              {`${availableProviderSessions[0]?.providerName ?? "Provider"} connected`}
-            </span>
-          ) : null}
-          {onProviderManagerOpen === undefined ? null : (
+
+          {onPluginManagerOpen === undefined ? null : (
             <button
               type="button"
-              className="provider-manage"
-              onClick={onProviderManagerOpen}
+              className="plugin-manage"
+              onClick={onPluginManagerOpen}
             >
-              Providers
+              Plugin Manager
             </button>
           )}
         </div>
@@ -402,7 +403,6 @@ export function ApplicationShell({
                     requestProviderHistory={requestProviderHistory}
                     indicators={slot.persisted?.indicators ?? []}
                     installedIndicators={installedIndicators}
-                    onIndicatorImport={onIndicatorImport}
                     syncIndicator={syncIndicator}
                     disposeIndicator={disposeIndicator}
                     selectedTimeframeId={
@@ -500,8 +500,8 @@ export function ApplicationShell({
       {pluginPermissionReview === undefined ? null : (
         <PluginPermissionReview {...pluginPermissionReview} />
       )}
-      {providerManager === undefined ? null : (
-        <ProviderManager {...providerManager} />
+      {pluginManager === undefined ? null : (
+        <PluginManager {...pluginManager} />
       )}
     </div>
   );
@@ -811,7 +811,7 @@ function HydratedRuntimeApplicationShell({
     string | undefined
   >();
   const [indicatorImportBusy, setIndicatorImportBusy] = useState(false);
-  const [providerManagerOpen, setProviderManagerOpen] = useState(false);
+  const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [providerManagement, setProviderManagement] =
     useState<ProviderManagementSnapshot>({
       installedProviders: [],
@@ -819,6 +819,9 @@ function HydratedRuntimeApplicationShell({
     });
   const [providerManagementBusy, setProviderManagementBusy] = useState(false);
   const [providerManagementError, setProviderManagementError] = useState<
+    string | undefined
+  >();
+  const [indicatorImportError, setIndicatorImportError] = useState<
     string | undefined
   >();
   const liveSubscriptions = useRef(
@@ -1148,12 +1151,12 @@ function HydratedRuntimeApplicationShell({
     }
   };
 
-  const beginProviderImport = (): void => {
+  const beginProviderImport = (sourceKind: PluginImportSourceKind): void => {
     if (providerImportBusy) return;
     setProviderImportBusy(true);
     setProviderImportError(undefined);
     void bridge
-      .previewProviderImport()
+      .previewProviderImport(sourceKind)
       .then((preview) => {
         if (preview !== null) setProviderPreview(preview);
       })
@@ -1165,15 +1168,20 @@ function HydratedRuntimeApplicationShell({
       .finally(() => setProviderImportBusy(false));
   };
 
-  const beginIndicatorImport = (): void => {
+  const beginIndicatorImport = (sourceKind: PluginImportSourceKind): void => {
     if (indicatorImportBusy) return;
     setIndicatorImportBusy(true);
+    setIndicatorImportError(undefined);
     void bridge
-      .previewIndicatorImport()
+      .previewIndicatorImport(sourceKind)
       .then((preview) => {
         if (preview !== null) setIndicatorPreview(preview);
       })
-      .catch(() => undefined)
+      .catch(() =>
+        setIndicatorImportError(
+          "Indicator import could not be prepared. Check the package and try again.",
+        ),
+      )
       .finally(() => setIndicatorImportBusy(false));
   };
 
@@ -1212,7 +1220,7 @@ function HydratedRuntimeApplicationShell({
                 upsertProviderSession(session);
                 bindActiveTabIfUnconfigured(session);
                 setProviderPreview(undefined);
-                if (providerManagerOpen) void refreshProviderManagement();
+                if (pluginManagerOpen) void refreshProviderManagement();
               })
               .catch(() => {
                 setProviderImportError(
@@ -1255,6 +1263,9 @@ function HydratedRuntimeApplicationShell({
                   setInstalledIndicators(await bridge.listIndicators());
                   setIndicatorPreview(undefined);
                 })
+                .catch(() => {
+                  setIndicatorImportError("Indicator could not be installed.");
+                })
                 .finally(() => setIndicatorImportBusy(false));
             },
           }
@@ -1268,27 +1279,38 @@ function HydratedRuntimeApplicationShell({
       pluginPermissionReview={pluginPermissionReview}
       providerSessions={providerSessions}
       installedIndicators={installedIndicators}
-      onIndicatorImport={beginIndicatorImport}
       syncIndicator={bridge.syncIndicator}
       disposeIndicator={bridge.disposeIndicator}
       requestProviderHistory={bridge.requestProviderHistory}
       onProviderSessionSelect={selectProviderSession}
       onWorkspaceTimeframeSelect={selectWorkspaceTimeframe}
-      onProviderManagerOpen={() => {
-        setProviderManagerOpen(true);
-        void refreshProviderManagement().catch(() => undefined);
+      onPluginManagerOpen={() => {
+        setPluginManagerOpen(true);
+        void Promise.all([
+          refreshProviderManagement(),
+          bridge.listIndicators().then(setInstalledIndicators),
+        ]).catch(() => undefined);
       }}
-      providerManager={
-        providerManagerOpen
+      pluginManager={
+        pluginManagerOpen
           ? {
               snapshot: providerManagement,
+              indicators: installedIndicators,
               busy: providerManagementBusy,
               error: providerManagementError,
-              importBusy: providerImportBusy,
-              importError: providerImportError,
-              onClose: () => setProviderManagerOpen(false),
-              onImport: beginProviderImport,
-              onRefresh: refreshProviderManagement,
+              providerImportBusy,
+              providerImportError,
+              indicatorImportBusy,
+              indicatorImportError,
+              onClose: () => setPluginManagerOpen(false),
+              onProviderImport: beginProviderImport,
+              onIndicatorImport: beginIndicatorImport,
+              onRefresh: async () => {
+                await Promise.all([
+                  refreshProviderManagement(),
+                  bridge.listIndicators().then(setInstalledIndicators),
+                ]);
+              },
               onCreate: (request) =>
                 runProviderManagementAction(async () => {
                   const session = await bridge.createProviderProfile(request);
