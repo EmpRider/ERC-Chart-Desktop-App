@@ -25,6 +25,7 @@ import {
   isProviderProfileUpdateRequest,
   isProviderImportCredentialValues,
   isProviderImportPreviewResult,
+  isPluginImportSourceKind,
   isRuntimeInfo,
   isWorkspaceLoadResult,
   isWorkspaceSaveRequest,
@@ -63,6 +64,7 @@ import {
   type PersistedWorkspace,
   type ProviderImportPreview,
   type ProviderImportCredentialValues,
+  type PluginImportSourceKind,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
 
@@ -71,13 +73,17 @@ export interface ErcChartBridge {
   readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
   readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
   readonly flushWorkspace: () => Promise<void>;
-  readonly previewProviderImport: () => Promise<ProviderImportPreview | null>;
+  readonly previewProviderImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<ProviderImportPreview | null>;
   readonly approveProviderImport: (
     requestId: string,
     credentials?: ProviderImportCredentialValues,
   ) => Promise<ImportedProviderSession>;
   readonly cancelProviderImport: (requestId: string) => Promise<void>;
-  readonly previewIndicatorImport: () => Promise<IndicatorImportPreview | null>;
+  readonly previewIndicatorImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<IndicatorImportPreview | null>;
   readonly approveIndicatorImport: (
     requestId: string,
   ) => Promise<InstalledIndicatorSummary>;
@@ -195,9 +201,12 @@ export function createErcChartBridge(
     },
     saveWorkspace,
     flushWorkspace: async (): Promise<void> => latestSave,
-    previewProviderImport: async (): Promise<ProviderImportPreview | null> => {
+    previewProviderImport: async (
+      sourceKind: PluginImportSourceKind,
+    ): Promise<ProviderImportPreview | null> => {
       try {
-        const result = await invoke(providerImportPreviewChannel);
+        if (!isPluginImportSourceKind(sourceKind)) throw new Error();
+        const result = await invoke(providerImportPreviewChannel, sourceKind);
         if (!isProviderImportPreviewResult(result)) throw new Error();
         return result;
       } catch {
@@ -236,16 +245,18 @@ export function createErcChartBridge(
         throw new Error("Provider import could not be cancelled.");
       }
     },
-    previewIndicatorImport:
-      async (): Promise<IndicatorImportPreview | null> => {
-        try {
-          const result = await invoke(indicatorImportPreviewChannel);
-          if (!isIndicatorImportPreviewResult(result)) throw new Error();
-          return result;
-        } catch {
-          throw new Error("Indicator import could not be prepared.");
-        }
-      },
+    previewIndicatorImport: async (
+      sourceKind: PluginImportSourceKind,
+    ): Promise<IndicatorImportPreview | null> => {
+      try {
+        if (!isPluginImportSourceKind(sourceKind)) throw new Error();
+        const result = await invoke(indicatorImportPreviewChannel, sourceKind);
+        if (!isIndicatorImportPreviewResult(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Indicator import could not be prepared.");
+      }
+    },
     approveIndicatorImport: async (
       requestId: string,
     ): Promise<InstalledIndicatorSummary> => {

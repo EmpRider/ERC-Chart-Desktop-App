@@ -60,6 +60,7 @@ import {
   providerProfileStopChannel,
   providerProfileUpdateChannel,
   isProviderImportCredentialValues,
+  isPluginImportSourceKind,
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
@@ -683,19 +684,28 @@ async function startDesktopMain(): Promise<void> {
       return true;
     },
   );
-  ipcMain.handle(providerImportPreviewChannel, async (event) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    const selection = await dialog.showOpenDialog({
-      title: "Import ERC Chart provider",
-      properties: ["openDirectory"],
-    });
-    const selectedPath = selection.filePaths[0];
-    if (selection.canceled || selectedPath === undefined) return null;
-    return providerImportService.preview({
-      kind: "folder",
-      path: selectedPath,
-    });
-  });
+  ipcMain.handle(
+    providerImportPreviewChannel,
+    async (event, sourceKind: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isPluginImportSourceKind(sourceKind)) {
+        throw new Error("Provider import source is invalid.");
+      }
+      const selection = await dialog.showOpenDialog({
+        title: "Import ERC Chart provider",
+        properties: sourceKind === "zip" ? ["openFile"] : ["openDirectory"],
+        ...(sourceKind === "zip"
+          ? { filters: [{ name: "ERC Chart plugin", extensions: ["zip"] }] }
+          : {}),
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || selectedPath === undefined) return null;
+      return providerImportService.preview({
+        kind: sourceKind,
+        path: selectedPath,
+      });
+    },
+  );
   ipcMain.handle(
     providerImportApproveChannel,
     async (event, requestId: unknown, credentials: unknown) => {
@@ -721,19 +731,28 @@ async function startDesktopMain(): Promise<void> {
     },
   );
 
-  ipcMain.handle(indicatorImportPreviewChannel, async (event) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    const selection = await dialog.showOpenDialog({
-      title: "Import ERC Chart indicator",
-      properties: ["openDirectory"],
-    });
-    const selectedPath = selection.filePaths[0];
-    if (selection.canceled || selectedPath === undefined) return null;
-    return indicatorImportService.preview({
-      kind: "folder",
-      path: selectedPath,
-    });
-  });
+  ipcMain.handle(
+    indicatorImportPreviewChannel,
+    async (event, sourceKind: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isPluginImportSourceKind(sourceKind)) {
+        throw new Error("Indicator import source is invalid.");
+      }
+      const selection = await dialog.showOpenDialog({
+        title: "Import ERC Chart indicator",
+        properties: sourceKind === "zip" ? ["openFile"] : ["openDirectory"],
+        ...(sourceKind === "zip"
+          ? { filters: [{ name: "ERC Chart plugin", extensions: ["zip"] }] }
+          : {}),
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || selectedPath === undefined) return null;
+      return indicatorImportService.preview({
+        kind: sourceKind,
+        path: selectedPath,
+      });
+    },
+  );
   ipcMain.handle(
     indicatorImportApproveChannel,
     async (event, requestId: unknown) => {

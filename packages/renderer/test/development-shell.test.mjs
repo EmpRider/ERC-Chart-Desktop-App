@@ -170,7 +170,7 @@ test("newly added configured workspaces render indicator controls", () => {
   assert.equal(workspace.tabs[0].slots[1].persisted?.chartType, "heikin-ashi");
 });
 
-test("renders provider connection status before the provider manager action", () => {
+test("renders provider connection status beside the secure bridge status", () => {
   const markup = renderShell(connectingShellState, createInitialWorkspace(), {
     providerSession: {
       profileId: "erc.provider.binomo.default",
@@ -184,16 +184,22 @@ test("renders provider connection status before the provider manager action", ()
       timeframeId: "1m",
       candles: [],
     },
-    onProviderManagerOpen: () => undefined,
+    onPluginManagerOpen: () => undefined,
   });
   const { document } = parseHTML(markup);
+  const runtimeState = document.querySelector(".runtime-state");
+  const bridgeStatus = runtimeState?.querySelector("[data-status]");
+  const providerStatus = runtimeState?.querySelector(".provider-loaded");
   const toolbar = document.querySelector(".workspace-toolbar");
-  const status = toolbar?.querySelector(".provider-loaded");
-  const manager = toolbar?.querySelector(".provider-manage");
 
-  assert.ok(status);
-  assert.ok(manager);
-  assert.equal(status.nextElementSibling, manager);
+  assert.ok(bridgeStatus);
+  assert.ok(providerStatus);
+  assert.equal(bridgeStatus.nextElementSibling, providerStatus);
+  assert.equal(providerStatus.textContent?.trim(), "Binomo connected");
+  assert.equal(toolbar?.querySelector(".provider-loaded"), null);
+  const pluginManager = toolbar?.querySelector(".plugin-manage");
+  assert.ok(pluginManager);
+  assert.equal(pluginManager.textContent?.trim(), "Plugin Manager");
 });
 
 test("changes provider at chart-tab scope", async (t) => {

@@ -2,6 +2,27 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.3.5] - 2026-09-06
+
+### Plugin Manager redesign
+
+- Replaced the provider-only management flow with a dedicated Plugin Manager
+  for both provider and indicator plugins.
+- Added separate Installed Providers and Installed Profiles views so provider
+  metadata, profile selection, profile editing, lifecycle controls, and profile
+  creation follow the same list-on-the-left/detail-on-the-right workflow.
+- Added ZIP and folder import entry points for both provider and indicator
+  plugins through the existing secure staging path.
+- Kept indicator instance parameters in the chart settings UI while exposing
+  installed indicator metadata and declared parameters in Plugin Manager.
+- Kept provider connection status visible beside the secure bridge status in
+  the application header.
+
+### v0.3.5 release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.3.4] - 2026-09-06
 
 ### Chart controls and indicator runtime
