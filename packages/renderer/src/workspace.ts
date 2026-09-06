@@ -188,14 +188,28 @@ export function workspaceReducer(
       const layoutSize = incrementLayoutSize(current.layoutSize);
       if (layoutSize === undefined) return state;
       const workspaceNumber = current.nextWorkspaceNumber;
+      const template = [...current.slots]
+        .reverse()
+        .find((slot) => slot.persisted !== undefined)?.persisted;
+      const newSlot: ChartSlot =
+        template === undefined
+          ? { id: `${current.id}-chart-${workspaceNumber}` }
+          : {
+              id: `${current.id}-chart-${workspaceNumber}`,
+              persisted: {
+                providerProfileId:
+                  current.providerProfileId ?? template.providerProfileId,
+                instrumentId: template.instrumentId,
+                timeframeSeconds: template.timeframeSeconds,
+                chartType: template.chartType,
+                indicators: [],
+              },
+            };
       const updated = {
         ...current,
         layoutSize,
         persistedLayout: undefined,
-        slots: [
-          ...current.slots,
-          { id: `${current.id}-chart-${workspaceNumber}` },
-        ],
+        slots: [...current.slots, newSlot],
         nextWorkspaceNumber: workspaceNumber + 1,
       };
       const tabs = [...state.tabs];
@@ -361,7 +375,7 @@ export function workspaceReducer(
       const workspaceIndex = current.slots.findIndex(
         (slot) => slot.id === action.workspaceId,
       );
-      if (workspaceIndex <= 0) return state;
+      if (workspaceIndex === -1 || current.slots.length <= 1) return state;
       const layoutSize = decrementLayoutSize(current.layoutSize);
       if (layoutSize === undefined) return state;
       const updated = {

@@ -23,6 +23,8 @@ export const providerProfileStartChannel =
   "erc-chart:provider-profile-start" as const;
 export const providerSessionLoadChannel =
   "erc-chart:provider-session-load" as const;
+export const providerHistoryLoadChannel =
+  "erc-chart:provider-history-load" as const;
 export const providerProfileStopChannel =
   "erc-chart:provider-profile-stop" as const;
 export const providerProfileDeleteChannel =
@@ -111,6 +113,12 @@ export interface ProviderSessionRequest {
   readonly profileId: string;
   readonly instrumentId: string;
   readonly timeframeId: string;
+}
+
+export interface ProviderHistoryLoadRequest extends ProviderSessionRequest {
+  readonly fromMs?: number;
+  readonly toMs?: number;
+  readonly limit?: number;
 }
 
 export interface ProviderLiveSubscriptionRequest extends ProviderLiveRequest {
@@ -306,6 +314,46 @@ export function isProviderSessionRequest(
   value: unknown,
 ): value is ProviderSessionRequest {
   return isProviderLiveRequest(value);
+}
+
+export function isProviderHistoryLoadRequest(
+  value: unknown,
+): value is ProviderHistoryLoadRequest {
+  if (!isProviderLiveRequest(value) || !isRecord(value)) return false;
+  if (
+    value.fromMs !== undefined &&
+    (!Number.isSafeInteger(value.fromMs) || Number(value.fromMs) < 0)
+  ) {
+    return false;
+  }
+  if (
+    value.toMs !== undefined &&
+    (!Number.isSafeInteger(value.toMs) || Number(value.toMs) < 0)
+  ) {
+    return false;
+  }
+  if (
+    value.limit !== undefined &&
+    (!Number.isSafeInteger(value.limit) ||
+      Number(value.limit) < 1 ||
+      Number(value.limit) > 100_000)
+  ) {
+    return false;
+  }
+  if (
+    typeof value.fromMs === "number" &&
+    typeof value.toMs === "number" &&
+    value.fromMs > value.toMs
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function isProviderHistoryResult(
+  value: unknown,
+): value is readonly Candle[] {
+  return Array.isArray(value) && value.every(isCandle);
 }
 
 export function isProviderLiveSubscriptionId(value: unknown): value is string {

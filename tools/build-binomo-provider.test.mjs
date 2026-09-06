@@ -31,7 +31,7 @@ test("builds the Binomo provider in the supported import package shape", async (
 
     assert.deepEqual(storedManifest, manifest);
     assert.equal(manifest.id, binomoProviderPackageIdentity.id);
-    assert.equal(manifest.version, "0.1.1");
+    assert.equal(manifest.version, "0.1.2");
     assert.equal(manifest.kind, "provider");
     assert.equal(manifest.entry, "dist/index.js");
     assert.deepEqual(manifest.permissions.network, [
@@ -45,6 +45,9 @@ test("builds the Binomo provider in the supported import package shape", async (
       createHash("sha256").update(entry).digest("hex"),
     );
     assert.match(entry.toString("utf8"), /@erc-chart\/provider-sdk/u);
+    assert.match(entry.toString("utf8"), /"2m"/u);
+    assert.match(entry.toString("utf8"), /"3m"/u);
+    assert.match(entry.toString("utf8"), /derivedFromTimeframeId/u);
     assert.equal(
       isProviderNetworkRequestAllowed(
         "https://api.binomo.com/candles/v1/Z-CRY%2FIDX/2026-09-03T00:00:00/60?locale=en",

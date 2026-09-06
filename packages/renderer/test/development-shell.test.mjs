@@ -113,7 +113,7 @@ test("renders loaded provider candles in the primary chart workspace", () => {
 
   assert.match(markup, /Binomo connected/);
   assert.match(markup, /Z-CRY\/IDX/);
-  assert.match(markup, /1m · 1 candles/);
+  assert.equal(document.querySelector(".provider-chart-meta"), null);
   assert.ok(document.querySelector("[data-provider-chart]"));
   assert.equal(
     document.querySelector(".provider-indicator-button")?.textContent,
@@ -121,6 +121,53 @@ test("renders loaded provider candles in the primary chart workspace", () => {
   );
   assert.equal(document.querySelector(".chart-provider-select"), null);
   assert.doesNotMatch(markup, /Awaiting market data/);
+});
+
+test("newly added configured workspaces render indicator controls", () => {
+  let workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  workspace = workspaceReducer(workspace, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-1",
+    persisted: {
+      ...workspace.tabs[0].slots[0].persisted,
+      chartType: "heikin-ashi",
+    },
+  });
+  workspace = workspaceReducer(workspace, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+
+  const markup = renderShell(connectingShellState, workspace, {
+    providerSession: {
+      profileId: "erc.provider.binomo.default",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "1m",
+      availableTimeframeIds: ["1m", "2m", "3m", "5m"],
+      candles: [],
+    },
+  });
+  const { document } = parseHTML(markup);
+
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 2);
+  assert.equal(
+    document.querySelectorAll(".provider-indicator-button").length,
+    2,
+  );
+  assert.equal(workspace.tabs[0].slots[1].persisted?.chartType, "heikin-ashi");
 });
 
 test("renders provider connection status before the provider manager action", () => {
@@ -249,8 +296,7 @@ test("renders an independent timeframe selector for each chart workspace", () =>
     selectors[1]?.querySelector("option[selected]")?.textContent,
     "3m",
   );
-  assert.match(markup, /1m · 0 candles/u);
-  assert.match(markup, /3m · 0 candles/u);
+  assert.equal(document.querySelector(".provider-chart-meta"), null);
 });
 
 test("resolves and renders a connected secure bridge", async () => {
@@ -314,7 +360,13 @@ test("renders accessible chart tabs and one enabled workspace add control", () =
   assert.equal(addWorkspace.getAttribute("aria-label"), "Add workspace");
   assert.equal(addWorkspace.hasAttribute("disabled"), false);
   assert.equal(addWorkspace.getAttribute("title"), null);
-  assert.equal(document.querySelectorAll(".workspace-close").length, 0);
+  const closeWorkspace = document.querySelector(".workspace-close");
+  assert.ok(closeWorkspace);
+  assert.equal(closeWorkspace.hasAttribute("disabled"), true);
+  assert.equal(
+    closeWorkspace.getAttribute("title"),
+    "At least one workspace must remain",
+  );
   assert.equal(document.querySelector(".layout-selector"), null);
   assert.equal(document.querySelectorAll("[data-chart-slot]").length, 1);
   assert.ok(document.querySelector('[role="tablist"]'));
@@ -353,8 +405,14 @@ test("disables workspace addition at four and exposes the maximum hint", () => {
     /Maximum 4 workspaces/,
   );
   assert.equal(chartSlots.length, 4);
-  assert.equal(document.querySelectorAll(".workspace-close").length, 3);
-  assert.equal(chartSlots[0]?.querySelector(".workspace-close"), null);
+  assert.equal(document.querySelectorAll(".workspace-close").length, 4);
+  assert.ok(chartSlots[0]?.querySelector(".workspace-close"));
+  assert.equal(
+    Array.from(document.querySelectorAll(".workspace-close")).some((button) =>
+      button.hasAttribute("disabled"),
+    ),
+    false,
+  );
   assert.equal(
     document.querySelector(".chart-grid")?.getAttribute("data-layout"),
     "4",
@@ -402,8 +460,8 @@ test("re-enables addition after an added workspace is removed", () => {
     null,
   );
   assert.equal(document.querySelectorAll("[data-chart-slot]").length, 3);
-  assert.equal(document.querySelectorAll(".workspace-close").length, 2);
-  assert.equal(closeWorkspace?.getAttribute("aria-label"), "Close workspace 2");
+  assert.equal(document.querySelectorAll(".workspace-close").length, 3);
+  assert.equal(closeWorkspace?.getAttribute("aria-label"), "Close workspace 1");
 });
 
 test("dispatches the exact add workspace action", async (t) => {
@@ -438,8 +496,8 @@ test("dispatches the exact close action for an arbitrary workspace", async (t) =
   });
   const closeWorkspaces = document.querySelectorAll(".workspace-close");
 
-  assert.equal(closeWorkspaces.length, 3);
-  await act(async () => closeWorkspaces[1]?.click());
+  assert.equal(closeWorkspaces.length, 4);
+  await act(async () => closeWorkspaces[2]?.click());
   assert.deepEqual(actions, [
     {
       type: "remove-workspace",

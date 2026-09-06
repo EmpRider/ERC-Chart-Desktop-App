@@ -34,7 +34,9 @@ export { ProviderChart, updateChartData } from "./provider-chart.js";
 export type {
   BuiltInIndicatorReconciliation,
   ProviderChartProps,
+  ProviderChartType,
   ProviderDataSubscriber,
+  ProviderHistoryRequester,
 } from "./provider-chart.js";
 export {
   builtInIndicatorDefinitions,
