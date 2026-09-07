@@ -1,5 +1,10 @@
 import type { Candle } from "./market-data.js";
-import type { PluginManifestPermissions } from "./plugins.js";
+import {
+  isPluginId,
+  isPluginPackagePath,
+  isPluginVersion,
+  type PluginManifestPermissions,
+} from "./plugins.js";
 
 export const indicatorImportPreviewChannel =
   "erc-chart:indicator-import-preview" as const;
@@ -8,12 +13,6 @@ export const indicatorImportApproveChannel =
 export const indicatorImportCancelChannel =
   "erc-chart:indicator-import-cancel" as const;
 export const indicatorsListChannel = "erc-chart:indicators-list" as const;
-export const indicatorRuntimeSyncChannel =
-  "erc-chart:indicator-runtime-sync" as const;
-export const indicatorRuntimeUpdateChannel =
-  "erc-chart:indicator-runtime-update" as const;
-export const indicatorRuntimeDisposeChannel =
-  "erc-chart:indicator-runtime-dispose" as const;
 
 export type IndicatorInputEffect = "calculation" | "presentation";
 
@@ -90,6 +89,7 @@ export interface InstalledIndicatorSummary {
   readonly pluginId: string;
   readonly pluginName: string;
   readonly version: string;
+  readonly runtimeEntryUrl: string;
   readonly definition: InstalledIndicatorDefinition;
 }
 
@@ -187,14 +187,6 @@ function isBoundedText(value: unknown, maximum = 256): value is string {
 
 function isIdentifier(value: unknown): value is string {
   return isBoundedText(value, 256) && /^[A-Za-z0-9._:-]+$/u.test(value);
-}
-
-function isPluginId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length <= 128 &&
-    /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/u.test(value)
-  );
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -343,8 +335,54 @@ export function isInstalledIndicatorSummary(
     isRecord(value) &&
     isPluginId(value.pluginId) &&
     isBoundedText(value.pluginName) &&
-    isBoundedText(value.version, 128) &&
+    isPluginVersion(value.version) &&
+    isIndicatorRuntimeEntryUrl(
+      value.runtimeEntryUrl,
+      value.pluginId,
+      value.version,
+    ) &&
     isInstalledIndicatorDefinition(value.definition)
+  );
+}
+
+function isIndicatorRuntimeEntryUrl(
+  value: unknown,
+  pluginId: string,
+  version: string,
+): value is string {
+  if (!isBoundedText(value, 1_024) || /%2e/iu.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (
+    url.protocol !== "erc-plugin:" ||
+    url.hostname.toLowerCase() !== "plugin" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    return false;
+  }
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    return false;
+  }
+  const [urlPluginId, urlVersion, ...entrySegments] = pathname
+    .split("/")
+    .filter(Boolean);
+  const entryPath = entrySegments.join("/");
+  return (
+    urlPluginId === pluginId &&
+    urlVersion === version &&
+    entryPath.startsWith("dist/") &&
+    isPluginPackagePath(entryPath)
   );
 }
 

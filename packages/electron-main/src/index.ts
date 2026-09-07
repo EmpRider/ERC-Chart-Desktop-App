@@ -7,14 +7,19 @@ export {
   windowsCredentialTarget,
 } from "./windows-credentials.js";
 export {
+  indicatorPluginOrigin,
+  indicatorPluginProtocolScheme,
+  indicatorPluginSchemeRegistration,
   rendererEntryUrl,
   rendererProtocolScheme,
   rendererSchemeRegistration,
+  resolveIndicatorPluginAssetUrl,
   resolveRendererAssetUrl,
 } from "./protocol.js";
 export {
   assertTrustedIpcSender,
   electronFusePolicy,
+  indicatorWorkerContentSecurityPolicy,
   isTrustedRendererDocument,
   rendererContentSecurityPolicy,
 } from "./security.js";

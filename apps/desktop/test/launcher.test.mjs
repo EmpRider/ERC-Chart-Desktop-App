@@ -30,6 +30,15 @@ test("registers the privileged renderer scheme before desktop readiness", async 
             supportFetchAPI: true,
           },
         },
+        {
+          scheme: "erc-plugin",
+          privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true,
+            corsEnabled: true,
+          },
+        },
       ],
     ],
     ["app", "ready"],

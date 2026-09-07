@@ -16,6 +16,9 @@
     },
     {
       "path": "../indicator-sdk"
+    },
+    {
+      "path": "../indicator-runtime"
     }
   ]
 }

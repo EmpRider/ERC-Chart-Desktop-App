@@ -1,4 +1,5 @@
 import {
+  indicatorPluginSchemeRegistration,
   rendererSchemeRegistration,
   type RendererSchemeRegistration,
 } from "@erc-chart/electron-main";
@@ -16,7 +17,10 @@ export function launchDesktopMainWithProtocol(
   onFailure: (error: unknown) => void,
 ): void {
   try {
-    registerSchemes([rendererSchemeRegistration]);
+    registerSchemes([
+      rendererSchemeRegistration,
+      indicatorPluginSchemeRegistration,
+    ]);
   } catch (error) {
     onFailure(error);
     return;

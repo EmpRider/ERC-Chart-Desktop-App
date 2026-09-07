@@ -2,6 +2,28 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [0.3.6] - 2026-09-06
+
+### Indicator worker runtime and SDK
+
+- Moved plugin indicator execution into a persistent worker runtime with
+  generation checks, result validation, incremental updates, and history
+  rebuild fallback when a worker needs to resynchronize.
+- Expanded the public indicator SDK with price-series helpers and reusable
+  technical-analysis primitives, including moving averages, ATR, DMI, RSI,
+  extrema, crossover, and crossunder kernels.
+- Added provider-series revision metadata so candle changes can distinguish
+  incremental updates from history rebuilds and keep indicator calculations in
+  sync with repaired or revised market data.
+- Refactored the ATR Rope + UT Bot example and renderer integration around the
+  public SDK/worker path, with regression coverage for incremental execution and
+  result validation.
+
+### v0.3.6 release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.3.5] - 2026-09-06
 
 ### Plugin Manager redesign

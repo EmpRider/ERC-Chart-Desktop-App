@@ -1,4 +1,4 @@
-import type { Candle, Tick } from "@erc-chart/contracts";
+import type { Candle, ProviderSeriesChange, Tick } from "@erc-chart/contracts";
 import type {
   ProviderCapabilities,
   ProviderDataSink,
@@ -48,7 +48,11 @@ export interface ProviderDataService {
   readonly getCapabilities: ProviderDataUpstream["getCapabilities"];
   readonly getInstruments: ProviderDataUpstream["getInstruments"];
   readonly requestHistory: ProviderDataUpstream["requestHistory"];
-  readonly subscribe: ProviderDataUpstream["subscribe"];
+  readonly subscribe: (
+    providerProfileId: string,
+    request: ProviderSubscriptionRequest,
+    sink: ProviderDataServiceSink,
+  ) => Promise<ProviderSubscription>;
   readonly seriesSnapshot: (
     providerProfileId: string,
     request: ProviderSubscriptionRequest,
@@ -60,6 +64,15 @@ export interface ProviderDataService {
   readonly invalidateProfile: (providerProfileId: string) => Promise<void>;
   readonly restoreProfile: (providerProfileId: string) => Promise<void>;
   readonly shutdown: () => Promise<void>;
+}
+
+export interface ProviderDataServiceSink {
+  readonly onCandles: (
+    candles: readonly Candle[],
+    series: ProviderSeriesChange,
+  ) => void;
+  readonly onTicks: ProviderDataSink["onTicks"];
+  readonly onError: ProviderDataSink["onError"];
 }
 
 export interface ProviderDataServiceOptions {
@@ -76,7 +89,7 @@ interface LogicalDemand {
   plan: TimeframePlan;
   sourceRequest: ProviderSubscriptionRequest;
   readonly sourceCandles: Map<number, Candle>;
-  readonly sinks: Map<number, ProviderDataSink>;
+  readonly sinks: Map<number, ProviderDataServiceSink>;
   generation: number;
   invalidated: boolean;
   upstreamSubscription: ProviderSubscription | undefined;
@@ -107,7 +120,7 @@ function demandKey(
 
 function notify(
   demand: LogicalDemand,
-  callback: (sink: ProviderDataSink) => void,
+  callback: (sink: ProviderDataServiceSink) => void,
 ): void {
   for (const sink of [...demand.sinks.values()]) {
     try {
@@ -116,6 +129,65 @@ function notify(
       // One logical consumer cannot block delivery to other consumers.
     }
   }
+}
+
+function seriesChangeFor(
+  deltas: readonly import("./canonical-series.js").CanonicalSeriesDelta[],
+): ProviderSeriesChange | undefined {
+  const latest = deltas.at(-1);
+  if (latest === undefined) return undefined;
+  const dirtyFromOpenTimeMs = deltas.reduce<number | undefined>(
+    (current, delta) => {
+      if (delta.dirtyFromOpenTimeMs === undefined) return current;
+      return current === undefined
+        ? delta.dirtyFromOpenTimeMs
+        : Math.min(current, delta.dirtyFromOpenTimeMs);
+    },
+    undefined,
+  );
+  const rebuild =
+    dirtyFromOpenTimeMs !== undefined ||
+    deltas.some(
+      ({ kind }) =>
+        kind === "history-replaced" ||
+        kind === "bar-revised" ||
+        kind === "retention-trimmed",
+    );
+  return Object.freeze({
+    generation: latest.generation,
+    revision: latest.revision,
+    kind: rebuild ? "rebuild" : "incremental",
+    ...(dirtyFromOpenTimeMs === undefined ? {} : { dirtyFromOpenTimeMs }),
+  });
+}
+
+function plainCandle(candle: Candle): Candle {
+  return Object.freeze({
+    instrumentId: candle.instrumentId,
+    timeframeId: candle.timeframeId,
+    openTimeMs: candle.openTimeMs,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    ...(candle.volume === undefined ? {} : { volume: candle.volume }),
+  });
+}
+
+function deliveredCandlesForChange(
+  candleState: CanonicalCandleState,
+  key: CanonicalSeriesKey,
+  change: ProviderSeriesChange,
+  incremental: readonly Candle[],
+): readonly Candle[] {
+  if (change.kind !== "rebuild") return incremental;
+  const snapshot = candleState.snapshot(key);
+  return Object.freeze([
+    ...candleState.finalizedCandles(key).map(plainCandle),
+    ...(snapshot.building === undefined
+      ? []
+      : [plainCandle(snapshot.building)]),
+  ]);
 }
 
 export function createProviderDataService(
@@ -279,8 +351,21 @@ export function createProviderDataService(
               demand.request,
             );
             if (normalized.length > 0) {
-              candleState.applyCandles(demand.seriesKey, normalized, now());
-              notify(demand, (sink) => sink.onCandles(normalized));
+              const deltas = candleState.applyCandles(
+                demand.seriesKey,
+                normalized,
+                now(),
+              );
+              const series = seriesChangeFor(deltas);
+              if (series !== undefined) {
+                const delivered = deliveredCandlesForChange(
+                  candleState,
+                  demand.seriesKey,
+                  series,
+                  normalized,
+                );
+                notify(demand, (sink) => sink.onCandles(delivered, series));
+              }
             }
           } catch {
             notify(demand, (sink) => sink.onError("PROVIDER_INVALID_CANDLE"));
@@ -316,8 +401,16 @@ export function createProviderDataService(
                     }),
                   ],
             );
-            if (generatedCandles.length > 0)
-              notify(demand, (sink) => sink.onCandles(generatedCandles));
+            const series = seriesChangeFor(deltas);
+            if (generatedCandles.length > 0 && series !== undefined) {
+              const delivered = deliveredCandlesForChange(
+                candleState,
+                demand.seriesKey,
+                series,
+                generatedCandles,
+              );
+              notify(demand, (sink) => sink.onCandles(delivered, series));
+            }
             if (accepted.length > 0)
               notify(demand, (sink) => sink.onTicks(accepted));
           } catch {
@@ -366,7 +459,7 @@ export function createProviderDataService(
   const subscribe = async (
     providerProfileIdValue: string,
     request: ProviderSubscriptionRequest,
-    sink: ProviderDataSink,
+    sink: ProviderDataServiceSink,
   ): Promise<ProviderSubscription> => {
     const providerProfileId = requireProviderProfileId(providerProfileIdValue);
     const key = demandKey(providerProfileId, request);
@@ -486,26 +579,26 @@ export function createProviderDataService(
         }
         if (repaired.length === 0) continue;
 
-        const merged = new Map<number, Candle>();
-        for (const candle of [...known, ...repaired]) {
-          merged.set(candle.openTimeMs, {
-            instrumentId: candle.instrumentId,
-            timeframeId: candle.timeframeId,
-            openTimeMs: candle.openTimeMs,
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            ...(candle.volume === undefined ? {} : { volume: candle.volume }),
-          });
-        }
-        candleState.loadHistory(demand.seriesKey, [...merged.values()], now());
-        const delivered = Object.freeze(
+        const deliveredRepair = Object.freeze(
           [...repaired].sort(
             (left, right) => left.openTimeMs - right.openTimeMs,
           ),
         );
-        notify(demand, (sink) => sink.onCandles(delivered));
+        const deltas = candleState.applyCandles(
+          demand.seriesKey,
+          deliveredRepair,
+          now(),
+        );
+        const series = seriesChangeFor(deltas);
+        if (series !== undefined) {
+          const delivered = deliveredCandlesForChange(
+            candleState,
+            demand.seriesKey,
+            series,
+            deliveredRepair,
+          );
+          notify(demand, (sink) => sink.onCandles(delivered, series));
+        }
       }
       await Promise.all(matching.map((demand) => connectDemand(demand)));
     } catch (error) {

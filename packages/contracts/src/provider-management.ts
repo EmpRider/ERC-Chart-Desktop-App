@@ -133,10 +133,18 @@ export interface ProviderLiveSubscriptionRequest extends ProviderLiveRequest {
   readonly subscriptionId: string;
 }
 
+export interface ProviderSeriesChange {
+  readonly generation: number;
+  readonly revision: number;
+  readonly kind: "incremental" | "rebuild";
+  readonly dirtyFromOpenTimeMs?: number;
+}
+
 export interface ProviderLiveCandlesEvent {
   readonly subscriptionId: string;
   readonly type: "candles";
   readonly candles: readonly Candle[];
+  readonly series: ProviderSeriesChange;
 }
 
 export interface ProviderLiveErrorEvent {
@@ -389,7 +397,20 @@ export function isProviderLiveEvent(
     return false;
   }
   if (value.type === "candles") {
-    return Array.isArray(value.candles) && value.candles.every(isCandle);
+    return (
+      Array.isArray(value.candles) &&
+      value.candles.every(isCandle) &&
+      isRecord(value.series) &&
+      Number.isSafeInteger(value.series.generation) &&
+      Number(value.series.generation) >= 0 &&
+      Number.isSafeInteger(value.series.revision) &&
+      Number(value.series.revision) >= 0 &&
+      (value.series.kind === "incremental" ||
+        value.series.kind === "rebuild") &&
+      (value.series.dirtyFromOpenTimeMs === undefined ||
+        (Number.isSafeInteger(value.series.dirtyFromOpenTimeMs) &&
+          Number(value.series.dirtyFromOpenTimeMs) >= 0))
+    );
   }
   return isBoundedIdentifier(value.code);
 }

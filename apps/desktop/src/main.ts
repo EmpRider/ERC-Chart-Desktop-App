@@ -32,13 +32,7 @@ import {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
-  indicatorRuntimeDisposeChannel,
-  indicatorRuntimeSyncChannel,
-  indicatorRuntimeUpdateChannel,
   indicatorsListChannel,
-  isIndicatorRuntimeInstanceId,
-  isIndicatorRuntimeSyncRequest,
-  isIndicatorRuntimeUpdateRequest,
   isProviderHistoryLoadRequest,
   isProviderLiveSubscriptionId,
   isProviderLiveSubscriptionRequest,
@@ -66,7 +60,6 @@ import {
   workspaceSaveChannel,
   type PersistedWorkspace,
 } from "@erc-chart/contracts";
-import { createIndicatorRuntimeHost } from "@erc-chart/indicator-runtime";
 import {
   loadWorkspace,
   openStorageDatabase,
@@ -457,6 +450,7 @@ async function startDesktopMain(): Promise<void> {
               fetch: (url): Promise<Response> => net.fetch(url),
             },
             rootPath,
+            path.join(userDataRoot, "indicator-plugins"),
           ),
         createWindow,
         dataUtility: {
@@ -586,10 +580,8 @@ async function startDesktopMain(): Promise<void> {
     stagingRoot: path.join(userDataRoot, "provider-staging"),
     installationRoot: path.join(userDataRoot, "provider-plugins"),
   });
-  const indicatorRuntimeHost = createIndicatorRuntimeHost();
   const indicatorImportService = createIndicatorImportService({
     database: workspaceDatabase,
-    runtimeHost: indicatorRuntimeHost,
     stagingRoot: path.join(userDataRoot, "indicator-staging"),
     installationRoot: path.join(userDataRoot, "indicator-plugins"),
   });
@@ -778,31 +770,6 @@ async function startDesktopMain(): Promise<void> {
     assertTrustedIpcSender(senderFromEvent(event));
     return indicatorImportService.list();
   });
-  ipcMain.handle(indicatorRuntimeSyncChannel, (event, request: unknown) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    if (!isIndicatorRuntimeSyncRequest(request)) {
-      throw new Error("Indicator runtime request is invalid.");
-    }
-    return indicatorRuntimeHost.sync(request);
-  });
-  ipcMain.handle(indicatorRuntimeUpdateChannel, (event, request: unknown) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    if (!isIndicatorRuntimeUpdateRequest(request)) {
-      throw new Error("Indicator runtime update is invalid.");
-    }
-    return indicatorRuntimeHost.update(request);
-  });
-  ipcMain.handle(
-    indicatorRuntimeDisposeChannel,
-    (event, instanceId: unknown) => {
-      assertTrustedIpcSender(senderFromEvent(event));
-      if (!isIndicatorRuntimeInstanceId(instanceId)) {
-        throw new Error("Indicator runtime instance ID is invalid.");
-      }
-      indicatorRuntimeHost.disposeInstance(instanceId);
-      return true;
-    },
-  );
 
   const removeProviderImportHandlers = (): void => {
     ipcMain.removeHandler(providerImportPreviewChannel);
@@ -814,9 +781,6 @@ async function startDesktopMain(): Promise<void> {
     ipcMain.removeHandler(indicatorImportApproveChannel);
     ipcMain.removeHandler(indicatorImportCancelChannel);
     ipcMain.removeHandler(indicatorsListChannel);
-    ipcMain.removeHandler(indicatorRuntimeSyncChannel);
-    ipcMain.removeHandler(indicatorRuntimeUpdateChannel);
-    ipcMain.removeHandler(indicatorRuntimeDisposeChannel);
   };
   const removeProviderManagementHandlers = (): void => {
     ipcMain.removeHandler(providerProfilesListChannel);

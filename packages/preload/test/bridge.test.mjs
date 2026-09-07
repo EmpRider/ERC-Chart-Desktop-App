@@ -25,9 +25,6 @@ test("exposes only the allowlisted application bridge methods", async () => {
     "approveIndicatorImport",
     "cancelIndicatorImport",
     "listIndicators",
-    "syncIndicator",
-    "updateIndicator",
-    "disposeIndicator",
     "listProviderProfiles",
     "createProviderProfile",
     "updateProviderProfile",
@@ -93,9 +90,6 @@ test("installs one application-specific global", () => {
         "approveIndicatorImport",
         "cancelIndicatorImport",
         "listIndicators",
-        "syncIndicator",
-        "updateIndicator",
-        "disposeIndicator",
         "listProviderProfiles",
         "createProviderProfile",
         "updateProviderProfile",
@@ -257,6 +251,7 @@ test("starts, filters, and stops provider live subscriptions", async () => {
         close: 100.5,
       },
     ],
+    series: { generation: 1, revision: 2, kind: "incremental" },
   });
   assert.equal(events.length, 1);
 

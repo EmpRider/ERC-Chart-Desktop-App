@@ -49,7 +49,8 @@ v1. In particular:
 - contracts depend on no application package;
 - provider and indicator SDKs may depend only on contracts;
 - preload may depend only on contracts;
-- renderer may depend on contracts, klinecharts, and public SDK types;
+- renderer may depend on contracts, klinecharts, public SDK types, and the
+  browser-only indicator runtime supervisor;
 - provider runtime may depend only on contracts and provider SDK;
 - indicator runtime may depend only on contracts and indicator SDK;
 - storage may depend only on contracts;
