@@ -2,6 +2,7 @@ export { startDesktopApplication } from "./application.js";
 export { createLocalDiagnosticLog } from "./local-diagnostic-log.js";
 export { secureWindowOptions } from "./window.js";
 export { createUtilitySupervisor } from "./utility-supervisor.js";
+export { createDataUtilityClient } from "./data-utility-client.js";
 export {
   createWindowsGenericCredentialManager,
   windowsCredentialTarget,
@@ -46,6 +47,13 @@ export type {
   WindowsGenericCredentialManager,
   WindowsGenericCredentialManagerOptions,
 } from "./windows-credentials.js";
+export type {
+  DataUtilityClient,
+  DataUtilityClientOptions,
+  DataUtilityClientTransport,
+  DataUtilityLiveSink,
+  DataUtilityUpstreamBridge,
+} from "./data-utility-client.js";
 export type {
   UtilityChild,
   UtilityScheduler,

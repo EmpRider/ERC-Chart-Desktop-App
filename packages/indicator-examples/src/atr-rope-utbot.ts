@@ -2129,7 +2129,9 @@ export function createInstance(
   context: IndicatorInstanceContext,
 ): RuntimeIndicatorInstance {
   const params = toParams(parameterValues);
-  let candles: readonly Candle[] = [];
+  let candles: Candle[] = [];
+  let points: IndicatorSnapshot["points"][number][] = [];
+  let visualRevision = 0;
   let current: CalculationResult = {
     points: [],
     overlays: [],
@@ -2143,6 +2145,9 @@ export function createInstance(
   const rebuild = (finalizedBarIndex: number): void => {
     if (disposed) return;
     current = calculate(candles, params, context, finalizedBarIndex);
+    visualRevision += 1;
+    points = [...current.points];
+    current = { ...current, points };
     liveTail = rebuildLiveTailState(
       candles,
       Math.max(0, finalizedBarIndex + 1),
@@ -2159,22 +2164,35 @@ export function createInstance(
     },
     onBuildingBar: (candle): void => {
       if (disposed) return;
-      candles = upsertCandle(candles, candle);
-      const index = candles.findIndex(
-        (item) => item.openTimeMs === candle.openTimeMs,
-      );
+      const previous = candles.at(-1);
+      const sameBuilding = previous?.openTimeMs === candle.openTimeMs;
+      if (sameBuilding) candles[candles.length - 1] = candle;
+      else if (
+        previous === undefined ||
+        candle.openTimeMs > previous.openTimeMs
+      )
+        candles.push(candle);
+      else {
+        candles = upsertCandle(candles, candle);
+        rebuild(Math.max(-1, candles.length - 2));
+        return;
+      }
+      const index = candles.length - 1;
+      if (!sameBuilding) visualRevision += 1;
       if (index < 0 || index !== liveTail.finalizedCount) {
         rebuild(Math.max(-1, candles.length - 2));
         return;
       }
       const rope = ropeTailStep(liveTail, candles, index, params, "building");
       const ut = utTailStep(liveTail, candles, index, params, "building");
-      const points = [...current.points];
       points[index] = livePoint(candle, rope, ut, params);
       current = {
         ...current,
         points,
-        overlays: renderZones(candles, current.pocZones, params),
+        // Zone geometry depends on finalized bars and the tail timestamp, not its live price.
+        overlays: sameBuilding
+          ? current.overlays
+          : renderZones(candles, current.pocZones, params),
         finalizedBarIndex: index - 1,
       };
     },
@@ -2187,6 +2205,7 @@ export function createInstance(
       rebuild(index < 0 ? Math.max(-1, candles.length - 2) : index);
     },
     snapshot: (): IndicatorSnapshot => ({
+      visualRevision,
       points: current.points,
       overlays: current.overlays,
       ...(current.signals === undefined ? {} : { signals: current.signals }),
@@ -2194,6 +2213,7 @@ export function createInstance(
     dispose: (): void => {
       disposed = true;
       candles = [];
+      points = [];
       liveTail = createLiveTailState(params);
       current = {
         points: [],

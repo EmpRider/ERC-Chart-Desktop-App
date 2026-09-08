@@ -143,6 +143,28 @@ export type {
   WorkspaceViewport,
 } from "./workspace-persistence.js";
 export {
+  isDataUtilityCommand,
+  dataUtilityUpstreamTimeoutMs,
+  dataUtilityProviderCommandTimeoutMs,
+  isDataUtilityEvent,
+  isDataUtilityInitMessage,
+  isDataUtilityResult,
+  isDataUtilityUpstreamEvent,
+  isDataUtilityUpstreamRequest,
+  isDataUtilityUpstreamResult,
+} from "./data-utility.js";
+export type {
+  DataUtilityCommand,
+  DataUtilityEvent,
+  DataUtilityInitMessage,
+  DataUtilityOperation,
+  DataUtilityResult,
+  DataUtilityUpstreamEvent,
+  DataUtilityUpstreamOperation,
+  DataUtilityUpstreamRequest,
+  DataUtilityUpstreamResult,
+} from "./data-utility.js";
+export {
   isUtilityControlMessage,
   isUtilityStatusMessage,
 } from "./utility-process.js";

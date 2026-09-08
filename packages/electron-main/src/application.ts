@@ -286,19 +286,19 @@ export async function startDesktopApplication<ProviderLaunch>(
       stopped = true;
       let shutdownError: unknown;
       try {
-        await adapters.providerUtilities.shutdownAll();
+        await currentWindow?.flushWorkspace();
+        await adapters.workspacePersistence.flush();
       } catch (error) {
         shutdownError = error;
       }
       try {
-        await adapters.dataUtility.shutdown();
+        await adapters.providerUtilities.shutdownAll();
       } catch (error) {
         shutdownError ??= error;
       }
       try {
-        await currentWindow?.flushWorkspace();
-        await adapters.workspacePersistence.flush();
         await adapters.workspacePersistence.close();
+        await adapters.dataUtility.shutdown();
       } catch (error) {
         shutdownError ??= error;
       } finally {

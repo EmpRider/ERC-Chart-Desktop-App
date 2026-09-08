@@ -5,9 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  activatePlugin,
+  createProviderProfile,
+  deletePlugin,
+  deleteProviderProfile,
+  disablePlugin,
   getPlugin,
   getProviderProfile,
   openStorageDatabase,
+  putPlugin,
 } from "../../../packages/storage/dist/index.js";
 import { createProviderImportService } from "../dist/provider-import-service.js";
 
@@ -88,6 +94,32 @@ function createController({ failHistory = false } = {}) {
   };
 }
 
+function createStorage(database) {
+  return {
+    async putPlugin(input) {
+      return putPlugin(database, input);
+    },
+    async activatePlugin(pluginId, version) {
+      return activatePlugin(database, pluginId, version);
+    },
+    async disablePlugin(pluginId, version) {
+      return disablePlugin(database, pluginId, version);
+    },
+    async deletePlugin(pluginId, version) {
+      return deletePlugin(database, pluginId, version);
+    },
+    async getProviderProfile(profileId) {
+      return getProviderProfile(database, profileId);
+    },
+    async createProviderProfile(input) {
+      return createProviderProfile(database, input);
+    },
+    async deleteProviderProfile(profileId) {
+      return deleteProviderProfile(database, profileId);
+    },
+  };
+}
+
 test("previews permissions without exposing the selected provider path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-import-service-"));
   const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
@@ -95,7 +127,7 @@ test("previews permissions without exposing the selected provider path", async (
     const source = await writeProviderPackage(root);
     const fixture = createController();
     const service = createProviderImportService({
-      database,
+      storage: createStorage(database),
       controller: fixture.controller,
       stagingRoot: path.join(root, "staging"),
       installationRoot: path.join(root, "installed"),
@@ -132,7 +164,7 @@ test("installs, starts, discovers and loads provider candles after approval", as
     const fixture = createController();
     const credentialWrites = [];
     const service = createProviderImportService({
-      database,
+      storage: createStorage(database),
       controller: fixture.controller,
       credentialManager: {
         async read() {
@@ -197,7 +229,7 @@ test("rolls back installation and profile when initial candle loading fails", as
     const fixture = createController({ failHistory: true });
     const credentialCalls = [];
     const service = createProviderImportService({
-      database,
+      storage: createStorage(database),
       controller: fixture.controller,
       credentialManager: {
         async read() {

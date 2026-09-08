@@ -87,13 +87,27 @@ export function alignedOpenTime(
     throw new RangeError("Timestamp must be a non-negative safe integer.");
   if (!Number.isSafeInteger(timeframeSeconds) || timeframeSeconds <= 0)
     throw new RangeError("Timeframe seconds must be a positive safe integer.");
-  if (!Number.isSafeInteger(alignment.originMs))
-    throw new RangeError("Alignment origin must be a safe integer.");
+  if (
+    (alignment.mode !== "epoch" && alignment.mode !== "session") ||
+    !Number.isSafeInteger(alignment.originMs) ||
+    typeof alignment.timeZone !== "string" ||
+    alignment.timeZone.trim() !== alignment.timeZone ||
+    alignment.timeZone.length === 0 ||
+    alignment.timeZone.length > 128
+  ) {
+    throw new RangeError("Provider alignment metadata is invalid.");
+  }
   const durationMs = timeframeSeconds * 1000;
-  return (
+  if (!Number.isSafeInteger(durationMs))
+    throw new RangeError("Timeframe duration must be a safe integer.");
+  const openTimeMs =
     alignment.originMs +
-    Math.floor((timestampMs - alignment.originMs) / durationMs) * durationMs
-  );
+    Math.floor((timestampMs - alignment.originMs) / durationMs) * durationMs;
+  if (!Number.isSafeInteger(openTimeMs) || openTimeMs < 0)
+    throw new RangeError(
+      "Aligned open time must be a non-negative safe integer.",
+    );
+  return openTimeMs;
 }
 
 export function aggregateTimeframeCandles(

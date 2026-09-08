@@ -10,6 +10,7 @@ import {
   rendererSchemeRegistration,
 } from "../packages/electron-main/dist/index.js";
 import { installRendererProtocol } from "../apps/desktop/dist/protocol.js";
+import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const runtimeWorkerPath = path.join(
@@ -191,6 +192,18 @@ async function run() {
       pluginSource(`ws://127.0.0.1:${address.port}`),
       "utf8",
     );
+    await buildIndicatorPackage({
+      source: path.join(
+        repoRoot,
+        "packages",
+        "indicator-examples",
+        "src",
+        "atr-bands.ts",
+      ),
+      id: "erc.indicator.atr-bands",
+      version: "0.1.0",
+      outputRoot: path.join(pluginRoot, "erc.indicator.atr-bands", "0.1.0"),
+    });
 
     await app.whenReady();
     stage("app-ready");
@@ -273,6 +286,52 @@ async function run() {
       );
     }
 
+    const authored = await window.webContents.executeJavaScript(`
+      (async () => {
+        const worker = new Worker("erc-app://app/indicator-worker.js", { type: "module" });
+        let sequence = 0;
+        const sync = (data, parameters = {}, configGeneration = 1) => new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("Authored worker timed out")), 3000);
+          worker.onmessage = event => { clearTimeout(timer); event.data.type === "error" ? reject(new Error(event.data.message)) : resolve(event.data.result); };
+          worker.onerror = event => { clearTimeout(timer); reject(new Error(event.message)); };
+          sequence += 1;
+          worker.postMessage({ type: "sync", instanceId: "authored-smoke", sequence, dataRevision: sequence, configGeneration,
+            runtimeEntryUrl: "erc-plugin://plugin/erc.indicator.atr-bands/0.1.0/dist/index.js",
+            pluginId: "erc.indicator.atr-bands", definitionId: "erc.indicator.atr-bands.main",
+            instrumentId: "fixture.instrument", timeframeId: "1m", parameters, data });
+        });
+        try {
+          const history = Array.from({ length: 1000 }, (_, index) => ({ instrumentId: "fixture.instrument", timeframeId: "1m",
+            openTimeMs: 1800000000000 + index * 60000, open: 100 + index, high: 102 + index, low: 99 + index, close: 101 + index }));
+          const initial = await sync({ kind: "snapshot", candles: history });
+          const finalized = { ...history.at(-1), close: 1101, high: 1102 };
+          const building = await sync({ kind: "building", candle: finalized });
+          const next = { ...finalized, openTimeMs: finalized.openTimeMs + 60000 };
+          const rollover = await sync({ kind: "rollover", finalized, building: next });
+          const reset = await sync({ kind: "rebuild", candles: history }, { input_0: 7 }, 2);
+          return { initialCount: initial.snapshot.points.length, building, rollover,
+            resetCount: reset.snapshot.points.length,
+            initialValue: initial.snapshot.points.at(-1).values.plot_0,
+            resetValue: reset.snapshot.points.at(-1).values.plot_0 };
+        } finally { worker.terminate(); }
+      })()
+    `);
+    if (
+      authored.initialCount !== 1000 ||
+      authored.building?.kind !== "building" ||
+      authored.building.points.length !== 1 ||
+      "overlays" in authored.building ||
+      "signals" in authored.building ||
+      authored.rollover?.kind !== "rollover" ||
+      authored.rollover.points.length !== 2 ||
+      authored.resetCount !== 1000 ||
+      authored.initialValue === authored.resetValue
+    ) {
+      throw new Error(
+        `Authored indicator worker smoke failed: ${JSON.stringify(authored)}`,
+      );
+    }
+    stage("authored-snapshot-building-rollover-rebuild");
     console.log("ERC_CHART_INDICATOR_WORKER_SMOKE_READY");
     exitCode = 0;
   } catch (error) {

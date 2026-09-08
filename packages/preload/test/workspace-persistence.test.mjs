@@ -68,6 +68,32 @@ test("serializes saves and flushes the latest request", async () => {
   await second;
 });
 
+test("coalesces only queued workspace snapshots behind the active save", async () => {
+  const releases = [];
+  const calls = [];
+  const bridge = createErcChartBridge(async (channel, payload) => {
+    if (channel !== "erc-chart:workspace-save") return null;
+    calls.push(payload.savedAtMs);
+    await new Promise((resolve) => releases.push(resolve));
+    return true;
+  });
+
+  const first = bridge.saveWorkspace(workspace);
+  const second = bridge.saveWorkspace({ ...workspace, savedAtMs: 2 });
+  const third = bridge.saveWorkspace({ ...workspace, savedAtMs: 3 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [1]);
+
+  releases.shift()();
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [1, 3]);
+
+  releases.shift()();
+  await Promise.all([second, third, bridge.flushWorkspace()]);
+  assert.deepEqual(calls, [1, 3]);
+});
+
 test("fails closed for malformed workspace load and save responses", async () => {
   const malformedLoad = createErcChartBridge(async () => ({
     private: "value",
@@ -82,6 +108,39 @@ test("fails closed for malformed workspace load and save responses", async () =>
     malformedSave.saveWorkspace(workspace),
     new Error("Workspace could not be saved."),
   );
+});
+
+test("failed save makes close-time flush reject until the same snapshot is acknowledged", async () => {
+  let rejectWrite;
+  let fail = true;
+  const writes = [];
+  const bridge = createErcChartBridge(async (channel, value) => {
+    assert.equal(channel, "erc-chart:workspace-save");
+    writes.push(value);
+    if (fail)
+      return new Promise((_resolve, reject) => {
+        rejectWrite = reject;
+      });
+    return true;
+  });
+  const saving = assert.rejects(
+    bridge.saveWorkspace(workspace),
+    new Error("Workspace could not be saved."),
+  );
+  const flushing = assert.rejects(
+    bridge.flushWorkspace(),
+    new Error("Workspace could not be saved."),
+  );
+  rejectWrite(new Error("SQLITE_FULL synthetic private details"));
+  await Promise.all([saving, flushing]);
+  await assert.rejects(
+    bridge.flushWorkspace(),
+    new Error("Workspace could not be saved."),
+  );
+  fail = false;
+  await bridge.saveWorkspace(workspace);
+  await bridge.flushWorkspace();
+  assert.deepEqual(writes, [workspace, workspace]);
 });
 
 test("rejects malformed renderer workspace state before invoking IPC", async () => {

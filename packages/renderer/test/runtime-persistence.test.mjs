@@ -65,6 +65,29 @@ test("hydrates before showing workspace UI", async (t) => {
   assert.equal(document.querySelectorAll("[data-chart-slot]").length, 2);
 });
 
+test("restores the canonical workspace without recovery-session UI", async (t) => {
+  const restored = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const bridge = {
+    getRuntimeInfo: async () => ({
+      ipcContractVersion: 1,
+      applicationName: "ERC Chart",
+    }),
+    loadWorkspace: async () => toPersistedWorkspace(restored, 1),
+    saveWorkspace: async () => undefined,
+    flushWorkspace: async () => undefined,
+    listIndicators: async () => [],
+  };
+
+  const document = await mountRuntimeShell(t, bridge);
+  await act(async () => undefined);
+
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 2);
+  assert.doesNotMatch(document.body.textContent, /Recover previous session/);
+});
+
 test("persists each real workspace mutation", async (t) => {
   const saves = [];
   const bridge = {
@@ -85,6 +108,41 @@ test("persists each real workspace mutation", async (t) => {
   await act(async () => add.click());
   assert.equal(saves.length, 1);
   assert.equal(saves[0].tabs[0].chartSlots.length, 2);
+});
+
+test("reports failed workspace saves and retries the failed snapshot", async (t) => {
+  let failSave = true;
+  const saves = [];
+  const bridge = {
+    getRuntimeInfo: async () => ({
+      ipcContractVersion: 1,
+      applicationName: "ERC Chart",
+    }),
+    loadWorkspace: async () => null,
+    saveWorkspace: async (workspace) => {
+      saves.push(workspace);
+      if (failSave) throw new Error("disk full");
+    },
+    flushWorkspace: async () => undefined,
+    listIndicators: async () => [],
+  };
+  const document = await mountRuntimeShell(t, bridge);
+  await act(async () => undefined);
+  const add = document.querySelector(".workspace-add");
+  assert.ok(add);
+
+  await act(async () => add.click());
+  assert.match(document.body.textContent, /Workspace not saved/);
+  const retry = [...document.querySelectorAll("button")].find(
+    (button) => button.textContent === "Retry workspace save",
+  );
+  assert.ok(retry);
+
+  failSave = false;
+  await act(async () => retry.click());
+  assert.doesNotMatch(document.body.textContent, /Workspace saved/);
+  assert.equal(saves.length, 2);
+  assert.deepEqual(saves[1], saves[0]);
 });
 
 test("restarts each provider profile referenced by restored chart tabs", async (t) => {

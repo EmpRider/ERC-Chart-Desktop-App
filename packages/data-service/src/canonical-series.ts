@@ -1,11 +1,27 @@
 import type { Candle, InstrumentId, TimeframeId } from "@erc-chart/contracts";
 import { normalizeCandle } from "./market-data-validation.js";
 
+export interface CanonicalCacheIdentity {
+  readonly version: 1;
+  readonly providerFingerprint: string;
+  readonly targetTimeframeId: string;
+  readonly targetTimeframeSeconds: number;
+  readonly targetAlignmentMode: string;
+  readonly targetAlignmentOriginMs: number;
+  readonly targetAlignmentTimeZone: string;
+  readonly sourceTimeframeId: string;
+  readonly sourceTimeframeSeconds: number;
+  readonly sourceAlignmentMode: string;
+  readonly sourceAlignmentOriginMs: number;
+  readonly sourceAlignmentTimeZone: string;
+}
+
 export interface CanonicalSeriesKey {
   readonly providerProfileId: string;
   readonly instrumentId: InstrumentId;
   readonly timeframeId: TimeframeId;
   readonly timeframeSeconds: number;
+  readonly cacheIdentity?: CanonicalCacheIdentity;
 }
 
 export interface CanonicalCandle extends Candle {
@@ -505,7 +521,10 @@ export function createCanonicalSeriesStore(): CanonicalSeriesStore {
   ): CanonicalSeriesDelta | undefined => {
     const state = stateFor(inputKey);
     const candle = normalizedForKey(state.key, inputCandle);
+    const latest = state.finalized.get(state.finalized.length - 1, state.key);
     if (
+      latest !== undefined &&
+      candle.openTimeMs <= latest.openTimeMs &&
       state.finalized.getByOpenTime(candle.openTimeMs, state.key) !== undefined
     ) {
       return undefined;

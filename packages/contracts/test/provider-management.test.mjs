@@ -173,6 +173,22 @@ test("validates provider live subscription requests and candle events", () => {
   };
 
   assert.equal(isProviderLiveRequest(request), true);
+  for (const previousRevision of [0, 1, -1, 2, 3, 0.5, "1"]) {
+    assert.equal(
+      isProviderLiveEvent({
+        subscriptionId: subscriptionRequest.subscriptionId,
+        type: "candles",
+        candles: [candle],
+        series: {
+          generation: 1,
+          revision: 2,
+          previousRevision,
+          kind: "incremental",
+        },
+      }),
+      previousRevision === 0 || previousRevision === 1,
+    );
+  }
   assert.equal(isProviderLiveSubscriptionRequest(subscriptionRequest), true);
   assert.equal(
     isProviderLiveSubscriptionRequest({

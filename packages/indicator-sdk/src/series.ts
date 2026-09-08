@@ -1,4 +1,21 @@
 import type { Candle } from "@erc-chart/contracts";
+import { authoringFrame, useKernel } from "./authoring-context.js";
+
+/** Scalar recurrence: every building update starts from the previous committed bar. */
+export function series<T extends number | string | boolean>(
+  initial: T,
+  update: (previous: T) => T,
+): T {
+  const frame = authoringFrame();
+  const state = useKernel(`series-${typeof initial}`, () => ({
+    committed: initial,
+  }));
+  const value = update(state.committed);
+  if (typeof value !== typeof initial)
+    throw new TypeError("Series state must preserve its primitive type.");
+  if (frame.phase === "finalized") state.committed = value;
+  return value;
+}
 
 export const priceSources = [
   "close",
