@@ -47,7 +47,25 @@ import {
   type PluginIndicatorSettingsField,
   type PluginIndicatorSync,
 } from "./plugin-indicators.js";
+import { ProviderToolbarIcon } from "./provider-toolbar-icons.js";
 import { maximumIndicatorsPerWorkspace } from "./workspace.js";
+
+export interface ProviderChartSession extends ImportedProviderSession {
+  readonly series?: ProviderSeriesChange;
+  /** Last correction, retained even when React batches subsequent building updates. */
+  readonly rebuildRevision?: number;
+  /** Same-bar replacement without copying the historical session array. */
+  readonly liveCandle?: Candle;
+}
+
+export function providerChartSessionCandles(
+  session: ProviderChartSession,
+): readonly Candle[] {
+  if (session.liveCandle === undefined) return session.candles;
+  const candles = [...session.candles];
+  candles[candles.length - 1] = session.liveCandle;
+  return candles;
+}
 
 export type ProviderChartType = "candlestick" | "heikin_ashi" | "line" | "area";
 
@@ -70,6 +88,48 @@ export type ProviderDataSubscriber = (
   request: ProviderLiveRequest,
   listener: (event: ProviderLiveEvent) => void,
 ) => Promise<() => Promise<void>>;
+
+type ProviderChartNavigationApi = Pick<
+  Chart,
+  | "getBarSpace"
+  | "scrollByDistance"
+  | "scrollToRealTime"
+  | "setBarSpace"
+  | "setOffsetRightDistance"
+  | "zoomAtCoordinate"
+>;
+
+const chartNavigationAnimationMs = 120;
+
+export function panProviderChartView(
+  chart: ProviderChartNavigationApi,
+  direction: "left" | "right",
+): void {
+  const directionMultiplier = direction === "left" ? 1 : -1;
+  chart.scrollByDistance(
+    directionMultiplier * 3 * chart.getBarSpace().bar,
+    chartNavigationAnimationMs,
+  );
+}
+
+export function zoomProviderChartView(
+  chart: ProviderChartNavigationApi,
+  direction: "in" | "out",
+): void {
+  chart.zoomAtCoordinate(
+    direction === "in" ? 1.05 : 0.95,
+    undefined,
+    chartNavigationAnimationMs,
+  );
+}
+
+export function resetProviderChartView(
+  chart: ProviderChartNavigationApi,
+): void {
+  chart.setBarSpace(10);
+  chart.setOffsetRightDistance(80);
+  chart.scrollToRealTime(chartNavigationAnimationMs);
+}
 
 type IndicatorSettingsDraft = Readonly<Record<string, string>>;
 
@@ -142,7 +202,7 @@ export function queueIndicatorSettingsDraftChange(
 }
 
 export interface ProviderChartProps {
-  readonly session: ImportedProviderSession;
+  readonly session: ProviderChartSession;
   readonly chartType?: ProviderChartType | undefined;
   readonly onChartTypeChange?:
     ((chartType: ProviderChartType) => void) | undefined;
@@ -373,12 +433,18 @@ export function updateChartData(
     return;
   }
   const firstTimestamp = candles[0]?.openTimeMs;
-  const seed =
-    firstTimestamp === undefined
-      ? undefined
-      : [...existingData]
-          .reverse()
-          .find((data) => data.timestamp < firstTimestamp);
+  let seed: KLineData | undefined;
+  for (
+    let index = existingData.length - 1;
+    firstTimestamp !== undefined && index >= 0;
+    index -= 1
+  ) {
+    const data = existingData[index];
+    if (data !== undefined && data.timestamp < firstTimestamp) {
+      seed = data;
+      break;
+    }
+  }
   for (const data of toHeikinAshiData(candles, seed)) updateData(data);
 }
 
@@ -547,6 +613,7 @@ export function ProviderChart({
   const appliedChartType = useRef<ProviderChartType | undefined>(undefined);
   const appliedChartSessionKey = useRef<string | undefined>(undefined);
   const dataLoadGeneration = useRef(0);
+  const lastAppliedSeries = useRef<ProviderSeriesChange | undefined>(undefined);
   const latestIndicators = useRef(indicators);
   const latestInstalledIndicators = useRef(installedIndicators);
   const latestSyncIndicator = useRef(syncIndicator);
@@ -766,6 +833,9 @@ export function ProviderChart({
         },
         indicator: {
           tooltip: {
+            title: {
+              showParams: false,
+            },
             features: [
               {
                 id: "erc-visible",
@@ -821,7 +891,10 @@ export function ProviderChart({
               : undefined;
           const dataSession =
             resetCandles === undefined
-              ? requestSession
+              ? {
+                  ...requestSession,
+                  candles: providerChartSessionCandles(requestSession),
+                }
               : { ...requestSession, candles: resetCandles };
           try {
             const page = await loadKLineHistoryPage(
@@ -836,6 +909,13 @@ export function ProviderChart({
               sessionDataKey(latestSession.current) !== requestKey
             ) {
               return;
+            }
+            if (params.type === "init" && requestSession.series !== undefined) {
+              markPluginIndicatorSeriesChange(chart, {
+                ...requestSession.series,
+                kind: "rebuild",
+              });
+              lastAppliedSeries.current = requestSession.series;
             }
             params.callback(page.data, page.more);
             if (
@@ -858,9 +938,12 @@ export function ProviderChart({
           updateData.current = callback;
           applyCachedCandles(
             callback,
-            latestSession.current.candles,
+            latestSession.current.liveCandle === undefined
+              ? latestSession.current.candles
+              : [latestSession.current.liveCandle],
             lastAppliedOpenTimeMs,
             latestChartType.current,
+            chart.getDataList(),
           );
         },
         unsubscribeBar: (): void => {
@@ -917,6 +1000,7 @@ export function ProviderChart({
       previous === undefined || previous[3] !== session.timeframeId;
     lastAppliedOpenTimeMs.current = session.candles.at(-1)?.openTimeMs;
     authoritativeResetCandles.current = undefined;
+    lastAppliedSeries.current = undefined;
     appliedChartSessionKey.current = nextKey;
     if (symbolChanged) {
       dataLoadGeneration.current += 1;
@@ -1050,14 +1134,64 @@ export function ProviderChart({
 
   useEffect(() => {
     const incrementalUpdate = updateData.current;
-    if (incrementalUpdate === undefined) return;
+    const chart = chartInstance.current;
+    if (incrementalUpdate === undefined || chart === undefined) return;
+    const series = session.series;
+    if (series !== undefined) {
+      const previous = lastAppliedSeries.current;
+      if (
+        previous !== undefined &&
+        series.generation === previous.generation &&
+        series.revision <= previous.revision
+      )
+        return;
+      // The session retains corrections across React batches; multiple revisions alone are not a correction.
+      const change: ProviderSeriesChange =
+        previous === undefined ||
+        series.generation !== previous.generation ||
+        (session.rebuildRevision === undefined
+          ? (series.previousRevision ?? series.revision - 1) !==
+            previous.revision
+          : session.rebuildRevision > previous.revision)
+          ? {
+              ...series,
+              kind: "rebuild",
+              dirtyFromOpenTimeMs:
+                session.candles[0]?.openTimeMs ??
+                series.dirtyFromOpenTimeMs ??
+                0,
+            }
+          : series;
+      lastAppliedSeries.current = series;
+      markPluginIndicatorSeriesChange(chart, change);
+      if (change.kind === "rebuild") {
+        applyProviderSeriesUpdate(
+          chart,
+          incrementalUpdate,
+          providerChartSessionCandles(session),
+          change,
+          chartType,
+          lastAppliedOpenTimeMs,
+          authoritativeResetCandles,
+          dataLoadGeneration,
+        );
+        return;
+      }
+    }
     applyCachedCandles(
       incrementalUpdate,
-      session.candles,
+      session.liveCandle === undefined ? session.candles : [session.liveCandle],
       lastAppliedOpenTimeMs,
       chartType,
+      chart.getDataList(),
     );
-  }, [chartType, session.candles]);
+  }, [
+    chartType,
+    session.candles,
+    session.series,
+    session.liveCandle,
+    session.rebuildRevision,
+  ]);
 
   const setChartType = (nextChartType: ProviderChartType): void => {
     const chart = chartInstance.current;
@@ -1073,6 +1207,24 @@ export function ProviderChart({
     anchor.href = chart.getConvertPictureUrl(true, "png", "#090f19");
     anchor.download = `${session.instrument.symbol}-${session.timeframeId}.png`;
     anchor.click();
+  };
+
+  const resetChartView = (): void => {
+    const chart = chartInstance.current;
+    if (chart === undefined) return;
+    resetProviderChartView(chart);
+  };
+
+  const panChartView = (direction: "left" | "right"): void => {
+    const chart = chartInstance.current;
+    if (chart === undefined) return;
+    panProviderChartView(chart, direction);
+  };
+
+  const zoomChartView = (direction: "in" | "out"): void => {
+    const chart = chartInstance.current;
+    if (chart === undefined) return;
+    zoomProviderChartView(chart, direction);
   };
 
   const toggleFullscreen = (): void => {
@@ -1155,6 +1307,7 @@ export function ProviderChart({
                   setChartSettingsOpen(false);
                 }}
               >
+                <ProviderToolbarIcon name="indicator" />
                 Indicator
               </button>
               {indicatorMenuOpen ? (
@@ -1246,6 +1399,7 @@ export function ProviderChart({
 
           <label className="provider-timezone-control">
             <span className="visually-hidden">Timezone</span>
+            <ProviderToolbarIcon name="timezone" />
             <select
               value={timezone}
               aria-label="Chart timezone"
@@ -1272,6 +1426,7 @@ export function ProviderChart({
                 setIndicatorMenuOpen(false);
               }}
             >
+              <ProviderToolbarIcon name="settings" />
               Setting
             </button>
             {chartSettingsOpen ? (
@@ -1306,6 +1461,7 @@ export function ProviderChart({
             className="provider-toolbar-button provider-screenshot-button"
             onClick={saveScreenshot}
           >
+            <ProviderToolbarIcon name="screenshot" />
             Screenshot
           </button>
           <button
@@ -1313,6 +1469,9 @@ export function ProviderChart({
             className="provider-toolbar-button provider-fullscreen-button"
             onClick={toggleFullscreen}
           >
+            <ProviderToolbarIcon
+              name={fullscreen ? "exit-fullscreen" : "fullscreen"}
+            />
             {fullscreen ? "Exit" : "Fullscreen"}
           </button>
         </div>
@@ -1341,12 +1500,82 @@ export function ProviderChart({
             <span aria-hidden="true">×</span>
           </button>
         </aside>
+        <div className="provider-chart-stage">
+          <div
+            ref={chartRoot}
+            className="provider-chart-canvas"
+            data-provider-chart
+            aria-label={`${session.instrument.symbol} ${session.timeframeId} ${chartType === "heikin_ashi" ? "Heikin-Ashi" : chartType} chart`}
+          />
+        </div>
         <div
-          ref={chartRoot}
-          className="provider-chart-canvas"
-          data-provider-chart
-          aria-label={`${session.instrument.symbol} ${session.timeframeId} ${chartType === "heikin_ashi" ? "Heikin-Ashi" : chartType} chart`}
-        />
+          className="provider-chart-navigation"
+          role="group"
+          aria-label="Chart navigation"
+        >
+          <button
+            type="button"
+            title="Pan chart left"
+            aria-label="Pan chart left"
+            onClick={() => panChartView("left")}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M15 6l-6 6 6 6" />
+              <path d="M9 12h10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="Go to latest candles"
+            aria-label="Go to latest candles"
+            onClick={resetChartView}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M6.2 9.2A6.8 6.8 0 0 1 17.8 7.3" />
+              <path d="M17.8 7.3V4.2" />
+              <path d="M17.8 7.3h-3.1" />
+              <path d="M17.8 14.8A6.8 6.8 0 0 1 6.2 16.7" />
+              <path d="M6.2 16.7v3.1" />
+              <path d="M6.2 16.7h3.1" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="Pan chart right"
+            aria-label="Pan chart right"
+            onClick={() => panChartView("right")}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M9 6l6 6-6 6" />
+              <path d="M5 12h10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="Zoom out"
+            aria-label="Zoom out"
+            onClick={() => zoomChartView("out")}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="10.5" cy="10.5" r="5.5" />
+              <path d="M7.5 10.5h6" />
+              <path d="M15 15l4 4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="Zoom in"
+            aria-label="Zoom in"
+            onClick={() => zoomChartView("in")}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="10.5" cy="10.5" r="5.5" />
+              <path d="M7.5 10.5h6" />
+              <path d="M10.5 7.5v6" />
+              <path d="M15 15l4 4" />
+            </svg>
+          </button>
+        </div>
       </div>
       {settingsIndicator === undefined || settingsName === undefined ? null : (
         <div
@@ -1540,23 +1769,29 @@ export function ProviderChart({
   );
 }
 
-function applyCachedCandles(
+export function applyCachedCandles(
   updateData: (data: KLineData) => void,
   candles: readonly Candle[],
   lastAppliedOpenTimeMs: { current: number | undefined },
   chartType: ProviderChartType,
+  existingData: readonly KLineData[] = [],
 ): void {
   if (candles.length === 0) return;
   const lastApplied = lastAppliedOpenTimeMs.current;
-  const firstRelevantIndex =
-    lastApplied === undefined
-      ? 0
-      : candles.findIndex((candle) => candle.openTimeMs >= lastApplied);
-  if (firstRelevantIndex === -1) return;
-  const transformed =
-    chartType === "heikin_ashi"
-      ? toHeikinAshiData(candles)
-      : candles.map(toKLineCandle);
-  for (const data of transformed.slice(firstRelevantIndex)) updateData(data);
+  let firstRelevantIndex = candles.length;
+  while (
+    firstRelevantIndex > 0 &&
+    (lastApplied === undefined ||
+      (candles[firstRelevantIndex - 1]?.openTimeMs ?? -1) >= lastApplied)
+  ) {
+    firstRelevantIndex -= 1;
+  }
+  if (firstRelevantIndex === candles.length) return;
+  updateChartData(
+    updateData,
+    candles.slice(firstRelevantIndex),
+    chartType,
+    existingData,
+  );
   lastAppliedOpenTimeMs.current = candles.at(-1)?.openTimeMs;
 }

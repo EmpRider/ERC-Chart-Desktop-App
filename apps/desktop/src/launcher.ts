@@ -28,6 +28,20 @@ export function launchDesktopMainWithProtocol(
   launchDesktopMain(start, onFailure);
 }
 
+export async function flushWorkspaceBeforeQuit(
+  flush: () => Promise<void>,
+  choose: () => Promise<"retry" | "cancel">,
+): Promise<boolean> {
+  for (;;) {
+    try {
+      await flush();
+      return true;
+    } catch {
+      if ((await choose()) === "cancel") return false;
+    }
+  }
+}
+
 interface DesktopSmokeController {
   readonly shutdown: () => Promise<void>;
 }

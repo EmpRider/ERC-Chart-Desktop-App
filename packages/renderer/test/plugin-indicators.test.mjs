@@ -511,8 +511,16 @@ test("sends one history snapshot followed by bounded building and rollover delta
     close: 14,
   };
   const requests = [];
+  let release;
+  let deferNext = false;
   const sync = async (request) => {
     requests.push(request);
+    if (deferNext) {
+      deferNext = false;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    }
     if (request.data.kind === "building") {
       return {
         kind: "building",
@@ -591,6 +599,60 @@ test("sends one history snapshot followed by bounded building and rollover delta
   assert.deepEqual(
     rolloverRows.map(({ line }) => line),
     [first.close, secondUpdate.close, third.close],
+  );
+  const countBeforeBurst = requests.length;
+  deferNext = true;
+  const live = [first, secondUpdate, { ...third, close: 15 }];
+  const pending = [template.calc(live, { id: runtimeId })];
+  for (let index = 0; index < 100; index += 1) {
+    live[2] = { ...third, close: 16 + index };
+    pending.push(template.calc(live, { id: runtimeId }));
+  }
+  assert.equal(
+    requests.length,
+    countBeforeBurst + 1,
+    "one active worker request regardless of tick burst",
+  );
+  release();
+  const results = await Promise.all(pending);
+  assert.equal(
+    requests.length,
+    countBeforeBurst + 2,
+    "one pending latest building update",
+  );
+  assert.equal(requests.at(-1).data.kind, "building");
+  assert.equal(results.at(-1).at(-1).line, 115);
+
+  // A finalized bar arriving while the worker is busy must not be lost or applied to a shifted timeline.
+  deferNext = true;
+  live[2] = { ...third, close: 116 };
+  const beforeRollover = template.calc(live, { id: runtimeId });
+  live.push({ ...third, timestamp: third.timestamp + 60_000, close: 117 });
+  const afterRollover = template.calc(live, { id: runtimeId });
+  release();
+  await Promise.all([beforeRollover, afterRollover]);
+  assert.equal(requests.at(-1).data.kind, "rollover");
+  assert.deepEqual(
+    (await afterRollover).map((row) => row.line),
+    [11, 13, 116, 117],
+  );
+
+  const runtimeIndicator = { id: runtimeId, result: await afterRollover };
+  const older = { ...first, timestamp: first.timestamp - 60_000, close: 9 };
+  deferNext = true;
+  const paginated = [older, ...live];
+  const pageCalculation = template.calc(paginated, runtimeIndicator);
+  assert.deepEqual(
+    runtimeIndicator.result.map((row) => row.line),
+    [undefined, 11, 13, 116, 117],
+    "existing plots stay on their candles before the worker finishes pagination",
+  );
+  assert.equal(requests.at(-1).data.kind, "rebuild");
+  release();
+  runtimeIndicator.result = await pageCalculation;
+  assert.deepEqual(
+    runtimeIndicator.result.map((row) => row.line),
+    [9, 11, 13, 116, 117],
   );
 });
 

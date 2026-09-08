@@ -136,6 +136,8 @@ export interface ProviderLiveSubscriptionRequest extends ProviderLiveRequest {
 export interface ProviderSeriesChange {
   readonly generation: number;
   readonly revision: number;
+  /** Revision immediately before this batch, which may contain multiple deltas. */
+  readonly previousRevision?: number;
   readonly kind: "incremental" | "rebuild";
   readonly dirtyFromOpenTimeMs?: number;
 }
@@ -405,6 +407,11 @@ export function isProviderLiveEvent(
       Number(value.series.generation) >= 0 &&
       Number.isSafeInteger(value.series.revision) &&
       Number(value.series.revision) >= 0 &&
+      (value.series.previousRevision === undefined ||
+        (Number.isSafeInteger(value.series.previousRevision) &&
+          Number(value.series.previousRevision) >= 0 &&
+          Number(value.series.previousRevision) <
+            Number(value.series.revision))) &&
       (value.series.kind === "incremental" ||
         value.series.kind === "rebuild") &&
       (value.series.dirtyFromOpenTimeMs === undefined ||

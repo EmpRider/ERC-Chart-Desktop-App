@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import {
   isInstalledIndicatorDefinition,
   isPluginManifest,
@@ -15,17 +14,11 @@ import {
   type PluginPackageSource,
   type StagedPluginPackage,
 } from "@erc-chart/provider-runtime";
-import {
-  activatePlugin,
-  deletePlugin,
-  disablePlugin,
-  listPlugins,
-  putPlugin,
-  type JsonObject,
-} from "@erc-chart/storage";
+import type { JsonObject, PluginRegistryEntry } from "@erc-chart/storage";
+import type { DataUtilityStorage } from "./data-utility-storage.js";
 
 export interface IndicatorImportServiceOptions {
-  readonly database: DatabaseSync;
+  readonly storage: DataUtilityStorage;
   readonly stagingRoot: string;
   readonly installationRoot: string;
   readonly createRequestId?: () => string;
@@ -110,11 +103,11 @@ function indicatorDefinitionFromManifest(
   return definition;
 }
 
-function markIndicatorIncompatible(
-  database: DatabaseSync,
-  entry: ReturnType<typeof listPlugins>[number],
-): void {
-  putPlugin(database, {
+async function markIndicatorIncompatible(
+  storage: DataUtilityStorage,
+  entry: PluginRegistryEntry,
+): Promise<void> {
+  await storage.putPlugin({
     pluginId: entry.pluginId,
     version: entry.version,
     kind: entry.kind,
@@ -133,21 +126,21 @@ export function createIndicatorImportService(
   const createRequestId = options.createRequestId ?? randomUUID;
 
   const list = async (): Promise<readonly InstalledIndicatorSummary[]> => {
-    const registry = listPlugins(options.database).filter(
+    const registry = (await options.storage.listPlugins()).filter(
       (entry) => entry.kind === "indicator" && entry.status === "active",
     );
     const summaries: InstalledIndicatorSummary[] = [];
     for (const entry of registry) {
       const manifest = entry.manifest;
       if (!isPluginManifest(manifest) || manifest.kind !== "indicator") {
-        markIndicatorIncompatible(options.database, entry);
+        await markIndicatorIncompatible(options.storage, entry);
         continue;
       }
       let definition: IndicatorImportPreview["definition"];
       try {
         definition = indicatorDefinitionFromManifest(manifest);
       } catch {
-        markIndicatorIncompatible(options.database, entry);
+        await markIndicatorIncompatible(options.storage, entry);
         continue;
       }
       summaries.push(
@@ -221,7 +214,7 @@ export function createIndicatorImportService(
       installed = await installStagedPlugin(staged, {
         installationRoot: options.installationRoot,
       });
-      putPlugin(options.database, {
+      await options.storage.putPlugin({
         pluginId: installed.pluginId,
         version: installed.version,
         kind: "indicator",
@@ -232,7 +225,10 @@ export function createIndicatorImportService(
         permissions: registryPermissions(staged),
       });
       registryCreated = true;
-      activatePlugin(options.database, installed.pluginId, installed.version);
+      await options.storage.activatePlugin(
+        installed.pluginId,
+        installed.version,
+      );
       return toSummary(
         installed.pluginId,
         installed.manifest.name,
@@ -242,20 +238,12 @@ export function createIndicatorImportService(
       );
     } catch (error) {
       if (registryCreated && installed !== undefined) {
-        try {
-          disablePlugin(
-            options.database,
-            installed.pluginId,
-            installed.version,
-          );
-        } catch {
-          // The registry can already be disabled when loading fails.
-        }
-        try {
-          deletePlugin(options.database, installed.pluginId, installed.version);
-        } catch {
-          // Preserve the original import failure.
-        }
+        await options.storage
+          .disablePlugin(installed.pluginId, installed.version)
+          .catch(() => undefined);
+        await options.storage
+          .deletePlugin(installed.pluginId, installed.version)
+          .catch(() => false);
       }
       if (installed !== undefined) {
         await removeInstalledPlugin(

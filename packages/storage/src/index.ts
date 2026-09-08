@@ -119,9 +119,48 @@ const migrations = [
   ALTER TABLE provider_profiles
     ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';
   `,
+  `
+  DROP TABLE series_cache_state;
+  DROP INDEX candles_newest;
+  DROP TABLE candles;
+
+  CREATE TABLE candles (
+    cache_key_version INTEGER NOT NULL CHECK (cache_key_version > 0),
+    cache_key TEXT NOT NULL,
+    feed_id TEXT NOT NULL,
+    instrument_id TEXT NOT NULL,
+    timeframe_sec INTEGER NOT NULL CHECK (timeframe_sec > 0),
+    open_time_ms INTEGER NOT NULL CHECK (open_time_ms >= 0),
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    PRIMARY KEY (cache_key_version, cache_key, open_time_ms),
+    CHECK (high >= open AND high >= close AND low <= open AND low <= close)
+  ) STRICT;
+  CREATE INDEX candles_newest
+    ON candles (cache_key_version, cache_key, open_time_ms DESC);
+
+  CREATE TABLE series_cache_state (
+    cache_key_version INTEGER NOT NULL CHECK (cache_key_version > 0),
+    cache_key TEXT NOT NULL,
+    feed_id TEXT NOT NULL,
+    instrument_id TEXT NOT NULL,
+    timeframe_sec INTEGER NOT NULL CHECK (timeframe_sec > 0),
+    oldest_time_ms INTEGER,
+    newest_time_ms INTEGER,
+    revision INTEGER NOT NULL,
+    synchronized_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (cache_key_version, cache_key)
+  ) STRICT;
+  `,
 ] as const;
 
 export interface StoredCandle {
+  readonly cacheKeyVersion: number;
+  readonly cacheKey: string;
   readonly feedId: string;
   readonly instrumentId: string;
   readonly timeframeSec: number;
@@ -135,12 +174,16 @@ export interface StoredCandle {
 }
 
 export interface CandleSeriesKey {
+  readonly cacheKeyVersion: number;
+  readonly cacheKey: string;
   readonly feedId: string;
   readonly instrumentId: string;
   readonly timeframeSec: number;
 }
 
 interface CandleRow {
+  readonly cache_key_version: number;
+  readonly cache_key: string;
   readonly feed_id: string;
   readonly instrument_id: string;
   readonly timeframe_sec: number;
@@ -174,10 +217,15 @@ function validateSeriesKey(
   if (rejectExtraFields)
     assertFields(
       input,
-      ["feedId", "instrumentId", "timeframeSec"],
+      ["cacheKeyVersion", "cacheKey", "feedId", "instrumentId", "timeframeSec"],
       "candle series key",
     );
   return {
+    cacheKeyVersion: requirePositiveInteger(
+      input.cacheKeyVersion,
+      "cacheKeyVersion",
+    ),
+    cacheKey: requireProfileText(input.cacheKey, "cacheKey", 2_048),
     feedId: requireProfileText(input.feedId, "feedId", 128),
     instrumentId: requireProfileText(input.instrumentId, "instrumentId", 128),
     timeframeSec: requirePositiveInteger(input.timeframeSec, "timeframeSec"),
@@ -190,6 +238,8 @@ function validateCandle(input: StoredCandle): StoredCandle {
   assertFields(
     input,
     [
+      "cacheKeyVersion",
+      "cacheKey",
       "feedId",
       "instrumentId",
       "timeframeSec",
@@ -227,6 +277,8 @@ function validateCandle(input: StoredCandle): StoredCandle {
 
 function toStoredCandle(row: CandleRow): StoredCandle {
   return {
+    cacheKeyVersion: row.cache_key_version,
+    cacheKey: row.cache_key,
     feedId: row.feed_id,
     instrumentId: row.instrument_id,
     timeframeSec: row.timeframe_sec,
@@ -250,21 +302,26 @@ export function upsertCandles(
   return withTransaction(database, () => {
     const statement = database.prepare(`
       INSERT INTO candles
-        (feed_id, instrument_id, timeframe_sec, open_time_ms, open, high, low, close, volume, revision)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(feed_id, instrument_id, timeframe_sec, open_time_ms) DO UPDATE SET
+        (cache_key_version, cache_key, feed_id, instrument_id, timeframe_sec,
+         open_time_ms, open, high, low, close, volume, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cache_key_version, cache_key, open_time_ms) DO UPDATE SET
+        feed_id = excluded.feed_id,
+        instrument_id = excluded.instrument_id,
+        timeframe_sec = excluded.timeframe_sec,
         open = excluded.open,
         high = excluded.high,
         low = excluded.low,
         close = excluded.close,
         volume = excluded.volume,
         revision = excluded.revision
-      WHERE excluded.revision >= candles.revision
     `);
     let changes = 0;
     for (const candle of checked) {
       changes += Number(
         statement.run(
+          candle.cacheKeyVersion,
+          candle.cacheKey,
           candle.feedId,
           candle.instrumentId,
           candle.timeframeSec,
@@ -291,18 +348,14 @@ export function getCandles(
     database
       .prepare(
         `
-        SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
-          open, high, low, close, volume, revision
+        SELECT cache_key_version, cache_key, feed_id, instrument_id,
+          timeframe_sec, open_time_ms, open, high, low, close, volume, revision
         FROM candles
-        WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+        WHERE cache_key_version = ? AND cache_key = ?
         ORDER BY open_time_ms
       `,
       )
-      .all(
-        checked.feedId,
-        checked.instrumentId,
-        checked.timeframeSec,
-      ) as unknown as CandleRow[]
+      .all(checked.cacheKeyVersion, checked.cacheKey) as unknown as CandleRow[]
   ).map(toStoredCandle);
 }
 
@@ -322,22 +375,21 @@ export function getNewestCandles(
   return (
     database
       .prepare(
-        `SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
-          open, high, low, close, volume, revision
+        `SELECT cache_key_version, cache_key, feed_id, instrument_id,
+          timeframe_sec, open_time_ms, open, high, low, close, volume, revision
         FROM (
-          SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
-            open, high, low, close, volume, revision
+          SELECT cache_key_version, cache_key, feed_id, instrument_id,
+            timeframe_sec, open_time_ms, open, high, low, close, volume, revision
           FROM candles
-          WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+          WHERE cache_key_version = ? AND cache_key = ?
           ORDER BY open_time_ms DESC
           LIMIT ?
         )
         ORDER BY open_time_ms`,
       )
       .all(
-        checked.feedId,
-        checked.instrumentId,
-        checked.timeframeSec,
+        checked.cacheKeyVersion,
+        checked.cacheKey,
         checkedLimit,
       ) as unknown as CandleRow[]
   ).map(toStoredCandle);
@@ -359,18 +411,17 @@ export function getCandlesInRange(
   return (
     database
       .prepare(
-        `SELECT feed_id, instrument_id, timeframe_sec, open_time_ms,
-          open, high, low, close, volume, revision
+        `SELECT cache_key_version, cache_key, feed_id, instrument_id,
+          timeframe_sec, open_time_ms, open, high, low, close, volume, revision
         FROM candles
-        WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+        WHERE cache_key_version = ? AND cache_key = ?
           AND open_time_ms >= ? AND open_time_ms <= ?
         ORDER BY open_time_ms
         LIMIT ?`,
       )
       .all(
-        checked.feedId,
-        checked.instrumentId,
-        checked.timeframeSec,
+        checked.cacheKeyVersion,
+        checked.cacheKey,
         fromMs,
         toMs,
         checkedLimit,
@@ -392,11 +443,10 @@ export function deleteCandlesBefore(
     database
       .prepare(
         `DELETE FROM candles
-         WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+         WHERE cache_key_version = ? AND cache_key = ?
            AND open_time_ms < ?`,
       )
-      .run(checked.feedId, checked.instrumentId, checked.timeframeSec, beforeMs)
-      .changes,
+      .run(checked.cacheKeyVersion, checked.cacheKey, beforeMs).changes,
   );
 }
 
@@ -417,32 +467,29 @@ export function retainNewestCandles(
       database
         .prepare(
           `DELETE FROM candles
-           WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?`,
+           WHERE cache_key_version = ? AND cache_key = ?`,
         )
-        .run(checked.feedId, checked.instrumentId, checked.timeframeSec)
-        .changes,
+        .run(checked.cacheKeyVersion, checked.cacheKey).changes,
     );
   }
   return Number(
     database
       .prepare(
         `DELETE FROM candles
-         WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+         WHERE cache_key_version = ? AND cache_key = ?
            AND open_time_ms < COALESCE((
              SELECT open_time_ms
              FROM candles
-             WHERE feed_id = ? AND instrument_id = ? AND timeframe_sec = ?
+             WHERE cache_key_version = ? AND cache_key = ?
              ORDER BY open_time_ms DESC
              LIMIT 1 OFFSET ?
            ), 0)`,
       )
       .run(
-        checked.feedId,
-        checked.instrumentId,
-        checked.timeframeSec,
-        checked.feedId,
-        checked.instrumentId,
-        checked.timeframeSec,
+        checked.cacheKeyVersion,
+        checked.cacheKey,
+        checked.cacheKeyVersion,
+        checked.cacheKey,
         maximumBars - 1,
       ).changes,
   );
@@ -1247,7 +1294,7 @@ export function saveWorkspace(
     128,
   );
   const now = Date.now();
-  database
+  const result = database
     .prepare(
       `INSERT INTO workspaces
         (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
@@ -1256,8 +1303,8 @@ export function saveWorkspace(
          schema_version = excluded.schema_version,
          name = excluded.name,
          document_json = excluded.document_json,
-         instance_id = excluded.instance_id,
-         updated_at_ms = excluded.updated_at_ms`,
+         updated_at_ms = excluded.updated_at_ms
+       WHERE workspaces.instance_id = excluded.instance_id`,
     )
     .run(
       document.id,
@@ -1268,6 +1315,7 @@ export function saveWorkspace(
       now,
       now,
     );
+  if (result.changes !== 1) throw new Error("Workspace owner conflict.");
   return document;
 }
 
@@ -1285,6 +1333,60 @@ export function loadWorkspace(
     .prepare("SELECT document_json FROM workspaces WHERE id = ?")
     .get(checkedId) as { readonly document_json: string } | undefined;
   return row === undefined ? undefined : parseWorkspaceV1(row.document_json);
+}
+
+export function claimWorkspace(
+  database: DatabaseSync,
+  id: string,
+  instanceId: string,
+): boolean {
+  const checkedId = requireRegistryText(
+    id,
+    "id",
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+    128,
+  );
+  const checkedInstanceId = requireRegistryText(
+    instanceId,
+    "instanceId",
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+    128,
+  );
+  return (
+    database
+      .prepare("UPDATE workspaces SET instance_id = ? WHERE id = ?")
+      .run(checkedInstanceId, checkedId).changes === 1
+  );
+}
+
+export function loadLatestWorkspaceSession(
+  database: DatabaseSync,
+  legacyId = "last-workspace",
+): WorkspaceV1 | undefined {
+  const checkedLegacyId = requireRegistryText(
+    legacyId,
+    "legacyId",
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+    128,
+  );
+  const rows = database
+    .prepare(
+      `SELECT document_json
+       FROM workspaces
+       WHERE id = ? OR id GLOB 'session:*'
+       ORDER BY updated_at_ms DESC, id DESC`,
+    )
+    .all(checkedLegacyId) as unknown as readonly {
+    readonly document_json: string;
+  }[];
+  for (const row of rows) {
+    try {
+      return parseWorkspaceV1(row.document_json);
+    } catch {
+      // Skip an invalid row without destroying recoverable user documents.
+    }
+  }
+  return undefined;
 }
 
 export function withTransaction<T>(database: DatabaseSync, run: () => T): T {
@@ -1363,34 +1465,34 @@ export async function openStorageDatabase(
       ) STRICT
     `);
 
-    const row = database
-      .prepare(
-        "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations",
-      )
-      .get() as { version: number };
-    if (row.version > migrations.length) {
-      throw new Error(
-        `Database schema version ${row.version} is newer than supported version ${migrations.length}.`,
-      );
-    }
+    withTransaction(database, () => {
+      const row = database
+        .prepare(
+          "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations",
+        )
+        .get() as { version: number };
+      if (row.version > migrations.length) {
+        throw new Error(
+          `Database schema version ${row.version} is newer than supported version ${migrations.length}.`,
+        );
+      }
 
-    for (
-      let version = row.version + 1;
-      version <= migrations.length;
-      version += 1
-    ) {
-      const migration = migrations[version - 1];
-      if (migration === undefined)
-        throw new Error(`Missing migration ${version}.`);
-      withTransaction(database, () => {
+      for (
+        let version = row.version + 1;
+        version <= migrations.length;
+        version += 1
+      ) {
+        const migration = migrations[version - 1];
+        if (migration === undefined)
+          throw new Error(`Missing migration ${version}.`);
         database.exec(migration);
         database
           .prepare(
             "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)",
           )
           .run(version, Date.now());
-      });
-    }
+      }
+    });
 
     return database;
   } catch (error) {

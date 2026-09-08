@@ -303,6 +303,25 @@ test("renders an independent timeframe selector for each chart workspace", () =>
     "3m",
   );
   assert.equal(document.querySelector(".provider-chart-meta"), null);
+  const navigationGroups = document.querySelectorAll(
+    ".provider-chart-navigation",
+  );
+  assert.equal(navigationGroups.length, 2);
+  for (const navigationGroup of navigationGroups) {
+    assert.equal(navigationGroup.querySelectorAll("button").length, 5);
+    assert.deepEqual(
+      Array.from(navigationGroup.querySelectorAll("button")).map((button) =>
+        button.getAttribute("aria-label"),
+      ),
+      [
+        "Pan chart left",
+        "Go to latest candles",
+        "Pan chart right",
+        "Zoom out",
+        "Zoom in",
+      ],
+    );
+  }
 });
 
 test("resolves and renders a connected secure bridge", async () => {

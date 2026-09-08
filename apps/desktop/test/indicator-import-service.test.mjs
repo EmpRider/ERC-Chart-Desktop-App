@@ -5,17 +5,45 @@ import path from "node:path";
 import test from "node:test";
 
 import { isInstalledIndicatorSummary } from "@erc-chart/contracts";
-import { getPlugin, openStorageDatabase, putPlugin } from "@erc-chart/storage";
+import {
+  activatePlugin,
+  deletePlugin,
+  disablePlugin,
+  getPlugin,
+  listPlugins,
+  openStorageDatabase,
+  putPlugin,
+} from "@erc-chart/storage";
 import { createIndicatorImportService } from "../dist/indicator-import-service.js";
 import { buildAtrRopeUtBotIndicatorPackage } from "../../../tools/build-atr-rope-utbot-indicator.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 
+function createStorage(database) {
+  return {
+    async listPlugins() {
+      return listPlugins(database);
+    },
+    async putPlugin(input) {
+      return putPlugin(database, input);
+    },
+    async activatePlugin(pluginId, version) {
+      return activatePlugin(database, pluginId, version);
+    },
+    async disablePlugin(pluginId, version) {
+      return disablePlugin(database, pluginId, version);
+    },
+    async deletePlugin(pluginId, version) {
+      return deletePlugin(database, pluginId, version);
+    },
+  };
+}
+
 test("previews, installs and lists an indicator package without executing it in Electron main", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-indicator-import-"));
   const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
   const service = createIndicatorImportService({
-    database,
+    storage: createStorage(database),
     stagingRoot: path.join(root, "staging"),
     installationRoot: path.join(root, "installed"),
     createRequestId: () => "indicator-request-1",
@@ -70,7 +98,7 @@ test("quarantines an active legacy indicator that has no manifest definition", a
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-indicator-legacy-"));
   const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
   const service = createIndicatorImportService({
-    database,
+    storage: createStorage(database),
     stagingRoot: path.join(root, "staging"),
     installationRoot: path.join(root, "installed"),
   });

@@ -1,4 +1,5 @@
 import type { Candle, Tick } from "@erc-chart/contracts";
+import type { ProviderBarAlignment } from "@erc-chart/provider-sdk";
 import {
   createCanonicalSeriesStore,
   type CanonicalCandle,
@@ -9,6 +10,7 @@ import {
 } from "./canonical-series.js";
 import type { HistoricalCandleCache } from "./history-cache.js";
 import { normalizeCandles, normalizeTicks } from "./market-data-validation.js";
+import { alignedOpenTime } from "./timeframes.js";
 
 export interface CandleStateOptions {
   readonly store?: CanonicalSeriesStore;
@@ -30,15 +32,24 @@ export interface CanonicalCandleState {
   readonly applyTicks: (
     key: CanonicalSeriesKey,
     ticks: readonly Tick[],
+    alignment?: ProviderBarAlignment,
   ) => readonly CanonicalSeriesDelta[];
   readonly snapshot: (key: CanonicalSeriesKey) => CanonicalSeriesSnapshot;
   readonly finalizedCandles: (
     key: CanonicalSeriesKey,
   ) => readonly CanonicalCandle[];
+  readonly latestFinalized: (
+    key: CanonicalSeriesKey,
+  ) => CanonicalCandle | undefined;
   readonly clearProfile: (providerProfileId: string) => void;
 }
 
 const defaultMaximumFinalizedBars = 100_000;
+const epochAlignment: ProviderBarAlignment = Object.freeze({
+  mode: "epoch",
+  originMs: 0,
+  timeZone: "UTC",
+});
 
 function requireNow(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0)
@@ -46,17 +57,25 @@ function requireNow(value: number): number {
   return value;
 }
 
-function bucketOpenTime(timestampMs: number, timeframeSeconds: number): number {
-  const durationMs = timeframeSeconds * 1000;
-  return Math.floor(timestampMs / durationMs) * durationMs;
+function bucketOpenTime(
+  timestampMs: number,
+  timeframeSeconds: number,
+  alignment: ProviderBarAlignment = epochAlignment,
+): number {
+  return alignedOpenTime(timestampMs, timeframeSeconds, alignment);
 }
 
 function candleFromTick(
   key: CanonicalSeriesKey,
   tick: Tick,
   current?: Candle,
+  alignment: ProviderBarAlignment = epochAlignment,
 ): Candle {
-  const openTimeMs = bucketOpenTime(tick.timestampMs, key.timeframeSeconds);
+  const openTimeMs = bucketOpenTime(
+    tick.timestampMs,
+    key.timeframeSeconds,
+    alignment,
+  );
   if (current === undefined || current.openTimeMs !== openTimeMs) {
     return Object.freeze({
       instrumentId: key.instrumentId,
@@ -103,11 +122,18 @@ export function createCanonicalCandleState(
   const persistAndRetain = (
     key: CanonicalSeriesKey,
     finalized: readonly CanonicalCandle[],
-  ): void => {
+  ): CanonicalSeriesDelta | undefined => {
     if (cache !== undefined && finalized.length > 0)
       cache.upsert(key, finalized);
-    const trim = store.trimFinalized(key, maximumFinalizedBars);
+    const activeFinalizedLimit =
+      defaultMaximumFinalizedBars -
+      (store.buildingCandle(key) === undefined ? 0 : 1);
+    const trim = store.trimFinalized(
+      key,
+      Math.min(maximumFinalizedBars, activeFinalizedLimit),
+    );
     if (trim !== undefined) cache?.retain(key, maximumFinalizedBars);
+    return trim;
   };
 
   const changedFinalizedCandles = (
@@ -143,8 +169,8 @@ export function createCanonicalCandleState(
       }
     }
     const delta = store.replaceHistory(key, finalized, building);
-    persistAndRetain(key, store.finalizedCandles(key));
-    return Object.freeze([delta]);
+    const trim = persistAndRetain(key, store.finalizedCandles(key));
+    return Object.freeze(trim === undefined ? [delta] : [delta, trim]);
   };
 
   const applyCandles = (
@@ -181,21 +207,28 @@ export function createCanonicalCandleState(
         if (updated !== undefined) deltas.push(updated);
       }
     }
-    const changedFinalized = changedFinalizedCandles(deltas);
-    if (changedFinalized.length > 0) persistAndRetain(key, changedFinalized);
+    if (deltas.length > 0) {
+      const trim = persistAndRetain(key, changedFinalizedCandles(deltas));
+      if (trim !== undefined) deltas.push(trim);
+    }
     return Object.freeze(deltas);
   };
 
   const applyTicks = (
     key: CanonicalSeriesKey,
     input: readonly Tick[],
+    alignment: ProviderBarAlignment = epochAlignment,
   ): readonly CanonicalSeriesDelta[] => {
     const ticks = [
       ...normalizeTicks(input, { instrumentId: key.instrumentId }),
     ].sort((left, right) => left.timestampMs - right.timestampMs);
     const deltas: CanonicalSeriesDelta[] = [];
     for (const tick of ticks) {
-      const openTimeMs = bucketOpenTime(tick.timestampMs, key.timeframeSeconds);
+      const openTimeMs = bucketOpenTime(
+        tick.timestampMs,
+        key.timeframeSeconds,
+        alignment,
+      );
       const latestFinalized = store.latestFinalized(key);
       if (
         latestFinalized !== undefined &&
@@ -212,12 +245,14 @@ export function createCanonicalCandleState(
       }
       const updated = store.updateBuilding(
         key,
-        candleFromTick(key, tick, building),
+        candleFromTick(key, tick, building, alignment),
       );
       if (updated !== undefined) deltas.push(updated);
     }
-    const changedFinalized = changedFinalizedCandles(deltas);
-    if (changedFinalized.length > 0) persistAndRetain(key, changedFinalized);
+    if (deltas.length > 0) {
+      const trim = persistAndRetain(key, changedFinalizedCandles(deltas));
+      if (trim !== undefined) deltas.push(trim);
+    }
     return Object.freeze(deltas);
   };
 
@@ -227,6 +262,7 @@ export function createCanonicalCandleState(
     applyTicks,
     snapshot: (key) => store.snapshot(key),
     finalizedCandles: (key) => store.finalizedCandles(key),
+    latestFinalized: (key) => store.latestFinalized(key),
     clearProfile: (providerProfileId) => store.clearProfile(providerProfileId),
   };
 }

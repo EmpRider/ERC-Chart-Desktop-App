@@ -9,15 +9,28 @@ The application is being designed and implemented from scratch. The supplied
 Signal project is reference material for required behavior only and is not part
 of this repository.
 
+Indicators can use the [Pine-inspired authoring API](docs/development/INDICATOR-AUTHORING.md)
+with `defineIndicator`, `input`, `ta`, and `plot`, without manually declaring
+output arrays or compatibility metadata.
+
 ## Current status
 
-Epic 2's local persistence foundation is complete. The repository includes the
-secure desktop shell from Epic 1 plus SQLite migrations and durability controls,
-provider-profile metadata, Windows Generic Credentials, versioned workspace
-serialization and restoration, persistent settings and plugin registry state,
-concurrent candle access, and redacted rotating diagnostics. Live charts,
-market-data providers, plugin execution, automatic updates, and production
-signing remain later-epic work.
+Source version `1.0.0` includes live provider/history integration, klinecharts,
+indicator workers, plugin management, and recoverable per-instance workspace
+sessions. Canonical market data and SQLite operations now run in the data utility
+process; main retains provider supervision, privileged operations, and credentials.
+History uses an identity-versioned cache; drawings remain session-only.
+
+Local validation on 2026-09-07 passed build, typecheck, lint, focused regressions,
+boundaries, real-process history/live/crash checks, fresh-process cache reuse,
+shared-storage autosaves/recovery, and synthetic stress. **Phase 6 remains open**
+for required failure-path and manual shared-profile/recovery validation.
+Full application performance and release/provider approval remain separate
+release gates. These are source-check results, not a newly verified installer.
+Automatic updates are excluded; production signing remains gated.
+
+See [validation evidence and recovery instructions](docs/development/DATA-INTEGRITY-VALIDATION.md)
+for exact results, skipped tests, fixture limits, and remaining gates.
 
 - [Architecture specification](docs/architecture/v1/ERC-chart-Architecture-Specification-v1.md)
 - [Architecture decisions](docs/architecture/v1/ARCHITECTURE-DECISIONS.md)

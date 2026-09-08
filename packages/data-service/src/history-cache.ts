@@ -37,7 +37,28 @@ export interface HistoricalCandleCache {
 }
 
 function storageKey(key: CanonicalSeriesKey): CandleSeriesKey {
+  const identity = key.cacheIdentity;
+  if (identity === undefined || identity.version !== 1) {
+    throw new Error("Canonical cache identity is required.");
+  }
+  const cacheKey = JSON.stringify([
+    key.providerProfileId,
+    key.instrumentId,
+    identity.providerFingerprint,
+    identity.targetTimeframeId,
+    identity.targetTimeframeSeconds,
+    identity.targetAlignmentMode,
+    identity.targetAlignmentOriginMs,
+    identity.targetAlignmentTimeZone,
+    identity.sourceTimeframeId,
+    identity.sourceTimeframeSeconds,
+    identity.sourceAlignmentMode,
+    identity.sourceAlignmentOriginMs,
+    identity.sourceAlignmentTimeZone,
+  ]);
   return {
+    cacheKeyVersion: identity.version,
+    cacheKey,
     feedId: key.providerProfileId,
     instrumentId: key.instrumentId,
     timeframeSec: key.timeframeSeconds,

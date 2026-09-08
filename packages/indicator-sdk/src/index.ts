@@ -136,6 +136,8 @@ export interface IndicatorSnapshot {
   readonly points: readonly IndicatorResultPoint[];
   readonly overlays: readonly IndicatorOverlay[];
   readonly signals?: readonly SignalCandidate[];
+  /** Optional opt-in: increment whenever overlays or signals change, including provisional rollback. */
+  readonly visualRevision?: number;
 }
 
 export interface IndicatorInstanceContext {
@@ -176,6 +178,7 @@ export interface SignalCandidate {
 }
 export {
   candlesWithPriceSource,
+  series,
   inputOptions,
   priceSeries,
   priceSources,
@@ -183,6 +186,8 @@ export {
   type PriceSource,
 } from "./series.js";
 export {
+  sma,
+  ema,
   atr,
   createAtrKernel,
   createDmiKernel,
@@ -211,3 +216,22 @@ export {
   type TaUpdatePhase,
   type TechnicalAnalysisApi,
 } from "./ta.js";
+export {
+  defineIndicator,
+  type IndicatorOptions,
+  type IndicatorBar,
+  type IndicatorCalculation,
+} from "./indicator.js";
+export {
+  plot,
+  type PlotApi,
+  type PlotOptions,
+  type ShapeOptions,
+} from "./plot.js";
+export {
+  input,
+  type InputApi,
+  type InputOptions,
+  type NumberInputOptions,
+} from "./input.js";
+export { signal, type SignalOptions } from "./signal.js";

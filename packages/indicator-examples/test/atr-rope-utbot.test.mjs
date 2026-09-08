@@ -250,7 +250,19 @@ test("incremental building-bar updates match a fresh full-history calculation", 
       low: building.low - 0.03,
       close: building.close + 0.05,
     };
+    const pointsBefore = incremental.snapshot().points;
+    const overlaysBefore = incremental.snapshot().overlays;
+    // The worker projects only the tail; ordinary updates must not copy historical output.
+    Object.defineProperty(pointsBefore, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error("building update iterated historical points");
+      },
+    });
     incremental.onBuildingBar(replacement);
+    Reflect.deleteProperty(pointsBefore, Symbol.iterator);
+    assert.strictEqual(incremental.snapshot().points, pointsBefore);
+    assert.strictEqual(incremental.snapshot().overlays, overlaysBefore);
     reference.onHistory([...history.slice(0, -1), replacement]);
 
     assert.deepEqual(

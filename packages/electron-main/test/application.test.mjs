@@ -95,6 +95,7 @@ function createFixture(platform = "win32") {
         events.push(`data:start:${entryPath}:${args.length}`);
       },
       async shutdown() {
+        events.push("data:shutdown");
         shutdownCount += 1;
         if (shutdownError !== undefined) throw shutdownError;
       },
@@ -343,6 +344,16 @@ test("shuts down the data utility and IPC registration idempotently", async () =
 
   assert.equal(fixture.getShutdownCount(), 1);
   assert.equal(fixture.getProviderShutdownAllCount(), 1);
+  assert.ok(
+    fixture.events.indexOf("window:flush") <
+      fixture.events.indexOf("data:shutdown"),
+    "workspace window flush must complete before terminating the data utility",
+  );
+  assert.ok(
+    fixture.events.indexOf("workspace:flush") <
+      fixture.events.indexOf("data:shutdown"),
+    "workspace persistence flush must complete before terminating the data utility",
+  );
   assert.equal(
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,

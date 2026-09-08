@@ -1,4 +1,5 @@
 import type { Candle } from "@erc-chart/contracts";
+import { authoringFrame, useKernel } from "./authoring-context.js";
 
 export const movingAverageTypes = [
   "sma",
@@ -654,7 +655,21 @@ export function movingAverage(
   values: readonly number[],
   type: MovingAverageType,
   period: number,
-): number[] {
+): number[];
+export function movingAverage(
+  value: number,
+  type: MovingAverageType,
+  period: number,
+): number;
+export function movingAverage(
+  values: readonly number[] | number,
+  type: MovingAverageType,
+  period: number,
+): number[] | number {
+  if (typeof values === "number")
+    return numericCall(`ma-${type}`, values, period, (length) =>
+      createMovingAverageKernel(type, length),
+    );
   const kernel = createMovingAverageKernel(type, period);
   return values.map((value) => kernel.update(value, "finalized"));
 }
@@ -691,8 +706,21 @@ export function createAtrKernel(periodValue: number): CandleTaKernel<number> {
   };
 }
 
-export function atr(candles: readonly Candle[], period: number): number[] {
-  const kernel = createAtrKernel(period);
+export function atr(period: number): number;
+export function atr(candles: readonly Candle[], period: number): number[];
+export function atr(
+  candles: readonly Candle[] | number,
+  period?: number,
+): number[] | number {
+  if (typeof candles === "number") {
+    const frame = authoringFrame();
+    const length = authoringLength(candles);
+    return useKernel(`atr:${length}`, () => createAtrKernel(length)).update(
+      frame.candle,
+      frame.phase,
+    );
+  }
+  const kernel = createAtrKernel(period ?? 14);
   return candles.map((candle) => kernel.update(candle, "finalized"));
 }
 
@@ -753,8 +781,21 @@ export function createDmiKernel(periodValue: number): CandleTaKernel<DmiPoint> {
   };
 }
 
-export function dmi(candles: readonly Candle[], period: number): DmiSeries {
-  const kernel = createDmiKernel(period);
+export function dmi(period: number): DmiPoint;
+export function dmi(candles: readonly Candle[], period: number): DmiSeries;
+export function dmi(
+  candles: readonly Candle[] | number,
+  period?: number,
+): DmiSeries | DmiPoint {
+  if (typeof candles === "number") {
+    const frame = authoringFrame();
+    const length = authoringLength(candles);
+    return useKernel(`dmi:${length}`, () => createDmiKernel(length)).update(
+      frame.candle,
+      frame.phase,
+    );
+  }
+  const kernel = createDmiKernel(period ?? 14);
   const adx: number[] = [];
   const plusDI: number[] = [];
   const minusDI: number[] = [];
@@ -796,8 +837,15 @@ export function createRsiKernel(periodValue: number): NumericTaKernel {
   };
 }
 
-export function rsi(values: readonly number[], periodValue: number): number[] {
-  const kernel = createRsiKernel(periodValue);
+export function rsi(valueOrLength: number, period?: number): number;
+export function rsi(values: readonly number[], period: number): number[];
+export function rsi(
+  values: readonly number[] | number,
+  periodValue?: number,
+): number[] | number {
+  if (typeof values === "number")
+    return numericCall("rsi", values, periodValue, createRsiKernel);
+  const kernel = createRsiKernel(periodValue ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
 
@@ -856,13 +904,27 @@ export function createLowestKernel(period: number): NumericTaKernel {
   return new ExtremumKernel(period, "lowest");
 }
 
-export function highest(values: readonly number[], period: number): number[] {
-  const kernel = createHighestKernel(period);
+export function highest(valueOrLength: number, period?: number): number;
+export function highest(values: readonly number[], period: number): number[];
+export function highest(
+  values: readonly number[] | number,
+  period?: number,
+): number[] | number {
+  if (typeof values === "number")
+    return numericCall("highest", values, period, createHighestKernel, "high");
+  const kernel = createHighestKernel(period ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
 
-export function lowest(values: readonly number[], period: number): number[] {
-  const kernel = createLowestKernel(period);
+export function lowest(valueOrLength: number, period?: number): number;
+export function lowest(values: readonly number[], period: number): number[];
+export function lowest(
+  values: readonly number[] | number,
+  period?: number,
+): number[] | number {
+  if (typeof values === "number")
+    return numericCall("lowest", values, period, createLowestKernel, "low");
+  const kernel = createLowestKernel(period ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
 
@@ -901,10 +963,24 @@ export function createCrossunderKernel(): CrossKernel {
   return createCrossKernel("under");
 }
 
+export function crossover(left: number, right: number): boolean;
 export function crossover(
   left: readonly number[],
   right: readonly number[],
-): boolean[] {
+): boolean[];
+export function crossover(
+  left: readonly number[] | number,
+  right: readonly number[] | number,
+): boolean[] | boolean {
+  if (typeof left === "number" && typeof right === "number") {
+    return useKernel("crossover", createCrossoverKernel).update(
+      left,
+      right,
+      authoringFrame().phase,
+    );
+  }
+  if (typeof left === "number" || typeof right === "number")
+    throw new TypeError("Cross inputs must both be scalars or arrays.");
   const kernel = createCrossoverKernel();
   const length = Math.min(left.length, right.length);
   return Array.from({ length }, (_, index) =>
@@ -916,10 +992,24 @@ export function crossover(
   );
 }
 
+export function crossunder(left: number, right: number): boolean;
 export function crossunder(
   left: readonly number[],
   right: readonly number[],
-): boolean[] {
+): boolean[];
+export function crossunder(
+  left: readonly number[] | number,
+  right: readonly number[] | number,
+): boolean[] | boolean {
+  if (typeof left === "number" && typeof right === "number") {
+    return useKernel("crossunder", createCrossunderKernel).update(
+      left,
+      right,
+      authoringFrame().phase,
+    );
+  }
+  if (typeof left === "number" || typeof right === "number")
+    throw new TypeError("Cross inputs must both be scalars or arrays.");
   const kernel = createCrossunderKernel();
   const length = Math.min(left.length, right.length);
   return Array.from({ length }, (_, index) =>
@@ -932,6 +1022,8 @@ export function crossunder(
 }
 
 export interface TechnicalAnalysisApi {
+  readonly sma: typeof sma;
+  readonly ema: typeof ema;
   readonly movingAverage: typeof movingAverage;
   readonly atr: typeof atr;
   readonly dmi: typeof dmi;
@@ -952,6 +1044,8 @@ export interface TechnicalAnalysisApi {
 }
 
 export const ta: TechnicalAnalysisApi = Object.freeze({
+  sma,
+  ema,
   movingAverage,
   atr,
   dmi,
@@ -970,3 +1064,37 @@ export const ta: TechnicalAnalysisApi = Object.freeze({
   createCrossoverKernel,
   createCrossunderKernel,
 });
+
+function authoringLength(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 100_000)
+    throw new RangeError("TA length must be an integer between 1 and 100,000.");
+  return value;
+}
+
+function numericCall(
+  name: string,
+  valueOrPeriod: number,
+  period: number | undefined,
+  create: (length: number) => NumericTaKernel,
+  source: "close" | "high" | "low" = "close",
+): number {
+  const frame = authoringFrame();
+  const length = authoringLength(period ?? valueOrPeriod);
+  const value = period === undefined ? frame.candle[source] : valueOrPeriod;
+  return useKernel(`${name}:${length}`, () => create(length)).update(
+    value,
+    frame.phase,
+  );
+}
+
+export function sma(value: number, period?: number): number {
+  return numericCall("sma", value, period, (length) =>
+    createMovingAverageKernel("sma", length),
+  );
+}
+
+export function ema(value: number, period?: number): number {
+  return numericCall("ema", value, period, (length) =>
+    createMovingAverageKernel("ema", length),
+  );
+}

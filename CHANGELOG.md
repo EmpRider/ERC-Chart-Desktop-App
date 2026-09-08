@@ -2,6 +2,33 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [1.0.0] - 2026-09-08
+
+### MVP release hardening
+
+- Moved canonical market-data and SQLite ownership into the data utility process,
+  including cache-backed history, session/workspace persistence, provider/plugin
+  metadata access, cancellation fencing, and bounded request cleanup.
+- Hardened live/history correctness around shared upstream subscriptions,
+  timeframe aggregation, profile invalidation, gap repair, cache identity, and
+  canonical generation/revision metadata.
+- Added recoverable per-instance workspace sessions and shared-profile storage
+  protections so concurrent application instances do not overwrite one another.
+- Expanded indicator authoring with the public `defineIndicator`, `input`, `ta`,
+  `plot`, and signal APIs, plus reusable plugin packaging/build tooling and
+  example indicators.
+- Extended chart/plugin integration and regression coverage for provider controls,
+  runtime persistence, indicator settings, cached chart updates, and utility
+  process lifecycle behavior.
+
+### v1.0.0 release packaging
+
+- Major-version MVP release produced by the protected `task` -> `epic` -> `main`
+  workflow and the Windows release pipeline.
+- Automatic updates remain disabled and the Windows installer remains unsigned.
+- Final hardware-performance, provider-approval, and documented manual acceptance
+  checks remain explicit operational follow-ups.
+
 ## [0.3.6] - 2026-09-06
 
 ### Indicator worker runtime and SDK

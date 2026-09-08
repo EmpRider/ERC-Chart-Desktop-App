@@ -29,6 +29,7 @@ interface ActiveInstance {
   readonly instance: RuntimeIndicatorInstance;
   lastBuilding: Candle | undefined;
   pointCount: number;
+  visualRevision: number | undefined;
 }
 
 interface WorkerGlobal {
@@ -138,6 +139,17 @@ function projectIncrementalResult(
   expectedOpenTimes: readonly number[],
 ): IndicatorWorkerResultUpdate {
   const snapshot = activeInstance.instance.snapshot();
+  if (
+    snapshot.visualRevision !== undefined &&
+    (!Number.isSafeInteger(snapshot.visualRevision) ||
+      snapshot.visualRevision < 0)
+  )
+    throw new Error(
+      "Indicator visual revision must be a non-negative safe integer.",
+    );
+  const visualsChanged =
+    snapshot.visualRevision === undefined ||
+    snapshot.visualRevision !== activeInstance.visualRevision;
   const expectedPointCount = kind === "building" ? 1 : 2;
   const expectedTotalCount =
     kind === "building"
@@ -166,18 +178,24 @@ function projectIncrementalResult(
   });
   const projected: IndicatorRuntimeSnapshot = {
     points,
-    overlays: snapshot.overlays.map((overlay) => ({ ...overlay })),
-    signals: (snapshot.signals ?? []).map((signal) => ({ ...signal })),
+    overlays: visualsChanged
+      ? snapshot.overlays.map((overlay) => ({ ...overlay }))
+      : [],
+    signals: visualsChanged
+      ? (snapshot.signals ?? []).map((signal) => ({ ...signal }))
+      : [],
   };
   if (!isIndicatorRuntimeSnapshot(projected)) {
     throw new Error("Indicator plugin returned an invalid incremental result.");
   }
   activeInstance.pointCount = expectedTotalCount;
+  activeInstance.visualRevision = snapshot.visualRevision;
   return {
     kind,
     points: projected.points,
-    overlays: projected.overlays,
-    signals: projected.signals,
+    ...(visualsChanged
+      ? { overlays: projected.overlays, signals: projected.signals }
+      : {}),
   };
 }
 
@@ -285,6 +303,7 @@ async function execute(
     instance,
     lastBuilding: message.data.candles.at(-1),
     pointCount: snapshot.points.length,
+    visualRevision: instance.snapshot().visualRevision,
   };
   return { kind: "snapshot", snapshot };
 }
