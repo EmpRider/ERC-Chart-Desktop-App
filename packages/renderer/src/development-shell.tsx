@@ -40,7 +40,11 @@ import {
   PluginPermissionReview,
   type PluginPermissionReviewPresentation,
 } from "./permission-review.js";
-import { ProviderChart } from "./provider-chart.js";
+import {
+  ProviderChart,
+  providerChartSessionCandles,
+  type ProviderChartSession,
+} from "./provider-chart.js";
 import { PluginManager, type PluginManagerProps } from "./provider-manager.js";
 import {
   createBrowserIndicatorRuntime,
@@ -136,7 +140,7 @@ export interface ApplicationShellProps {
   readonly pluginPermissionReview?:
     PluginPermissionReviewPresentation | undefined;
   readonly providerSession?: ImportedProviderSession | undefined;
-  readonly providerSessions?: readonly ImportedProviderSession[] | undefined;
+  readonly providerSessions?: readonly ProviderChartSession[] | undefined;
   readonly installedIndicators?:
     readonly InstalledIndicatorSummary[] | undefined;
   readonly syncIndicator?: PluginIndicatorSync | undefined;
@@ -152,6 +156,9 @@ export interface ApplicationShellProps {
     | undefined;
   readonly onPluginManagerOpen?: (() => void) | undefined;
   readonly pluginManager?: PluginManagerProps | undefined;
+  readonly liveDataStale?: boolean;
+  readonly workspaceSaveStatus?: "saved" | "saving" | "failed" | undefined;
+  readonly onRetryWorkspaceSave?: (() => void) | undefined;
 }
 
 export function ApplicationShell({
@@ -169,6 +176,9 @@ export function ApplicationShell({
   onWorkspaceTimeframeSelect,
   onPluginManagerOpen,
   pluginManager,
+  liveDataStale,
+  workspaceSaveStatus,
+  onRetryWorkspaceSave,
 }: ApplicationShellProps): JSX.Element {
   const availableProviderSessions =
     providerSessions ??
@@ -328,6 +338,30 @@ export function ApplicationShell({
             >
               Plugin Manager
             </button>
+          )}
+          {liveDataStale ? (
+            <p role="status" data-live-status>
+              Live data stale
+            </p>
+          ) : null}
+          {workspaceSaveStatus === undefined ||
+          workspaceSaveStatus === "saved" ? null : (
+            <span
+              role={workspaceSaveStatus === "failed" ? "alert" : "status"}
+              aria-live={
+                workspaceSaveStatus === "failed" ? "assertive" : "polite"
+              }
+            >
+              {workspaceSaveStatus === "failed"
+                ? "Workspace not saved"
+                : "Saving workspace…"}
+              {workspaceSaveStatus === "failed" &&
+              onRetryWorkspaceSave !== undefined ? (
+                <button type="button" onClick={onRetryWorkspaceSave}>
+                  Retry workspace save
+                </button>
+              ) : null}
+            </span>
           )}
         </div>
 
@@ -565,9 +599,9 @@ function replaceCandles(
 }
 
 function mergeProviderSession(
-  current: readonly ImportedProviderSession[],
+  current: readonly ProviderChartSession[],
   session: ImportedProviderSession,
-): readonly ImportedProviderSession[] {
+): readonly ProviderChartSession[] {
   const key = providerSessionKey(session);
   const existing = current.find(
     (candidate) => providerSessionKey(candidate) === key,
@@ -577,7 +611,14 @@ function mergeProviderSession(
       ? session
       : {
           ...session,
-          candles: mergeCandles(session.candles, existing.candles),
+          ...(existing.series === undefined ? {} : { series: existing.series }),
+          ...(existing.rebuildRevision === undefined
+            ? {}
+            : { rebuildRevision: existing.rebuildRevision }),
+          candles: mergeCandles(
+            session.candles,
+            providerChartSessionCandles(existing),
+          ),
         };
   return [
     ...current.filter((candidate) => providerSessionKey(candidate) !== key),
@@ -586,11 +627,11 @@ function mergeProviderSession(
 }
 
 export function mergeProviderSessionCandles(
-  current: readonly ImportedProviderSession[],
+  current: readonly ProviderChartSession[],
   request: ProviderLiveRequest,
   candles: readonly Candle[],
-  kind: "incremental" | "rebuild" = "incremental",
-): readonly ImportedProviderSession[] {
+  series?: ProviderChartSession["series"],
+): readonly ProviderChartSession[] {
   let changed = false;
   const next = current.map((session) => {
     if (
@@ -600,13 +641,44 @@ export function mergeProviderSessionCandles(
     ) {
       return session;
     }
+    if (
+      series !== undefined &&
+      session.series !== undefined &&
+      (series.generation < session.series.generation ||
+        (series.generation === session.series.generation &&
+          series.revision <= session.series.revision))
+    )
+      return session;
     changed = true;
+    const rebuildRevision =
+      series === undefined
+        ? session.rebuildRevision
+        : series.kind === "rebuild" ||
+            session.series === undefined ||
+            series.generation !== session.series.generation ||
+            (series.previousRevision ?? series.revision - 1) !==
+              session.series.revision
+          ? series.revision
+          : (session.rebuildRevision ?? 0);
+    const liveCandle =
+      candles.length === 1 &&
+      series?.kind === "incremental" &&
+      candles[0]?.openTimeMs === session.candles.at(-1)?.openTimeMs
+        ? candles[0]
+        : undefined;
+    const { liveCandle: _previousLiveCandle, ...base } = session;
+    void _previousLiveCandle;
     return {
-      ...session,
+      ...base,
+      ...(series === undefined ? {} : { series }),
+      ...(rebuildRevision === undefined ? {} : { rebuildRevision }),
+      ...(liveCandle === undefined ? {} : { liveCandle }),
       candles:
-        kind === "rebuild"
-          ? replaceCandles(session.candles, candles)
-          : mergeCandles(session.candles, candles),
+        liveCandle !== undefined
+          ? session.candles
+          : series?.kind === "rebuild"
+            ? replaceCandles(session.candles, candles)
+            : mergeCandles(providerChartSessionCandles(session), candles),
     };
   });
   return changed ? next : current;
@@ -820,7 +892,7 @@ function HydratedRuntimeApplicationShell({
     readonly InstalledIndicatorSummary[]
   >([]);
   const [providerSessions, setProviderSessions] = useState<
-    readonly ImportedProviderSession[]
+    readonly ProviderChartSession[]
   >([]);
   const [providerImportBusy, setProviderImportBusy] = useState(false);
   const [providerImportError, setProviderImportError] = useState<
@@ -840,6 +912,14 @@ function HydratedRuntimeApplicationShell({
   const [indicatorImportError, setIndicatorImportError] = useState<
     string | undefined
   >();
+  const [workspaceSaveStatus, setWorkspaceSaveStatus] = useState<
+    "saved" | "saving" | "failed"
+  >("saved");
+  const pendingWorkspaceSave = useRef<PersistedWorkspace | undefined>(
+    undefined,
+  );
+  const failedWorkspaceSave = useRef<PersistedWorkspace | undefined>(undefined);
+  const workspaceSaveRunning = useRef(false);
   const indicatorRuntimeRef = useRef<BrowserIndicatorRuntime | undefined>(
     undefined,
   );
@@ -852,6 +932,9 @@ function HydratedRuntimeApplicationShell({
       indicatorRuntime.dispose();
     },
     [indicatorRuntime],
+  );
+  const [staleLiveRequests, setStaleLiveRequests] = useState<readonly string[]>(
+    [],
   );
   const liveSubscriptions = useRef(
     new Map<
@@ -887,14 +970,49 @@ function HydratedRuntimeApplicationShell({
     .map(providerLiveRequestKey)
     .sort()
     .join("\n");
+  const runWorkspaceSave = (): void => {
+    if (workspaceSaveRunning.current) return;
+    const next = pendingWorkspaceSave.current;
+    if (next === undefined) return;
+    pendingWorkspaceSave.current = undefined;
+    workspaceSaveRunning.current = true;
+    setWorkspaceSaveStatus("saving");
+    void bridge
+      .saveWorkspace(next)
+      .then(() => {
+        failedWorkspaceSave.current = undefined;
+        setWorkspaceSaveStatus(
+          pendingWorkspaceSave.current === undefined ? "saved" : "saving",
+        );
+      })
+      .catch(() => {
+        failedWorkspaceSave.current = pendingWorkspaceSave.current ?? next;
+        pendingWorkspaceSave.current = undefined;
+        setWorkspaceSaveStatus("failed");
+      })
+      .finally(() => {
+        workspaceSaveRunning.current = false;
+        if (pendingWorkspaceSave.current !== undefined) runWorkspaceSave();
+      });
+  };
+  const queueWorkspaceSave = (document: PersistedWorkspace): void => {
+    pendingWorkspaceSave.current = document;
+    failedWorkspaceSave.current = undefined;
+    runWorkspaceSave();
+  };
+  const retryWorkspaceSave = (): void => {
+    const retry = failedWorkspaceSave.current;
+    if (retry === undefined) return;
+    pendingWorkspaceSave.current = retry;
+    failedWorkspaceSave.current = undefined;
+    runWorkspaceSave();
+  };
   const dispatch = (action: WorkspaceAction): void => {
     const before = store.getSnapshot();
     store.dispatch(action);
     const after = store.getSnapshot();
     if (after === before) return;
-    void bridge
-      .saveWorkspace(toPersistedWorkspace(after))
-      .catch(() => undefined);
+    queueWorkspaceSave(toPersistedWorkspace(after));
   };
   const bindProviderSession = (
     tabId: string,
@@ -988,7 +1106,7 @@ function HydratedRuntimeApplicationShell({
           );
           if (!active) return;
           setProviderSessions((current) =>
-            restored.reduce<readonly ImportedProviderSession[]>(
+            restored.reduce<readonly ProviderChartSession[]>(
               (next, restoredSession) =>
                 restoredSession === undefined
                   ? next
@@ -1016,6 +1134,7 @@ function HydratedRuntimeApplicationShell({
       requests.map((request) => [providerLiveRequestKey(request), request]),
     );
 
+    setStaleLiveRequests((keys) => keys.filter((key) => desired.has(key)));
     for (const [key, current] of liveSubscriptions.current) {
       if (desired.has(key)) continue;
       liveSubscriptions.current.delete(key);
@@ -1035,17 +1154,24 @@ function HydratedRuntimeApplicationShell({
         .subscribeProviderData(request, (event) => {
           if (
             current.cancelled ||
-            liveSubscriptions.current.get(key) !== current ||
-            event.type !== "candles"
+            liveSubscriptions.current.get(key) !== current
           ) {
             return;
           }
+          setStaleLiveRequests((keys) =>
+            event.type === "error"
+              ? keys.includes(key)
+                ? keys
+                : [...keys, key]
+              : keys.filter((value) => value !== key),
+          );
+          if (event.type !== "candles") return;
           setProviderSessions((sessions) =>
             mergeProviderSessionCandles(
               sessions,
               request,
               event.candles,
-              event.series.kind,
+              event.series,
             ),
           );
         })
@@ -1061,6 +1187,9 @@ function HydratedRuntimeApplicationShell({
         })
         .catch(() => {
           if (liveSubscriptions.current.get(key) === current) {
+            setStaleLiveRequests((keys) =>
+              keys.includes(key) ? keys : [...keys, key],
+            );
             liveSubscriptions.current.delete(key);
           }
         });
@@ -1310,6 +1439,11 @@ function HydratedRuntimeApplicationShell({
       connection={connection}
       workspace={workspace}
       onWorkspaceAction={dispatch}
+      liveDataStale={staleLiveRequests.some((key) =>
+        liveRequestSignature.split("\n").includes(key),
+      )}
+      workspaceSaveStatus={workspaceSaveStatus}
+      onRetryWorkspaceSave={retryWorkspaceSave}
       pluginPermissionReview={pluginPermissionReview}
       providerSessions={providerSessions}
       installedIndicators={installedIndicators}

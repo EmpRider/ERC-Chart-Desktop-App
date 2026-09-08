@@ -144,22 +144,81 @@ export function createErcChartBridge(
   invoke: BridgeInvoke,
   listen?: BridgeListen,
 ): ErcChartBridge {
-  let latestSave: Promise<void> = Promise.resolve();
+  interface SaveWaiter {
+    readonly resolve: () => void;
+    readonly reject: (error: Error) => void;
+  }
+  let activeSave: Promise<void> | undefined;
+  let queuedWorkspace: PersistedWorkspace | undefined;
+  let queuedWaiters: SaveWaiter[] = [];
+  let flushWaiters: SaveWaiter[] = [];
+  let lastSaveError: Error | undefined;
   let providerSubscriptionSequence = 0;
+
+  const settleFlushWaiters = (): void => {
+    if (activeSave !== undefined || queuedWorkspace !== undefined) return;
+    const waiters = flushWaiters;
+    flushWaiters = [];
+    for (const waiter of waiters) {
+      if (lastSaveError === undefined) waiter.resolve();
+      else waiter.reject(lastSaveError);
+    }
+  };
+
+  const startWorkspaceSave = (
+    workspace: PersistedWorkspace,
+    waiters: readonly SaveWaiter[],
+  ): void => {
+    const run = (async (): Promise<void> => {
+      try {
+        const result = await invoke(workspaceSaveChannel, workspace);
+        if (result !== true) throw new Error();
+        lastSaveError = undefined;
+        for (const waiter of waiters) waiter.resolve();
+      } catch {
+        const error = new Error("Workspace could not be saved.");
+        lastSaveError = error;
+        for (const waiter of waiters) waiter.reject(error);
+      }
+    })();
+    activeSave = run;
+    void run.finally(() => {
+      if (activeSave === run) activeSave = undefined;
+      const nextWorkspace = queuedWorkspace;
+      if (nextWorkspace !== undefined) {
+        const nextWaiters = queuedWaiters;
+        queuedWorkspace = undefined;
+        queuedWaiters = [];
+        startWorkspaceSave(nextWorkspace, nextWaiters);
+      } else {
+        settleFlushWaiters();
+      }
+    });
+  };
+
   const saveWorkspace = (workspace: PersistedWorkspace): Promise<void> => {
     if (!isWorkspaceSaveRequest(workspace))
       return Promise.reject(new Error("Workspace could not be saved."));
-    latestSave = latestSave
-      .catch(() => undefined)
-      .then(async (): Promise<void> => {
-        try {
-          const result = await invoke(workspaceSaveChannel, workspace);
-          if (result !== true) throw new Error();
-        } catch {
-          throw new Error("Workspace could not be saved.");
-        }
-      });
-    return latestSave;
+    return new Promise<void>((resolve, reject) => {
+      const waiter: SaveWaiter = { resolve, reject };
+      if (activeSave === undefined) {
+        startWorkspaceSave(workspace, [waiter]);
+        return;
+      }
+      queuedWorkspace = workspace;
+      queuedWaiters.push(waiter);
+    });
+  };
+
+  const flushWorkspace = (): Promise<void> => {
+    if (activeSave === undefined && queuedWorkspace === undefined) {
+      return lastSaveError === undefined
+        ? Promise.resolve()
+        : Promise.reject(lastSaveError);
+    }
+    return new Promise<void>((resolve, reject) => {
+      flushWaiters.push({ resolve, reject });
+    });
   };
   return {
     getRuntimeInfo: async (): Promise<RuntimeInfo> => {
@@ -183,7 +242,7 @@ export function createErcChartBridge(
       }
     },
     saveWorkspace,
-    flushWorkspace: async (): Promise<void> => latestSave,
+    flushWorkspace,
     previewProviderImport: async (
       sourceKind: PluginImportSourceKind,
     ): Promise<ProviderImportPreview | null> => {

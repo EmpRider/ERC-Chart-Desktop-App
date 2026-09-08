@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import type {
   ImportedProviderSession,
   ProviderImportCredentialValues,
@@ -20,16 +19,8 @@ import {
   type ProviderUtilityLaunchDescriptor,
   type StagedPluginPackage,
 } from "@erc-chart/provider-runtime";
-import {
-  activatePlugin,
-  createProviderProfile,
-  deletePlugin,
-  deleteProviderProfile,
-  disablePlugin,
-  getProviderProfile,
-  putPlugin,
-  type JsonObject,
-} from "@erc-chart/storage";
+import type { JsonObject } from "@erc-chart/storage";
+import type { DataUtilityStorage } from "./data-utility-storage.js";
 
 type ProviderController = Pick<
   DesktopApplicationController<ProviderUtilityLaunchDescriptor>,
@@ -41,7 +32,7 @@ type ProviderController = Pick<
 >;
 
 export interface ProviderImportServiceOptions {
-  readonly database: DatabaseSync;
+  readonly storage: DataUtilityStorage;
   readonly controller: ProviderController;
   readonly credentialManager: Pick<
     WindowsGenericCredentialManager,
@@ -175,7 +166,7 @@ export function createProviderImportService(
       installed = await installStagedPlugin(staged, {
         installationRoot: options.installationRoot,
       });
-      putPlugin(options.database, {
+      await options.storage.putPlugin({
         pluginId: installed.pluginId,
         version: installed.version,
         kind: installed.manifest.kind,
@@ -186,15 +177,18 @@ export function createProviderImportService(
         permissions: registryPermissions(staged),
       });
       registryCreated = true;
-      activatePlugin(options.database, installed.pluginId, installed.version);
+      await options.storage.activatePlugin(
+        installed.pluginId,
+        installed.version,
+      );
 
-      let profile = getProviderProfile(options.database, profileId);
+      let profile = await options.storage.getProviderProfile(profileId);
       if (profile === undefined) {
         const credentialReference = windowsCredentialTarget(
           installed.pluginId,
           profileId,
         );
-        profile = createProviderProfile(options.database, {
+        profile = await options.storage.createProviderProfile({
           id: profileId,
           providerId: installed.pluginId,
           displayName: installed.manifest.name,
@@ -283,7 +277,9 @@ export function createProviderImportService(
           .catch(() => undefined);
       }
       if (profileCreated) {
-        deleteProviderProfile(options.database, profileId);
+        await options.storage
+          .deleteProviderProfile(profileId)
+          .catch(() => false);
       }
       if (credentialsWritten && credentialTarget !== undefined) {
         if (previousCredentialValue === undefined) {
@@ -297,20 +293,12 @@ export function createProviderImportService(
         }
       }
       if (registryCreated && installed !== undefined) {
-        try {
-          disablePlugin(
-            options.database,
-            installed.pluginId,
-            installed.version,
-          );
-        } catch {
-          // A failed activation can leave the registry disabled already.
-        }
-        try {
-          deletePlugin(options.database, installed.pluginId, installed.version);
-        } catch {
-          // Preserve the original import failure.
-        }
+        await options.storage
+          .disablePlugin(installed.pluginId, installed.version)
+          .catch(() => undefined);
+        await options.storage
+          .deletePlugin(installed.pluginId, installed.version)
+          .catch(() => false);
       }
       if (installed !== undefined) {
         await removeInstalledPlugin(

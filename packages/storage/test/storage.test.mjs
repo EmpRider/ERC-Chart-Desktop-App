@@ -5,8 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { databaseSchemaVersion } from "@erc-chart/contracts";
 import {
   activatePlugin,
+  claimWorkspace,
   createProviderProfile,
   deleteAppSetting,
   deleteCandlesBefore,
@@ -22,6 +24,7 @@ import {
   listAppSettings,
   listPlugins,
   listProviderProfiles,
+  loadLatestWorkspaceSession,
   loadWorkspace,
   openStorageDatabase,
   parseWorkspaceV1,
@@ -266,6 +269,99 @@ test("persists and restores workspace tabs, layouts, charts, and indicators", as
   });
 });
 
+test("loads the newest valid session before legacy workspace fallback", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const legacy = { ...validWorkspace, id: "last-workspace" };
+      saveWorkspace(database, legacy, "legacy-owner");
+      database
+        .prepare("UPDATE workspaces SET updated_at_ms = ? WHERE id = ?")
+        .run(0, legacy.id);
+      assert.equal(loadLatestWorkspaceSession(database).id, "last-workspace");
+
+      const firstSession = {
+        ...validWorkspace,
+        id: "session:aaa",
+        tabs: [{ ...validWorkspace.tabs[0], title: "First session" }],
+      };
+      const secondSession = {
+        ...validWorkspace,
+        id: "session:bbb",
+        tabs: [{ ...validWorkspace.tabs[0], title: "Second session" }],
+      };
+      saveWorkspace(database, firstSession, "instance-a");
+      saveWorkspace(database, secondSession, "instance-b");
+      database
+        .prepare("UPDATE workspaces SET updated_at_ms = ? WHERE id = ?")
+        .run(10, firstSession.id);
+      database
+        .prepare("UPDATE workspaces SET updated_at_ms = ? WHERE id = ?")
+        .run(20, secondSession.id);
+      database
+        .prepare(
+          `INSERT INTO workspaces
+            (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("session:corrupt", 1, "Corrupt", "{", "instance-corrupt", 30, 30);
+
+      assert.equal(
+        loadLatestWorkspaceSession(database)?.tabs[0].title,
+        "Second session",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("workspace save rejects changing an existing document owner", async () => {
+  await withDatabase(async (databasePath) => {
+    const first = await openStorageDatabase(databasePath);
+    const second = await openStorageDatabase(databasePath);
+    try {
+      const workspace = { ...validWorkspace, id: "last-workspace" };
+      saveWorkspace(first, workspace, "instance-a");
+      assert.throws(
+        () =>
+          saveWorkspace(
+            second,
+            {
+              ...workspace,
+              tabs: [{ ...workspace.tabs[0], title: "Instance B work" }],
+              savedAtMs: workspace.savedAtMs + 1,
+            },
+            "instance-b",
+          ),
+        /owner|conflict/i,
+      );
+      assert.equal(loadWorkspace(first, workspace.id).tabs[0].title, "Main");
+      assert.equal(claimWorkspace(second, workspace.id, "instance-b"), true);
+      saveWorkspace(
+        second,
+        {
+          ...workspace,
+          tabs: [{ ...workspace.tabs[0], title: "Instance B work" }],
+          savedAtMs: workspace.savedAtMs + 1,
+        },
+        "instance-b",
+      );
+      assert.equal(
+        loadWorkspace(first, workspace.id).tabs[0].title,
+        "Instance B work",
+      );
+      assert.equal(
+        first.prepare("SELECT count(*) AS count FROM workspaces").get().count,
+        1,
+      );
+    } finally {
+      second.close();
+      first.close();
+    }
+  });
+});
+
 test("workspace persistence rejects drawings and malformed stored documents", async () => {
   await withDatabase(async (databasePath) => {
     const database = await openStorageDatabase(databasePath);
@@ -319,7 +415,8 @@ test("creates the versioned SQLite schema and records its migration", async () =
         .map(({ version }) => version);
 
       assert.deepEqual(tables, expectedTables);
-      assert.deepEqual(migrations, [1, 2]);
+      assert.deepEqual(migrations, [1, 2, 3]);
+      assert.equal(migrations.at(-1), databaseSchemaVersion);
     } finally {
       database.close();
     }
@@ -336,7 +433,154 @@ test("runs migrations idempotently", async () => {
         database
           .prepare("SELECT COUNT(*) AS count FROM schema_migrations")
           .get().count,
-        2,
+        3,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("cache identity migration preserves every non-cache table byte-for-byte and rebuilds disposable cache", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const setup = new DatabaseSync(databasePath);
+    setup.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at_ms INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO schema_migrations (version, applied_at_ms) VALUES (1, 1), (2, 2);
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        schema_version INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        document_json TEXT NOT NULL,
+        instance_id TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE candles (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL CHECK (timeframe_sec > 0),
+        open_time_ms INTEGER NOT NULL CHECK (open_time_ms >= 0),
+        open REAL NOT NULL,
+        high REAL NOT NULL,
+        low REAL NOT NULL,
+        close REAL NOT NULL,
+        volume REAL,
+        revision INTEGER NOT NULL CHECK (revision >= 0),
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec, open_time_ms)
+      ) STRICT;
+      CREATE INDEX candles_newest
+        ON candles (feed_id, instrument_id, timeframe_sec, open_time_ms DESC);
+      CREATE TABLE series_cache_state (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL,
+        oldest_time_ms INTEGER,
+        newest_time_ms INTEGER,
+        revision INTEGER NOT NULL,
+        synchronized_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec)
+      ) STRICT;
+      INSERT INTO candles
+        (feed_id, instrument_id, timeframe_sec, open_time_ms, open, high, low, close, volume, revision)
+      VALUES ('legacy-feed', 'BTCUSD', 60, 0, 1, 2, 1, 2, 3, 1);
+      INSERT INTO series_cache_state VALUES ('legacy-feed', 'BTCUSD', 60, 0, 0, 1, 1);
+      CREATE TABLE provider_profiles (id TEXT PRIMARY KEY, provider_id TEXT NOT NULL,
+        display_name TEXT NOT NULL, credential_target TEXT NOT NULL UNIQUE,
+        created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+        settings_json TEXT NOT NULL DEFAULT '{}') STRICT;
+      CREATE TABLE instruments (provider_profile_id TEXT NOT NULL, instrument_id TEXT NOT NULL,
+        metadata_json TEXT NOT NULL, updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY(provider_profile_id, instrument_id),
+        FOREIGN KEY(provider_profile_id) REFERENCES provider_profiles(id)) STRICT;
+      CREATE TABLE plugins (plugin_id TEXT NOT NULL, version TEXT NOT NULL, kind TEXT NOT NULL,
+        trust TEXT NOT NULL, status TEXT NOT NULL, manifest_json TEXT NOT NULL,
+        integrity_hash TEXT NOT NULL, PRIMARY KEY(plugin_id, version)) STRICT;
+      CREATE TABLE plugin_permissions (plugin_id TEXT NOT NULL, version TEXT NOT NULL,
+        permission TEXT NOT NULL, granted_at_ms INTEGER NOT NULL,
+        PRIMARY KEY(plugin_id, version, permission),
+        FOREIGN KEY(plugin_id, version) REFERENCES plugins(plugin_id, version)) STRICT;
+      CREATE TABLE app_settings (key TEXT PRIMARY KEY, schema_version INTEGER NOT NULL,
+        value_json TEXT NOT NULL, updated_at_ms INTEGER NOT NULL) STRICT;
+      CREATE TABLE diagnostic_events (id INTEGER PRIMARY KEY, occurred_at_ms INTEGER NOT NULL,
+        level TEXT NOT NULL, code TEXT NOT NULL, metadata_json TEXT NOT NULL) STRICT;
+      INSERT INTO provider_profiles VALUES ('fixture', 'synthetic', 'Preserved profile',
+        'synthetic-reference-only', 11, 12, '{ "region": "test" }');
+      INSERT INTO instruments VALUES ('fixture', 'BTCUSD', '{ "name": "Bitcoin" }', 13);
+      INSERT INTO plugins VALUES ('fixture', '1.0.0', 'provider', 'local', 'active',
+        '{ "id": "fixture" }', 'synthetic-integrity');
+      INSERT INTO plugin_permissions VALUES ('fixture', '1.0.0', 'network', 14);
+      INSERT INTO app_settings VALUES ('theme', 1, '{ "theme": "dark" }', 15);
+      INSERT INTO diagnostic_events VALUES (1, 16, 'info', 'SYNTHETIC', '{ "count": 1 }');
+    `);
+    setup
+      .prepare(
+        `INSERT INTO workspaces
+          (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        validWorkspace.id,
+        validWorkspace.schemaVersion,
+        validWorkspace.name,
+        serializeWorkspaceV1(validWorkspace),
+        "instance-preserved",
+        1,
+        1,
+      );
+    const protectedTables = expectedTables.filter(
+      (table) =>
+        !["candles", "series_cache_state", "schema_migrations"].includes(table),
+    );
+    const before = protectedTables.map((table) =>
+      setup.prepare(`SELECT * FROM ${table} ORDER BY 1`).all(),
+    );
+    const migrationRows = setup
+      .prepare("SELECT * FROM schema_migrations ORDER BY version")
+      .all();
+    setup.close();
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(
+        protectedTables.map((table) =>
+          database.prepare(`SELECT * FROM ${table} ORDER BY 1`).all(),
+        ),
+        before,
+      );
+      assert.deepEqual(
+        database
+          .prepare(
+            "SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version",
+          )
+          .all(),
+        migrationRows,
+      );
+      assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM series_cache_state")
+          .get().count,
+        0,
+      );
+      assert.deepEqual(
+        loadWorkspace(database, validWorkspace.id),
+        validWorkspace,
+      );
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM candles").get().count,
+        0,
+      );
+      assert.deepEqual(
+        database
+          .prepare("SELECT version FROM schema_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2, 3],
       );
     } finally {
       database.close();
@@ -354,6 +598,31 @@ test("upgrades version-1 provider profiles with empty non-secret settings", asyn
         applied_at_ms INTEGER NOT NULL
       ) STRICT;
       INSERT INTO schema_migrations (version, applied_at_ms) VALUES (1, 1);
+      CREATE TABLE candles (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL CHECK (timeframe_sec > 0),
+        open_time_ms INTEGER NOT NULL CHECK (open_time_ms >= 0),
+        open REAL NOT NULL,
+        high REAL NOT NULL,
+        low REAL NOT NULL,
+        close REAL NOT NULL,
+        volume REAL,
+        revision INTEGER NOT NULL CHECK (revision >= 0),
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec, open_time_ms)
+      ) STRICT;
+      CREATE INDEX candles_newest
+        ON candles (feed_id, instrument_id, timeframe_sec, open_time_ms DESC);
+      CREATE TABLE series_cache_state (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL,
+        oldest_time_ms INTEGER,
+        newest_time_ms INTEGER,
+        revision INTEGER NOT NULL,
+        synchronized_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec)
+      ) STRICT;
       CREATE TABLE provider_profiles (
         id TEXT PRIMARY KEY,
         provider_id TEXT NOT NULL,
@@ -385,7 +654,7 @@ test("upgrades version-1 provider profiles with empty non-secret settings", asyn
           .prepare("SELECT version FROM schema_migrations ORDER BY version")
           .all()
           .map(({ version }) => version),
-        [1, 2],
+        [1, 2, 3],
       );
     } finally {
       database.close();
@@ -410,6 +679,69 @@ test("configures WAL, foreign keys, and a five-second busy timeout", async () =>
         5_000,
       );
     } finally {
+      database.close();
+    }
+  });
+});
+
+test("SQLite busy and full failures preserve the acknowledged workspace and recovery rows", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    const blocker = await openStorageDatabase(databasePath);
+    try {
+      saveWorkspace(database, validWorkspace, "owner");
+      const before = database
+        .prepare("SELECT * FROM workspaces ORDER BY id")
+        .all();
+      database.exec("PRAGMA busy_timeout=0");
+      blocker.exec("BEGIN IMMEDIATE");
+      assert.throws(
+        () =>
+          saveWorkspace(
+            database,
+            { ...validWorkspace, name: "unsaved" },
+            "owner",
+          ),
+        (error) => error.errcode === 5,
+      );
+      blocker.exec("ROLLBACK");
+      assert.deepEqual(
+        database.prepare("SELECT * FROM workspaces ORDER BY id").all(),
+        before,
+      );
+      const pages = database.prepare("PRAGMA page_count").get().page_count;
+      database.exec(`PRAGMA max_page_count=${pages}`);
+      const large = structuredClone(validWorkspace);
+      large.tabs[0].chartSlots[0].indicators[0].parameters.note = "x".repeat(
+        200_000,
+      );
+      assert.equal(validateWorkspaceV1(large), true);
+      assert.throws(
+        () => saveWorkspace(database, large, "owner"),
+        (error) => error.errcode === 13,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.deepEqual(
+        database.prepare("SELECT * FROM workspaces ORDER BY id").all(),
+        before,
+      );
+      assert.equal(
+        database.prepare("PRAGMA integrity_check").get().integrity_check,
+        "ok",
+      );
+      database.exec("PRAGMA max_page_count=1073741823");
+      saveWorkspace(
+        database,
+        { ...validWorkspace, name: "retry saved" },
+        "owner",
+      );
+      assert.equal(
+        loadWorkspace(database, validWorkspace.id).name,
+        "retry saved",
+      );
+    } finally {
+      if (blocker.isTransaction) blocker.exec("ROLLBACK");
+      blocker.close();
       database.close();
     }
   });
@@ -945,12 +1277,67 @@ test("rejects a database created by a newer application version", async () => {
     await assert.rejects(
       openStorageDatabase(databasePath),
       new Error(
-        "Database schema version 999 is newer than supported version 2.",
+        "Database schema version 999 is newer than supported version 3.",
       ),
     );
 
     const reopened = new DatabaseSync(databasePath);
     reopened.close();
+  });
+});
+
+const migrationWorker = `
+  import { openStorageDatabase } from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};
+  const database = await openStorageDatabase(process.env.ERC_TEST_DATABASE);
+  database.close();
+`;
+
+function runMigrationWorker(databasePath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", migrationWorker],
+      {
+        env: { ...process.env, ERC_TEST_DATABASE: databasePath },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else
+        reject(
+          new Error(`Migration worker exited ${code ?? signal}: ${stderr}`),
+        );
+    });
+  });
+}
+
+test("serializes two-process first-open migrations and applies each version once", async () => {
+  await withDatabase(async (databasePath) => {
+    await Promise.all([
+      runMigrationWorker(databasePath),
+      runMigrationWorker(databasePath),
+    ]);
+    const database = new DatabaseSync(databasePath);
+    try {
+      assert.deepEqual(
+        database
+          .prepare("SELECT version FROM schema_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2, 3],
+      );
+      assert.equal(
+        database.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+    } finally {
+      database.close();
+    }
   });
 });
 
@@ -962,6 +1349,8 @@ const candleWorker = `
     for (let index = 0; index < 40; index += 1) {
       const open = offset + index + 1;
       upsertCandles(database, [{
+        cacheKeyVersion: 1,
+        cacheKey: "storage-test-v1",
         feedId: "feed-main",
         instrumentId: "EURUSD",
         timeframeSec: 60,
@@ -974,6 +1363,8 @@ const candleWorker = `
         revision: 1,
       }]);
       getCandles(database, {
+        cacheKeyVersion: 1,
+        cacheKey: "storage-test-v1",
         feedId: "feed-main",
         instrumentId: "EURUSD",
         timeframeSec: 60,
@@ -1016,6 +1407,8 @@ test("upserts and reads a validated candle series", async () => {
     try {
       upsertCandles(database, [
         {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
           feedId: "feed-main",
           instrumentId: "EURUSD",
           timeframeSec: 60,
@@ -1027,6 +1420,8 @@ test("upserts and reads a validated candle series", async () => {
           revision: 1,
         },
         {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
           feedId: "feed-main",
           instrumentId: "EURUSD",
           timeframeSec: 60,
@@ -1041,6 +1436,8 @@ test("upserts and reads a validated candle series", async () => {
       ]);
       upsertCandles(database, [
         {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
           feedId: "feed-main",
           instrumentId: "EURUSD",
           timeframeSec: 60,
@@ -1055,6 +1452,8 @@ test("upserts and reads a validated candle series", async () => {
       ]);
 
       const candles = getCandles(database, {
+        cacheKeyVersion: 1,
+        cacheKey: "storage-test-v1",
         feedId: "feed-main",
         instrumentId: "EURUSD",
         timeframeSec: 60,
@@ -1075,6 +1474,8 @@ test("upserts and reads a validated candle series", async () => {
         () =>
           upsertCandles(database, [
             {
+              cacheKeyVersion: 1,
+              cacheKey: "storage-test-v1",
               feedId: "feed-main",
               instrumentId: "EURUSD",
               timeframeSec: 0,
@@ -1094,10 +1495,12 @@ test("upserts and reads a validated candle series", async () => {
   });
 });
 
-test("queries newest/ranged candles, rejects stale revisions, and applies retention", async () => {
+test("queries newest/ranged candles, accepts later valid source rows regardless of process-local revision, and applies retention", async () => {
   await withDatabase(async (databasePath) => {
     const database = await openStorageDatabase(databasePath);
     const key = {
+      cacheKeyVersion: 1,
+      cacheKey: "storage-test-v1",
       feedId: "feed-main",
       instrumentId: "EURUSD",
       timeframeSec: 60,
@@ -1126,7 +1529,7 @@ test("queries newest/ranged candles, rejects stale revisions, and applies retent
           revision: 4,
         },
       ]);
-      assert.equal(getCandles(database, key)[2].open, 3);
+      assert.equal(getCandles(database, key)[2].open, 99);
       assert.deepEqual(
         getNewestCandles(database, key, 2).map(({ openTimeMs }) => openTimeMs),
         [180_000, 240_000],
@@ -1167,6 +1570,8 @@ test("two processes concurrently read and upsert candles without corruption", as
       );
       assert.equal(
         getCandles(database, {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
           feedId: "feed-main",
           instrumentId: "EURUSD",
           timeframeSec: 60,

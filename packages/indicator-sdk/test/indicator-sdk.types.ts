@@ -1,11 +1,31 @@
 import type { InstrumentId, TimeframeId } from "@erc-chart/contracts";
 import {
   indicatorSdkVersion,
+  defineIndicator,
+  input,
+  plot,
+  ta,
   type IndicatorDefinition,
   type IndicatorInputDefinition,
   type IndicatorInstance,
   type SignalCandidate,
 } from "../src/index.js";
+
+export const authored = defineIndicator(
+  { id: "fixture.authored", name: "Authored" },
+  ({ close }) => {
+    const length: number = input.int(14, { title: "Length" });
+    const value: number = ta.ema(close, length);
+    const atr: number = ta.atr(length);
+    const rsi: number = ta.rsi(length);
+    plot.line(value + atr, { title: "Band", color: "#00ff00" });
+    plot.histogram(rsi);
+    // @ts-expect-error the authoring plot API accepts scalars, never historical arrays
+    plot.line([value]);
+    // @ts-expect-error implicit foreign timeframe acquisition is not implemented
+    ta.ema(14, "1h");
+  },
+);
 
 // @ts-expect-error boolean inputs cannot use string defaults
 export const invalidInput: IndicatorInputDefinition = {

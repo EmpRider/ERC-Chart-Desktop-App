@@ -369,7 +369,17 @@ export function createProviderUtilitySupervisor(
     };
     states.set(providerProfileId, state);
 
-    const protocolViolation = (): void =>
+    const protocolViolation = (reason = "unexpected-message"): void => {
+      try {
+        options.hostBroker?.log(
+          providerProfileId,
+          "error",
+          "PROVIDER_PROTOCOL_REJECTED",
+          { reason, state: state.status },
+        );
+      } catch {
+        // Diagnostics must not prevent invalid messages from being rejected.
+      }
       fail(
         providerProfileId,
         state,
@@ -377,6 +387,7 @@ export function createProviderUtilitySupervisor(
         "PROVIDER_UTILITY_PROTOCOL_VIOLATION",
         true,
       );
+    };
 
     const postHostFailure = (
       type:
@@ -410,7 +421,7 @@ export function createProviderUtilitySupervisor(
     ): boolean => {
       if (isUtilityStatusMessage(message)) return false;
       if (state.status !== "starting" && state.status !== "ready") {
-        protocolViolation();
+        protocolViolation("host-message-outside-active-state");
         return true;
       }
       if (message.type === "provider-config-validation-response") {
@@ -420,7 +431,7 @@ export function createProviderUtilitySupervisor(
           pending === undefined ||
           pending.requestId !== message.requestId
         ) {
-          protocolViolation();
+          protocolViolation("unexpected-configuration-response");
           return true;
         }
         state.pendingConfiguration = undefined;
@@ -453,7 +464,7 @@ export function createProviderUtilitySupervisor(
           pending === undefined ||
           pending.expectedType !== message.type
         ) {
-          protocolViolation();
+          protocolViolation(`unexpected-data-response:${message.type}`);
           return true;
         }
         state.pendingData.delete(message.requestId);
@@ -483,7 +494,7 @@ export function createProviderUtilitySupervisor(
       ) {
         const sink = state.subscriptionSinks.get(message.subscriptionId);
         if (state.status !== "ready" || sink === undefined) {
-          protocolViolation();
+          protocolViolation("event-for-inactive-subscription");
           return true;
         }
         try {
@@ -705,7 +716,7 @@ export function createProviderUtilitySupervisor(
       if (message.type === "provider-host-websocket-send") {
         const connection = state.activeWebSockets.get(message.socketId);
         if (connection === undefined) {
-          protocolViolation();
+          protocolViolation("send-for-inactive-websocket");
           return true;
         }
         try {
@@ -727,7 +738,7 @@ export function createProviderUtilitySupervisor(
       if (message.type === "provider-host-websocket-close") {
         const connection = state.activeWebSockets.get(message.socketId);
         if (connection === undefined) {
-          protocolViolation();
+          protocolViolation("close-for-inactive-websocket");
           return true;
         }
         try {
@@ -784,7 +795,27 @@ export function createProviderUtilitySupervisor(
 
     const onMessage = (message: unknown): void => {
       if (!isProviderUtilityChildMessage(message)) {
-        protocolViolation();
+        // Report only recognized message kinds, never arbitrary child payloads.
+        const kind =
+          typeof message === "object" && message !== null && "type" in message
+            ? message.type
+            : undefined;
+        const knownKind = [
+          "ready",
+          "error",
+          "stopped",
+          "provider-history-response",
+          "provider-capabilities-response",
+          "provider-instruments-response",
+          "provider-host-network-request",
+          "provider-host-websocket-send",
+          "provider-host-websocket-open-request",
+          "provider-host-log",
+          "provider-host-status",
+          "provider-subscription-candles",
+          "provider-subscription-ticks",
+        ].find((value) => value === kind);
+        protocolViolation(`invalid-message:${knownKind ?? "unknown"}`);
         return;
       }
       if (handleHostMessage(message)) return;
@@ -810,7 +841,7 @@ export function createProviderUtilitySupervisor(
         finishStopped(state);
         return;
       }
-      protocolViolation();
+      protocolViolation(`unexpected-lifecycle-message:${message.type}`);
     };
 
     const onExit = (): void => {

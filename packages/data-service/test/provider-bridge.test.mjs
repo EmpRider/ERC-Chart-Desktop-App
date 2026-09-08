@@ -81,6 +81,61 @@ function createUpstream() {
 
 const request = { instrumentId: "BTCUSD", timeframeId: "1m" };
 
+test("pagination publishes revision continuity without rebuilding the live chart, while corrections still rebuild", async () => {
+  const fixture = createUpstream();
+  const candle = (openTimeMs, close = 11) => ({
+    ...request,
+    openTimeMs,
+    open: 10,
+    high: 20,
+    low: 9,
+    close,
+  });
+  let history = [candle(120_000), candle(180_000)];
+  fixture.upstream.requestHistory = async () => history;
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 190_000,
+  });
+  await service.requestHistory("profile-a", request);
+  const sink = createSink();
+  const other = createSink();
+  await service.subscribe("profile-a", request, sink.sink);
+  await service.subscribe("profile-a", request, other.sink);
+  fixture.subscriptions[0].sink.onCandles([candle(180_000, 12)]);
+  const before = sink.series.at(-1);
+  history = [candle(0), candle(60_000)];
+  const page = await service.requestHistory("profile-a", {
+    ...request,
+    fromMs: 0,
+    toMs: 119_999,
+    limit: 2,
+  });
+  assert.deepEqual(
+    page.map((bar) => bar.openTimeMs),
+    [0, 60_000],
+  );
+  const pagination = sink.series.at(-1);
+  assert.equal(pagination.kind, "incremental");
+  assert.equal(pagination.previousRevision, before.revision);
+  assert.ok(pagination.revision > before.revision);
+  assert.deepEqual(sink.candles.at(-1), candle(180_000, 12));
+  assert.deepEqual(other.series.at(-1), pagination);
+  fixture.subscriptions[0].sink.onCandles([candle(180_000, 13)]);
+  assert.equal(sink.series.at(-1).kind, "incremental");
+  assert.equal(sink.series.at(-1).previousRevision, pagination.revision);
+
+  history = [candle(60_000, 15)];
+  await service.requestHistory("profile-a", {
+    ...request,
+    fromMs: 60_000,
+    toMs: 119_999,
+    limit: 1,
+  });
+  assert.equal(sink.series.at(-1).kind, "rebuild");
+  assert.equal(sink.candles.slice(-4)[1].close, 15);
+  await service.shutdown();
+});
+
 test("forwards discovery/capabilities/history and multiplexes compatible live demand", async () => {
   const fixture = createUpstream();
   const service = createProviderDataService(fixture.upstream);
@@ -212,6 +267,108 @@ test("invalidates and restores only the affected provider profile while retainin
   await secondHandle.unsubscribe();
   assert.equal(restoredProfileA.unsubscribeCount, 1);
   assert.equal(profileB.unsubscribeCount, 1);
+});
+
+test("tick-tail overflow during pending history preserves every processed tick and canonical revision", async () => {
+  const fixture = createUpstream();
+  const history = deferred();
+  const started = deferred();
+  fixture.upstream.requestHistory = () => {
+    started.resolve();
+    return history.promise;
+  };
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 120_000,
+    tickBufferCapacity: 2,
+  });
+  const target = createSink();
+  const handle = await service.subscribe("profile-a", request, target.sink);
+  try {
+    const pending = service.requestHistory("profile-a", request);
+    await started.promise;
+    const ticks = Array.from({ length: 10 }, (_, index) => ({
+      instrumentId: "BTCUSD",
+      timestampMs: 120_000 + index,
+      price: 10 + index,
+      volume: 1,
+    }));
+    fixture.subscriptions[0].sink.onTicks(ticks);
+    history.resolve([
+      {
+        ...request,
+        openTimeMs: 120_000,
+        open: 1,
+        high: 1,
+        low: 1,
+        close: 1,
+        volume: 1,
+      },
+    ]);
+    const candles = await pending;
+    assert.deepEqual(candles.at(-1), {
+      ...request,
+      openTimeMs: 120_000,
+      open: 10,
+      high: 19,
+      low: 10,
+      close: 19,
+      volume: 10,
+    });
+    assert.deepEqual(target.ticks, ticks);
+    const snapshot = await service.seriesSnapshot("profile-a", request);
+    assert.equal(snapshot.revision, target.series.at(-1).revision);
+    assert.equal(snapshot.generation, target.series.at(-1).generation);
+    assert.deepEqual(target.errors, []);
+  } finally {
+    await handle.unsubscribe();
+    await service.shutdown();
+  }
+});
+
+test("unsubscribe during history rejects late hydration without mutating a replacement demand", async () => {
+  const fixture = createUpstream();
+  const history = deferred();
+  const started = deferred();
+  fixture.upstream.requestHistory = () => {
+    started.resolve();
+    return history.promise;
+  };
+  const service = createProviderDataService(fixture.upstream);
+  const first = createSink();
+  const old = await service.subscribe("profile-a", request, first.sink);
+  const pending = service.requestHistory("profile-a", request);
+  const rejected = assert.rejects(pending, /invalidated/u);
+  await started.promise;
+  await old.unsubscribe();
+  const replacement = createSink();
+  const current = await service.subscribe(
+    "profile-a",
+    request,
+    replacement.sink,
+  );
+  try {
+    await old.unsubscribe();
+    history.resolve([
+      { ...request, openTimeMs: 0, open: 10, high: 10, low: 10, close: 10 },
+    ]);
+    await rejected;
+    fixture.subscriptions[0].sink.onTicks([
+      { instrumentId: "BTCUSD", timestampMs: 120_000, price: 999 },
+    ]);
+    fixture.subscriptions[1].sink.onTicks([
+      { instrumentId: "BTCUSD", timestampMs: 120_000, price: 12 },
+    ]);
+    assert.deepEqual(first.candles, []);
+    assert.equal(replacement.candles.at(-1).close, 12);
+    assert.equal(fixture.subscriptions[1].unsubscribeCount, 0);
+  } finally {
+    await current.unsubscribe();
+    await service.shutdown();
+  }
+  assert.deepEqual(
+    fixture.subscriptions.map(({ unsubscribeCount }) => unsubscribeCount),
+    [1, 1],
+  );
 });
 
 test("shutdown releases each active upstream subscription once", async () => {
@@ -533,4 +690,574 @@ test("ECDD-95 acceptance: reconnect repairs a deliberately created gap", async (
   );
 
   await handle.unsubscribe();
+});
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+test("concurrent demand shares one upstream and releases it once", async () => {
+  const fixture = createUpstream();
+  const capabilities = deferred();
+  fixture.upstream.getCapabilities = async () => capabilities.promise;
+  const service = createProviderDataService(fixture.upstream);
+  const firstPending = service.subscribe(
+    "profile-a",
+    request,
+    createSink().sink,
+  );
+  const secondPending = service.subscribe(
+    "profile-a",
+    request,
+    createSink().sink,
+  );
+
+  capabilities.resolve({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+  });
+  const handles = await Promise.all([firstPending, secondPending]);
+
+  assert.equal(fixture.subscriptions.length, 1);
+  await Promise.all(handles.map((handle) => handle.unsubscribe()));
+  assert.deepEqual(
+    fixture.subscriptions.map((subscription) => subscription.unsubscribeCount),
+    [1],
+  );
+  await service.shutdown();
+});
+
+test("accepted native tick fans out once to every active timeframe", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m", "5m"],
+    liveData: true,
+    derivedTimeframes: false,
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+      {
+        id: "5m",
+        seconds: 300,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+    ],
+  });
+  const service = createProviderDataService(fixture.upstream);
+  const oneMinute = createSink();
+  const fiveMinute = createSink();
+  const handles = await Promise.all([
+    service.subscribe(
+      "profile-a",
+      { instrumentId: "BTCUSD", timeframeId: "1m" },
+      oneMinute.sink,
+    ),
+    service.subscribe(
+      "profile-a",
+      { instrumentId: "BTCUSD", timeframeId: "5m" },
+      fiveMinute.sink,
+    ),
+  ]);
+  assert.equal(fixture.subscriptions.length, 2);
+
+  const tick = [{ instrumentId: "BTCUSD", timestampMs: 100_000, price: 12 }];
+  fixture.subscriptions[0].sink.onTicks(tick);
+  fixture.subscriptions[1].sink.onTicks(tick);
+
+  assert.equal(oneMinute.candles.length, 1);
+  assert.equal(fiveMinute.candles.length, 1);
+  assert.equal(oneMinute.ticks.length, 1);
+  assert.equal(fiveMinute.ticks.length, 1);
+
+  await Promise.all(handles.map((handle) => handle.unsubscribe()));
+  await service.shutdown();
+});
+
+test("derived live candle retains native history constituents", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+    derivedTimeframeIds: ["5m"],
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+      {
+        id: "5m",
+        seconds: 300,
+        historical: true,
+        live: true,
+        native: false,
+        derivedFromTimeframeId: "1m",
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+    ],
+  });
+  fixture.upstream.requestHistory = async () => [
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 0,
+      open: 10,
+      high: 20,
+      low: 5,
+      close: 11,
+      volume: 2,
+    },
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 60_000,
+      open: 11,
+      high: 12,
+      low: 9,
+      close: 12,
+      volume: 3,
+    },
+  ];
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 120_000,
+  });
+  const targetRequest = { instrumentId: "BTCUSD", timeframeId: "5m" };
+  await service.requestHistory("profile-a", targetRequest);
+  const target = createSink();
+  const handle = await service.subscribe(
+    "profile-a",
+    targetRequest,
+    target.sink,
+  );
+
+  fixture.subscriptions[0].sink.onCandles([
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 120_000,
+      open: 12,
+      high: 13,
+      low: 11,
+      close: 13,
+      volume: 4,
+    },
+  ]);
+
+  assert.deepEqual(target.candles.at(-1), {
+    instrumentId: "BTCUSD",
+    timeframeId: "5m",
+    openTimeMs: 0,
+    open: 10,
+    high: 20,
+    low: 5,
+    close: 13,
+    volume: 9,
+  });
+  await handle.unsubscribe();
+  await service.shutdown();
+});
+
+test("tick candle uses provider nonzero alignment origin", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: false,
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 30_000, timeZone: "UTC" },
+      },
+    ],
+  });
+  const service = createProviderDataService(fixture.upstream);
+  const target = createSink();
+  const handle = await service.subscribe("profile-a", request, target.sink);
+  fixture.subscriptions[0].sink.onTicks([
+    { instrumentId: "BTCUSD", timestampMs: 100_000, price: 12 },
+  ]);
+
+  const snapshot = await service.seriesSnapshot("profile-a", request);
+  assert.equal(snapshot.building.openTimeMs, 90_000);
+  await handle.unsubscribe();
+  await service.shutdown();
+});
+
+test("shutdown fences an acquisition waiting on capabilities", async () => {
+  const fixture = createUpstream();
+  const capabilities = deferred();
+  fixture.upstream.getCapabilities = async () => capabilities.promise;
+  const service = createProviderDataService(fixture.upstream);
+
+  const pending = service.subscribe("profile-a", request, createSink().sink);
+  const stopping = service.shutdown();
+  capabilities.resolve({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+  });
+
+  await assert.rejects(pending, /invalidated|shut down/i);
+  await stopping;
+  assert.equal(fixture.subscriptions.length, 0);
+});
+
+test("profile invalidation rejects history that resolves from the old epoch", async () => {
+  const fixture = createUpstream();
+  const history = deferred();
+  const historyStarted = deferred();
+  fixture.upstream.requestHistory = async () => {
+    historyStarted.resolve();
+    return history.promise;
+  };
+  const service = createProviderDataService(fixture.upstream);
+
+  const pending = service.requestHistory("profile-a", request);
+  await historyStarted.promise;
+  await service.invalidateProfile("profile-a");
+  history.resolve([
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 60_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+  ]);
+
+  await assert.rejects(pending, /invalidated/i);
+  await service.shutdown();
+});
+
+test("failed live connect can be retried without retaining a poisoned demand", async () => {
+  const fixture = createUpstream();
+  let attempts = 0;
+  fixture.upstream.subscribe = async (providerProfileId, liveRequest, sink) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("synthetic connect failure");
+    const record = {
+      providerProfileId,
+      request: liveRequest,
+      sink,
+      unsubscribeCount: 0,
+    };
+    fixture.subscriptions.push(record);
+    return {
+      async unsubscribe() {
+        record.unsubscribeCount += 1;
+      },
+    };
+  };
+  const service = createProviderDataService(fixture.upstream);
+
+  await assert.rejects(
+    service.subscribe("profile-a", request, createSink().sink),
+    /synthetic connect failure/,
+  );
+  const handle = await service.subscribe(
+    "profile-a",
+    request,
+    createSink().sink,
+  );
+  assert.equal(attempts, 2);
+  assert.equal(fixture.subscriptions.length, 1);
+  await handle.unsubscribe();
+  assert.equal(fixture.subscriptions[0].unsubscribeCount, 1);
+  await service.shutdown();
+});
+
+test("native and derived consumers sharing a source use one upstream", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+    derivedTimeframeIds: ["5m"],
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+      {
+        id: "5m",
+        seconds: 300,
+        historical: true,
+        live: true,
+        native: false,
+        derivedFromTimeframeId: "1m",
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+    ],
+  });
+  const service = createProviderDataService(fixture.upstream);
+  const handles = await Promise.all([
+    service.subscribe(
+      "profile-a",
+      { instrumentId: "BTCUSD", timeframeId: "1m" },
+      createSink().sink,
+    ),
+    service.subscribe(
+      "profile-a",
+      { instrumentId: "BTCUSD", timeframeId: "5m" },
+      createSink().sink,
+    ),
+  ]);
+
+  assert.equal(fixture.subscriptions.length, 1);
+  await Promise.all(handles.map((handle) => handle.unsubscribe()));
+  assert.equal(fixture.subscriptions[0].unsubscribeCount, 1);
+  await service.shutdown();
+});
+
+test("late history cannot overwrite a newer live native constituent", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+    derivedTimeframeIds: ["5m"],
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+      {
+        id: "5m",
+        seconds: 300,
+        historical: true,
+        live: true,
+        native: false,
+        derivedFromTimeframeId: "1m",
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+    ],
+  });
+  const history = deferred();
+  const historyStarted = deferred();
+  fixture.upstream.requestHistory = async () => {
+    historyStarted.resolve();
+    return history.promise;
+  };
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 120_000,
+  });
+  const derivedRequest = { instrumentId: "BTCUSD", timeframeId: "5m" };
+  const pendingHistory = service.requestHistory("profile-a", derivedRequest);
+  await historyStarted.promise;
+  const sink = createSink();
+  const handle = await service.subscribe(
+    "profile-a",
+    derivedRequest,
+    sink.sink,
+  );
+  fixture.subscriptions[0].sink.onCandles([
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 120_000,
+      open: 12,
+      high: 20,
+      low: 8,
+      close: 19,
+      volume: 7,
+    },
+  ]);
+  history.resolve([
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 0,
+      open: 10,
+      high: 11,
+      low: 9,
+      close: 10,
+      volume: 1,
+    },
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 60_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+      volume: 2,
+    },
+    {
+      instrumentId: "BTCUSD",
+      timeframeId: "1m",
+      openTimeMs: 120_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+      volume: 3,
+    },
+  ]);
+
+  const result = await pendingHistory;
+  assert.deepEqual(result.at(-1), {
+    instrumentId: "BTCUSD",
+    timeframeId: "5m",
+    openTimeMs: 0,
+    open: 10,
+    high: 20,
+    low: 8,
+    close: 19,
+    volume: 10,
+  });
+  await handle.unsubscribe();
+  await service.shutdown();
+});
+
+test("derived restore hydrates the current source bucket even without a target gap", async () => {
+  const fixture = createUpstream();
+  fixture.upstream.getCapabilities = async () => ({
+    instruments: true,
+    nativeTimeframes: ["1m"],
+    liveData: true,
+    derivedTimeframes: true,
+    derivedTimeframeIds: ["5m"],
+    timeframes: [
+      {
+        id: "1m",
+        seconds: 60,
+        historical: true,
+        live: true,
+        native: true,
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+      {
+        id: "5m",
+        seconds: 300,
+        historical: true,
+        live: true,
+        native: false,
+        derivedFromTimeframeId: "1m",
+        alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+      },
+    ],
+  });
+  let restoring = false;
+  fixture.upstream.requestHistory = async () =>
+    restoring
+      ? [
+          {
+            instrumentId: "BTCUSD",
+            timeframeId: "1m",
+            openTimeMs: 0,
+            open: 10,
+            high: 20,
+            low: 5,
+            close: 11,
+            volume: 2,
+          },
+          {
+            instrumentId: "BTCUSD",
+            timeframeId: "1m",
+            openTimeMs: 60_000,
+            open: 11,
+            high: 12,
+            low: 9,
+            close: 12,
+            volume: 3,
+          },
+          {
+            instrumentId: "BTCUSD",
+            timeframeId: "1m",
+            openTimeMs: 120_000,
+            open: 12,
+            high: 13,
+            low: 11,
+            close: 13,
+            volume: 4,
+          },
+        ]
+      : [
+          {
+            instrumentId: "BTCUSD",
+            timeframeId: "1m",
+            openTimeMs: 0,
+            open: 10,
+            high: 10,
+            low: 10,
+            close: 10,
+            volume: 1,
+          },
+          {
+            instrumentId: "BTCUSD",
+            timeframeId: "1m",
+            openTimeMs: 60_000,
+            open: 10,
+            high: 10,
+            low: 10,
+            close: 10,
+            volume: 1,
+          },
+        ];
+  const service = createProviderDataService(fixture.upstream, {
+    now: () => 120_000,
+  });
+  const targetRequest = { instrumentId: "BTCUSD", timeframeId: "5m" };
+  await service.requestHistory("profile-a", targetRequest);
+  const sink = createSink();
+  const handle = await service.subscribe("profile-a", targetRequest, sink.sink);
+  await service.invalidateProfile("profile-a");
+  restoring = true;
+  await service.restoreProfile("profile-a");
+
+  assert.deepEqual(sink.candles.at(-1), {
+    instrumentId: "BTCUSD",
+    timeframeId: "5m",
+    openTimeMs: 0,
+    open: 10,
+    high: 20,
+    low: 5,
+    close: 13,
+    volume: 9,
+  });
+  assert.equal(fixture.subscriptions.length, 2);
+  await handle.unsubscribe();
+  await service.shutdown();
 });

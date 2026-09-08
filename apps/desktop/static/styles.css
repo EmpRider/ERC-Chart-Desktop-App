@@ -1308,6 +1308,20 @@ textarea {
   cursor: pointer;
 }
 
+.provider-toolbar-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+}
+
+.provider-toolbar-icon {
+  width: 0.82rem;
+  height: 0.82rem;
+  flex: 0 0 auto;
+  fill: currentColor;
+}
+
 .provider-timeframe-button:hover,
 .provider-timeframe-button:focus-visible,
 .provider-toolbar-button:hover,
@@ -1346,19 +1360,27 @@ textarea {
   align-items: stretch;
 }
 
-.provider-indicator-button::before {
-  content: "ƒx";
-  margin-right: 0.28rem;
-  color: #78bfff;
-  font-size: 0.58rem;
-  font-style: italic;
-  font-weight: 700;
-}
-
 .provider-timezone-control select {
-  min-width: 6.8rem;
+  width: 5.5rem;
+  min-width: 5.5rem;
   appearance: none;
   padding-right: 1.25rem;
+  padding-left: 1.65rem;
+}
+
+.provider-timezone-control > .provider-toolbar-icon {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 0.48rem;
+  color: #aab7c8;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.provider-timezone-control:hover > .provider-toolbar-icon,
+.provider-timezone-control:focus-within > .provider-toolbar-icon {
+  color: #eef6ff;
 }
 
 .provider-timezone-control::after {
@@ -1456,10 +1478,73 @@ textarea {
 }
 
 .provider-chart-body {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
+}
+
+.provider-chart-stage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.provider-chart-navigation {
+  position: absolute;
+  z-index: 15;
+  bottom: 2.65rem;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgb(52 70 91 / 78%);
+  border-radius: 0.38rem;
+  background: rgb(10 17 27 / 88%);
+  box-shadow: 0 0.45rem 1.2rem rgb(0 0 0 / 34%);
+  overflow: hidden;
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+}
+
+.provider-chart-navigation button {
+  display: grid;
+  width: 1.85rem;
+  height: 1.7rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid rgb(40 55 73 / 78%);
+  background: transparent;
+  color: #8495aa;
+  cursor: pointer;
+}
+
+.provider-chart-navigation button:last-child {
+  border-right: 0;
+}
+
+.provider-chart-navigation button:hover,
+.provider-chart-navigation button:focus-visible {
+  background: #122136;
+  color: #e4eef9;
+  outline: none;
+}
+
+.provider-chart-navigation button:nth-child(2) {
+  color: #77bfff;
+}
+
+.provider-chart-navigation svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .provider-drawing-toolbar {

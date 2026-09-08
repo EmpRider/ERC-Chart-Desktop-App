@@ -64,6 +64,8 @@ interface RuntimeContext {
   pendingSeriesChange?: ProviderSeriesChange;
   calculationSequence: number;
   latestCalculation?: Promise<PluginIndicatorFigureData[]>;
+  queuedDataList?: readonly KLineData[];
+  calculationRunning?: boolean;
   dataGeneration: number;
   dataRevision: number;
   configGeneration: number;
@@ -72,6 +74,7 @@ interface RuntimeContext {
 }
 
 const contexts = new Map<string, RuntimeContext>();
+const rowStartTimes = new WeakMap<PluginIndicatorFigureData[], number>();
 const registeredNames = new Set<string>();
 const chartScopes = new WeakMap<object, string>();
 let nextChartScope = 1;
@@ -478,9 +481,13 @@ function applyWorkerResult(
   dataList: readonly KLineData[],
   context: RuntimeContext,
   result: IndicatorWorkerResultUpdate,
+  candleCount = dataList.length,
+  candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
     context.rows = rowsForSnapshot(dataList, result.snapshot);
+    const first = dataList[0]?.timestamp;
+    if (first !== undefined) rowStartTimes.set(context.rows, first);
     context.overlays = result.snapshot.overlays;
     context.signals = result.snapshot.signals;
     return context.rows;
@@ -490,16 +497,16 @@ function applyWorkerResult(
   if (
     rows === undefined ||
     result.points.length !== expectedPointCount ||
-    (result.kind === "building" && rows.length !== dataList.length) ||
-    (result.kind === "rollover" && rows.length + 1 !== dataList.length)
+    (result.kind === "building" && rows.length !== candleCount) ||
+    (result.kind === "rollover" && rows.length + 1 !== candleCount)
   ) {
     throw new Error(
       "Indicator worker result delta does not match renderer state.",
     );
   }
-  const startIndex = dataList.length - expectedPointCount;
+  const startIndex = candleCount - expectedPointCount;
   for (let offset = 0; offset < expectedPointCount; offset += 1) {
-    const data = dataList[startIndex + offset];
+    const data = candleTail[candleTail.length - expectedPointCount + offset];
     const point = result.points[offset];
     if (
       data === undefined ||
@@ -512,8 +519,8 @@ function applyWorkerResult(
     }
     rows[startIndex + offset] = rowForPoint(point);
   }
-  context.overlays = result.overlays;
-  context.signals = result.signals;
+  if (result.overlays !== undefined) context.overlays = result.overlays;
+  if (result.signals !== undefined) context.signals = result.signals;
   return rows;
 }
 
@@ -537,7 +544,24 @@ export function markPluginIndicatorSeriesChange(
   if (scope === undefined) return;
   const prefix = `erc.runtime.${scope}:`;
   for (const [runtimeId, context] of contexts) {
-    if (runtimeId.startsWith(prefix)) context.pendingSeriesChange = change;
+    if (runtimeId.startsWith(prefix)) {
+      const pending = context.pendingSeriesChange;
+      context.pendingSeriesChange =
+        pending?.generation === change.generation && pending.kind === "rebuild"
+          ? {
+              ...change,
+              kind: "rebuild",
+              ...(pending.dirtyFromOpenTimeMs === undefined
+                ? {}
+                : {
+                    dirtyFromOpenTimeMs: Math.min(
+                      pending.dirtyFromOpenTimeMs,
+                      change.dirtyFromOpenTimeMs ?? pending.dirtyFromOpenTimeMs,
+                    ),
+                  }),
+            }
+          : change;
+    }
   }
 }
 
@@ -624,7 +648,7 @@ export function reconcilePluginIndicators(
             previousContext.timeframeId,
           );
     const sameConfiguration = previousCalculationKey === nextCalculationKey;
-    contexts.set(runtimeId, {
+    const nextContext: RuntimeContext = {
       indicator,
       summary,
       providerProfileId,
@@ -665,7 +689,18 @@ export function reconcilePluginIndicators(
       previousContext?.pendingSeriesChange !== undefined
         ? { pendingSeriesChange: previousContext.pendingSeriesChange }
         : {}),
-    });
+    };
+    // Presentation reconciliation must not replace an in-flight calculation's owner.
+    contexts.set(
+      runtimeId,
+      sameConfiguration && previousContext !== undefined
+        ? Object.assign(previousContext, {
+            indicator,
+            summary,
+            sync: sync as PluginIndicatorSync,
+          })
+        : nextContext,
+    );
     if (!registeredNames.has(name)) {
       module.registerIndicator<PluginIndicatorFigureData, string>({
         name,
@@ -675,64 +710,118 @@ export function reconcilePluginIndicators(
         calc: async (dataList, runtimeIndicator) => {
           const context = contexts.get(runtimeIndicator.id);
           if (context === undefined) return dataList.map(() => ({}));
-          const sequence = context.calculationSequence + 1;
-          context.calculationSequence = sequence;
-          const data = incrementalDataUpdate(dataList, context);
-          if (data === undefined) {
-            return context.rows ?? dataList.map(() => ({}));
-          }
-          const sourceChange = context.pendingSeriesChange;
+          // KLineCharts prepends candles immediately, but awaits calc before
+          // replacing its index-based results. Keep existing plots on their
+          // original candles while the worker rebuilds the expanded history.
+          const displayed = runtimeIndicator.result;
+          const displayedStart =
+            displayed === undefined ? undefined : rowStartTimes.get(displayed);
+          const first = dataList[0]?.timestamp;
           if (
-            sourceChange !== undefined &&
-            (sourceChange.generation < context.dataGeneration ||
-              (sourceChange.generation === context.dataGeneration &&
-                sourceChange.revision < context.dataRevision))
+            displayedStart !== undefined &&
+            first !== undefined &&
+            first < displayedStart
           ) {
-            if (context.pendingSeriesChange === sourceChange) {
-              delete context.pendingSeriesChange;
+            const offset = dataList.findIndex(
+              (candle) => candle.timestamp === displayedStart,
+            );
+            if (offset > 0 && dataList.length >= offset + displayed.length) {
+              const aligned = [
+                ...Array.from({ length: offset }, () => ({})),
+                ...displayed,
+              ];
+              runtimeIndicator.result = aligned;
+              rowStartTimes.set(aligned, first);
             }
-            return context.rows ?? dataList.map(() => ({}));
           }
-          if (sourceChange !== undefined) {
-            context.dataGeneration = sourceChange.generation;
-            if (context.pendingSeriesChange === sourceChange) {
-              delete context.pendingSeriesChange;
-            }
-          }
-          context.dataRevision =
-            sourceChange?.revision ?? context.dataRevision + 1;
-          const calculation = context
-            .sync({
-              instanceId: runtimeIndicator.id,
-              runtimeEntryUrl: context.summary.runtimeEntryUrl,
-              pluginId: context.indicator.pluginId,
-              definitionId: context.indicator.definitionId,
-              instrumentId: context.instrumentId,
-              timeframeId: context.timeframeId,
-              parameters: normalizePluginIndicatorParameters(
-                context.indicator,
-                context.summary.definition,
-              ),
-              data,
-              rebuildCandles: () =>
-                dataList.map((item) =>
-                  toCandle(item, context.instrumentId, context.timeframeId),
-                ),
-              dataRevision: context.dataRevision,
-              configGeneration: context.configGeneration,
-            })
-            .then((result) => {
-              const current = contexts.get(runtimeIndicator.id);
-              if (
-                current !== context ||
-                context.calculationSequence !== sequence
-              ) {
-                if (current?.latestCalculation !== undefined)
-                  return current.latestCalculation;
-                return current?.rows ?? dataList.map(() => ({}));
+          context.queuedDataList = dataList;
+          if (
+            context.calculationRunning &&
+            context.latestCalculation !== undefined
+          )
+            return context.latestCalculation;
+          context.calculationRunning = true;
+          const calculation = (async (): Promise<
+            PluginIndicatorFigureData[]
+          > => {
+            try {
+              while (context.queuedDataList !== undefined) {
+                const next = context.queuedDataList;
+                delete context.queuedDataList;
+                const sourceChange = context.pendingSeriesChange;
+                if (
+                  sourceChange !== undefined &&
+                  (sourceChange.generation < context.dataGeneration ||
+                    (sourceChange.generation === context.dataGeneration &&
+                      sourceChange.revision < context.dataRevision))
+                ) {
+                  delete context.pendingSeriesChange;
+                  continue;
+                }
+                const data = incrementalDataUpdate(next, context);
+                if (data === undefined) {
+                  delete context.pendingSeriesChange;
+                  continue;
+                }
+                if (sourceChange !== undefined)
+                  context.dataGeneration = sourceChange.generation;
+                delete context.pendingSeriesChange;
+                context.dataRevision =
+                  sourceChange?.revision ?? context.dataRevision + 1;
+                // Chart arrays can change while the worker runs. Capture only the tail for deltas.
+                const resultTimeline =
+                  data.kind === "snapshot" || data.kind === "rebuild"
+                    ? [...next]
+                    : next;
+                const count = next.length;
+                const tail = next.slice(-2).map((candle) => ({ ...candle }));
+                const snapshotTimeline = (): readonly KLineData[] => {
+                  const timeline = resultTimeline.slice(0, count);
+                  for (let offset = 0; offset < tail.length; offset += 1) {
+                    const candle = tail[offset];
+                    if (candle !== undefined)
+                      timeline[count - tail.length + offset] = candle;
+                  }
+                  return timeline;
+                };
+                const result = await context.sync({
+                  instanceId: runtimeIndicator.id,
+                  runtimeEntryUrl: context.summary.runtimeEntryUrl,
+                  pluginId: context.indicator.pluginId,
+                  definitionId: context.indicator.definitionId,
+                  instrumentId: context.instrumentId,
+                  timeframeId: context.timeframeId,
+                  parameters: normalizePluginIndicatorParameters(
+                    context.indicator,
+                    context.summary.definition,
+                  ),
+                  data,
+                  rebuildCandles: () =>
+                    snapshotTimeline().map((item) =>
+                      toCandle(item, context.instrumentId, context.timeframeId),
+                    ),
+                  dataRevision: context.dataRevision,
+                  configGeneration: context.configGeneration,
+                });
+                const current = contexts.get(runtimeIndicator.id);
+                if (current !== context) {
+                  return current?.latestCalculation ?? current?.rows ?? [];
+                }
+                applyWorkerResult(
+                  result.kind === "snapshot"
+                    ? snapshotTimeline()
+                    : resultTimeline,
+                  context,
+                  result,
+                  count,
+                  tail,
+                );
               }
-              return applyWorkerResult(dataList, context, result);
-            });
+              return context.rows ?? [];
+            } finally {
+              context.calculationRunning = false;
+            }
+          })();
           context.latestCalculation = calculation;
           return calculation;
         },

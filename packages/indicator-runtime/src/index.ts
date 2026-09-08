@@ -52,8 +52,8 @@ export type IndicatorWorkerResultUpdate =
   | {
       readonly kind: "building" | "rollover";
       readonly points: readonly IndicatorRuntimePoint[];
-      readonly overlays: readonly IndicatorRuntimeOverlay[];
-      readonly signals: readonly IndicatorRuntimeSignal[];
+      readonly overlays?: readonly IndicatorRuntimeOverlay[];
+      readonly signals?: readonly IndicatorRuntimeSignal[];
     };
 
 export interface IndicatorWorkerSyncMessage extends IndicatorWorkerExecutionRequest {
@@ -172,12 +172,12 @@ function isWorkerResultUpdate(
   return (
     Array.isArray(value.points) &&
     value.points.length === expectedPointCount &&
-    Array.isArray(value.overlays) &&
-    Array.isArray(value.signals) &&
+    (value.overlays === undefined || Array.isArray(value.overlays)) &&
+    (value.signals === undefined || Array.isArray(value.signals)) &&
     isIndicatorRuntimeSnapshot({
       points: value.points,
-      overlays: value.overlays,
-      signals: value.signals,
+      overlays: value.overlays ?? [],
+      signals: value.signals ?? [],
     })
   );
 }

@@ -3,12 +3,84 @@ import test from "node:test";
 import { updateChartData } from "../dist/index.js";
 import {
   applyProviderSeriesUpdate,
+  applyCachedCandles,
   applyProviderChartType,
   groupIndicatorSettingsFields,
   loadKLineHistoryPage,
+  panProviderChartView,
   queueIndicatorSettingsDraftChange,
+  resetProviderChartView,
   toHeikinAshiData,
+  zoomProviderChartView,
 } from "../dist/provider-chart.js";
+
+test("uses native KLineCharts navigation APIs for chart controls", () => {
+  const calls = [];
+  const chart = {
+    getBarSpace: () => ({ bar: 10 }),
+    scrollByDistance: (...args) => calls.push(["scroll", ...args]),
+    scrollToRealTime: (...args) => calls.push(["latest", ...args]),
+    setBarSpace: (...args) => calls.push(["bar-space", ...args]),
+    setOffsetRightDistance: (...args) => calls.push(["right-offset", ...args]),
+    zoomAtCoordinate: (...args) => calls.push(["zoom", ...args]),
+  };
+
+  panProviderChartView(chart, "left");
+  panProviderChartView(chart, "right");
+  zoomProviderChartView(chart, "out");
+  zoomProviderChartView(chart, "in");
+  resetProviderChartView(chart);
+
+  assert.deepEqual(calls, [
+    ["scroll", 30, 120],
+    ["scroll", -30, 120],
+    ["zoom", 0.95, undefined, 120],
+    ["zoom", 1.05, undefined, 120],
+    ["bar-space", 10],
+    ["right-offset", 80],
+    ["latest", 120],
+  ]);
+});
+
+test("building chart updates read only the tail, including Heikin-Ashi", () => {
+  const candles = Array.from({ length: 100_000 }, (_, index) => ({
+    instrumentId: "BTCUSD",
+    timeframeId: "1m",
+    openTimeMs: index * 60_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  }));
+  const guarded = new Proxy(candles, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) {
+        assert.ok(
+          Number(key) >= candles.length - 2,
+          "live update scanned historical candles",
+        );
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const existing = toHeikinAshiData(candles);
+  const replacement = { ...candles.at(-1), high: 13, close: 12 };
+  candles[candles.length - 1] = replacement;
+  const expected = toHeikinAshiData(candles).at(-1);
+  for (const type of ["candlestick", "heikin_ashi"]) {
+    const updates = [];
+    applyCachedCandles(
+      (value) => updates.push(value),
+      guarded,
+      { current: replacement.openTimeMs },
+      type,
+      existing,
+    );
+    assert.equal(updates.length, 1);
+    if (type === "heikin_ashi") assert.deepEqual(updates[0], expected);
+    else assert.equal(updates[0].close, replacement.close);
+  }
+});
 
 test("reloads authoritative canonical candles for rebuild series changes", () => {
   const updates = [];

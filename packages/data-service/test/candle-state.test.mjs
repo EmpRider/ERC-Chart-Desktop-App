@@ -82,6 +82,49 @@ test("builds OHLC incrementally from ticks and ignores obsolete ticks", () => {
   assert.equal(state.finalizedCandles(key)[0].close, 11);
 });
 
+test("counts the building candle within the 100,000 active-bar limit", () => {
+  const limit = 100_000;
+  const currentTimeMs = limit * 60_000;
+  const history = Array.from({ length: limit }, (_, index) =>
+    candle(index * 60_000, 10),
+  );
+  for (const ingress of ["history", "candles", "ticks"]) {
+    const state = createCanonicalCandleState();
+    state.loadHistory(key, history, currentTimeMs);
+    assert.equal(state.snapshot(key).timeMs.length, limit);
+    const deltas =
+      ingress === "history"
+        ? state.loadHistory(
+            key,
+            [...history, candle(currentTimeMs, 11)],
+            currentTimeMs + 1,
+          )
+        : ingress === "candles"
+          ? state.applyCandles(
+              key,
+              [candle(currentTimeMs, 11)],
+              currentTimeMs + 1,
+            )
+          : state.applyTicks(key, [
+              {
+                instrumentId: "BTCUSD",
+                timestampMs: currentTimeMs + 1,
+                price: 11,
+              },
+            ]);
+    const snapshot = state.snapshot(key);
+    assert.equal(
+      snapshot.timeMs.length + (snapshot.building === undefined ? 0 : 1),
+      limit,
+      ingress,
+    );
+    assert.equal(snapshot.timeMs[0], 60_000, ingress);
+    assert.equal(snapshot.building?.openTimeMs, currentTimeMs, ingress);
+    assert.equal(deltas.at(-1).kind, "retention-trimmed", ingress);
+    assert.equal(deltas.at(-1).revision, snapshot.revision, ingress);
+  }
+});
+
 test("treats duplicate live candles as no-op revisions", () => {
   const state = createCanonicalCandleState();
   state.applyCandles(key, [candle(60_000, 11)], 90_000);
@@ -152,7 +195,7 @@ test("persists only changed finalized candles and retains incremental history", 
   );
   assert.deepEqual(
     rolloverDeltas.map(({ kind }) => kind),
-    ["bar-finalized", "building-updated"],
+    ["bar-finalized", "building-updated", "retention-trimmed"],
   );
   assert.deepEqual(
     upserts.map((batch) => batch.map(({ openTimeMs }) => openTimeMs)),

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   finishDesktopSmoke,
+  flushWorkspaceBeforeQuit,
   launchDesktopMain,
   launchDesktopMainWithProtocol,
 } from "../dist/launcher.js";
@@ -89,6 +90,32 @@ test("routes an asynchronous desktop boot rejection to the failure handler", asy
   });
 
   assert.equal(await handled, expected);
+});
+
+test("workspace close retries failed flush or cancels without shutdown", async () => {
+  const events = [];
+  let attempts = 0;
+  const proceed = await flushWorkspaceBeforeQuit(
+    async () => {
+      attempts += 1;
+      events.push(`flush:${attempts}`);
+      if (attempts === 1) throw new Error("disk full");
+    },
+    async () => {
+      events.push("choice:retry");
+      return "retry";
+    },
+  );
+  assert.equal(proceed, true);
+  assert.deepEqual(events, ["flush:1", "choice:retry", "flush:2"]);
+
+  const cancelled = await flushWorkspaceBeforeQuit(
+    async () => {
+      throw new Error("busy");
+    },
+    async () => "cancel",
+  );
+  assert.equal(cancelled, false);
 });
 
 test("shuts down the desktop before reporting a smoke exit", async () => {
