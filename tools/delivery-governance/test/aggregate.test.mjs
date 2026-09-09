@@ -88,6 +88,15 @@ test("docs-only application rejects an application job that ran", () =>
     }).ok,
     false,
   ));
+test("governance-only application accepts skipped application jobs", () =>
+  assert.equal(
+    aggregateResults({
+      ...base,
+      applicationPresent: true,
+      governanceOnly: true,
+    }).ok,
+    true,
+  ));
 test("cancelled jobs fail", () =>
   assert.equal(
     aggregateResults({
