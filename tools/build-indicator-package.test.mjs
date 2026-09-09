@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
+import {
+  discardStagedPlugin,
+  stagePluginPackage,
+} from "../packages/provider-runtime/dist/index.js";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 
 test("packages a scalar-authored indicator with generated metadata and a self-contained runtime", async (t) => {
@@ -16,7 +20,7 @@ test("packages a scalar-authored indicator with generated metadata and a self-co
     import.meta.dirname,
     "../packages/indicator-examples/src/atr-bands.ts",
   );
-  const { manifest, packageRoot } = await buildIndicatorPackage({
+  const { archivePath, manifest, packageRoot } = await buildIndicatorPackage({
     source,
     outputRoot: path.join(directory, "package"),
     id: "erc.indicator.atr-bands",
@@ -57,6 +61,20 @@ test("packages a scalar-authored indicator with generated metadata and a self-co
   assert.equal(instance.snapshot().points.length, 20);
   assert.ok(Number.isFinite(instance.snapshot().points.at(-1).values.plot_0));
   instance.dispose();
+  const staged = await stagePluginPackage(
+    { kind: "zip", path: archivePath },
+    {
+      stagingRoot: path.join(directory, "staging"),
+      trustPolicy: { mode: "developer", trustedPublisherKeys: {} },
+    },
+  );
+  assert.equal(staged.sourceKind, "zip");
+  assert.equal(staged.manifest.id, manifest.id);
+  assert.deepEqual(
+    staged.files.map((file) => file.path),
+    ["dist/index.js", "plugin.json"],
+  );
+  await discardStagedPlugin(staged);
   await assert.rejects(
     buildIndicatorPackage({
       source,

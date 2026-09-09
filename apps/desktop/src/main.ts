@@ -31,7 +31,9 @@ import {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
+  indicatorRemoveChannel,
   indicatorsListChannel,
+  isPluginId,
   isProviderHistoryLoadRequest,
   isProviderLiveSubscriptionId,
   isProviderLiveSubscriptionRequest,
@@ -786,6 +788,13 @@ async function startDesktopMain(): Promise<void> {
     assertTrustedIpcSender(senderFromEvent(event));
     return indicatorImportService.list();
   });
+  ipcMain.handle(indicatorRemoveChannel, async (event, pluginId: unknown) => {
+    assertTrustedIpcSender(senderFromEvent(event));
+    if (!isPluginId(pluginId)) {
+      throw new Error("Indicator plugin ID is invalid.");
+    }
+    return indicatorImportService.remove(pluginId);
+  });
 
   const removeProviderImportHandlers = (): void => {
     ipcMain.removeHandler(providerImportPreviewChannel);
@@ -797,6 +806,7 @@ async function startDesktopMain(): Promise<void> {
     ipcMain.removeHandler(indicatorImportApproveChannel);
     ipcMain.removeHandler(indicatorImportCancelChannel);
     ipcMain.removeHandler(indicatorsListChannel);
+    ipcMain.removeHandler(indicatorRemoveChannel);
   };
   const removeProviderManagementHandlers = (): void => {
     ipcMain.removeHandler(providerProfilesListChannel);

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
+import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -102,7 +103,8 @@ export async function buildIndicatorPackage({
     `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8",
   );
-  return { packageRoot, manifest };
+  const archivePath = await writePluginPackageArchive(packageRoot);
+  return { packageRoot, archivePath, manifest };
 }
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -127,4 +129,5 @@ if (
     outputRoot,
   });
   console.log(`INDICATOR_PACKAGE ${result.packageRoot}`);
+  console.log(`INDICATOR_PACKAGE_ZIP ${result.archivePath}`);
 }

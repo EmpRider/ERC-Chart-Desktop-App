@@ -14,6 +14,8 @@ export interface KernelSlot {
 export interface AuthoringFrame {
   readonly candle: Candle;
   readonly phase: "building" | "finalized";
+  readonly historyReplay: boolean;
+  readonly historyFinalizedTail: boolean;
   readonly discovery: boolean;
   readonly kernels: KernelSlot[];
   kernelIndex: number;

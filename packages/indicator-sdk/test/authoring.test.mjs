@@ -86,6 +86,38 @@ test("scalar authoring generates valid definitions and dense results without out
   instance.dispose();
 });
 
+test("history replay marks the finalized tail before the building candle", () => {
+  const seen = [];
+  const plugin = defineIndicator(
+    { id: "erc.indicator.history-flags.main", name: "History flags" },
+    (bar) => {
+      plot.line(bar.close);
+      seen.push({
+        index: bar.index,
+        confirmed: bar.isConfirmed,
+        history: bar.isHistory,
+        finalizedTail: bar.isHistoryFinalizedTail,
+      });
+    },
+  );
+  seen.length = 0;
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0), candle(1), candle(2)]);
+  assert.deepEqual(seen, [
+    { index: 0, confirmed: true, history: true, finalizedTail: false },
+    { index: 1, confirmed: true, history: true, finalizedTail: true },
+    { index: 2, confirmed: false, history: true, finalizedTail: false },
+  ]);
+  instance.onBuildingBar(candle(2, 99));
+  assert.deepEqual(seen.at(-1), {
+    index: 2,
+    confirmed: false,
+    history: false,
+    finalizedTail: false,
+  });
+  instance.dispose();
+});
+
 test("building replacements and finalization match a fresh history run and do not compound state", () => {
   const plugin = example();
   const instance = plugin.createInstance({}, context);
@@ -170,6 +202,78 @@ test("provisional drawings roll back and finalized drawings persist without auth
   instance.dispose();
 });
 
+test("plot.sync owns drawing diff, removal and provisional rollback", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.sync-draw.main", name: "Sync draw" },
+    ({ close, openTimeMs }) => {
+      plot.sync(
+        close > 15
+          ? [
+              {
+                id: "zone",
+                kind: "box",
+                startTimeMs: openTimeMs,
+                endTimeMs: openTimeMs + 60_000,
+                top: close,
+                bottom: close - 1,
+                color: "#008800",
+              },
+            ]
+          : [],
+      );
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 20), candle(1, 20)]);
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].top, 20);
+
+  instance.onBuildingBar(candle(1, 10));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.onBuildingBar(candle(1, 22));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].top, 22);
+
+  instance.onFinalizedBar(candle(1, 22));
+  instance.onBuildingBar(candle(2, 10));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.dispose();
+});
+
+test("plot.drawings reconciles direct plot.box calls without author-owned drawing arrays", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.scoped-draw.main", name: "Scoped draw" },
+    ({ close, openTimeMs }) => {
+      plot.drawings("zones", () => {
+        if (close <= 15) return;
+        plot.box({
+          id: "zone",
+          startTimeMs: 0,
+          endTimeMs: openTimeMs + 60_000,
+          top: close,
+          bottom: close - 1,
+          color: "#008800",
+        });
+      });
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 20), candle(1, 20)]);
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].top, 20);
+
+  instance.onBuildingBar(candle(1, 10));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.onBuildingBar(candle(1, 22));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].top, 22);
+
+  instance.onFinalizedBar(candle(1, 22));
+  instance.onBuildingBar(candle(2, 10));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.dispose();
+});
+
 test("input changes initialize new kernels and generated colors use the supplied parameters", () => {
   const plugin = example();
   const instance = plugin.createInstance(
@@ -189,10 +293,51 @@ test("input changes initialize new kernels and generated colors use the supplied
   );
   assert.equal(instance.snapshot().points.at(-1).colors.plot_0, "#ff0000");
   instance.dispose();
-  assert.throws(
-    () => plugin.createInstance({ input_0: 0 }, context).onHistory(history),
-    /bounds/,
+
+  const migrated = plugin.createInstance(
+    { input_0: 0, input_1: 42, removed_old_key: "ignored" },
+    context,
   );
+  migrated.onHistory(history);
+  assert.equal(
+    migrated.snapshot().points.at(-1).values.plot_0,
+    ta
+      .movingAverage(
+        history.map((candle) => candle.close),
+        "ema",
+        1,
+      )
+      .at(-1),
+  );
+  assert.equal(migrated.snapshot().points.at(-1).colors.plot_0, "#00ff00");
+  migrated.dispose();
+});
+
+test("stale option, boolean and numeric parameters normalize to the current declaration", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.input-migration.main", name: "Input migration" },
+    () => {
+      const length = input.int(3, { key: "length", min: 1, max: 5 });
+      const mode = input.string("close", {
+        key: "mode",
+        options: ["close", "open"],
+      });
+      const enabled = input.bool(true, { key: "enabled" });
+      plot.line(length + (mode === "open" ? 10 : 0) + (enabled ? 100 : 0));
+    },
+  );
+  const instance = plugin.createInstance(
+    {
+      length: 99,
+      mode: "removed-mode",
+      enabled: "legacy-true",
+      oldSetting: 123,
+    },
+    context,
+  );
+  instance.onHistory([candle(0), candle(1)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 105);
+  instance.dispose();
 });
 
 test("conditional stateful declarations fail locally and history reload resets a failed instance", () => {

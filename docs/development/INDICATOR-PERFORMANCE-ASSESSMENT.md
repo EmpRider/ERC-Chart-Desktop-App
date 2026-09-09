@@ -43,7 +43,7 @@ before/after interactive FPS recording of the user's live session.
 - Changed legacy ATR building updates to replace their current candle/point in
   place. Added visual revisions so unchanged drawings/signals are retained
   without being retransmitted.
-- Added a Pine-inspired scalar SDK: `defineIndicator`, `input`, scalar `ta`,
+- Added a Pine-inspired authored SDK: `defineIndicator`, `input`, scalar `ta`,
   `series`, `plot`, and `signal`. Definitions, output arrays and lifecycle
   handling are generated internally. Provisional calculations roll back to the
   last committed bar before each tick, preventing cumulative intrabar errors.
@@ -76,11 +76,11 @@ number of plots/drawings and author code. Extrema use amortized constant-time
 queues; arbitrary loops or moving-average variants cannot all promise strict
 constant work.
 
-The **legacy ATR Rope + UT Bot finalized-bar handler still rebuilds POC/signals**.
-Migrating that calculation to persistent committed state remains necessary to
-remove its bar-close spike. The new scalar SDK supports incremental finalization,
-but the complex legacy indicator has not been fully migrated. Renderer rollover
-can also materialize session history; ordinary same-bar ticks avoid that copy.
+ATR Rope + UT Bot now uses the authored API and persistent committed state for
+its rope, UT Bot, signal-follow and rolling POC calculations. Finalized bars
+advance that state incrementally and building updates reuse the last committed
+state. Renderer rollover can still materialize session history; ordinary
+same-bar ticks avoid that copy.
 
 Initial load, timeframe/instrument changes, calculation settings, historical
 corrections, missed multi-bar catch-up and retention resets may rebuild from the

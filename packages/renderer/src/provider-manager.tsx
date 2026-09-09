@@ -24,6 +24,7 @@ export interface PluginManagerProps {
   readonly onClose: () => void;
   readonly onProviderImport: (sourceKind: PluginImportSourceKind) => void;
   readonly onIndicatorImport: (sourceKind: PluginImportSourceKind) => void;
+  readonly onIndicatorRemove: (pluginId: string) => Promise<void>;
   readonly onRefresh: () => Promise<void>;
   readonly onCreate: (request: ProviderProfileCreateRequest) => Promise<void>;
   readonly onUpdate: (request: ProviderProfileUpdateRequest) => Promise<void>;
@@ -344,6 +345,7 @@ export function PluginManager({
   onClose,
   onProviderImport,
   onIndicatorImport,
+  onIndicatorRemove,
   onRefresh,
   onCreate,
   onUpdate,
@@ -861,6 +863,27 @@ export function PluginManager({
                         ))}
                       </div>
                     )}
+                  </section>
+                  <section className="plugin-detail-section">
+                    <div className="plugin-detail-section-heading">
+                      <div>
+                        <h4>Indicator installation</h4>
+                        <p>
+                          Removing the plugin keeps workspace configuration, so
+                          reinstalling it can restore those instances.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="provider-danger"
+                        disabled={busy || indicatorImportBusy}
+                        onClick={() => {
+                          void onIndicatorRemove(selectedIndicator.pluginId);
+                        }}
+                      >
+                        Remove indicator
+                      </button>
+                    </div>
                   </section>
                 </>
               )}

@@ -14,6 +14,7 @@ export {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
+  indicatorRemoveChannel,
   indicatorsListChannel,
   isIndicatorImportPreview,
   isIndicatorImportPreviewResult,

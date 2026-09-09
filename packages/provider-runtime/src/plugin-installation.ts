@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import type { PluginManifest } from "@erc-chart/contracts";
@@ -9,6 +10,7 @@ const pluginVersionPattern =
 
 export interface PluginInstallationOptions {
   readonly installationRoot: string;
+  readonly replaceExisting?: boolean;
 }
 
 export interface InstalledPluginPackage {
@@ -70,6 +72,7 @@ export async function installStagedPlugin(
   options: PluginInstallationOptions,
 ): Promise<InstalledPluginPackage> {
   let pluginDirectory: string | undefined;
+  let replacementBackupPath: string | undefined;
   try {
     const manifest = checkedStagedManifest(staged);
     const installationRoot = checkedInstallationRoot(options.installationRoot);
@@ -86,14 +89,30 @@ export async function installStagedPlugin(
       "Plugin installation directory",
     );
     const installationPath = path.join(pluginDirectory, manifest.version);
-    if ((await optionalStat(installationPath)) !== undefined)
-      throw new Error(
-        `Plugin ${manifest.id}@${manifest.version} is already installed.`,
+    const existingInfo = await optionalStat(installationPath);
+    if (existingInfo !== undefined) {
+      if (!options.replaceExisting)
+        throw new Error(
+          `Plugin ${manifest.id}@${manifest.version} is already installed.`,
+        );
+      if (!existingInfo.isDirectory() || existingInfo.isSymbolicLink())
+        throw new Error("Installed plugin path must be a real directory.");
+      replacementBackupPath = path.join(
+        pluginDirectory,
+        `.${manifest.version}.replacement-${randomUUID()}`,
       );
+      await rename(installationPath, replacementBackupPath);
+    }
 
     try {
       await rename(await realpath(staged.stagingPath), installationPath);
     } catch (error) {
+      if (replacementBackupPath !== undefined) {
+        await rename(replacementBackupPath, installationPath).catch(
+          () => undefined,
+        );
+        replacementBackupPath = undefined;
+      }
       if ((error as NodeJS.ErrnoException).code === "EXDEV") {
         throw new Error(
           "Plugin staging and installation directories must be on the same filesystem for atomic installation.",
@@ -101,6 +120,11 @@ export async function installStagedPlugin(
         );
       }
       throw error;
+    }
+
+    if (replacementBackupPath !== undefined) {
+      await rm(replacementBackupPath, { recursive: true, force: true });
+      replacementBackupPath = undefined;
     }
 
     return {
@@ -112,6 +136,15 @@ export async function installStagedPlugin(
     };
   } catch (error) {
     await rm(staged.stagingPath, { recursive: true, force: true });
+    if (replacementBackupPath !== undefined && pluginDirectory !== undefined) {
+      const manifest = staged.manifest;
+      const installationPath = path.join(pluginDirectory, manifest.version);
+      if ((await optionalStat(installationPath)) === undefined) {
+        await rename(replacementBackupPath, installationPath).catch(
+          () => undefined,
+        );
+      }
+    }
     if (pluginDirectory !== undefined) {
       try {
         await rmdir(pluginDirectory);

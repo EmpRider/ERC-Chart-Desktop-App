@@ -2,10 +2,12 @@ import {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
+  indicatorRemoveChannel,
   indicatorsListChannel,
   isIndicatorImportPreviewResult,
   isInstalledIndicatorList,
   isInstalledIndicatorSummary,
+  isPluginId,
   isImportedProviderSession,
   isProviderHistoryLoadRequest,
   isProviderHistoryResult,
@@ -79,6 +81,7 @@ export interface ErcChartBridge {
   ) => Promise<InstalledIndicatorSummary>;
   readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
   readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
+  readonly removeIndicator: (pluginId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -333,6 +336,15 @@ export function createErcChartBridge(
         return result;
       } catch {
         throw new Error("Installed indicators could not be loaded.");
+      }
+    },
+    removeIndicator: async (pluginId: string): Promise<void> => {
+      try {
+        if (!isPluginId(pluginId)) throw new Error();
+        const result = await invoke(indicatorRemoveChannel, pluginId);
+        if (result !== true) throw new Error();
+      } catch {
+        throw new Error("Indicator could not be removed.");
       }
     },
     listProviderProfiles: async (): Promise<ProviderManagementSnapshot> => {

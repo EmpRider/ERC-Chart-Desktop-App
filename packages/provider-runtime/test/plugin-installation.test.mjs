@@ -176,3 +176,49 @@ test("rejects installation collisions without replacing the installed version", 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("replaces an installed version only when replacement is explicitly enabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-replace-"));
+  try {
+    const installationRoot = path.join(root, "installed");
+    const stagingRoot = path.join(root, "staging");
+    const firstSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 1;\n",
+    );
+    const first = await stagePluginPackage(
+      { kind: "folder", path: firstSource },
+      { stagingRoot },
+    );
+    await installStagedPlugin(first, { installationRoot });
+
+    await rm(firstSource, { recursive: true, force: true });
+    const replacementSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 'replacement';\n",
+    );
+    const replacement = await stagePluginPackage(
+      { kind: "folder", path: replacementSource },
+      { stagingRoot },
+    );
+    const installed = await installStagedPlugin(replacement, {
+      installationRoot,
+      replaceExisting: true,
+    });
+
+    assert.equal(
+      await readFile(
+        path.join(installed.installationPath, "dist", "index.js"),
+        "utf8",
+      ),
+      "export default 'replacement';\n",
+    );
+    assert.deepEqual(await readdir(path.dirname(installed.installationPath)), [
+      "1.0.0",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

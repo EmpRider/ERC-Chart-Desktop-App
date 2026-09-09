@@ -62,6 +62,7 @@ function managerProps(overrides = {}) {
     onClose: () => undefined,
     onProviderImport: () => undefined,
     onIndicatorImport: () => undefined,
+    onIndicatorRemove: async () => undefined,
     onRefresh: async () => undefined,
     onCreate: async () => undefined,
     onUpdate: async () => undefined,
@@ -121,6 +122,8 @@ test("switches tabs and dispatches provider and indicator import source kinds", 
             calls.push(["provider-import", sourceKind]),
           onIndicatorImport: (sourceKind) =>
             calls.push(["indicator-import", sourceKind]),
+          onIndicatorRemove: async (pluginId) =>
+            calls.push(["indicator-remove", pluginId]),
           onStart: async (profileId) => calls.push(["start", profileId]),
           onStop: async (profileId) => calls.push(["stop", profileId]),
           onDelete: async (profileId) => calls.push(["delete", profileId]),
@@ -178,6 +181,12 @@ test("switches tabs and dispatches provider and indicator import source kinds", 
   assert.match(document.body.textContent, /Declared parameters/u);
   assert.match(document.body.textContent, /configured per indicator instance/u);
 
+  const removeIndicator = [...document.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Remove indicator",
+  );
+  assert.ok(removeIndicator);
+  await act(async () => removeIndicator.click());
+
   const indicatorImportFolder = [
     ...document.querySelectorAll(".plugin-import-actions button"),
   ].find((button) => button.textContent?.trim() === "Import folder");
@@ -188,6 +197,7 @@ test("switches tabs and dispatches provider and indicator import source kinds", 
     ["provider-import", "zip"],
     ["stop", "profile-a"],
     ["delete", "profile-a"],
+    ["indicator-remove", "erc.indicator.fixture"],
     ["indicator-import", "folder"],
   ]);
 });
