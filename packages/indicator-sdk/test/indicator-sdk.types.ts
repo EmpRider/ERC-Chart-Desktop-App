@@ -2,6 +2,7 @@ import type { InstrumentId, TimeframeId } from "@erc-chart/contracts";
 import {
   indicatorSdkVersion,
   defineIndicator,
+  history,
   input,
   plot,
   ta,
@@ -13,12 +14,26 @@ import {
 
 export const authored = defineIndicator(
   { id: "fixture.authored", name: "Authored" },
-  ({ close }) => {
+  ({ close, volume }) => {
     const length: number = input.int(14, { title: "Length" });
     const value: number = ta.ema(close, length);
     const atr: number = ta.atr(length);
     const rsi: number = ta.rsi(length);
-    plot.line(value + atr, { title: "Band", color: "#00ff00" });
+    const previousByIndex: number = close[1];
+    const previousByAt: number = close.at(1);
+    const previousByFunction: number = history(close, 1);
+    const previousDerived: number = history(close * 2, 1);
+    const previousVolume: number = history(volume, 1);
+    plot.line(
+      value +
+        atr +
+        previousByIndex +
+        previousByAt +
+        previousByFunction +
+        previousDerived +
+        previousVolume,
+      { title: "Band", color: "#00ff00" },
+    );
     plot.histogram(rsi);
     // @ts-expect-error the authoring plot API accepts scalars, never historical arrays
     plot.line([value]);

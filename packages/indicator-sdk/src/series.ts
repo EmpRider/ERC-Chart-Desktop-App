@@ -1,7 +1,50 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
+import { historyValue } from "./internal/series-history.js";
 
 export const maxSeriesCollectionItems = 4_096;
+
+/**
+ * Compile-time authoring view for scalar market values.
+ *
+ * The runtime value stays a primitive number. The authoring transform lowers
+ * bracket and `.at()` history access to `history()` before the code executes.
+ */
+export type SeriesNumber = number & {
+  readonly [barsBack: number]: number;
+  readonly at: (barsBack: number) => number;
+};
+
+export type IndicatorSeriesBar = Omit<
+  Candle,
+  "open" | "high" | "low" | "close" | "volume"
+> & {
+  readonly open: SeriesNumber;
+  readonly high: SeriesNumber;
+  readonly low: SeriesNumber;
+  readonly close: SeriesNumber;
+  readonly volume?: SeriesNumber;
+  readonly index: number;
+  readonly isConfirmed: boolean;
+  readonly isHistory: boolean;
+  readonly isHistoryFinalizedTail: boolean;
+  readonly hl2: SeriesNumber;
+  readonly hlc3: SeriesNumber;
+  readonly ohlc4: SeriesNumber;
+};
+
+/**
+ * Read a prior value from the same scalar source.
+ *
+ * `barsBack = 0` returns the current value. Missing history returns NaN. The
+ * authoring compiler lowers `close[n]` and `close.at(n)` to this operation.
+ */
+export function history(
+  source: number | undefined,
+  barsBack: number,
+): number {
+  return historyValue(source ?? Number.NaN, barsBack);
+}
 
 function cloneSeriesState<T>(value: T): T {
   const seen = new Map<object, unknown>();
