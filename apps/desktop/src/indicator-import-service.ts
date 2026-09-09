@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   isInstalledIndicatorDefinition,
+  isPluginId,
   isPluginManifest,
   type IndicatorImportPreview,
   type InstalledIndicatorSummary,
@@ -9,6 +10,7 @@ import {
 import {
   discardStagedPlugin,
   installStagedPlugin,
+  PluginInstallationRecoveryError,
   removeInstalledPlugin,
   stagePluginPackage,
   type PluginPackageSource,
@@ -31,6 +33,7 @@ export interface IndicatorImportService {
   readonly approve: (requestId: string) => Promise<InstalledIndicatorSummary>;
   readonly cancel: (requestId: string) => Promise<void>;
   readonly list: () => Promise<readonly InstalledIndicatorSummary[]>;
+  readonly remove: (pluginId: string) => Promise<boolean>;
   readonly shutdown: () => Promise<void>;
 }
 
@@ -75,15 +78,35 @@ function toSummary(
   pluginName: string,
   version: string,
   entry: string,
+  packageHash: string,
   definition: IndicatorImportPreview["definition"],
 ): InstalledIndicatorSummary {
-  const runtimeEntryUrl = [
+  const runtimeEntryPath = [
     "erc-plugin://plugin",
     encodeURIComponent(pluginId),
     encodeURIComponent(version),
     ...entry.split("/").map((part) => encodeURIComponent(part)),
   ].join("/");
+  const runtimeEntryUrl = `${runtimeEntryPath}?revision=${packageHash}`;
   return { pluginId, pluginName, version, runtimeEntryUrl, definition };
+}
+
+function packageHashFromIntegrity(integrityHash: string): string {
+  const prefix = "sha256:";
+  const packageHash = integrityHash.startsWith(prefix)
+    ? integrityHash.slice(prefix.length)
+    : "";
+  if (!/^[a-f0-9]{64}$/u.test(packageHash)) {
+    throw new Error("Indicator registry integrity metadata is invalid.");
+  }
+  return packageHash;
+}
+
+function requirePluginId(value: string): string {
+  if (!isPluginId(value)) {
+    throw new Error("Indicator plugin ID is invalid.");
+  }
+  return value;
 }
 
 function indicatorDefinitionFromManifest(
@@ -149,6 +172,7 @@ export function createIndicatorImportService(
           manifest.name,
           entry.version,
           manifest.entry,
+          packageHashFromIntegrity(entry.integrityHash),
           definition,
         ),
       );
@@ -206,38 +230,86 @@ export function createIndicatorImportService(
     if (request === undefined) {
       throw new Error("Indicator import request is no longer available.");
     }
-    pending.delete(requestId);
     const { staged } = request;
     let installed: Awaited<ReturnType<typeof installStagedPlugin>> | undefined;
     let registryCreated = false;
+    const existingEntry = (await options.storage.listPlugins()).find(
+      (entry) =>
+        entry.kind === "indicator" &&
+        entry.pluginId === staged.manifest.id &&
+        entry.version === staged.manifest.version,
+    );
     try {
-      installed = await installStagedPlugin(staged, {
-        installationRoot: options.installationRoot,
-      });
-      await options.storage.putPlugin({
-        pluginId: installed.pluginId,
-        version: installed.version,
-        kind: "indicator",
-        trust: "unsigned",
-        status: "disabled",
-        manifest: installed.manifest as unknown as JsonObject,
-        integrityHash: `sha256:${installed.packageHash}`,
-        permissions: registryPermissions(staged),
-      });
-      registryCreated = true;
-      await options.storage.activatePlugin(
-        installed.pluginId,
-        installed.version,
-      );
+      if (existingEntry !== undefined) {
+        await options.storage.putPlugin({
+          pluginId: staged.manifest.id,
+          version: staged.manifest.version,
+          kind: "indicator",
+          trust: "unsigned",
+          status: "disabled",
+          manifest: staged.manifest as unknown as JsonObject,
+          integrityHash: `sha256:${staged.packageHash}`,
+          permissions: registryPermissions(staged),
+        });
+        registryCreated = true;
+        await options.storage.activatePlugin(
+          staged.manifest.id,
+          staged.manifest.version,
+        );
+        installed = await installStagedPlugin(staged, {
+          installationRoot: options.installationRoot,
+          replaceExisting: true,
+        });
+      } else {
+        installed = await installStagedPlugin(staged, {
+          installationRoot: options.installationRoot,
+          replaceExisting: true,
+          deferReplacementCommit: true,
+        });
+        await options.storage.putPlugin({
+          pluginId: installed.pluginId,
+          version: installed.version,
+          kind: "indicator",
+          trust: "unsigned",
+          status: "disabled",
+          manifest: installed.manifest as unknown as JsonObject,
+          integrityHash: `sha256:${installed.packageHash}`,
+          permissions: registryPermissions(staged),
+        });
+        registryCreated = true;
+        await options.storage.activatePlugin(
+          installed.pluginId,
+          installed.version,
+        );
+        await installed.replacement?.commit();
+      }
+      pending.delete(requestId);
       return toSummary(
         installed.pluginId,
         installed.manifest.name,
         installed.version,
         installed.manifest.entry,
+        installed.packageHash,
         request.definition,
       );
     } catch (error) {
-      if (registryCreated && installed !== undefined) {
+      pending.delete(requestId);
+      if (
+        existingEntry !== undefined &&
+        registryCreated &&
+        installed === undefined
+      ) {
+        await options.storage.putPlugin(
+          error instanceof PluginInstallationRecoveryError
+            ? { ...existingEntry, status: "disabled" }
+            : existingEntry,
+        );
+      }
+      if (
+        existingEntry === undefined &&
+        registryCreated &&
+        installed !== undefined
+      ) {
         await options.storage
           .disablePlugin(installed.pluginId, installed.version)
           .catch(() => undefined);
@@ -245,17 +317,57 @@ export function createIndicatorImportService(
           .deletePlugin(installed.pluginId, installed.version)
           .catch(() => false);
       }
-      if (installed !== undefined) {
-        await removeInstalledPlugin(
-          { installationRoot: options.installationRoot },
-          installed.pluginId,
-          installed.version,
-        ).catch(() => undefined);
-      } else {
+      if (existingEntry === undefined && installed !== undefined) {
+        if (installed.replacement !== undefined) {
+          await installed.replacement.rollback().catch(() => undefined);
+        } else {
+          await removeInstalledPlugin(
+            { installationRoot: options.installationRoot },
+            installed.pluginId,
+            installed.version,
+          ).catch(() => undefined);
+        }
+      } else if (installed === undefined) {
         await discardStagedPlugin(staged).catch(() => undefined);
       }
       throw error;
     }
+  };
+
+  const remove = async (pluginIdValue: string): Promise<boolean> => {
+    const pluginId = requirePluginId(pluginIdValue);
+    const entries = (await options.storage.listPlugins())
+      .filter(
+        (entry) => entry.kind === "indicator" && entry.pluginId === pluginId,
+      )
+      .sort((left, right) => {
+        if (left.status === "active" && right.status !== "active") return 1;
+        if (right.status === "active" && left.status !== "active") return -1;
+        return left.version.localeCompare(right.version);
+      });
+    if (entries.length === 0) return false;
+
+    for (const entry of entries) {
+      const wasActive = entry.status === "active";
+      if (wasActive)
+        await options.storage.disablePlugin(pluginId, entry.version);
+      try {
+        await removeInstalledPlugin(
+          { installationRoot: options.installationRoot },
+          pluginId,
+          entry.version,
+        );
+      } catch (error) {
+        if (wasActive) {
+          await options.storage
+            .activatePlugin(pluginId, entry.version)
+            .catch(() => undefined);
+        }
+        throw error;
+      }
+      await options.storage.deletePlugin(pluginId, entry.version);
+    }
+    return true;
   };
 
   return {
@@ -263,6 +375,7 @@ export function createIndicatorImportService(
     approve,
     cancel,
     list,
+    remove,
     shutdown: async (): Promise<void> => {
       const staged = [...pending.values()].map((request) => request.staged);
       pending.clear();

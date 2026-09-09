@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
 export const binomoProviderPackageIdentity = Object.freeze({
   id: "erc.provider.binomo",
@@ -58,7 +59,8 @@ export async function buildBinomoProviderPackage({ root, outputRoot }) {
     `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8",
   );
-  return { packageRoot, manifest };
+  const archivePath = await writePluginPackageArchive(packageRoot);
+  return { packageRoot, archivePath, manifest };
 }
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -72,4 +74,5 @@ if (
     outputRoot: path.join(root, "out", "provider-plugins", "binomo-provider"),
   });
   console.log(`BINOMO_PROVIDER_PACKAGE ${result.packageRoot}`);
+  console.log(`BINOMO_PROVIDER_PACKAGE_ZIP ${result.archivePath}`);
 }

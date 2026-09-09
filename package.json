@@ -30,7 +30,7 @@
     "smoke:indicator-worker": "npm run build:runtime && node tools/electron-indicator-worker-smoke.mjs",
     "smoke:workspace-restart": "npm run build:runtime && node tools/electron-workspace-restart.mjs",
     "smoke:multi-instance": "npm run build:runtime && node tools/electron-multi-instance.mjs",
-    "test:performance": "node tools/application-gates/src/scaffold-performance.mjs",
+    "test:performance": "node tools/application-gates/src/scaffold-performance.mjs && node tools/indicator-series-performance.mjs && node tools/indicator-drawings-performance.mjs && node tools/indicator-tick-performance.mjs",
     "audit:ci": "node tools/audit-ci.mjs",
     "version:check": "node tools/workspace-boundaries/src/cli.mjs",
     "package:win": "npm run build:runtime && node tools/packaging/prepare-package.mjs && electron-builder --config tools/packaging/electron-builder.config.mjs --win nsis --x64 --publish never",

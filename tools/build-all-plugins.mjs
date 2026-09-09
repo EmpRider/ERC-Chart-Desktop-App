@@ -45,6 +45,9 @@ for (const entry of packages) {
   console.log(
     `PLUGIN_PACKAGE ${result.manifest.id}@${result.manifest.version} ${result.packageRoot}`,
   );
+  console.log(
+    `PLUGIN_PACKAGE_ZIP ${result.manifest.id}@${result.manifest.version} ${result.archivePath}`,
+  );
 }
 
 console.log(`Built ${packages.length} plugin packages.`);

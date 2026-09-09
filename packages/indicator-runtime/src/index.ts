@@ -6,7 +6,22 @@ import type {
   IndicatorRuntimePoint,
   IndicatorRuntimeSignal,
   IndicatorRuntimeSnapshot,
+  InstalledIndicatorDefinition,
 } from "@erc-chart/contracts";
+import {
+  normalizeIndicatorParameters as normalizeSdkIndicatorParameters,
+  type IndicatorInputDefinition,
+} from "@erc-chart/indicator-sdk";
+
+export function normalizeIndicatorParameters(
+  definition: InstalledIndicatorDefinition,
+  supplied: Readonly<Record<string, unknown>>,
+): IndicatorParameterValues {
+  return normalizeSdkIndicatorParameters(
+    definition.inputs as readonly IndicatorInputDefinition[],
+    supplied,
+  );
+}
 
 export interface IndicatorWorkerExecutionRequest {
   readonly instanceId: string;
@@ -139,6 +154,8 @@ interface WorkerState {
 
 const defaultStartupTimeoutMs = 2_000;
 const defaultUpdateTimeoutMs = 100;
+const maximumHistoryTimeoutMs = 60_000;
+const historyTimeoutPerBarMs = 5;
 
 function positiveTimeout(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value > 0
@@ -335,7 +352,19 @@ export function createIndicatorWorkerSupervisor(
       ...request,
     };
     return new Promise<IndicatorWorkerExecutionResult>((resolve, reject) => {
-      const timeoutMs = state.initialized ? updateTimeoutMs : startupTimeoutMs;
+      const historyCalculation =
+        request.data.kind === "snapshot" || request.data.kind === "rebuild";
+      const historyTimeoutMs = historyCalculation
+        ? Math.min(
+            maximumHistoryTimeoutMs,
+            startupTimeoutMs +
+              request.data.candles.length * historyTimeoutPerBarMs,
+          )
+        : startupTimeoutMs;
+      const timeoutMs =
+        !state.initialized || historyCalculation
+          ? historyTimeoutMs
+          : updateTimeoutMs;
       const timer = setTimeout(() => {
         const pending = state.pending.get(sequence);
         if (pending === undefined) return;

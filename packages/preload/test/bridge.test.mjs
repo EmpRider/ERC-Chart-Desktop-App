@@ -25,6 +25,7 @@ test("exposes only the allowlisted application bridge methods", async () => {
     "approveIndicatorImport",
     "cancelIndicatorImport",
     "listIndicators",
+    "removeIndicator",
     "listProviderProfiles",
     "createProviderProfile",
     "updateProviderProfile",
@@ -90,6 +91,7 @@ test("installs one application-specific global", () => {
         "approveIndicatorImport",
         "cancelIndicatorImport",
         "listIndicators",
+        "removeIndicator",
         "listProviderProfiles",
         "createProviderProfile",
         "updateProviderProfile",
@@ -102,6 +104,39 @@ test("installs one application-specific global", () => {
       ],
     ],
   ]);
+});
+
+test("validates indicator removal across the preload boundary", async () => {
+  const calls = [];
+  const bridge = createErcChartBridge(async (...args) => {
+    calls.push(args);
+    return true;
+  });
+
+  await bridge.removeIndicator("erc.indicator.fixture");
+  assert.deepEqual(calls, [
+    ["erc-chart:indicator-remove", "erc.indicator.fixture"],
+  ]);
+
+  await assert.rejects(
+    bridge.removeIndicator("invalid"),
+    new Error("Indicator could not be removed."),
+  );
+  assert.equal(calls.length, 1);
+
+  const falseBridge = createErcChartBridge(async () => false);
+  await assert.rejects(
+    falseBridge.removeIndicator("erc.indicator.fixture"),
+    new Error("Indicator could not be removed."),
+  );
+
+  const rejectedBridge = createErcChartBridge(async () => {
+    throw new Error("private IPC failure");
+  });
+  await assert.rejects(
+    rejectedBridge.removeIndicator("erc.indicator.fixture"),
+    new Error("Indicator could not be removed."),
+  );
 });
 
 test("validates provider management commands across the preload boundary", async () => {

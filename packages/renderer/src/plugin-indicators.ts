@@ -5,12 +5,14 @@ import type {
   IndicatorRuntimeSignal,
   IndicatorRuntimeSnapshot,
   InstalledIndicatorDefinition,
-  InstalledIndicatorInputDefinition,
   InstalledIndicatorSummary,
   ProviderSeriesChange,
   WorkspaceIndicator,
 } from "@erc-chart/contracts";
-import type { IndicatorWorkerResultUpdate } from "@erc-chart/indicator-runtime";
+import {
+  normalizeIndicatorParameters,
+  type IndicatorWorkerResultUpdate,
+} from "@erc-chart/indicator-runtime";
 import type {
   Chart,
   IndicatorCreate,
@@ -213,46 +215,11 @@ function registrationName(summary: InstalledIndicatorSummary): string {
     .join("__");
 }
 
-function finite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function normalizedInputValue(
-  input: InstalledIndicatorInputDefinition,
-  value: unknown,
-): boolean | number | string {
-  if (input.type === "boolean") {
-    return typeof value === "boolean" ? value : input.defaultValue;
-  }
-  if (input.type === "number") {
-    const raw = finite(value) ? value : input.defaultValue;
-    const bounded = Math.min(input.max ?? raw, Math.max(input.min ?? raw, raw));
-    if (input.step === undefined) return bounded;
-    const decimals = Math.max(0, `${input.step}`.split(".")[1]?.length ?? 0);
-    return Number(bounded.toFixed(decimals));
-  }
-  if (typeof value !== "string") return input.defaultValue;
-  if (
-    input.options !== undefined &&
-    !input.options.some((option) => option.value === value)
-  ) {
-    return input.defaultValue;
-  }
-  return value;
-}
-
 export function normalizePluginIndicatorParameters(
   indicator: WorkspaceIndicator,
   definition: InstalledIndicatorDefinition,
 ): Readonly<Record<string, boolean | number | string>> {
-  return Object.freeze(
-    Object.fromEntries(
-      definition.inputs.map((input) => [
-        input.key,
-        normalizedInputValue(input, indicator.parameters[input.key]),
-      ]),
-    ),
-  );
+  return normalizeIndicatorParameters(definition, indicator.parameters);
 }
 
 export function createPluginWorkspaceIndicator(

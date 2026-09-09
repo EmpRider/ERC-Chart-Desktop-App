@@ -1,29 +1,19 @@
 import {
-  indicatorContractVersion,
-  indicatorHostVersion,
-  candlesWithPriceSource,
-  inputOptions,
+  appendSeries,
+  defineIndicator,
+  input,
+  laggedValue,
   movingAverageTypes,
-  priceSeries,
+  plot,
   priceSources,
+  priceValue,
+  series,
+  signal,
   ta,
-  type Candle,
-  type CandleTaKernel,
-  type IndicatorDefinition,
-  type IndicatorInputValue,
-  type IndicatorInstanceContext,
+  type DmiPoint,
+  type IndicatorBar,
   type IndicatorPluginModule,
-  type IndicatorSnapshot,
-  type DmiSeries,
-  type MovingAverageType,
-  type NumericTaKernel,
-  type PriceSource,
-  type RuntimeIndicatorInstance,
-  type SignalCandidate,
 } from "@erc-chart/indicator-sdk";
-
-const pluginId = "erc.indicator.atr-rope-utbot";
-const definitionId = `${pluginId}.unified`;
 
 const ropeModes = [
   "original",
@@ -51,82 +41,45 @@ const suppressionModes = [
 const drawModes = ["Line + Band", "Line", "Band"] as const;
 const bandMergeModes = ["Inside Band", "Band Overlap"] as const;
 
-type RopeMode = (typeof ropeModes)[number];
-type DirectionMaType = MovingAverageType;
-type UtMode = (typeof utModes)[number];
-type SignalMode = (typeof signalModes)[number];
-type SuppressionMode = (typeof suppressionModes)[number];
-type DrawMode = (typeof drawModes)[number];
 type BandMergeMode = (typeof bandMergeModes)[number];
+type Direction = -1 | 0 | 1;
+type SignalSide = "buy" | "sell";
 
-interface Params {
-  readonly ropePeriod: number;
-  readonly ropeMultiplier: number;
-  readonly ropeSource: PriceSource;
-  readonly ropeSensitivityMode: RopeMode;
-  readonly ropeDirectionMaType: DirectionMaType;
-  readonly ropeDirectionLookback: number;
-  readonly ropeDirectionThreshold: number;
-  readonly utbotKeyValue: number;
-  readonly utbotAtrPeriod: number;
-  readonly utbotSource: PriceSource;
-  readonly utbotMode: UtMode;
-  readonly signalIssueMode: SignalMode;
-  readonly mgStepCount: number;
-  readonly profilePeriod: number;
-  readonly fastPocPeriod: number;
-  readonly rowCount: number;
-  readonly dmiLength: number;
-  readonly minEarlyBars: number;
-  readonly projectionBars: number;
-  readonly bodyWeight: number;
-  readonly migrationStrength: number;
-  readonly migrationConfirmBars: number;
-  readonly migrationCenterSmoothing: number;
-  readonly activeHistoricalPocCount: number;
-  readonly minZoneBarsToRender: number;
-  readonly minZoneHitsToRender: number;
-  readonly maxStoredZones: number;
-  readonly pocBandHalfRows: number;
-  readonly bandMergeMode: BandMergeMode;
-  readonly maxBandExpansionRows: number;
-  readonly pocBandSignalSuppressLine: SuppressionMode;
-  readonly drawMode: DrawMode;
-  readonly adxPocSource: PriceSource;
-  readonly currentColor: string;
-  readonly historicalColor: string;
-  readonly frozenColor: string;
-  readonly bandOpacity: number;
-  readonly lineOpacity: number;
-  readonly lineWidth: number;
-  readonly ropeUpColor: string;
-  readonly ropeDownColor: string;
-  readonly ropeFlatColor: string;
-  readonly ropeWidth: number;
-  readonly showTrailingStop: boolean;
-  readonly utbotTrailingStopColor: string;
-  readonly utbotUpTrendColor: string;
-  readonly utbotDownTrendColor: string;
-  readonly buySignalColor: string;
-  readonly sellSignalColor: string;
+interface RopeState {
+  readonly previousRope: number;
+  readonly rope: number;
+  readonly directionInput: number;
+  readonly sources: readonly number[];
 }
 
-interface RopeResult {
-  readonly rope: number[];
-  readonly upper: number[];
-  readonly lower: number[];
-  readonly directionUpper: number[];
-  readonly directionLower: number[];
-  readonly direction: number[];
+interface RopeDirectionState {
+  readonly bandAtr: number;
+  readonly upper: number;
+  readonly lower: number;
+  readonly direction: Direction;
 }
 
-interface UtResult {
-  readonly stop: number[];
-  readonly position: number[];
+interface UtState {
+  readonly previousStop: number;
+  readonly previousClose: number;
+  readonly stop: number;
+  readonly position: Direction;
+  readonly sources: readonly number[];
+}
+
+interface PocBar {
+  readonly index: number;
+  readonly openTimeMs: number;
+  readonly open: number;
+  readonly high: number;
+  readonly low: number;
+  readonly close: number;
+  readonly dmi: DmiPoint;
 }
 
 interface PocCandidate {
   readonly barIndex: number;
+  readonly openTimeMs: number;
   readonly center: number;
   readonly bandLow: number;
   readonly bandHigh: number;
@@ -144,6 +97,8 @@ interface PocCandidate {
 interface PocSegment {
   startIndex: number;
   endIndex: number;
+  startTimeMs: number;
+  endTimeMs: number;
   center: number;
   bandLow: number;
   bandHigh: number;
@@ -165,875 +120,601 @@ interface PocZone {
   readonly segments: PocSegment[];
 }
 
-interface SuppressionBand {
-  readonly startIndex: number;
-  readonly endIndex: number;
-  readonly top: number;
-  readonly bottom: number;
-}
-
-interface CalculationResult extends IndicatorSnapshot {
-  readonly finalizedBarIndex: number;
-  readonly pocZones: readonly PocZone[];
-}
-
-interface RopePoint {
-  readonly rope: number;
-  readonly upper: number;
-  readonly lower: number;
-  readonly directionUpper: number;
-  readonly directionLower: number;
-  readonly direction: number;
-}
-
-interface UtPoint {
-  readonly stop: number;
-  readonly position: number;
-}
-
-interface LiveTailState {
-  readonly ropeAtr: CandleTaKernel<number>;
-  readonly directionMa: NumericTaKernel;
-  readonly utAtr: CandleTaKernel<number>;
-  finalizedCount: number;
-  previousRope: number;
-  bandAtr: number;
-  previousAtr: number;
-  previousUtStop: number;
-  previousUtPosition: number;
-  previousUtClose: number;
-}
-
-export const definition: IndicatorDefinition = {
-  id: definitionId,
-  name: "ATR Rope + UT Bot Unified",
-  description:
-    "ATR Rope + UT Bot with follow signals and rolling ADX POC migration. This ERC conversion intentionally uses chart-timeframe candles only until the host exposes explicit MTF inputs, preventing hidden lookahead from userscript security() semantics.",
-  indicatorContractVersion,
-  hostCompatibility: {
-    minimumHostApiVersion: indicatorHostVersion,
-    maximumHostApiVersion: indicatorHostVersion,
-  },
-  placement: "overlay",
-  requiresLiveTicks: false,
-  inputs: [
-    {
-      key: "ropePeriod",
-      label: "ATR period",
-      group: "ATR Rope",
-      type: "number",
-      defaultValue: 14,
-      min: 1,
-      max: 500,
-      step: 1,
-    },
-    {
-      key: "ropeMultiplier",
-      label: "Sensitivity multiplier",
-      group: "ATR Rope",
-      type: "number",
-      defaultValue: 1.5,
-      min: 0.1,
-      max: 10,
-      step: 0.1,
-    },
-    {
-      key: "ropeSource",
-      label: "Price source",
-      group: "ATR Rope",
-      type: "string",
-      defaultValue: "close",
-      options: inputOptions(priceSources),
-    },
-    {
-      key: "ropeSensitivityMode",
-      label: "Sensitivity mode",
-      group: "ATR Rope",
-      type: "string",
-      defaultValue: "original",
-      options: inputOptions(ropeModes),
-    },
-    {
-      key: "ropeDirectionMaType",
-      label: "Direction MA",
-      group: "ATR Rope Direction",
-      type: "string",
-      defaultValue: "sma",
-      options: inputOptions(movingAverageTypes),
-    },
-    {
-      key: "ropeDirectionLookback",
-      label: "Direction lookback",
-      group: "ATR Rope Direction",
-      type: "number",
-      defaultValue: 2,
-      min: 1,
-      max: 20,
-      step: 1,
-    },
-    {
-      key: "ropeDirectionThreshold",
-      label: "Direction threshold",
-      group: "ATR Rope Direction",
-      type: "number",
-      defaultValue: 0.05,
-      min: 0,
-      max: 500,
-      step: 0.01,
-    },
-    {
-      key: "utbotKeyValue",
-      label: "ATR multiplier",
-      group: "UT Bot",
-      type: "number",
-      defaultValue: 1,
-      min: 0.1,
-      max: 10,
-      step: 0.1,
-    },
-    {
-      key: "utbotAtrPeriod",
-      label: "ATR period",
-      group: "UT Bot",
-      type: "number",
-      defaultValue: 10,
-      min: 1,
-      max: 500,
-      step: 1,
-    },
-    {
-      key: "utbotSource",
-      label: "Price source",
-      group: "UT Bot",
-      type: "string",
-      defaultValue: "close",
-      options: inputOptions(priceSources),
-    },
-    {
-      key: "utbotMode",
-      label: "Mode",
-      group: "UT Bot",
-      type: "string",
-      defaultValue: "original",
-      options: inputOptions(utModes),
-    },
-    {
-      key: "signalIssueMode",
-      label: "Signal mode",
-      group: "Signals",
-      type: "string",
-      defaultValue: "original",
-      options: inputOptions(signalModes),
-    },
-    {
-      key: "mgStepCount",
-      label: "MG follow steps",
-      group: "Signals",
-      type: "number",
-      defaultValue: 0,
-      min: 0,
-      max: 20,
-      step: 1,
-    },
-    {
-      key: "buySignalColor",
-      label: "Buy color",
-      group: "Signals",
-      type: "string",
-      defaultValue: "#089981",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "sellSignalColor",
-      label: "Sell color",
-      group: "Signals",
-      type: "string",
-      defaultValue: "#F23645",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "adxPocSource",
-      label: "Price source",
-      group: "ADX POC",
-      type: "string",
-      defaultValue: "close",
-      options: inputOptions(priceSources),
-    },
-    {
-      key: "profilePeriod",
-      label: "Profile period",
-      group: "ADX POC",
-      type: "number",
-      defaultValue: 30,
-      min: 5,
-      max: 500,
-      step: 1,
-    },
-    {
-      key: "fastPocPeriod",
-      label: "Fast POC period",
-      group: "ADX POC",
-      type: "number",
-      defaultValue: 10,
-      min: 3,
-      max: 100,
-      step: 1,
-    },
-    {
-      key: "rowCount",
-      label: "Price rows",
-      group: "ADX POC",
-      type: "number",
-      defaultValue: 24,
-      min: 10,
-      max: 100,
-      step: 1,
-    },
-    {
-      key: "dmiLength",
-      label: "ADX / DI length",
-      group: "ADX POC",
-      type: "number",
-      defaultValue: 14,
-      min: 1,
-      max: 500,
-      step: 1,
-    },
-    {
-      key: "minEarlyBars",
-      label: "Minimum early bars",
-      group: "ADX POC",
-      type: "number",
-      defaultValue: 5,
-      min: 2,
-      max: 100,
-      step: 1,
-    },
-    {
-      key: "projectionBars",
-      label: "Projection bars",
-      group: "ADX POC Migration",
-      type: "number",
-      defaultValue: 5,
-      min: 1,
-      max: 50,
-      step: 1,
-    },
-    {
-      key: "bodyWeight",
-      label: "Body weight",
-      group: "ADX POC",
-      type: "number",
-      defaultValue: 0.7,
-      min: 0,
-      max: 1,
-      step: 0.05,
-    },
-    {
-      key: "migrationStrength",
-      label: "Migration strength",
-      group: "ADX POC Migration",
-      type: "number",
-      defaultValue: 1.1,
-      min: 1,
-      max: 3,
-      step: 0.05,
-    },
-    {
-      key: "migrationConfirmBars",
-      label: "Migration confirmations",
-      group: "ADX POC Migration",
-      type: "number",
-      defaultValue: 1,
-      min: 1,
-      max: 5,
-      step: 1,
-    },
-    {
-      key: "migrationCenterSmoothing",
-      label: "Center smoothing",
-      group: "ADX POC Migration",
-      type: "number",
-      defaultValue: 0.1,
-      min: 0,
-      max: 0.95,
-      step: 0.05,
-    },
-    {
-      key: "activeHistoricalPocCount",
-      label: "Active historical POCs",
-      group: "ADX POC Zones",
-      type: "number",
-      defaultValue: 1,
-      min: 0,
-      max: 20,
-      step: 1,
-    },
-    {
-      key: "minZoneBarsToRender",
-      label: "Minimum zone bars",
-      group: "ADX POC Zones",
-      type: "number",
-      defaultValue: 3,
-      min: 1,
-      max: 20,
-      step: 1,
-    },
-    {
-      key: "minZoneHitsToRender",
-      label: "Minimum zone hits",
-      group: "ADX POC Zones",
-      type: "number",
-      defaultValue: 2,
-      min: 1,
-      max: 20,
-      step: 1,
-    },
-    {
-      key: "maxStoredZones",
-      label: "Maximum stored zones",
-      group: "ADX POC Zones",
-      type: "number",
-      defaultValue: 300,
-      min: 20,
-      max: 1000,
-      step: 10,
-    },
-    {
-      key: "pocBandHalfRows",
-      label: "Band half rows",
-      group: "ADX POC Band",
-      type: "number",
-      defaultValue: 1.5,
-      min: 0.1,
-      max: 20,
-      step: 0.1,
-    },
-    {
-      key: "bandMergeMode",
-      label: "Band merge mode",
-      group: "ADX POC Band",
-      type: "string",
-      defaultValue: "Inside Band",
-      options: inputOptions(bandMergeModes),
-    },
-    {
-      key: "maxBandExpansionRows",
-      label: "Maximum band expansion",
-      group: "ADX POC Band",
-      type: "number",
-      defaultValue: 2,
-      min: 0.5,
-      max: 20,
-      step: 0.25,
-    },
-    {
-      key: "pocBandSignalSuppressLine",
-      label: "Signal suppression",
-      group: "ADX POC Suppression",
-      type: "string",
-      defaultValue: "off",
-      options: inputOptions(suppressionModes),
-    },
-    {
-      key: "drawMode",
-      label: "POC draw mode",
-      group: "ADX POC Style",
-      type: "string",
-      defaultValue: "Line + Band",
-      options: inputOptions(drawModes),
-      effect: "presentation",
-    },
-    {
-      key: "currentColor",
-      label: "Current POC",
-      group: "ADX POC Style",
-      type: "string",
-      defaultValue: "rgba(255, 255, 0, 1)",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "historicalColor",
-      label: "Historical POC",
-      group: "ADX POC Style",
-      type: "string",
-      defaultValue: "rgba(255, 213, 79, 0.75)",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "frozenColor",
-      label: "Frozen POC",
-      group: "ADX POC Style",
-      type: "string",
-      defaultValue: "rgba(255, 255, 0, 0.35)",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "bandOpacity",
-      label: "Band opacity",
-      group: "ADX POC Style",
-      type: "number",
-      defaultValue: 0.18,
-      min: 0,
-      max: 1,
-      step: 0.05,
-      effect: "presentation",
-    },
-    {
-      key: "lineOpacity",
-      label: "Line opacity",
-      group: "ADX POC Style",
-      type: "number",
-      defaultValue: 0.95,
-      min: 0,
-      max: 1,
-      step: 0.05,
-      effect: "presentation",
-    },
-    {
-      key: "lineWidth",
-      label: "Line width",
-      group: "ADX POC Style",
-      type: "number",
-      defaultValue: 2,
-      min: 1,
-      max: 5,
-      step: 1,
-      effect: "presentation",
-    },
-    {
-      key: "ropeUpColor",
-      label: "Rope up color",
-      group: "Display",
-      type: "string",
-      defaultValue: "#3daa45",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "ropeDownColor",
-      label: "Rope down color",
-      group: "Display",
-      type: "string",
-      defaultValue: "#ff033e",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "ropeFlatColor",
-      label: "Rope flat color",
-      group: "Display",
-      type: "string",
-      defaultValue: "#004d92",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "ropeWidth",
-      label: "Rope width",
-      group: "Display",
-      type: "number",
-      defaultValue: 3,
-      min: 1,
-      max: 10,
-      step: 1,
-      effect: "presentation",
-    },
-    {
-      key: "showTrailingStop",
-      label: "Show trailing stop",
-      group: "Display",
-      type: "boolean",
-      defaultValue: true,
-      effect: "presentation",
-    },
-    {
-      key: "utbotTrailingStopColor",
-      label: "UT neutral color",
-      group: "Display",
-      type: "string",
-      defaultValue: "#787B86",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "utbotUpTrendColor",
-      label: "UT up color",
-      group: "Display",
-      type: "string",
-      defaultValue: "#089981",
-      editor: "color",
-      effect: "presentation",
-    },
-    {
-      key: "utbotDownTrendColor",
-      label: "UT down color",
-      group: "Display",
-      type: "string",
-      defaultValue: "#F23645",
-      editor: "color",
-      effect: "presentation",
-    },
-  ],
-  outputs: [
-    { key: "rope", label: "ATR Rope" },
-    { key: "directionUpper", label: "Direction Upper" },
-    { key: "directionLower", label: "Direction Lower" },
-    { key: "utStop", label: "UT Stop" },
-    { key: "buyMarker", label: "Buy" },
-    { key: "sellMarker", label: "Sell" },
-  ],
-  plots: [
-    {
-      key: "rope",
-      kind: "line",
-      outputKey: "rope",
-      label: "ATR Rope",
-      color: "#3daa45",
-      width: 3,
-    },
-    {
-      key: "directionUpper",
-      kind: "line",
-      outputKey: "directionUpper",
-      label: "Direction Upper",
-      color: "#3daa45",
-      width: 1,
-    },
-    {
-      key: "directionLower",
-      kind: "line",
-      outputKey: "directionLower",
-      label: "Direction Lower",
-      color: "#ff033e",
-      width: 1,
-    },
-    {
-      key: "utStop",
-      kind: "line",
-      outputKey: "utStop",
-      label: "UT Stop",
-      color: "#089981",
-      width: 2,
-    },
-    {
-      key: "buyMarker",
-      kind: "shape",
-      outputKey: "buyMarker",
-      label: "Buy",
-      color: "#089981",
-      direction: "up",
-    },
-    {
-      key: "sellMarker",
-      kind: "shape",
-      outputKey: "sellMarker",
-      label: "Sell",
-      color: "#F23645",
-      direction: "down",
-    },
-  ],
-};
-
-function numberValue(
-  values: Readonly<Record<string, IndicatorInputValue>>,
-  key: string,
-): number {
-  const value = values[key];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Invalid numeric parameter: ${key}`);
-  }
-  return value;
-}
-
-function stringValue(
-  values: Readonly<Record<string, IndicatorInputValue>>,
-  key: string,
-): string {
-  const value = values[key];
-  if (typeof value !== "string")
-    throw new Error(`Invalid string parameter: ${key}`);
-  return value;
-}
-
-function booleanValue(
-  values: Readonly<Record<string, IndicatorInputValue>>,
-  key: string,
-): boolean {
-  const value = values[key];
-  if (typeof value !== "boolean")
-    throw new Error(`Invalid boolean parameter: ${key}`);
-  return value;
-}
-
-function toParams(
-  values: Readonly<Record<string, IndicatorInputValue>>,
-): Params {
-  return {
-    ropePeriod: Math.max(1, Math.floor(numberValue(values, "ropePeriod"))),
-    ropeMultiplier: numberValue(values, "ropeMultiplier"),
-    ropeSource: stringValue(values, "ropeSource") as PriceSource,
-    ropeSensitivityMode: stringValue(values, "ropeSensitivityMode") as RopeMode,
-    ropeDirectionMaType: stringValue(
-      values,
-      "ropeDirectionMaType",
-    ) as DirectionMaType,
-    ropeDirectionLookback: Math.max(
-      1,
-      Math.floor(numberValue(values, "ropeDirectionLookback")),
-    ),
-    ropeDirectionThreshold: numberValue(values, "ropeDirectionThreshold"),
-    utbotKeyValue: numberValue(values, "utbotKeyValue"),
-    utbotAtrPeriod: Math.max(
-      1,
-      Math.floor(numberValue(values, "utbotAtrPeriod")),
-    ),
-    utbotSource: stringValue(values, "utbotSource") as PriceSource,
-    utbotMode: stringValue(values, "utbotMode") as UtMode,
-    signalIssueMode: stringValue(values, "signalIssueMode") as SignalMode,
-    mgStepCount: Math.max(0, Math.floor(numberValue(values, "mgStepCount"))),
-    profilePeriod: Math.max(
-      5,
-      Math.floor(numberValue(values, "profilePeriod")),
-    ),
-    fastPocPeriod: Math.max(
-      3,
-      Math.floor(numberValue(values, "fastPocPeriod")),
-    ),
-    rowCount: Math.max(10, Math.floor(numberValue(values, "rowCount"))),
-    dmiLength: Math.max(1, Math.floor(numberValue(values, "dmiLength"))),
-    minEarlyBars: Math.max(2, Math.floor(numberValue(values, "minEarlyBars"))),
-    projectionBars: Math.max(
-      1,
-      Math.floor(numberValue(values, "projectionBars")),
-    ),
-    bodyWeight: numberValue(values, "bodyWeight"),
-    migrationStrength: numberValue(values, "migrationStrength"),
-    migrationConfirmBars: Math.max(
-      1,
-      Math.floor(numberValue(values, "migrationConfirmBars")),
-    ),
-    migrationCenterSmoothing: numberValue(values, "migrationCenterSmoothing"),
-    activeHistoricalPocCount: Math.max(
-      0,
-      Math.floor(numberValue(values, "activeHistoricalPocCount")),
-    ),
-    minZoneBarsToRender: Math.max(
-      1,
-      Math.floor(numberValue(values, "minZoneBarsToRender")),
-    ),
-    minZoneHitsToRender: Math.max(
-      1,
-      Math.floor(numberValue(values, "minZoneHitsToRender")),
-    ),
-    maxStoredZones: Math.max(
-      20,
-      Math.floor(numberValue(values, "maxStoredZones")),
-    ),
-    pocBandHalfRows: numberValue(values, "pocBandHalfRows"),
-    bandMergeMode: stringValue(values, "bandMergeMode") as BandMergeMode,
-    maxBandExpansionRows: numberValue(values, "maxBandExpansionRows"),
-    pocBandSignalSuppressLine: stringValue(
-      values,
-      "pocBandSignalSuppressLine",
-    ) as SuppressionMode,
-    drawMode: stringValue(values, "drawMode") as DrawMode,
-    adxPocSource: stringValue(values, "adxPocSource") as PriceSource,
-    currentColor: stringValue(values, "currentColor"),
-    historicalColor: stringValue(values, "historicalColor"),
-    frozenColor: stringValue(values, "frozenColor"),
-    bandOpacity: numberValue(values, "bandOpacity"),
-    lineOpacity: numberValue(values, "lineOpacity"),
-    lineWidth: numberValue(values, "lineWidth"),
-    ropeUpColor: stringValue(values, "ropeUpColor"),
-    ropeDownColor: stringValue(values, "ropeDownColor"),
-    ropeFlatColor: stringValue(values, "ropeFlatColor"),
-    ropeWidth: numberValue(values, "ropeWidth"),
-    showTrailingStop: booleanValue(values, "showTrailingStop"),
-    utbotTrailingStopColor: stringValue(values, "utbotTrailingStopColor"),
-    utbotUpTrendColor: stringValue(values, "utbotUpTrendColor"),
-    utbotDownTrendColor: stringValue(values, "utbotDownTrendColor"),
-    buySignalColor: stringValue(values, "buySignalColor"),
-    sellSignalColor: stringValue(values, "sellSignalColor"),
+interface PocState {
+  readonly bars: readonly PocBar[];
+  readonly zones: readonly PocZone[];
+  readonly currentZoneId?: string;
+  readonly previousScores: readonly {
+    readonly center: number;
+    readonly score: number;
+  }[];
+  readonly pendingMigration?: {
+    readonly candidate: PocCandidate;
+    readonly hitCount: number;
   };
 }
 
-function computeRope(candles: readonly Candle[], params: Params): RopeResult {
-  const source = priceSeries(candles, params.ropeSource);
-  const atrValues = ta.atr(candles, params.ropePeriod);
-  const rope = Array<number>(candles.length).fill(Number.NaN);
-  const upper = Array<number>(candles.length).fill(Number.NaN);
-  const lower = Array<number>(candles.length).fill(Number.NaN);
-  const lag = Math.floor((params.ropePeriod - 1) / 2);
-  let previousRope = source[0] ?? 0;
-  for (let index = 0; index < candles.length; index += 1) {
-    const current = source[index] ?? Number.NaN;
-    const currentAtr = atrValues[index] ?? Number.NaN;
-    if (!Number.isFinite(current)) {
-      rope[index] = previousRope;
-      continue;
-    }
-    if (!Number.isFinite(currentAtr)) {
-      previousRope = current;
-      rope[index] = current;
-      continue;
-    }
-    const threshold = Math.max(0, currentAtr * params.ropeMultiplier);
-    const move = current - previousRope;
-    const absMove = Math.abs(move);
-    const sign = Math.sign(move);
-    let amount = 0;
-    switch (params.ropeSensitivityMode) {
-      case "original":
-        amount = absMove > threshold ? (absMove - threshold) * sign : 0;
-        break;
-      case "partial":
-        amount =
-          absMove < threshold ? move * 0.4 : (absMove - threshold) * sign;
-        break;
-      case "reduced":
-        amount =
-          absMove > threshold * 0.5 ? (absMove - threshold * 0.5) * sign : 0;
-        break;
-      case "momentum": {
-        const old = index >= 3 ? (source[index - 3] ?? current) : current;
-        const momentum = Math.abs(current - old);
-        const denominator = threshold * 3;
-        const normalized =
-          denominator > Number.EPSILON ? momentum / denominator : 0;
-        const factor = 1 + Math.min(normalized, 1) * 0.5;
-        amount =
-          absMove < threshold
-            ? move * 0.3
-            : (absMove - threshold * 0.6) * sign * factor;
-        break;
-      }
-      case "ema":
-        amount =
-          absMove < threshold
-            ? move * 0.15
-            : (absMove - threshold * 0.7) * sign + move * 0.075;
-        break;
-      case "adaptive": {
-        const old = index >= 5 ? (source[index - 5] ?? current) : current;
-        const change = Math.abs(current - old);
-        const denominator = threshold * 5;
-        const normalized =
-          denominator > Number.EPSILON ? change / denominator : 0;
-        const adaptiveThreshold =
-          threshold * (1 - Math.min(normalized * 0.4, 0.6));
-        amount =
-          absMove > adaptiveThreshold
-            ? (absMove - adaptiveThreshold) * sign
-            : 0;
-        break;
-      }
-      case "zerolag": {
-        const lagged =
-          lag === 0 || index < lag ? current : (source[index - lag] ?? current);
-        const zeroLag = lag === 0 ? current : current + (current - lagged);
-        const lagMove = zeroLag - previousRope;
-        const magnitude = Math.abs(lagMove);
-        amount =
-          magnitude > threshold
-            ? (magnitude - threshold) * Math.sign(lagMove)
-            : 0;
-        break;
-      }
-    }
-    previousRope += Number.isFinite(amount) ? amount : 0;
-    rope[index] = previousRope;
-    upper[index] = previousRope + threshold;
-    lower[index] = previousRope - threshold;
-  }
-
-  const directionInput = rope.map((value, index) =>
-    index === 0 ? (source[0] ?? value) : (rope[index - 1] ?? value),
-  );
-  const directionBase = ta.movingAverage(
-    directionInput,
-    params.ropeDirectionMaType,
-    params.ropeDirectionLookback,
-  );
-  const directionUpper = Array<number>(candles.length).fill(Number.NaN);
-  const directionLower = Array<number>(candles.length).fill(Number.NaN);
-  const direction = Array<number>(candles.length).fill(0);
-  let bandAtr = Number.NaN;
-  for (let index = 0; index < candles.length; index += 1) {
-    const base = directionBase[index] ?? Number.NaN;
-    const currentAtr = atrValues[index] ?? Number.NaN;
-    const ropeValue = rope[index] ?? Number.NaN;
-    if (
-      !Number.isFinite(base) ||
-      !Number.isFinite(currentAtr) ||
-      !Number.isFinite(ropeValue)
-    )
-      continue;
-    if (!Number.isFinite(bandAtr)) bandAtr = currentAtr;
-    const band = bandAtr * params.ropeDirectionThreshold;
-    directionUpper[index] = base + band;
-    directionLower[index] = base - band;
-    const nextDirection =
-      ropeValue > base + band ? 1 : ropeValue < base - band ? -1 : 0;
-    direction[index] = nextDirection;
-    if (nextDirection === 0) bandAtr = currentAtr;
-  }
-  return { rope, upper, lower, directionUpper, directionLower, direction };
+interface SignalOutcome {
+  readonly index: number;
+  readonly open: number;
+  readonly close: number;
 }
 
-function computeUtBot(candles: readonly Candle[], params: Params): UtResult {
-  const source = priceSeries(candles, params.utbotSource);
-  const atrValues = ta.atr(candles, params.utbotAtrPeriod);
-  const stop = Array<number>(candles.length).fill(Number.NaN);
-  const position = Array<number>(candles.length).fill(0);
-  const lag = Math.floor((params.utbotAtrPeriod - 1) / 2);
-  let previousStop = Number.NaN;
-  let previousPosition = 0;
-  let previousClose = Number.NaN;
-  for (let index = 0; index < candles.length; index += 1) {
-    const raw = source[index] ?? Number.NaN;
-    const lagged =
-      lag === 0 || index < lag ? raw : (source[index - lag] ?? raw);
-    const current =
-      params.utbotMode === "0lag" && lag > 0 ? raw + (raw - lagged) : raw;
-    const currentAtr = atrValues[index] ?? Number.NaN;
-    if (!Number.isFinite(current) || !Number.isFinite(currentAtr)) {
-      previousClose = Number.isFinite(current) ? current : previousClose;
-      continue;
-    }
-    const loss = Math.max(0, currentAtr * params.utbotKeyValue);
-    const previousC = Number.isFinite(previousClose) ? previousClose : current;
-    const stopPrev = Number.isFinite(previousStop)
-      ? previousStop
-      : current - loss;
-    let currentStop: number;
-    if (!Number.isFinite(previousStop)) currentStop = current - loss;
-    else if (current > previousStop && previousC > previousStop)
-      currentStop = Math.max(previousStop, current - loss);
-    else if (current < previousStop && previousC < previousStop)
-      currentStop = Math.min(previousStop, current + loss);
-    else currentStop = current > previousStop ? current - loss : current + loss;
-    if (index > 0 && Number.isFinite(stopPrev)) {
-      if (previousC < stopPrev && current > stopPrev) previousPosition = 1;
-      else if (previousC > stopPrev && current < stopPrev)
-        previousPosition = -1;
-    }
-    stop[index] = currentStop;
-    position[index] = previousPosition;
-    previousStop = currentStop;
-    previousClose = current;
+interface SignalState {
+  previousUnified: Direction;
+  previousBlocked: boolean;
+  followDirection: SignalSide | undefined;
+  lastSignalIndex: number | undefined;
+  mgDirection: SignalSide | undefined;
+  mgStep: number;
+  mgSignalIndex: number | undefined;
+  outcomes: readonly SignalOutcome[];
+  buy: boolean;
+  sell: boolean;
+}
+
+const emptyRopeState: RopeState = {
+  previousRope: Number.NaN,
+  rope: Number.NaN,
+  directionInput: Number.NaN,
+  sources: [],
+};
+const emptyRopeDirectionState: RopeDirectionState = {
+  bandAtr: Number.NaN,
+  upper: Number.NaN,
+  lower: Number.NaN,
+  direction: 0,
+};
+const emptyUtState: UtState = {
+  previousStop: Number.NaN,
+  previousClose: Number.NaN,
+  stop: Number.NaN,
+  position: 0,
+  sources: [],
+};
+const emptyPocState: PocState = {
+  bars: [],
+  zones: [],
+  previousScores: [],
+};
+const emptySignalState: SignalState = {
+  previousUnified: 0,
+  previousBlocked: false,
+  followDirection: undefined,
+  lastSignalIndex: undefined,
+  mgDirection: undefined,
+  mgStep: 0,
+  mgSignalIndex: undefined,
+  outcomes: [],
+  buy: false,
+  sell: false,
+};
+
+function readInputs() {
+  return {
+    ropePeriod: input.int(14, {
+      key: "ropePeriod",
+      title: "ATR period",
+      group: "ATR Rope",
+      min: 1,
+      max: 500,
+    }),
+    ropeMultiplier: input.float(1.5, {
+      key: "ropeMultiplier",
+      title: "Sensitivity multiplier",
+      group: "ATR Rope",
+      min: 0.1,
+      max: 10,
+      step: 0.1,
+    }),
+    ropeSource: input.string("close", {
+      key: "ropeSource",
+      title: "Price source",
+      group: "ATR Rope",
+      options: priceSources,
+    }),
+    ropeSensitivityMode: input.string("original", {
+      key: "ropeSensitivityMode",
+      title: "Sensitivity mode",
+      group: "ATR Rope",
+      options: ropeModes,
+    }),
+    ropeDirectionMaType: input.string("sma", {
+      key: "ropeDirectionMaType",
+      title: "Direction MA",
+      group: "ATR Rope Direction",
+      options: movingAverageTypes,
+    }),
+    ropeDirectionLookback: input.int(2, {
+      key: "ropeDirectionLookback",
+      title: "Direction lookback",
+      group: "ATR Rope Direction",
+      min: 1,
+      max: 20,
+    }),
+    ropeDirectionThreshold: input.float(0.05, {
+      key: "ropeDirectionThreshold",
+      title: "Direction threshold",
+      group: "ATR Rope Direction",
+      min: 0,
+      max: 500,
+      step: 0.01,
+    }),
+    utbotKeyValue: input.float(1, {
+      key: "utbotKeyValue",
+      title: "ATR multiplier",
+      group: "UT Bot",
+      min: 0.1,
+      max: 10,
+      step: 0.1,
+    }),
+    utbotAtrPeriod: input.int(10, {
+      key: "utbotAtrPeriod",
+      title: "ATR period",
+      group: "UT Bot",
+      min: 1,
+      max: 500,
+    }),
+    utbotSource: input.string("close", {
+      key: "utbotSource",
+      title: "Price source",
+      group: "UT Bot",
+      options: priceSources,
+    }),
+    utbotMode: input.string("original", {
+      key: "utbotMode",
+      title: "Mode",
+      group: "UT Bot",
+      options: utModes,
+    }),
+    signalIssueMode: input.string("original", {
+      key: "signalIssueMode",
+      title: "Signal mode",
+      group: "Signals",
+      options: signalModes,
+    }),
+    mgStepCount: input.int(0, {
+      key: "mgStepCount",
+      title: "MG follow steps",
+      group: "Signals",
+      min: 0,
+      max: 20,
+    }),
+    buySignalColor: input.color("#089981", {
+      key: "buySignalColor",
+      title: "Buy color",
+      group: "Signals",
+      effect: "presentation",
+    }),
+    sellSignalColor: input.color("#F23645", {
+      key: "sellSignalColor",
+      title: "Sell color",
+      group: "Signals",
+      effect: "presentation",
+    }),
+    adxPocSource: input.string("close", {
+      key: "adxPocSource",
+      title: "Price source",
+      group: "ADX POC",
+      options: priceSources,
+    }),
+    profilePeriod: input.int(30, {
+      key: "profilePeriod",
+      title: "Profile period",
+      group: "ADX POC",
+      min: 5,
+      max: 500,
+    }),
+    fastPocPeriod: input.int(10, {
+      key: "fastPocPeriod",
+      title: "Fast POC period",
+      group: "ADX POC",
+      min: 3,
+      max: 100,
+    }),
+    rowCount: input.int(24, {
+      key: "rowCount",
+      title: "Price rows",
+      group: "ADX POC",
+      min: 10,
+      max: 100,
+    }),
+    dmiLength: input.int(14, {
+      key: "dmiLength",
+      title: "ADX / DI length",
+      group: "ADX POC",
+      min: 1,
+      max: 500,
+    }),
+    minEarlyBars: input.int(5, {
+      key: "minEarlyBars",
+      title: "Minimum early bars",
+      group: "ADX POC",
+      min: 2,
+      max: 100,
+    }),
+    projectionBars: input.int(5, {
+      key: "projectionBars",
+      title: "Projection bars",
+      group: "ADX POC Migration",
+      min: 1,
+      max: 50,
+    }),
+    bodyWeight: input.float(0.7, {
+      key: "bodyWeight",
+      title: "Body weight",
+      group: "ADX POC",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    }),
+    migrationStrength: input.float(1.1, {
+      key: "migrationStrength",
+      title: "Migration strength",
+      group: "ADX POC Migration",
+      min: 1,
+      max: 3,
+      step: 0.05,
+    }),
+    migrationConfirmBars: input.int(1, {
+      key: "migrationConfirmBars",
+      title: "Migration confirmations",
+      group: "ADX POC Migration",
+      min: 1,
+      max: 5,
+    }),
+    migrationCenterSmoothing: input.float(0.1, {
+      key: "migrationCenterSmoothing",
+      title: "Center smoothing",
+      group: "ADX POC Migration",
+      min: 0,
+      max: 0.95,
+      step: 0.05,
+    }),
+    activeHistoricalPocCount: input.int(1, {
+      key: "activeHistoricalPocCount",
+      title: "Active historical POCs",
+      group: "ADX POC Zones",
+      min: 0,
+      max: 20,
+    }),
+    minZoneBarsToRender: input.int(3, {
+      key: "minZoneBarsToRender",
+      title: "Minimum zone bars",
+      group: "ADX POC Zones",
+      min: 1,
+      max: 20,
+    }),
+    minZoneHitsToRender: input.int(2, {
+      key: "minZoneHitsToRender",
+      title: "Minimum zone hits",
+      group: "ADX POC Zones",
+      min: 1,
+      max: 20,
+    }),
+    maxStoredZones: input.int(300, {
+      key: "maxStoredZones",
+      title: "Maximum stored zones",
+      group: "ADX POC Zones",
+      min: 20,
+      max: 1000,
+      step: 10,
+    }),
+    pocBandHalfRows: input.float(1.5, {
+      key: "pocBandHalfRows",
+      title: "Band half rows",
+      group: "ADX POC Band",
+      min: 0.1,
+      max: 20,
+      step: 0.1,
+    }),
+    bandMergeMode: input.string("Inside Band", {
+      key: "bandMergeMode",
+      title: "Band merge mode",
+      group: "ADX POC Band",
+      options: bandMergeModes,
+    }),
+    maxBandExpansionRows: input.float(2, {
+      key: "maxBandExpansionRows",
+      title: "Maximum band expansion",
+      group: "ADX POC Band",
+      min: 0.5,
+      max: 20,
+      step: 0.25,
+    }),
+    pocBandSignalSuppressLine: input.string("off", {
+      key: "pocBandSignalSuppressLine",
+      title: "Signal suppression",
+      group: "ADX POC Suppression",
+      options: suppressionModes,
+    }),
+    drawMode: input.string("Line + Band", {
+      key: "drawMode",
+      title: "POC draw mode",
+      group: "ADX POC Style",
+      options: drawModes,
+      effect: "presentation",
+    }),
+    currentColor: input.color("rgba(255, 255, 0, 1)", {
+      key: "currentColor",
+      title: "Current POC",
+      group: "ADX POC Style",
+      effect: "presentation",
+    }),
+    historicalColor: input.color("rgba(255, 213, 79, 0.75)", {
+      key: "historicalColor",
+      title: "Historical POC",
+      group: "ADX POC Style",
+      effect: "presentation",
+    }),
+    frozenColor: input.color("rgba(255, 255, 0, 0.35)", {
+      key: "frozenColor",
+      title: "Frozen POC",
+      group: "ADX POC Style",
+      effect: "presentation",
+    }),
+    bandOpacity: input.float(0.18, {
+      key: "bandOpacity",
+      title: "Band opacity",
+      group: "ADX POC Style",
+      min: 0,
+      max: 1,
+      step: 0.05,
+      effect: "presentation",
+    }),
+    lineOpacity: input.float(0.95, {
+      key: "lineOpacity",
+      title: "Line opacity",
+      group: "ADX POC Style",
+      min: 0,
+      max: 1,
+      step: 0.05,
+      effect: "presentation",
+    }),
+    lineWidth: input.int(2, {
+      key: "lineWidth",
+      title: "Line width",
+      group: "ADX POC Style",
+      min: 1,
+      max: 5,
+      effect: "presentation",
+    }),
+    ropeUpColor: input.color("#3daa45", {
+      key: "ropeUpColor",
+      title: "Rope up color",
+      group: "Display",
+      effect: "presentation",
+    }),
+    ropeDownColor: input.color("#ff033e", {
+      key: "ropeDownColor",
+      title: "Rope down color",
+      group: "Display",
+      effect: "presentation",
+    }),
+    ropeFlatColor: input.color("#004d92", {
+      key: "ropeFlatColor",
+      title: "Rope flat color",
+      group: "Display",
+      effect: "presentation",
+    }),
+    ropeWidth: input.int(3, {
+      key: "ropeWidth",
+      title: "Rope width",
+      group: "Display",
+      min: 1,
+      max: 10,
+      effect: "presentation",
+    }),
+    showTrailingStop: input.bool(true, {
+      key: "showTrailingStop",
+      title: "Show trailing stop",
+      group: "Display",
+      effect: "presentation",
+    }),
+    utbotTrailingStopColor: input.color("#787B86", {
+      key: "utbotTrailingStopColor",
+      title: "UT neutral color",
+      group: "Display",
+      effect: "presentation",
+    }),
+    utbotUpTrendColor: input.color("#089981", {
+      key: "utbotUpTrendColor",
+      title: "UT up color",
+      group: "Display",
+      effect: "presentation",
+    }),
+    utbotDownTrendColor: input.color("#F23645", {
+      key: "utbotDownTrendColor",
+      title: "UT down color",
+      group: "Display",
+      effect: "presentation",
+    }),
+  };
+}
+
+type Params = ReturnType<typeof readInputs>;
+
+function stepRope(
+  previous: Readonly<RopeState>,
+  current: number,
+  currentAtr: number,
+  params: Params,
+): RopeState {
+  const lag = Math.floor((params.ropePeriod - 1) / 2);
+  const previousRope = Number.isFinite(previous.previousRope)
+    ? previous.previousRope
+    : current;
+  const directionInput = Number.isFinite(previous.previousRope)
+    ? previous.previousRope
+    : current;
+  const sources = appendSeries(previous.sources, current, Math.max(6, lag + 1));
+  if (!Number.isFinite(current)) {
+    return { previousRope, rope: previousRope, directionInput, sources };
   }
-  return { stop, position };
+  if (!Number.isFinite(currentAtr)) {
+    return { previousRope: current, rope: current, directionInput, sources };
+  }
+
+  const threshold = Math.max(0, currentAtr * params.ropeMultiplier);
+  const move = current - previousRope;
+  const absMove = Math.abs(move);
+  const sign = Math.sign(move);
+  let amount = 0;
+  switch (params.ropeSensitivityMode) {
+    case "original":
+      amount = absMove > threshold ? (absMove - threshold) * sign : 0;
+      break;
+    case "partial":
+      amount = absMove < threshold ? move * 0.4 : (absMove - threshold) * sign;
+      break;
+    case "reduced":
+      amount =
+        absMove > threshold * 0.5 ? (absMove - threshold * 0.5) * sign : 0;
+      break;
+    case "momentum": {
+      const old = laggedValue(previous.sources, current, 3);
+      const momentum = Math.abs(current - old);
+      const denominator = threshold * 3;
+      const normalized =
+        denominator > Number.EPSILON ? momentum / denominator : 0;
+      const factor = 1 + Math.min(normalized, 1) * 0.5;
+      amount =
+        absMove < threshold
+          ? move * 0.3
+          : (absMove - threshold * 0.6) * sign * factor;
+      break;
+    }
+    case "ema":
+      amount =
+        absMove < threshold
+          ? move * 0.15
+          : (absMove - threshold * 0.7) * sign + move * 0.075;
+      break;
+    case "adaptive": {
+      const old = laggedValue(previous.sources, current, 5);
+      const change = Math.abs(current - old);
+      const denominator = threshold * 5;
+      const normalized =
+        denominator > Number.EPSILON ? change / denominator : 0;
+      const adaptiveThreshold =
+        threshold * (1 - Math.min(normalized * 0.4, 0.6));
+      amount =
+        absMove > adaptiveThreshold ? (absMove - adaptiveThreshold) * sign : 0;
+      break;
+    }
+    case "zerolag": {
+      const lagged = laggedValue(previous.sources, current, lag);
+      const zeroLag = lag === 0 ? current : current + (current - lagged);
+      const lagMove = zeroLag - previousRope;
+      const magnitude = Math.abs(lagMove);
+      amount =
+        magnitude > threshold
+          ? (magnitude - threshold) * Math.sign(lagMove)
+          : 0;
+      break;
+    }
+  }
+  const rope = previousRope + (Number.isFinite(amount) ? amount : 0);
+  return { previousRope: rope, rope, directionInput, sources };
+}
+
+function stepRopeDirection(
+  previous: Readonly<RopeDirectionState>,
+  rope: number,
+  currentAtr: number,
+  base: number,
+  threshold: number,
+): RopeDirectionState {
+  if (![rope, currentAtr, base].every(Number.isFinite)) {
+    return {
+      bandAtr: previous.bandAtr,
+      upper: Number.NaN,
+      lower: Number.NaN,
+      direction: 0,
+    };
+  }
+  const bandAtr = Number.isFinite(previous.bandAtr)
+    ? previous.bandAtr
+    : currentAtr;
+  const band = bandAtr * threshold;
+  const upper = base + band;
+  const lower = base - band;
+  const direction: Direction = rope > upper ? 1 : rope < lower ? -1 : 0;
+  return {
+    bandAtr: direction === 0 ? currentAtr : bandAtr,
+    upper,
+    lower,
+    direction,
+  };
+}
+
+function stepUtBot(
+  previous: Readonly<UtState>,
+  raw: number,
+  currentAtr: number,
+  index: number,
+  params: Params,
+): UtState {
+  const lag = Math.floor((params.utbotAtrPeriod - 1) / 2);
+  const lagged = laggedValue(previous.sources, raw, lag);
+  const current =
+    params.utbotMode === "0lag" && lag > 0 ? raw + (raw - lagged) : raw;
+  const sources = appendSeries(previous.sources, raw, lag + 1);
+  if (!Number.isFinite(current) || !Number.isFinite(currentAtr)) {
+    return {
+      ...previous,
+      previousClose: Number.isFinite(current)
+        ? current
+        : previous.previousClose,
+      stop: Number.NaN,
+      sources,
+    };
+  }
+
+  const loss = Math.max(0, currentAtr * params.utbotKeyValue);
+  const previousClose = Number.isFinite(previous.previousClose)
+    ? previous.previousClose
+    : current;
+  const stopPrev = Number.isFinite(previous.previousStop)
+    ? previous.previousStop
+    : current - loss;
+  let stop: number;
+  if (!Number.isFinite(previous.previousStop)) stop = current - loss;
+  else if (
+    current > previous.previousStop &&
+    previousClose > previous.previousStop
+  )
+    stop = Math.max(previous.previousStop, current - loss);
+  else if (
+    current < previous.previousStop &&
+    previousClose < previous.previousStop
+  )
+    stop = Math.min(previous.previousStop, current + loss);
+  else stop = current > previous.previousStop ? current - loss : current + loss;
+
+  let position = previous.position;
+  if (index > 0 && Number.isFinite(stopPrev)) {
+    if (previousClose < stopPrev && current > stopPrev) position = 1;
+    else if (previousClose > stopPrev && current < stopPrev) position = -1;
+  }
+  return {
+    previousStop: stop,
+    previousClose: current,
+    stop,
+    position,
+    sources,
+  };
+}
+
+function cloneZone(zone: PocZone): PocZone {
+  return {
+    ...zone,
+    segments: [...zone.segments],
+  };
 }
 
 function projectedPocCandidate(
-  candles: readonly Candle[],
-  dmi: DmiSeries,
+  bars: readonly PocBar[],
   params: Params,
   barIndex: number,
   previousScores: readonly {
@@ -1044,54 +725,46 @@ function projectedPocCandidate(
   const profileStart = Math.max(0, barIndex - params.profilePeriod + 1);
   const fastPeriod = Math.min(params.fastPocPeriod, params.profilePeriod);
   const start = Math.max(0, barIndex - fastPeriod + 1);
+  const profileBars = bars.filter((bar) => bar.index >= profileStart);
+  const fastBars = bars.filter((bar) => bar.index >= start);
   let low = Number.POSITIVE_INFINITY;
   let high = Number.NEGATIVE_INFINITY;
-  for (let index = profileStart; index <= barIndex; index += 1) {
-    const candle = candles[index];
-    if (candle === undefined) continue;
-    low = Math.min(low, candle.low);
-    high = Math.max(high, candle.high);
+  for (const bar of profileBars) {
+    low = Math.min(low, bar.low);
+    high = Math.max(high, bar.high);
   }
   if (!Number.isFinite(low) || !Number.isFinite(high)) return undefined;
+  const currentBar = bars.at(-1);
+  if (currentBar === undefined) return undefined;
   if (high <= low) {
-    const close = candles[barIndex]?.close ?? 0;
-    const tick = Math.max(Math.abs(close) * 1e-8, Number.EPSILON);
-    low = close - tick * 5;
-    high = close + tick * 5;
+    const tick = Math.max(Math.abs(currentBar.close) * 1e-8, Number.EPSILON);
+    low = currentBar.close - tick * 5;
+    high = currentBar.close + tick * 5;
   }
   const rowHeight = (high - low) / params.rowCount;
   if (!Number.isFinite(rowHeight) || rowHeight <= 0) return undefined;
   const rows = Array.from({ length: params.rowCount }, (_, row) => ({
     center: low + (row + 0.5) * rowHeight,
     score: 0,
-    plus: 0,
-    minus: 0,
   }));
   const relMax = Math.max(barIndex - start, 1);
-  for (let index = start; index <= barIndex; index += 1) {
-    const candle = candles[index];
-    if (candle === undefined) continue;
-    const plus = dmi.plusDI[index] ?? Number.NaN;
-    const minus = dmi.minusDI[index] ?? Number.NaN;
-    const adxValue = dmi.adx[index] ?? Number.NaN;
-    if (![plus, minus, adxValue].every(Number.isFinite)) continue;
+  for (const bar of fastBars) {
+    const { plusDI: plus, minusDI: minus, adx } = bar.dmi;
+    if (![plus, minus, adx].every(Number.isFinite)) continue;
     const total = Math.max(plus + minus, 0.000001);
     const dominance = Math.abs(plus - minus) / total;
-    const recency = 0.25 + 0.75 * ((index - start) / relMax);
-    const candleScore = adxValue * dominance * recency;
+    const recency = 0.25 + 0.75 * ((bar.index - start) / relMax);
+    const candleScore = adx * dominance * recency;
     const startRow = Math.max(
       0,
-      Math.min(params.rowCount - 1, Math.floor((candle.low - low) / rowHeight)),
+      Math.min(params.rowCount - 1, Math.floor((bar.low - low) / rowHeight)),
     );
     const endRow = Math.max(
       0,
-      Math.min(
-        params.rowCount - 1,
-        Math.floor((candle.high - low) / rowHeight),
-      ),
+      Math.min(params.rowCount - 1, Math.floor((bar.high - low) / rowHeight)),
     );
-    const bodyLow = Math.min(candle.open, candle.close);
-    const bodyHigh = Math.max(candle.open, candle.close);
+    const bodyLow = Math.min(bar.open, bar.close);
+    const bodyHigh = Math.max(bar.open, bar.close);
     const totalRows = Math.max(1, endRow - startRow + 1);
     const bodyRows: number[] = [];
     for (let row = startRow; row <= endRow; row += 1) {
@@ -1108,15 +781,15 @@ function projectedPocCandidate(
     for (let row = startRow; row <= endRow; row += 1) {
       const target = rows[row];
       if (target === undefined) continue;
-      const inBody = bodyRows.includes(row);
       const contribution =
         (candleScore * (1 - params.bodyWeight)) / totalRows +
-        (inBody ? (candleScore * params.bodyWeight) / bodyCount : 0);
+        (bodyRows.includes(row)
+          ? (candleScore * params.bodyWeight) / bodyCount
+          : 0);
       target.score += contribution;
-      target.plus += plus * contribution;
-      target.minus += minus * contribution;
     }
   }
+
   let best:
     | {
         readonly row: number;
@@ -1125,19 +798,19 @@ function projectedPocCandidate(
       }
     | undefined;
   const scoreLookup = rows.map((row, rowIndex) => {
-    let previous = 0;
+    let oldScore = 0;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const old of previousScores) {
       const distance = Math.abs(old.center - row.center);
       if (distance < bestDistance) {
         bestDistance = distance;
-        previous = old.score;
+        oldScore = old.score;
       }
     }
-    const velocity = row.score - previous;
+    const velocity = row.score - oldScore;
     const projected = Math.max(0, row.score + velocity * params.projectionBars);
     if (best === undefined || projected > best.projected)
-      best = { row: rowIndex, projected, previous };
+      best = { row: rowIndex, projected, previous: oldScore };
     return { center: row.center, score: row.score, projectedScore: projected };
   });
   if (best === undefined || best.projected <= 0) return undefined;
@@ -1146,6 +819,7 @@ function projectedPocCandidate(
   const half = rowHeight * params.pocBandHalfRows;
   return {
     barIndex,
+    openTimeMs: currentBar.openTimeMs,
     center: row.center,
     bandLow: row.center - half,
     bandHigh: row.center + half,
@@ -1193,121 +867,6 @@ function findMatchingZone(
     .find((zone) => zoneMatches(candidate, zone, mode));
 }
 
-function buildPocZones(
-  candles: readonly Candle[],
-  params: Params,
-  lastClosedIndex: number,
-): PocZone[] {
-  if (lastClosedIndex < Math.max(params.dmiLength, params.minEarlyBars) - 1)
-    return [];
-  const pocCandles = candlesWithPriceSource(candles, params.adxPocSource);
-  const dmi = ta.dmi(candles, params.dmiLength);
-  const zones: PocZone[] = [];
-  let current: PocZone | undefined;
-  let previousScores: readonly {
-    readonly center: number;
-    readonly score: number;
-  }[] = [];
-  let pendingMigration:
-    { readonly candidate: PocCandidate; readonly hitCount: number } | undefined;
-  const startIndex = Math.max(
-    0,
-    params.minEarlyBars - 1,
-    lastClosedIndex - 3_000,
-  );
-  for (let barIndex = startIndex; barIndex <= lastClosedIndex; barIndex += 1) {
-    const candidate = projectedPocCandidate(
-      pocCandles,
-      dmi,
-      params,
-      barIndex,
-      previousScores,
-    );
-    if (candidate === undefined) continue;
-    previousScores = candidate.scoreLookup.map((item) => ({
-      center: item.center,
-      score: item.score,
-    }));
-    if (current === undefined) {
-      current = createZone(candidate);
-      zones.push(current);
-      rankZones(zones, current, barIndex, params.activeHistoricalPocCount);
-      continue;
-    }
-    if (zoneMatches(candidate, current, params.bandMergeMode)) {
-      updateZone(current, candidate, params);
-      pendingMigration = undefined;
-      rankZones(zones, current, barIndex, params.activeHistoricalPocCount);
-      extendZones(zones, current, barIndex, params.activeHistoricalPocCount);
-      continue;
-    }
-    const activeScore = nearestProjectedScore(candidate, current.center);
-    const comparison = Math.max(
-      activeScore,
-      current.projectedScore * 0.25,
-      0.000001,
-    );
-    const migrate =
-      candidate.velocity > 0 &&
-      candidate.projectedScore > params.migrationStrength * comparison;
-    if (migrate) {
-      const previousPending = pendingMigration;
-      const samePending =
-        previousPending !== undefined &&
-        candidateMatchesBand(
-          candidate,
-          previousPending.candidate,
-          params.bandMergeMode,
-        );
-      pendingMigration = samePending
-        ? {
-            candidate: {
-              ...candidate,
-              bandLow: Math.min(
-                previousPending.candidate.bandLow,
-                candidate.bandLow,
-              ),
-              bandHigh: Math.max(
-                previousPending.candidate.bandHigh,
-                candidate.bandHigh,
-              ),
-            },
-            hitCount: previousPending.hitCount + 1,
-          }
-        : { candidate, hitCount: 1 };
-      if (pendingMigration.hitCount >= params.migrationConfirmBars) {
-        current.frozen = true;
-        const matching = findMatchingZone(
-          candidate,
-          zones,
-          current,
-          params.bandMergeMode,
-        );
-        if (matching === undefined) {
-          current = createZone(candidate);
-          zones.push(current);
-        } else {
-          current = matching;
-          updateZone(current, candidate, params);
-        }
-        pendingMigration = undefined;
-        rankZones(zones, current, barIndex, params.activeHistoricalPocCount);
-      }
-    } else {
-      pendingMigration = undefined;
-    }
-    extendZones(zones, current, barIndex, params.activeHistoricalPocCount);
-  }
-  const active = zones.filter((zone) => !zone.frozen);
-  const frozen = zones
-    .filter((zone) => zone.frozen)
-    .sort((left, right) => left.lastSeenIndex - right.lastSeenIndex);
-  const keepFrozen = Math.max(0, params.maxStoredZones - active.length);
-  return [...frozen.slice(-keepFrozen), ...active].sort(
-    (left, right) => left.createdAt - right.createdAt,
-  );
-}
-
 function createZone(candidate: PocCandidate): PocZone {
   return {
     id: `poc:${candidate.barIndex}:${Math.round(candidate.center * 100000)}`,
@@ -1326,6 +885,8 @@ function createZone(candidate: PocCandidate): PocZone {
       {
         startIndex: candidate.barIndex,
         endIndex: candidate.barIndex,
+        startTimeMs: candidate.openTimeMs,
+        endTimeMs: candidate.openTimeMs,
         center: candidate.center,
         bandLow: candidate.bandLow,
         bandHigh: candidate.bandHigh,
@@ -1363,26 +924,29 @@ function updateZone(
     segment = {
       startIndex: candidate.barIndex,
       endIndex: candidate.barIndex,
+      startTimeMs: candidate.openTimeMs,
+      endTimeMs: candidate.openTimeMs,
       center,
       bandLow: zone.bandLow,
       bandHigh: zone.bandHigh,
     };
     zone.segments.push(segment);
+  } else {
+    segment = { ...segment };
+    zone.segments[zone.segments.length - 1] = segment;
   }
   segment.endIndex = candidate.barIndex;
+  segment.endTimeMs = candidate.openTimeMs;
   segment.center = center;
   segment.bandLow = zone.bandLow;
   segment.bandHigh = zone.bandHigh;
 }
 
-function nearestProjectedScore(
-  candidate: PocCandidate,
-  priceValue: number,
-): number {
+function nearestProjectedScore(candidate: PocCandidate, value: number): number {
   let result = 0;
   let distance = Number.POSITIVE_INFINITY;
   for (const row of candidate.scoreLookup) {
-    const currentDistance = Math.abs(row.center - priceValue);
+    const currentDistance = Math.abs(row.center - value);
     if (currentDistance < distance) {
       distance = currentDistance;
       result = row.projectedScore;
@@ -1409,12 +973,13 @@ function rankZones(
     zone.activeRank = index;
     if (index > historicalCount) {
       zone.frozen = true;
-      const segment = zone.segments.at(-1);
-      if (segment !== undefined)
+      const priorSegment = zone.segments.at(-1);
+      if (priorSegment !== undefined) {
+        const segment = { ...priorSegment };
+        zone.segments[zone.segments.length - 1] = segment;
         segment.endIndex = Math.min(segment.endIndex, barIndex);
-    } else if (zone === current || index > 0) {
-      zone.frozen = false;
-    }
+      }
+    } else if (zone === current || index > 0) zone.frozen = false;
   });
 }
 
@@ -1422,6 +987,7 @@ function extendZones(
   zones: readonly PocZone[],
   current: PocZone,
   barIndex: number,
+  openTimeMs: number,
   historicalCount: number,
 ): void {
   for (const zone of zones) {
@@ -1436,85 +1002,443 @@ function extendZones(
       segment = {
         startIndex: barIndex,
         endIndex: barIndex,
+        startTimeMs: openTimeMs,
+        endTimeMs: openTimeMs,
         center: zone.center,
         bandLow: zone.bandLow,
         bandHigh: zone.bandHigh,
       };
       zone.segments.push(segment);
+    } else {
+      segment = { ...segment };
+      zone.segments[zone.segments.length - 1] = segment;
     }
     segment.endIndex = barIndex;
+    segment.endTimeMs = openTimeMs;
     segment.center = zone.center;
     segment.bandLow = zone.bandLow;
     segment.bandHigh = zone.bandHigh;
   }
 }
 
-function suppressionBands(
+function advanceSegmentEnds(
   zones: readonly PocZone[],
-  params: Params,
-): SuppressionBand[] {
-  return zones.flatMap((zone) =>
-    zone.segments
-      .filter(
-        (segment) =>
-          !zone.frozen ||
-          segment.endIndex - segment.startIndex + 1 >=
-            params.minZoneBarsToRender ||
-          zone.hitCount >= params.minZoneHitsToRender,
-      )
-      .map((segment) => ({
-        startIndex: segment.startIndex,
-        endIndex: segment.endIndex,
-        top: segment.bandHigh,
-        bottom: segment.bandLow,
-      })),
-  );
+  bar: IndicatorBar,
+): void {
+  for (const zone of zones) {
+    const priorSegment = zone.segments.at(-1);
+    if (priorSegment?.endIndex !== bar.index - 1) continue;
+    const segment = { ...priorSegment, endTimeMs: bar.openTimeMs };
+    zone.segments[zone.segments.length - 1] = segment;
+  }
 }
 
-function insideBand(
-  index: number,
-  value: number,
-  bands: readonly SuppressionBand[],
+function zoneIsRenderable(
+  zone: PocZone,
+  segment: PocSegment,
+  params: Params,
 ): boolean {
   return (
-    Number.isFinite(value) &&
-    bands.some(
-      (band) =>
-        index >= band.startIndex &&
-        index <= band.endIndex &&
-        value >= band.bottom &&
-        value <= band.top,
-    )
+    !zone.frozen ||
+    segment.endIndex - segment.startIndex + 1 >= params.minZoneBarsToRender ||
+    zone.hitCount >= params.minZoneHitsToRender
   );
 }
 
-function isBlocked(
+function drawZones(
+  zones: readonly PocZone[],
+  params: Params,
+  bar: IndicatorBar,
+): void {
+  for (const zone of zones) {
+    for (const segment of zone.segments) {
+      if (!zoneIsRenderable(zone, segment, params)) continue;
+      const endTimeMs =
+        segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
+      const color = zoneColor(zone, params);
+      if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
+        const id = `${zone.id}:band:${segment.startIndex}`;
+        plot.box({
+          id,
+          startTimeMs: segment.startTimeMs,
+          endTimeMs,
+          top: segment.bandHigh,
+          bottom: segment.bandLow,
+          color: rgbaWithAlpha(color, params.bandOpacity),
+        });
+      }
+      if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
+        const id = `${zone.id}:line:${segment.startIndex}`;
+        plot.segment({
+          id,
+          startTimeMs: segment.startTimeMs,
+          endTimeMs,
+          startValue: segment.center,
+          endValue: segment.center,
+          color: rgbaWithAlpha(color, params.lineOpacity),
+          width: params.lineWidth,
+          style:
+            zone.activeRank === 0 && !zone.frozen
+              ? "solid"
+              : zone.frozen
+                ? "dotted"
+                : "dashed",
+        });
+      }
+    }
+  }
+}
+
+function trimZones(zones: readonly PocZone[], params: Params): PocZone[] {
+  const active = zones.filter((zone) => !zone.frozen);
+  const frozen = zones
+    .filter((zone) => zone.frozen)
+    .sort((left, right) => left.lastSeenIndex - right.lastSeenIndex);
+  const keepFrozen = Math.max(0, params.maxStoredZones - active.length);
+  return [...frozen.slice(-keepFrozen), ...active].sort(
+    (left, right) => left.createdAt - right.createdAt,
+  );
+}
+
+function stepPoc(
+  previous: Readonly<PocState>,
+  bar: IndicatorBar,
+  dmi: DmiPoint,
+  params: Params,
+): PocState {
+  if (!bar.isConfirmed) return { ...previous };
+  const pocBar: PocBar = {
+    index: bar.index,
+    openTimeMs: bar.openTimeMs,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: priceValue(bar, params.adxPocSource),
+    dmi,
+  };
+  const bars = [...previous.bars, pocBar].filter(
+    (item) => item.index >= bar.index - params.profilePeriod + 1,
+  );
+  // Retained history is replayed once from a fresh series kernel, so its prior
+  // POC state will never be revisited. Reuse those zone objects during replay
+  // instead of copying an ever-growing segment history on every candle. Live
+  // finalized updates still use copy-on-write state for building-bar rollback.
+  let zones = bar.isHistory
+    ? [...previous.zones]
+    : previous.zones.map(cloneZone);
+  advanceSegmentEnds(zones, bar);
+  let current = previous.currentZoneId
+    ? zones.find((zone) => zone.id === previous.currentZoneId)
+    : undefined;
+  let previousScores = previous.previousScores;
+  let pendingMigration = previous.pendingMigration;
+
+  if (bar.index >= Math.max(params.dmiLength, params.minEarlyBars) - 1) {
+    const candidate = projectedPocCandidate(
+      bars,
+      params,
+      bar.index,
+      previousScores,
+    );
+    if (candidate !== undefined) {
+      previousScores = candidate.scoreLookup.map((item) => ({
+        center: item.center,
+        score: item.score,
+      }));
+      if (current === undefined) {
+        current = createZone(candidate);
+        zones.push(current);
+        rankZones(zones, current, bar.index, params.activeHistoricalPocCount);
+      } else if (zoneMatches(candidate, current, params.bandMergeMode)) {
+        updateZone(current, candidate, params);
+        pendingMigration = undefined;
+        rankZones(zones, current, bar.index, params.activeHistoricalPocCount);
+        extendZones(
+          zones,
+          current,
+          bar.index,
+          bar.openTimeMs,
+          params.activeHistoricalPocCount,
+        );
+      } else {
+        const activeScore = nearestProjectedScore(candidate, current.center);
+        const comparison = Math.max(
+          activeScore,
+          current.projectedScore * 0.25,
+          0.000001,
+        );
+        const migrate =
+          candidate.velocity > 0 &&
+          candidate.projectedScore > params.migrationStrength * comparison;
+        if (migrate) {
+          const priorPendingMigration = pendingMigration;
+          const nextPendingMigration =
+            priorPendingMigration !== undefined &&
+            candidateMatchesBand(
+              candidate,
+              priorPendingMigration.candidate,
+              params.bandMergeMode,
+            )
+              ? {
+                  candidate: {
+                    ...candidate,
+                    bandLow: Math.min(
+                      priorPendingMigration.candidate.bandLow,
+                      candidate.bandLow,
+                    ),
+                    bandHigh: Math.max(
+                      priorPendingMigration.candidate.bandHigh,
+                      candidate.bandHigh,
+                    ),
+                  },
+                  hitCount: priorPendingMigration.hitCount + 1,
+                }
+              : { candidate, hitCount: 1 };
+          pendingMigration = nextPendingMigration;
+          if (nextPendingMigration.hitCount >= params.migrationConfirmBars) {
+            current.frozen = true;
+            const matching = findMatchingZone(
+              candidate,
+              zones,
+              current,
+              params.bandMergeMode,
+            );
+            if (matching === undefined) {
+              current = createZone(candidate);
+              zones.push(current);
+            } else {
+              current = matching;
+              updateZone(current, candidate, params);
+            }
+            pendingMigration = undefined;
+            rankZones(
+              zones,
+              current,
+              bar.index,
+              params.activeHistoricalPocCount,
+            );
+          }
+        } else pendingMigration = undefined;
+        extendZones(
+          zones,
+          current,
+          bar.index,
+          bar.openTimeMs,
+          params.activeHistoricalPocCount,
+        );
+      }
+    }
+  }
+
+  zones = trimZones(zones, params);
+  if (bar.isHistory && !bar.isHistoryFinalizedTail) {
+    return {
+      bars,
+      zones,
+      ...(current === undefined ? {} : { currentZoneId: current.id }),
+      previousScores,
+      ...(pendingMigration === undefined ? {} : { pendingMigration }),
+    };
+  }
+  return {
+    bars,
+    zones,
+    ...(current === undefined ? {} : { currentZoneId: current.id }),
+    previousScores,
+    ...(pendingMigration === undefined ? {} : { pendingMigration }),
+  };
+}
+
+function insidePocBand(
+  index: number,
+  value: number,
+  zones: readonly PocZone[],
+  params: Params,
+): boolean {
+  if (!Number.isFinite(value)) return false;
+  return zones.some((zone) => {
+    // Segments are chronological and non-overlapping. A signal on the current
+    // candle can only intersect the zone's newest segment, so scanning frozen
+    // historical segments makes retained-history rebuilds unnecessarily
+    // quadratic without changing the result.
+    const segment = zone.segments.at(-1);
+    return (
+      segment !== undefined &&
+      zoneIsRenderable(zone, segment, params) &&
+      index >= segment.startIndex &&
+      index <= segment.endIndex &&
+      value >= segment.bandLow &&
+      value <= segment.bandHigh
+    );
+  });
+}
+
+function signalBlocked(
   index: number,
   params: Params,
-  bands: readonly SuppressionBand[],
-  close: readonly number[],
-  rope: readonly number[],
-  stop: readonly number[],
+  zones: readonly PocZone[],
+  close: number,
+  rope: number,
+  stop: number,
 ): boolean {
   switch (params.pocBandSignalSuppressLine) {
     case "off":
       return false;
     case "Any":
       return (
-        insideBand(index, close[index] ?? Number.NaN, bands) ||
-        insideBand(index, rope[index] ?? Number.NaN, bands) ||
-        insideBand(index, stop[index] ?? Number.NaN, bands)
+        insidePocBand(index, close, zones, params) ||
+        insidePocBand(index, rope, zones, params) ||
+        insidePocBand(index, stop, zones, params)
       );
     case "ATR Rope":
-      return insideBand(index, rope[index] ?? Number.NaN, bands);
+      return insidePocBand(index, rope, zones, params);
     case "UT Bot":
-      return insideBand(index, stop[index] ?? Number.NaN, bands);
+      return insidePocBand(index, stop, zones, params);
     case "ATR Rope + UT Bot":
       return (
-        insideBand(index, rope[index] ?? Number.NaN, bands) &&
-        insideBand(index, stop[index] ?? Number.NaN, bands)
+        insidePocBand(index, rope, zones, params) &&
+        insidePocBand(index, stop, zones, params)
       );
   }
+}
+
+function stepSignals(
+  previous: Readonly<SignalState>,
+  bar: IndicatorBar,
+  unified: Direction,
+  blocked: boolean,
+  params: Params,
+): SignalState {
+  if (!bar.isConfirmed) return { ...previous, buy: false, sell: false };
+  const outcomes = [
+    ...previous.outcomes,
+    { index: bar.index, open: bar.open, close: bar.close },
+  ].slice(-64);
+  const next: SignalState = {
+    ...previous,
+    outcomes,
+    buy: false,
+    sell: false,
+  };
+  const usesWinFollow =
+    params.signalIssueMode === "Win Follow" ||
+    params.signalIssueMode === "Win Follow + MG Follow";
+  const usesMgFollow =
+    (params.signalIssueMode === "MG Follow" ||
+      params.signalIssueMode === "Win Follow + MG Follow") &&
+    params.mgStepCount > 0;
+  const exitedBand = previous.previousBlocked && !blocked;
+  const originalBuy =
+    !blocked && unified === 1 && (previous.previousUnified !== 1 || exitedBand);
+  const originalSell =
+    !blocked &&
+    unified === -1 &&
+    (previous.previousUnified !== -1 || exitedBand);
+  const won = (
+    direction: SignalSide,
+    signalIndex: number | undefined,
+  ): boolean | undefined => {
+    if (signalIndex === undefined || signalIndex + 1 > bar.index)
+      return undefined;
+    const outcome = outcomes.find((item) => item.index === signalIndex + 1);
+    if (outcome === undefined) return undefined;
+    return direction === "buy"
+      ? outcome.close > outcome.open
+      : outcome.close < outcome.open;
+  };
+  const issue = (direction: SignalSide): void => {
+    next.buy = direction === "buy";
+    next.sell = direction === "sell";
+    next.lastSignalIndex = bar.index;
+  };
+  const clearMg = (): void => {
+    next.mgDirection = undefined;
+    next.mgStep = 0;
+    next.mgSignalIndex = undefined;
+  };
+  const startMg = (direction: SignalSide): void => {
+    if (usesMgFollow) {
+      next.mgDirection = direction;
+      next.mgStep = 0;
+      next.mgSignalIndex = next.lastSignalIndex;
+    } else clearMg();
+  };
+  const runMg = (): void => {
+    if (!usesMgFollow || next.mgDirection === undefined) return;
+    const result = won(next.mgDirection, next.mgSignalIndex);
+    if (result === undefined) return;
+    if (result) {
+      const recovered = next.mgDirection;
+      clearMg();
+      next.followDirection = recovered;
+      if (
+        (recovered === "buy" && unified === 1) ||
+        (recovered === "sell" && unified === -1)
+      )
+        issue(recovered);
+      return;
+    }
+    if (next.mgStep >= params.mgStepCount) {
+      clearMg();
+      next.followDirection = undefined;
+      return;
+    }
+    const direction = next.mgDirection;
+    issue(direction);
+    next.mgSignalIndex = bar.index;
+    next.mgStep += 1;
+  };
+
+  if (params.signalIssueMode === "original") {
+    if (originalBuy) next.buy = true;
+    else if (originalSell) next.sell = true;
+    next.followDirection = undefined;
+    next.lastSignalIndex = undefined;
+    clearMg();
+  } else if (params.signalIssueMode === "MG Follow") {
+    if (originalBuy) {
+      clearMg();
+      issue("buy");
+      next.mgDirection = "buy";
+      next.mgSignalIndex = bar.index;
+    } else if (originalSell) {
+      clearMg();
+      issue("sell");
+      next.mgDirection = "sell";
+      next.mgSignalIndex = bar.index;
+    } else runMg();
+    next.followDirection = undefined;
+  } else if (usesWinFollow) {
+    if (next.followDirection !== undefined) {
+      const sameSide =
+        (next.followDirection === "buy" && unified === 1) ||
+        (next.followDirection === "sell" && unified === -1);
+      const result = won(next.followDirection, next.lastSignalIndex);
+      if (!sameSide) {
+        if (result === false) startMg(next.followDirection);
+        next.followDirection = undefined;
+      } else if (result === true) issue(next.followDirection);
+      else if (result === false) {
+        const lost = next.followDirection;
+        next.followDirection = undefined;
+        startMg(lost);
+      }
+    }
+    if (!next.buy && !next.sell) {
+      if (originalBuy) {
+        issue("buy");
+        next.followDirection = "buy";
+        clearMg();
+      } else if (originalSell) {
+        issue("sell");
+        next.followDirection = "sell";
+        clearMg();
+      } else runMg();
+    }
+  }
+  next.previousUnified = unified;
+  next.previousBlocked = blocked;
+  return next;
 }
 
 function rgbaWithAlpha(color: string, alpha: number): string {
@@ -1534,696 +1458,136 @@ function zoneColor(zone: PocZone, params: Params): string {
   return zone.activeRank === 0 ? params.currentColor : params.historicalColor;
 }
 
-function renderZones(
-  candles: readonly Candle[],
-  zones: readonly PocZone[],
-  params: Params,
-): IndicatorSnapshot["overlays"] {
-  const overlays: IndicatorSnapshot["overlays"][number][] = [];
-  for (const zone of zones.slice(-params.maxStoredZones)) {
-    for (const segment of zone.segments) {
-      const length = segment.endIndex - segment.startIndex + 1;
-      if (
-        zone.frozen &&
-        length < params.minZoneBarsToRender &&
-        zone.hitCount < params.minZoneHitsToRender
-      )
-        continue;
-      const start = candles[segment.startIndex];
-      const end = candles[Math.min(segment.endIndex + 1, candles.length - 1)];
-      if (start === undefined || end === undefined) continue;
-      const color = zoneColor(zone, params);
-      if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
-        overlays.push({
-          id: `${zone.id}:band:${segment.startIndex}`,
-          kind: "box",
-          startTimeMs: start.openTimeMs,
-          endTimeMs: end.openTimeMs,
-          top: segment.bandHigh,
-          bottom: segment.bandLow,
-          color: rgbaWithAlpha(color, params.bandOpacity),
-        });
-      }
-      if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
-        overlays.push({
-          id: `${zone.id}:line:${segment.startIndex}`,
-          kind: "line-segment",
-          startTimeMs: start.openTimeMs,
-          endTimeMs: end.openTimeMs,
-          startValue: segment.center,
-          endValue: segment.center,
-          color: rgbaWithAlpha(color, params.lineOpacity),
-          width: params.lineWidth,
-          style:
-            zone.activeRank === 0 && !zone.frozen
-              ? "solid"
-              : zone.frozen
-                ? "dotted"
-                : "dashed",
-        });
-      }
-    }
-  }
-  return overlays.slice(-2_000);
+function renderZones(state: PocState, bar: IndicatorBar, params: Params): void {
+  const skipHistoricalIntermediate =
+    bar.isHistory && bar.isConfirmed && !bar.isHistoryFinalizedTail;
+  plot.drawings(
+    "poc-zones",
+    skipHistoricalIntermediate
+      ? null
+      : () => drawZones(state.zones, params, bar),
+  );
 }
 
-function calculateSignals(
-  candles: readonly Candle[],
-  params: Params,
-  rope: RopeResult,
-  ut: UtResult,
-  bands: readonly SuppressionBand[],
-  finalizedBarIndex: number,
-): { readonly buy: number[]; readonly sell: number[] } {
-  const buy = Array<number>(candles.length).fill(0);
-  const sell = Array<number>(candles.length).fill(0);
-  const close = candles.map((candle) => candle.close);
-  const usesWinFollow =
-    params.signalIssueMode === "Win Follow" ||
-    params.signalIssueMode === "Win Follow + MG Follow";
-  const usesMgFollow =
-    (params.signalIssueMode === "MG Follow" ||
-      params.signalIssueMode === "Win Follow + MG Follow") &&
-    params.mgStepCount > 0;
-  let previousUnified = 0;
-  let previousBlocked = false;
-  let followDirection: "buy" | "sell" | undefined;
-  let lastSignalIndex: number | undefined;
-  let mgDirection: "buy" | "sell" | undefined;
-  let mgStep = 0;
-  let mgSignalIndex: number | undefined;
-  const won = (
-    direction: "buy" | "sell",
-    signalIndex: number | undefined,
-    currentIndex: number,
-  ): boolean | undefined => {
-    if (signalIndex === undefined || signalIndex + 1 > currentIndex)
-      return undefined;
-    const outcome = candles[signalIndex + 1];
-    if (outcome === undefined) return undefined;
-    return direction === "buy"
-      ? outcome.close > outcome.open
-      : outcome.close < outcome.open;
-  };
-  for (let index = 0; index <= finalizedBarIndex; index += 1) {
-    const ropeDirection = rope.direction[index] ?? 0;
-    const utPosition = ut.position[index] ?? 0;
-    const unified = ropeDirection === utPosition ? ropeDirection : 0;
-    const blocked = isBlocked(index, params, bands, close, rope.rope, ut.stop);
-    const exitedBand = previousBlocked && !blocked;
-    const originalBuy =
-      !blocked && unified === 1 && (previousUnified !== 1 || exitedBand);
-    const originalSell =
-      !blocked && unified === -1 && (previousUnified !== -1 || exitedBand);
-    const issue = (direction: "buy" | "sell"): void => {
-      if (direction === "buy") buy[index] = 1;
-      else sell[index] = 1;
-      lastSignalIndex = index;
-    };
-    const clearMg = (): void => {
-      mgDirection = undefined;
-      mgStep = 0;
-      mgSignalIndex = undefined;
-    };
-    const startMg = (direction: "buy" | "sell"): void => {
-      if (usesMgFollow) {
-        mgDirection = direction;
-        mgStep = 0;
-        mgSignalIndex = lastSignalIndex;
-      } else clearMg();
-    };
-    const runMg = (): void => {
-      if (!usesMgFollow || mgDirection === undefined) return;
-      const result = won(mgDirection, mgSignalIndex, index);
-      if (result === undefined) return;
-      if (result) {
-        const recovered = mgDirection;
-        clearMg();
-        followDirection = recovered;
-        if (
-          (recovered === "buy" && unified === 1) ||
-          (recovered === "sell" && unified === -1)
-        )
-          issue(recovered);
-        return;
-      }
-      if (mgStep >= params.mgStepCount) {
-        clearMg();
-        followDirection = undefined;
-        return;
-      }
-      issue(mgDirection);
-      mgSignalIndex = index;
-      mgStep += 1;
-    };
-    if (params.signalIssueMode === "original") {
-      if (originalBuy) buy[index] = 1;
-      else if (originalSell) sell[index] = 1;
-      followDirection = undefined;
-      lastSignalIndex = undefined;
-      clearMg();
-    } else if (params.signalIssueMode === "MG Follow") {
-      if (originalBuy) {
-        clearMg();
-        issue("buy");
-        mgDirection = "buy";
-        mgSignalIndex = index;
-      } else if (originalSell) {
-        clearMg();
-        issue("sell");
-        mgDirection = "sell";
-        mgSignalIndex = index;
-      } else runMg();
-      followDirection = undefined;
-    } else if (usesWinFollow) {
-      if (followDirection !== undefined) {
-        const sameSide =
-          (followDirection === "buy" && unified === 1) ||
-          (followDirection === "sell" && unified === -1);
-        const result = won(followDirection, lastSignalIndex, index);
-        if (!sameSide) {
-          if (result === false) startMg(followDirection);
-          followDirection = undefined;
-        } else if (result === true) issue(followDirection);
-        else if (result === false) {
-          const lost = followDirection;
-          followDirection = undefined;
-          startMg(lost);
-        }
-      }
-      if (buy[index] !== 1 && sell[index] !== 1) {
-        if (originalBuy) {
-          issue("buy");
-          followDirection = "buy";
-          clearMg();
-        } else if (originalSell) {
-          issue("sell");
-          followDirection = "sell";
-          clearMg();
-        } else runMg();
-      }
-    }
-    previousUnified = unified;
-    previousBlocked = blocked;
-  }
-  return { buy, sell };
-}
+const indicator: IndicatorPluginModule = defineIndicator(
+  {
+    id: "erc.indicator.atr-rope-utbot.unified",
+    name: "ATR Rope + UT Bot Unified",
+    description:
+      "ATR Rope + UT Bot with follow signals and rolling ADX POC migration. Uses chart-timeframe candles until explicit MTF inputs are available.",
+    placement: "overlay",
+  },
+  (bar) => {
+    const params = readInputs();
 
-function finiteOrNull(value: number): number | null {
-  return Number.isFinite(value) ? value : null;
-}
-
-function ropeTailStep(
-  state: LiveTailState,
-  candles: readonly Candle[],
-  index: number,
-  params: Params,
-  phase: "building" | "finalized",
-): RopePoint {
-  const candle = candles[index];
-  if (candle === undefined) {
-    return {
-      rope: Number.NaN,
-      upper: Number.NaN,
-      lower: Number.NaN,
-      directionUpper: Number.NaN,
-      directionLower: Number.NaN,
-      direction: 0,
-    };
-  }
-  const current = priceSeries([candle], params.ropeSource)[0] ?? Number.NaN;
-  const currentAtr = state.ropeAtr.update(candle, phase);
-  const previousRope = Number.isFinite(state.previousRope)
-    ? state.previousRope
-    : current;
-  const directionInput = index === 0 ? current : previousRope;
-  const directionBase = state.directionMa.update(directionInput, phase);
-  let ropeValue = previousRope;
-  let upper = Number.NaN;
-  let lower = Number.NaN;
-  let directionUpper = Number.NaN;
-  let directionLower = Number.NaN;
-  let direction = 0;
-  let nextBandAtr = state.bandAtr;
-
-  if (Number.isFinite(current)) {
-    if (!Number.isFinite(currentAtr)) {
-      ropeValue = current;
-    } else {
-      const threshold = Math.max(0, currentAtr * params.ropeMultiplier);
-      const move = current - previousRope;
-      const absMove = Math.abs(move);
-      const sign = Math.sign(move);
-      let amount = 0;
-      switch (params.ropeSensitivityMode) {
-        case "original":
-          amount = absMove > threshold ? (absMove - threshold) * sign : 0;
-          break;
-        case "partial":
-          amount =
-            absMove < threshold ? move * 0.4 : (absMove - threshold) * sign;
-          break;
-        case "reduced":
-          amount =
-            absMove > threshold * 0.5 ? (absMove - threshold * 0.5) * sign : 0;
-          break;
-        case "momentum": {
-          const old =
-            index >= 3
-              ? (priceSeries(
-                  [candles[index - 3] as Candle],
-                  params.ropeSource,
-                )[0] ?? current)
-              : current;
-          const momentum = Math.abs(current - old);
-          const denominator = threshold * 3;
-          const normalized =
-            denominator > Number.EPSILON ? momentum / denominator : 0;
-          const factor = 1 + Math.min(normalized, 1) * 0.5;
-          amount =
-            absMove < threshold
-              ? move * 0.3
-              : (absMove - threshold * 0.6) * sign * factor;
-          break;
-        }
-        case "ema":
-          amount =
-            absMove < threshold
-              ? move * 0.15
-              : (absMove - threshold * 0.7) * sign + move * 0.075;
-          break;
-        case "adaptive": {
-          const old =
-            index >= 5
-              ? (priceSeries(
-                  [candles[index - 5] as Candle],
-                  params.ropeSource,
-                )[0] ?? current)
-              : current;
-          const change = Math.abs(current - old);
-          const denominator = threshold * 5;
-          const normalized =
-            denominator > Number.EPSILON ? change / denominator : 0;
-          const adaptiveThreshold =
-            threshold * (1 - Math.min(normalized * 0.4, 0.6));
-          amount =
-            absMove > adaptiveThreshold
-              ? (absMove - adaptiveThreshold) * sign
-              : 0;
-          break;
-        }
-        case "zerolag": {
-          const lag = Math.floor((params.ropePeriod - 1) / 2);
-          const lagged =
-            lag === 0 || index < lag
-              ? current
-              : (priceSeries(
-                  [candles[index - lag] as Candle],
-                  params.ropeSource,
-                )[0] ?? current);
-          const zeroLag = lag === 0 ? current : current + (current - lagged);
-          const lagMove = zeroLag - previousRope;
-          const magnitude = Math.abs(lagMove);
-          amount =
-            magnitude > threshold
-              ? (magnitude - threshold) * Math.sign(lagMove)
-              : 0;
-          break;
-        }
-      }
-      ropeValue = previousRope + (Number.isFinite(amount) ? amount : 0);
-      upper = ropeValue + threshold;
-      lower = ropeValue - threshold;
-      if (Number.isFinite(directionBase)) {
-        const bandAtr = Number.isFinite(state.bandAtr)
-          ? state.bandAtr
-          : currentAtr;
-        const band = bandAtr * params.ropeDirectionThreshold;
-        directionUpper = directionBase + band;
-        directionLower = directionBase - band;
-        direction =
-          ropeValue > directionUpper ? 1 : ropeValue < directionLower ? -1 : 0;
-        nextBandAtr = direction === 0 ? currentAtr : bandAtr;
-      }
-    }
-  }
-
-  if (phase === "finalized") {
-    state.previousRope = ropeValue;
-    state.previousAtr = currentAtr;
-    if (Number.isFinite(nextBandAtr)) state.bandAtr = nextBandAtr;
-    state.finalizedCount = Math.max(state.finalizedCount, index + 1);
-  }
-  return {
-    rope: ropeValue,
-    upper,
-    lower,
-    directionUpper,
-    directionLower,
-    direction,
-  };
-}
-
-function utTailStep(
-  state: LiveTailState,
-  candles: readonly Candle[],
-  index: number,
-  params: Params,
-  phase: "building" | "finalized",
-): UtPoint {
-  const candle = candles[index];
-  if (candle === undefined) return { stop: Number.NaN, position: 0 };
-  const raw = priceSeries([candle], params.utbotSource)[0] ?? Number.NaN;
-  const lag = Math.floor((params.utbotAtrPeriod - 1) / 2);
-  const lagged =
-    lag === 0 || index < lag
-      ? raw
-      : (priceSeries([candles[index - lag] as Candle], params.utbotSource)[0] ??
-        raw);
-  const current =
-    params.utbotMode === "0lag" && lag > 0 ? raw + (raw - lagged) : raw;
-  const currentAtr = state.utAtr.update(candle, phase);
-  if (!Number.isFinite(current) || !Number.isFinite(currentAtr)) {
-    if (phase === "finalized" && Number.isFinite(current)) {
-      state.previousUtClose = current;
-      state.finalizedCount = Math.max(state.finalizedCount, index + 1);
-    }
-    return { stop: Number.NaN, position: state.previousUtPosition };
-  }
-  const loss = Math.max(0, currentAtr * params.utbotKeyValue);
-  const previousClose = Number.isFinite(state.previousUtClose)
-    ? state.previousUtClose
-    : current;
-  const previousStop = state.previousUtStop;
-  const stopPrev = Number.isFinite(previousStop)
-    ? previousStop
-    : current - loss;
-  let stop: number;
-  if (!Number.isFinite(previousStop)) stop = current - loss;
-  else if (current > previousStop && previousClose > previousStop) {
-    stop = Math.max(previousStop, current - loss);
-  } else if (current < previousStop && previousClose < previousStop) {
-    stop = Math.min(previousStop, current + loss);
-  } else {
-    stop = current > previousStop ? current - loss : current + loss;
-  }
-  let position = state.previousUtPosition;
-  if (index > 0 && Number.isFinite(stopPrev)) {
-    if (previousClose < stopPrev && current > stopPrev) position = 1;
-    else if (previousClose > stopPrev && current < stopPrev) position = -1;
-  }
-  if (phase === "finalized") {
-    state.previousUtStop = stop;
-    state.previousUtPosition = position;
-    state.previousUtClose = current;
-    state.finalizedCount = Math.max(state.finalizedCount, index + 1);
-  }
-  return { stop, position };
-}
-
-function createLiveTailState(params: Params): LiveTailState {
-  return {
-    ropeAtr: ta.createAtrKernel(params.ropePeriod),
-    directionMa: ta.createMovingAverageKernel(
+    const ropeSource = priceValue(bar, params.ropeSource);
+    const ropeAtr = ta.atr(params.ropePeriod);
+    const ropeState = series(emptyRopeState, (previous) =>
+      stepRope(previous, ropeSource, ropeAtr, params),
+    );
+    const directionBase = ta.movingAverage(
+      ropeState.directionInput,
       params.ropeDirectionMaType,
       params.ropeDirectionLookback,
-    ),
-    utAtr: ta.createAtrKernel(params.utbotAtrPeriod),
-    finalizedCount: 0,
-    previousRope: Number.NaN,
-    bandAtr: Number.NaN,
-    previousAtr: Number.NaN,
-    previousUtStop: Number.NaN,
-    previousUtPosition: 0,
-    previousUtClose: Number.NaN,
-  };
-}
-
-function rebuildLiveTailState(
-  candles: readonly Candle[],
-  finalizedCount: number,
-  params: Params,
-): LiveTailState {
-  const state = createLiveTailState(params);
-  const end = Math.min(finalizedCount, candles.length);
-  for (let index = 0; index < end; index += 1) {
-    ropeTailStep(state, candles, index, params, "finalized");
-    utTailStep(state, candles, index, params, "finalized");
-  }
-  state.finalizedCount = end;
-  return state;
-}
-
-function livePoint(
-  candle: Candle,
-  rope: RopePoint,
-  ut: UtPoint,
-  params: Params,
-): IndicatorSnapshot["points"][number] {
-  return {
-    openTimeMs: candle.openTimeMs,
-    values: {
-      rope: finiteOrNull(rope.rope),
-      directionUpper: finiteOrNull(rope.directionUpper),
-      directionLower: finiteOrNull(rope.directionLower),
-      utStop: params.showTrailingStop ? finiteOrNull(ut.stop) : null,
-      buyMarker: null,
-      sellMarker: null,
-    },
-    colors: {
-      rope:
-        rope.direction > 0
-          ? params.ropeUpColor
-          : rope.direction < 0
-            ? params.ropeDownColor
-            : params.ropeFlatColor,
-      utStop:
-        ut.position > 0
-          ? params.utbotUpTrendColor
-          : ut.position < 0
-            ? params.utbotDownTrendColor
-            : params.utbotTrailingStopColor,
-      buyMarker: params.buySignalColor,
-      sellMarker: params.sellSignalColor,
-    },
-    sizes: { rope: params.ropeWidth },
-  };
-}
-
-function calculate(
-  candles: readonly Candle[],
-  params: Params,
-  context: IndicatorInstanceContext,
-  requestedFinalizedBarIndex = Math.max(-1, candles.length - 2),
-): CalculationResult {
-  if (candles.length === 0)
-    return {
-      points: [],
-      overlays: [],
-      signals: [],
-      finalizedBarIndex: -1,
-      pocZones: [],
-    };
-  const rope = computeRope(candles, params);
-  const ut = computeUtBot(candles, params);
-  const finalizedBarIndex = Math.min(
-    candles.length - 1,
-    Math.max(-1, requestedFinalizedBarIndex),
-  );
-  const zones = buildPocZones(candles, params, finalizedBarIndex);
-  const bands = suppressionBands(zones, params);
-  const signalFlags = calculateSignals(
-    candles,
-    params,
-    rope,
-    ut,
-    bands,
-    finalizedBarIndex,
-  );
-  const markerAtr = ta.atr(
-    candles,
-    Math.max(params.ropePeriod, params.utbotAtrPeriod),
-  );
-  const points = candles.map((candle, index) => {
-    const ropeValue = rope.rope[index] ?? Number.NaN;
-    const direction = rope.direction[index] ?? 0;
-    const stop = ut.stop[index] ?? Number.NaN;
-    const position = ut.position[index] ?? 0;
-    const padding = Number.isFinite(markerAtr[index])
-      ? Math.max(markerAtr[index] as number, Number.EPSILON) * 0.35
-      : Math.max(Math.abs(candle.close) * 1e-5, Number.EPSILON);
-    return {
-      openTimeMs: candle.openTimeMs,
-      values: {
-        rope: finiteOrNull(ropeValue),
-        directionUpper: finiteOrNull(rope.directionUpper[index] ?? Number.NaN),
-        directionLower: finiteOrNull(rope.directionLower[index] ?? Number.NaN),
-        utStop: params.showTrailingStop ? finiteOrNull(stop) : null,
-        buyMarker: signalFlags.buy[index] === 1 ? candle.low - padding : null,
-        sellMarker:
-          signalFlags.sell[index] === 1 ? candle.high + padding : null,
-      },
-      colors: {
-        rope:
-          direction > 0
-            ? params.ropeUpColor
-            : direction < 0
-              ? params.ropeDownColor
-              : params.ropeFlatColor,
-        utStop:
-          position > 0
-            ? params.utbotUpTrendColor
-            : position < 0
-              ? params.utbotDownTrendColor
-              : params.utbotTrailingStopColor,
-        buyMarker: params.buySignalColor,
-        sellMarker: params.sellSignalColor,
-      },
-      sizes: {
-        rope: params.ropeWidth,
-      },
-    };
-  });
-  const signals: SignalCandidate[] = [];
-  for (let index = 0; index <= finalizedBarIndex; index += 1) {
-    const candle = candles[index];
-    if (candle === undefined) continue;
-    const direction =
-      signalFlags.buy[index] === 1
-        ? "long"
-        : signalFlags.sell[index] === 1
-          ? "short"
-          : undefined;
-    if (direction === undefined) continue;
-    signals.push({
-      signalContractVersion: indicatorContractVersion,
-      id: `${definitionId}:${candle.openTimeMs}:${direction}`,
-      indicatorId: definitionId,
-      instrumentId: context.instrumentId,
-      timeframeId: context.timeframeId,
-      occurredAtMs: candle.openTimeMs,
-      direction,
-      finalized: true,
-    });
-  }
-  return {
-    points,
-    overlays: renderZones(candles, zones, params),
-    signals,
-    finalizedBarIndex,
-    pocZones: zones,
-  };
-}
-
-function upsertCandle(candles: readonly Candle[], candle: Candle): Candle[] {
-  const next = [...candles];
-  const index = next.findIndex((item) => item.openTimeMs === candle.openTimeMs);
-  if (index >= 0) next[index] = candle;
-  else next.push(candle);
-  next.sort((left, right) => left.openTimeMs - right.openTimeMs);
-  return next;
-}
-
-export function createInstance(
-  parameterValues: Readonly<Record<string, IndicatorInputValue>>,
-  context: IndicatorInstanceContext,
-): RuntimeIndicatorInstance {
-  const params = toParams(parameterValues);
-  let candles: Candle[] = [];
-  let points: IndicatorSnapshot["points"][number][] = [];
-  let visualRevision = 0;
-  let current: CalculationResult = {
-    points: [],
-    overlays: [],
-    signals: [],
-    finalizedBarIndex: -1,
-    pocZones: [],
-  };
-  let liveTail = createLiveTailState(params);
-  let disposed = false;
-
-  const rebuild = (finalizedBarIndex: number): void => {
-    if (disposed) return;
-    current = calculate(candles, params, context, finalizedBarIndex);
-    visualRevision += 1;
-    points = [...current.points];
-    current = { ...current, points };
-    liveTail = rebuildLiveTailState(
-      candles,
-      Math.max(0, finalizedBarIndex + 1),
-      params,
     );
-  };
+    const ropeDirection = series(emptyRopeDirectionState, (previous) =>
+      stepRopeDirection(
+        previous,
+        ropeState.rope,
+        ropeAtr,
+        directionBase,
+        params.ropeDirectionThreshold,
+      ),
+    );
 
-  return {
-    onHistory: (history): void => {
-      candles = [...history].sort(
-        (left, right) => left.openTimeMs - right.openTimeMs,
-      );
-      rebuild(Math.max(-1, candles.length - 2));
-    },
-    onBuildingBar: (candle): void => {
-      if (disposed) return;
-      const previous = candles.at(-1);
-      const sameBuilding = previous?.openTimeMs === candle.openTimeMs;
-      if (sameBuilding) candles[candles.length - 1] = candle;
-      else if (
-        previous === undefined ||
-        candle.openTimeMs > previous.openTimeMs
-      )
-        candles.push(candle);
-      else {
-        candles = upsertCandle(candles, candle);
-        rebuild(Math.max(-1, candles.length - 2));
-        return;
-      }
-      const index = candles.length - 1;
-      if (!sameBuilding) visualRevision += 1;
-      if (index < 0 || index !== liveTail.finalizedCount) {
-        rebuild(Math.max(-1, candles.length - 2));
-        return;
-      }
-      const rope = ropeTailStep(liveTail, candles, index, params, "building");
-      const ut = utTailStep(liveTail, candles, index, params, "building");
-      points[index] = livePoint(candle, rope, ut, params);
-      current = {
-        ...current,
-        points,
-        // Zone geometry depends on finalized bars and the tail timestamp, not its live price.
-        overlays: sameBuilding
-          ? current.overlays
-          : renderZones(candles, current.pocZones, params),
-        finalizedBarIndex: index - 1,
-      };
-    },
-    onFinalizedBar: (candle): void => {
-      if (disposed) return;
-      candles = upsertCandle(candles, candle);
-      const index = candles.findIndex(
-        (item) => item.openTimeMs === candle.openTimeMs,
-      );
-      rebuild(index < 0 ? Math.max(-1, candles.length - 2) : index);
-    },
-    snapshot: (): IndicatorSnapshot => ({
-      visualRevision,
-      points: current.points,
-      overlays: current.overlays,
-      ...(current.signals === undefined ? {} : { signals: current.signals }),
-    }),
-    dispose: (): void => {
-      disposed = true;
-      candles = [];
-      points = [];
-      liveTail = createLiveTailState(params);
-      current = {
-        points: [],
-        overlays: [],
-        signals: [],
-        finalizedBarIndex: -1,
-        pocZones: [],
-      };
-    },
-  };
-}
-const plugin: IndicatorPluginModule = { definition, createInstance };
-export default plugin;
+    const utSource = priceValue(bar, params.utbotSource);
+    const utAtr = ta.atr(params.utbotAtrPeriod);
+    const ut = series(emptyUtState, (previous) =>
+      stepUtBot(previous, utSource, utAtr, bar.index, params),
+    );
+
+    const dmi = ta.dmi(params.dmiLength);
+    const poc = series(emptyPocState, (previous) =>
+      stepPoc(previous, bar, dmi, params),
+    );
+    const unified: Direction =
+      ropeDirection.direction === ut.position ? ropeDirection.direction : 0;
+    const blocked = signalBlocked(
+      bar.index,
+      params,
+      poc.zones,
+      bar.close,
+      ropeState.rope,
+      ut.stop,
+    );
+    const signalState = series(emptySignalState, (previous) =>
+      stepSignals(previous, bar, unified, blocked, params),
+    );
+    const markerAtr = ta.atr(
+      Math.max(params.ropePeriod, params.utbotAtrPeriod),
+    );
+    const padding = Number.isFinite(markerAtr)
+      ? Math.max(markerAtr, Number.EPSILON) * 0.35
+      : Math.max(Math.abs(bar.close) * 1e-5, Number.EPSILON);
+    const ropeColor =
+      ropeDirection.direction > 0
+        ? params.ropeUpColor
+        : ropeDirection.direction < 0
+          ? params.ropeDownColor
+          : params.ropeFlatColor;
+    const utColor =
+      ut.position > 0
+        ? params.utbotUpTrendColor
+        : ut.position < 0
+          ? params.utbotDownTrendColor
+          : params.utbotTrailingStopColor;
+
+    plot.line(ropeState.rope, {
+      key: "rope",
+      title: "ATR Rope",
+      color: ropeColor,
+      width: params.ropeWidth,
+    });
+    plot.line(ropeDirection.upper, {
+      key: "directionUpper",
+      title: "Direction Upper",
+      color: "#3daa45",
+    });
+    plot.line(ropeDirection.lower, {
+      key: "directionLower",
+      title: "Direction Lower",
+      color: "#ff033e",
+    });
+    plot.line(params.showTrailingStop ? ut.stop : null, {
+      key: "utStop",
+      title: "UT Stop",
+      color: utColor,
+      width: 2,
+    });
+    plot.shape(signalState.buy ? bar.low - padding : null, {
+      key: "buyMarker",
+      title: "Buy",
+      direction: "up",
+      color: params.buySignalColor,
+    });
+    plot.shape(signalState.sell ? bar.high + padding : null, {
+      key: "sellMarker",
+      title: "Sell",
+      direction: "down",
+      color: params.sellSignalColor,
+    });
+    renderZones(poc, bar, params);
+    signal(signalState.buy, "long", {
+      id: "erc.indicator.atr-rope-utbot.unified:buy",
+    });
+    signal(signalState.sell, "short", {
+      id: "erc.indicator.atr-rope-utbot.unified:sell",
+    });
+  },
+);
+
+export const definition: IndicatorPluginModule["definition"] =
+  indicator.definition;
+export const createInstance: IndicatorPluginModule["createInstance"] =
+  indicator.createInstance;
+export default indicator;

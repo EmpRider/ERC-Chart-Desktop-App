@@ -170,20 +170,37 @@ for (const size of [1_000, 100_000]) {
     timeframeId: "1m",
   });
   try {
+    const historyStarted = performance.now();
     instance.onHistory(
       Array.from({ length: size }, (_, index) => candle(index)),
+    );
+    const historyElapsedMs = performance.now() - historyStarted;
+    assert.ok(
+      historyElapsedMs < 60_000,
+      `ATR history exceeded the worker budget: ${historyElapsedMs}`,
     );
     const points = instance.snapshot().points;
     const overlays = instance.snapshot().overlays;
     for (let index = 0; index < 20; index += 1)
       instance.onBuildingBar({ ...candle(size - 1), close: 10 + index / 100 });
     const started = performance.now();
-    for (let index = 0; index < 1_000; index += 1)
+    let maximumBuildingMs = 0;
+    for (let index = 0; index < 1_000; index += 1) {
+      const updateStarted = performance.now();
       instance.onBuildingBar({
         ...candle(size - 1),
         close: 10 + (index % 100) / 100,
       });
+      maximumBuildingMs = Math.max(
+        maximumBuildingMs,
+        performance.now() - updateStarted,
+      );
+    }
     const elapsedMs = performance.now() - started;
+    assert.ok(
+      maximumBuildingMs < 100,
+      `ATR building update exceeded the 100 ms worker budget: ${maximumBuildingMs}`,
+    );
     assert.strictEqual(
       instance.snapshot().points,
       points,
@@ -194,10 +211,20 @@ for (const size of [1_000, 100_000]) {
       overlays,
       "unchanged finalized geometry must be reused",
     );
+    const finalizedStarted = performance.now();
+    instance.onFinalizedBar(candle(size - 1));
+    const finalizedElapsedMs = performance.now() - finalizedStarted;
+    assert.ok(
+      finalizedElapsedMs < 100,
+      `ATR finalization exceeded the 100 ms worker budget: ${finalizedElapsedMs}`,
+    );
     console.log(
       JSON.stringify({
         component: "atr-rope-utbot",
         historyBars: size,
+        historyElapsedMs,
+        finalizedElapsedMs,
+        maximumBuildingMs,
         ticks: 1_000,
         elapsedMs,
       }),

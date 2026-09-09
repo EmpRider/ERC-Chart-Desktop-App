@@ -73,6 +73,7 @@ export interface RendererBridge {
   ) => Promise<InstalledIndicatorSummary>;
   readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
   readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
+  readonly removeIndicator: (pluginId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -1427,6 +1428,7 @@ function HydratedRuntimeApplicationShell({
                   setIndicatorPreview(undefined);
                 })
                 .catch(() => {
+                  setIndicatorPreview(undefined);
                   setIndicatorImportError("Indicator could not be installed.");
                 })
                 .finally(() => setIndicatorImportBusy(false));
@@ -1475,6 +1477,19 @@ function HydratedRuntimeApplicationShell({
               onClose: () => setPluginManagerOpen(false),
               onProviderImport: beginProviderImport,
               onIndicatorImport: beginIndicatorImport,
+              onIndicatorRemove: async (pluginId) => {
+                if (indicatorImportBusy) return;
+                setIndicatorImportBusy(true);
+                setIndicatorImportError(undefined);
+                try {
+                  await bridge.removeIndicator(pluginId);
+                  setInstalledIndicators(await bridge.listIndicators());
+                } catch {
+                  setIndicatorImportError("Indicator could not be removed.");
+                } finally {
+                  setIndicatorImportBusy(false);
+                }
+              },
               onRefresh: async () => {
                 await Promise.all([
                   refreshProviderManagement(),
