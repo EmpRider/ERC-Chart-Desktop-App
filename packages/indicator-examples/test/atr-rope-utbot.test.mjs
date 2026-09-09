@@ -41,6 +41,36 @@ function candles() {
   return result;
 }
 
+function paginatedCandles(length) {
+  return Array.from({ length }, (_, index) => ({
+    instrumentId: "edge.instrument",
+    timeframeId: "1m",
+    openTimeMs: 1_800_000_000_000 + index * 60_000,
+    open: 100 + (index % 7),
+    high: 102 + (index % 7),
+    low: 98 + (index % 7),
+    close: 101 + (index % 7),
+    volume: 1,
+  }));
+}
+
+test("rebuilds across multiple paginated history pages without exhausting drawing updates", () => {
+  const instance = atrRopeUtBotIndicator.createInstance(defaults(), {
+    instrumentId: "edge.instrument",
+    timeframeId: "1m",
+  });
+  try {
+    const history = paginatedCandles(1_500);
+    instance.onHistory(history);
+    const snapshot = instance.snapshot();
+    assert.equal(snapshot.points.length, history.length);
+    assert.equal(snapshot.points[0].openTimeMs, history[0].openTimeMs);
+    assert.equal(snapshot.points.at(-1).openTimeMs, history.at(-1).openTimeMs);
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("handles zero threshold, period-one zero lag and zero previous close without NaN output", () => {
   const instance = atrRopeUtBotIndicator.createInstance(
     defaults({

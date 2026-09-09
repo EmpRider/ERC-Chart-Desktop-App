@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -171,6 +173,154 @@ test("rejects installation collisions without replacing the installed version", 
         "utf8",
       ),
       "export default 1;\n",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("replaces an installed version only when replacement is explicitly enabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-provider-replace-"));
+  try {
+    const installationRoot = path.join(root, "installed");
+    const stagingRoot = path.join(root, "staging");
+    const firstSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 1;\n",
+    );
+    const first = await stagePluginPackage(
+      { kind: "folder", path: firstSource },
+      { stagingRoot },
+    );
+    await installStagedPlugin(first, { installationRoot });
+
+    await rm(firstSource, { recursive: true, force: true });
+    const replacementSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 'replacement';\n",
+    );
+    const replacement = await stagePluginPackage(
+      { kind: "folder", path: replacementSource },
+      { stagingRoot },
+    );
+    const installed = await installStagedPlugin(replacement, {
+      installationRoot,
+      replaceExisting: true,
+    });
+
+    assert.equal(
+      await readFile(
+        path.join(installed.installationPath, "dist", "index.js"),
+        "utf8",
+      ),
+      "export default 'replacement';\n",
+    );
+    assert.deepEqual(await readdir(path.dirname(installed.installationPath)), [
+      "1.0.0",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("can defer replacement cleanup until the caller commits or rolls back", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "erc-provider-deferred-replace-"),
+  );
+  try {
+    const installationRoot = path.join(root, "installed");
+    const stagingRoot = path.join(root, "staging");
+    const firstSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 1;\n",
+    );
+    const first = await stagePluginPackage(
+      { kind: "folder", path: firstSource },
+      { stagingRoot },
+    );
+    await installStagedPlugin(first, { installationRoot });
+
+    await rm(firstSource, { recursive: true, force: true });
+    const replacementSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 'replacement';\n",
+    );
+    const replacement = await stagePluginPackage(
+      { kind: "folder", path: replacementSource },
+      { stagingRoot },
+    );
+    const pending = await installStagedPlugin(replacement, {
+      installationRoot,
+      replaceExisting: true,
+      deferReplacementCommit: true,
+    });
+
+    assert.ok(pending.replacement);
+    assert.equal(
+      await readFile(
+        path.join(pending.installationPath, "dist", "index.js"),
+        "utf8",
+      ),
+      "export default 'replacement';\n",
+    );
+    await pending.replacement.rollback();
+    assert.equal(
+      await readFile(
+        path.join(pending.installationPath, "dist", "index.js"),
+        "utf8",
+      ),
+      "export default 1;\n",
+    );
+    assert.deepEqual(await readdir(path.dirname(pending.installationPath)), [
+      "1.0.0",
+    ]);
+
+    await rm(replacementSource, { recursive: true, force: true });
+    const committedSource = await createFolderFixture(
+      root,
+      "1.0.0",
+      "export default 'committed';\n",
+    );
+    const committedStaged = await stagePluginPackage(
+      { kind: "folder", path: committedSource },
+      { stagingRoot },
+    );
+    const committed = await installStagedPlugin(committedStaged, {
+      installationRoot,
+      replaceExisting: true,
+      deferReplacementCommit: true,
+    });
+    assert.ok(committed.replacement);
+    const originalRm = fs.rm;
+    try {
+      fs.rm = async (target, options) => {
+        if (String(target).includes(".replacement-"))
+          throw new Error("fixture backup cleanup failure");
+        return originalRm(target, options);
+      };
+      syncBuiltinESMExports();
+      await committed.replacement.commit();
+      await committed.replacement.rollback();
+    } finally {
+      fs.rm = originalRm;
+      syncBuiltinESMExports();
+    }
+    assert.equal(
+      await readFile(
+        path.join(committed.installationPath, "dist", "index.js"),
+        "utf8",
+      ),
+      "export default 'committed';\n",
+    );
+    const remaining = await readdir(path.dirname(committed.installationPath));
+    assert.ok(remaining.includes("1.0.0"));
+    assert.equal(
+      remaining.filter((name) => name.includes(".replacement-")).length,
+      1,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

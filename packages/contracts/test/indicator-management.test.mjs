@@ -33,8 +33,8 @@ function summary(runtimeEntryUrl, overrides = {}) {
 }
 
 test("accepts only canonical erc-plugin runtime entry URLs for the installed plugin", () => {
-  const valid =
-    "erc-plugin://plugin/erc.indicator.test/1.2.3-alpha.1%2Bbuild.5/dist/index.js";
+  const revision = "a".repeat(64);
+  const valid = `erc-plugin://plugin/erc.indicator.test/1.2.3-alpha.1%2Bbuild.5/dist/index.js?revision=${revision}`;
   assert.equal(isInstalledIndicatorSummary(summary(valid)), true);
 
   for (const invalid of [
@@ -44,7 +44,10 @@ test("accepts only canonical erc-plugin runtime entry URLs for the installed plu
     "erc-plugin://plugin/erc.indicator.test/1.2.4/dist/index.js",
     "erc-plugin://plugin/erc.indicator.test/1.2.3-alpha.1%2Bbuild.5/plugin.json",
     "erc-plugin://plugin/erc.indicator.test/1.2.3-alpha.1%2Bbuild.5/dist/%2e%2e/plugin.json",
-    `${valid}?cache=1`,
+    "erc-plugin://plugin/erc.indicator.test/1.2.3-alpha.1%2Bbuild.5/dist/index.js",
+    `${valid}&cache=1`,
+    `${valid}&revision=${revision}`,
+    `${valid}#fragment`,
   ]) {
     assert.equal(isInstalledIndicatorSummary(summary(invalid)), false, invalid);
   }

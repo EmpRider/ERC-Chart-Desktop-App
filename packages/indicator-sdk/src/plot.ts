@@ -1,11 +1,14 @@
-import { authoringFrame } from "./authoring-context.js";
+import { sameDrawing } from "./drawing-equality.js";
+import { authoringFrame, useKernel } from "./authoring-context.js";
 import type {
   IndicatorBox,
   IndicatorLineSegment,
+  IndicatorOverlay,
   IndicatorPlotDefinition,
 } from "./index.js";
 
 export interface PlotOptions {
+  readonly key?: string;
   readonly title?: string;
   readonly color?: string;
   readonly width?: number;
@@ -14,6 +17,13 @@ export interface PlotOptions {
 export interface ShapeOptions extends PlotOptions {
   readonly direction?: "up" | "down";
 }
+
+interface DrawingScopeState {
+  committed: Map<string, IndicatorOverlay>;
+}
+
+let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
+let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
 
 function valuePlot(
   kind: IndicatorPlotDefinition["kind"],
@@ -24,7 +34,7 @@ function valuePlot(
   const index = frame.plotIndex++;
   if (index >= 128)
     throw new RangeError("An indicator may declare at most 128 plots.");
-  const key = `plot_${index}`;
+  const key = options.key ?? `plot_${index}`;
   if (
     options.width !== undefined &&
     (!Number.isFinite(options.width) ||
@@ -33,6 +43,12 @@ function valuePlot(
   )
     throw new RangeError("Plot width must be greater than 0 and at most 20.");
   if (frame.discovery) {
+    if (
+      frame.plots.some(
+        (plot) => plot.key === key || (plot.outputKey ?? plot.key) === key,
+      )
+    )
+      throw new Error("Plot keys must be unique.");
     frame.plots.push({
       key,
       outputKey: key,
@@ -48,7 +64,8 @@ function valuePlot(
   } else {
     const definition = frame.plots[index];
     if (
-      definition?.kind !== kind ||
+      definition?.key !== key ||
+      definition.kind !== kind ||
       definition.label !== (options.title ?? `Plot ${index + 1}`) ||
       definition.style !== options.style ||
       definition.direction !== options.direction
@@ -68,10 +85,57 @@ function overlay(value: IndicatorBox | IndicatorLineSegment): void {
   if (frame.discovery) return;
   if (!value.id || value.id.length > 256)
     throw new RangeError("Drawings require a bounded stable id.");
+  if (activeDrawingCollector !== undefined) {
+    const previous = activeCommittedDrawings?.get(value.id);
+    activeDrawingCollector.set(
+      value.id,
+      previous !== undefined && sameDrawing(previous, value)
+        ? previous
+        : Object.freeze(value),
+    );
+    if (activeDrawingCollector.size > 2_000)
+      throw new RangeError(
+        "At most 2,000 drawings are allowed in one drawing scope.",
+      );
+    return;
+  }
   // Same-id drawings replace earlier geometry; oldest drawings are retained within a fixed cap.
-  frame.overlayUpdates.set(value.id, Object.freeze({ ...value }));
-  if (frame.overlayUpdates.size > 1_000)
-    throw new RangeError("At most 1,000 drawing changes are allowed per bar.");
+  frame.overlayUpdates.set(value.id, Object.freeze(value));
+  if (frame.overlayUpdates.size > 2_000)
+    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
+}
+
+function drawingScope(key: string, render: (() => void) | null): void {
+  if (!key || key.length > 128)
+    throw new RangeError("Drawing scopes require a bounded stable key.");
+  const frame = authoringFrame();
+  const state = useKernel<DrawingScopeState>(`plot-drawings:${key}`, () => ({
+    committed: new Map<string, IndicatorOverlay>(),
+  }));
+  if (frame.discovery || render === null) return;
+  if (activeDrawingCollector !== undefined)
+    throw new Error("Drawing scopes cannot be nested.");
+
+  const next = new Map<string, IndicatorOverlay>();
+  activeDrawingCollector = next;
+  activeCommittedDrawings = state.committed;
+  try {
+    render();
+  } finally {
+    activeDrawingCollector = undefined;
+    activeCommittedDrawings = undefined;
+  }
+
+  for (const [id, drawing] of next) {
+    const previous = state.committed.get(id);
+    if (previous !== drawing) frame.overlayUpdates.set(id, drawing);
+  }
+  for (const id of state.committed.keys()) {
+    if (!next.has(id)) frame.overlayUpdates.set(id, null);
+  }
+  if (frame.overlayUpdates.size > 2_000)
+    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
+  if (frame.phase === "finalized") state.committed = next;
 }
 
 /** Values are scalars. The SDK owns plot definitions and timestamp-aligned output arrays. */
@@ -83,6 +147,7 @@ export interface PlotApi {
   readonly box: (value: Omit<IndicatorBox, "kind">) => void;
   readonly segment: (value: Omit<IndicatorLineSegment, "kind">) => void;
   readonly remove: (id: string) => void;
+  readonly drawings: (key: string, render: (() => void) | null) => void;
 }
 export const plot: PlotApi = Object.freeze({
   line: (value: number | null, options?: PlotOptions): void =>
@@ -99,10 +164,17 @@ export const plot: PlotApi = Object.freeze({
     overlay({ ...value, kind: "line-segment" }),
   remove: (id: string): void => {
     const frame = authoringFrame();
+    if (!id || id.length > 256)
+      throw new RangeError("Drawings require a bounded stable id.");
+    if (activeDrawingCollector !== undefined) {
+      activeDrawingCollector.delete(id);
+      return;
+    }
     frame.overlayUpdates.set(id, null);
-    if (frame.overlayUpdates.size > 1_000)
+    if (frame.overlayUpdates.size > 2_000)
       throw new RangeError(
-        "At most 1,000 drawing changes are allowed per bar.",
+        "At most 2,000 drawing changes are allowed per bar.",
       );
   },
+  drawings: drawingScope,
 });

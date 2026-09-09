@@ -666,10 +666,13 @@ export function movingAverage(
   type: MovingAverageType,
   period: number,
 ): number[] | number {
-  if (typeof values === "number")
-    return numericCall(`ma-${type}`, values, period, (length) =>
+  if (typeof values === "number") {
+    const frame = authoringFrame();
+    const length = authoringLength(period);
+    return useKernel(`ma:${type}:${length}`, () =>
       createMovingAverageKernel(type, length),
-    );
+    ).update(values, frame.phase);
+  }
   const kernel = createMovingAverageKernel(type, period);
   return values.map((value) => kernel.update(value, "finalized"));
 }

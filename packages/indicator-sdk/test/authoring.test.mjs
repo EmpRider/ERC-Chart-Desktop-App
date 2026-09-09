@@ -86,6 +86,57 @@ test("scalar authoring generates valid definitions and dense results without out
   instance.dispose();
 });
 
+test("history replay marks the finalized tail before the building candle", () => {
+  const seen = [];
+  const plugin = defineIndicator(
+    { id: "erc.indicator.history-flags.main", name: "History flags" },
+    (bar) => {
+      plot.line(bar.close);
+      seen.push({
+        index: bar.index,
+        confirmed: bar.isConfirmed,
+        history: bar.isHistory,
+        finalizedTail: bar.isHistoryFinalizedTail,
+      });
+    },
+  );
+  seen.length = 0;
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0), candle(1), candle(2)]);
+  assert.deepEqual(seen, [
+    { index: 0, confirmed: true, history: true, finalizedTail: false },
+    { index: 1, confirmed: true, history: true, finalizedTail: true },
+    { index: 2, confirmed: false, history: true, finalizedTail: false },
+  ]);
+  instance.onBuildingBar(candle(2, 99));
+  assert.deepEqual(seen.at(-1), {
+    index: 2,
+    confirmed: false,
+    history: false,
+    finalizedTail: false,
+  });
+  instance.onBuildingBar(candle(3, 100));
+  assert.equal(
+    seen.filter((value) => value.confirmed).length,
+    3,
+    "newer building candles auto-finalize the previous building candle",
+  );
+  assert.deepEqual(seen.slice(-2), [
+    { index: 2, confirmed: true, history: false, finalizedTail: false },
+    { index: 3, confirmed: false, history: false, finalizedTail: false },
+  ]);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.openTimeMs),
+    [0, 60_000, 120_000, 180_000],
+  );
+  instance.onFinalizedBar(candle(2, 99));
+  assert.throws(
+    () => instance.onFinalizedBar(candle(2, 98)),
+    /history rebuild/u,
+  );
+  instance.dispose();
+});
+
 test("building replacements and finalization match a fresh history run and do not compound state", () => {
   const plugin = example();
   const instance = plugin.createInstance({}, context);
@@ -139,6 +190,87 @@ test("scalar recurrences roll back provisional state and remain isolated per ins
   second.dispose();
 });
 
+test("structured series state is isolated from nested mutations and returned-value mutations", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.structured-state.main", name: "Structured state" },
+    (bar) => {
+      const state = series({ values: [] }, (previous) => {
+        previous.values.push(bar.close);
+        return previous;
+      });
+      plot.line(state.values.reduce((sum, value) => sum + value, 0));
+      if (bar.isConfirmed) state.values.push(1_000);
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 21);
+  instance.onBuildingBar(candle(1, 20));
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 30);
+  instance.dispose();
+});
+
+test("structured series rejects custom instances nested in collections", () => {
+  class CustomState {
+    value = 1;
+  }
+  for (const initial of [
+    { child: new CustomState() },
+    new Map([["child", new CustomState()]]),
+  ]) {
+    assert.throws(
+      () =>
+        defineIndicator(
+          { id: "erc.indicator.custom-state.main", name: "Custom state" },
+          () => series(initial, (previous) => previous),
+        ),
+      /does not support custom class instances/u,
+    );
+  }
+});
+
+test("structured series preserves null-prototype objects", () => {
+  const initial = Object.assign(Object.create(null), { value: 2 });
+  const plugin = defineIndicator(
+    { id: "erc.indicator.null-state.main", name: "Null state" },
+    () => {
+      const state = series(initial, (previous) => {
+        assert.equal(Object.getPrototypeOf(previous), null);
+        previous.value += 1;
+        return previous;
+      });
+      plot.line(state.value);
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0), candle(1)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 4);
+  assert.equal(initial.value, 2);
+  instance.dispose();
+});
+
+test("structured series rejects retained collections above the documented limit", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.series-limit.main", name: "Series limit" },
+    ({ close }) => {
+      const state = series({ values: [] }, (previous) => {
+        previous.values.push(close);
+        return previous;
+      });
+      plot.line(state.values.length);
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  assert.throws(
+    () =>
+      instance.onHistory(
+        Array.from({ length: 4_098 }, (_, index) => candle(index)),
+      ),
+    /Series state collections may contain at most 4,096 items/u,
+  );
+  instance.dispose();
+});
+
 test("provisional drawings roll back and finalized drawings persist without author-owned arrays", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.draw.main", name: "Draw" },
@@ -170,6 +302,54 @@ test("provisional drawings roll back and finalized drawings persist without auth
   instance.dispose();
 });
 
+test("plot discovery rejects duplicate output keys", () => {
+  assert.throws(
+    () =>
+      defineIndicator(
+        { id: "erc.indicator.duplicate-plot.main", name: "Duplicate plot" },
+        () => {
+          plot.line(1, { key: "shared" });
+          plot.histogram(2, { key: "shared" });
+        },
+      ),
+    /Plot keys must be unique/u,
+  );
+});
+
+test("plot.drawings reconciles direct plot.box calls without author-owned drawing arrays", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.scoped-draw.main", name: "Scoped draw" },
+    ({ close, openTimeMs }) => {
+      plot.drawings("zones", () => {
+        if (close <= 15) return;
+        plot.box({
+          id: "zone",
+          startTimeMs: 0,
+          endTimeMs: openTimeMs + 60_000,
+          top: close,
+          bottom: close - 1,
+          color: "#008800",
+        });
+      });
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 20), candle(1, 20)]);
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].top, 20);
+
+  instance.onBuildingBar(candle(1, 10));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.onBuildingBar(candle(1, 22));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].top, 22);
+
+  instance.onFinalizedBar(candle(1, 22));
+  instance.onBuildingBar(candle(2, 10));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.dispose();
+});
+
 test("input changes initialize new kernels and generated colors use the supplied parameters", () => {
   const plugin = example();
   const instance = plugin.createInstance(
@@ -189,10 +369,51 @@ test("input changes initialize new kernels and generated colors use the supplied
   );
   assert.equal(instance.snapshot().points.at(-1).colors.plot_0, "#ff0000");
   instance.dispose();
-  assert.throws(
-    () => plugin.createInstance({ input_0: 0 }, context).onHistory(history),
-    /bounds/,
+
+  const migrated = plugin.createInstance(
+    { input_0: 0, input_1: 42, removed_old_key: "ignored" },
+    context,
   );
+  migrated.onHistory(history);
+  assert.equal(
+    migrated.snapshot().points.at(-1).values.plot_0,
+    ta
+      .movingAverage(
+        history.map((candle) => candle.close),
+        "ema",
+        1,
+      )
+      .at(-1),
+  );
+  assert.equal(migrated.snapshot().points.at(-1).colors.plot_0, "#00ff00");
+  migrated.dispose();
+});
+
+test("stale option, boolean and numeric parameters normalize to the current declaration", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.input-migration.main", name: "Input migration" },
+    () => {
+      const length = input.int(3, { key: "length", min: 1, max: 5 });
+      const mode = input.string("close", {
+        key: "mode",
+        options: ["close", "open"],
+      });
+      const enabled = input.bool(true, { key: "enabled" });
+      plot.line(length + (mode === "open" ? 10 : 0) + (enabled ? 100 : 0));
+    },
+  );
+  const instance = plugin.createInstance(
+    {
+      length: 99,
+      mode: "removed-mode",
+      enabled: "legacy-true",
+      oldSetting: 123,
+    },
+    context,
+  );
+  instance.onHistory([candle(0), candle(1)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 105);
+  instance.dispose();
 });
 
 test("conditional stateful declarations fail locally and history reload resets a failed instance", () => {

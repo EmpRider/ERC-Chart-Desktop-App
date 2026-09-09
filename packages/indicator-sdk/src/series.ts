@@ -1,20 +1,164 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
 
-/** Scalar recurrence: every building update starts from the previous committed bar. */
-export function series<T extends number | string | boolean>(
-  initial: T,
-  update: (previous: T) => T,
-): T {
+export const maxSeriesCollectionItems = 4_096;
+
+function cloneSeriesState<T>(value: T): T {
+  const seen = new Map<object, unknown>();
+  const clone = (current: unknown): unknown => {
+    if (current === null || typeof current !== "object") return current;
+    const existing = seen.get(current);
+    if (existing !== undefined) return existing;
+    if (Array.isArray(current)) {
+      const result = new Array<unknown>(current.length);
+      seen.set(current, result);
+      for (let index = 0; index < current.length; index += 1)
+        result[index] = clone(current[index]);
+      return result;
+    }
+    if (current instanceof Date) {
+      const result = new Date(current.getTime());
+      seen.set(current, result);
+      return result;
+    }
+    if (current instanceof RegExp) {
+      const result = new RegExp(current.source, current.flags);
+      seen.set(current, result);
+      return result;
+    }
+    if (current instanceof Map) {
+      const result = new Map<unknown, unknown>();
+      seen.set(current, result);
+      for (const [key, entry] of current) result.set(clone(key), clone(entry));
+      return result;
+    }
+    if (current instanceof Set) {
+      const result = new Set<unknown>();
+      seen.set(current, result);
+      for (const entry of current) result.add(clone(entry));
+      return result;
+    }
+    if (current instanceof ArrayBuffer) {
+      const result = current.slice(0);
+      seen.set(current, result);
+      return result;
+    }
+    if (ArrayBuffer.isView(current)) {
+      const result = structuredClone(current);
+      seen.set(current, result);
+      return result;
+    }
+    const prototype = Object.getPrototypeOf(current);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(
+        "Series state does not support custom class instances.",
+      );
+    }
+    const result = Object.create(prototype) as Record<string, unknown>;
+    seen.set(current, result);
+    for (const key of Object.keys(current))
+      result[key] = clone((current as Record<string, unknown>)[key]);
+    return result;
+  };
+  return clone(value) as T;
+}
+
+function assertBoundedSeriesCollections(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  const pending: object[] = [value];
+  const visited = new Set<object>();
+  let items = 0;
+  const addItems = (count: number): void => {
+    items += count;
+    if (items > maxSeriesCollectionItems)
+      throw new RangeError(
+        `Series state collections may contain at most ${maxSeriesCollectionItems.toLocaleString("en-US")} items.`,
+      );
+  };
+  const visit = (entry: unknown): void => {
+    if (entry !== null && typeof entry === "object") pending.push(entry);
+  };
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || visited.has(current)) continue;
+    visited.add(current);
+    if (Array.isArray(current)) {
+      addItems(current.length);
+      for (const entry of current) visit(entry);
+      continue;
+    }
+    if (current instanceof Map) {
+      addItems(current.size);
+      for (const [key, entry] of current) {
+        visit(key);
+        visit(entry);
+      }
+      continue;
+    }
+    if (current instanceof Set) {
+      addItems(current.size);
+      for (const entry of current) visit(entry);
+      continue;
+    }
+    if (ArrayBuffer.isView(current)) {
+      addItems(
+        "length" in current
+          ? Number((current as { readonly length: number }).length)
+          : current.byteLength,
+      );
+      continue;
+    }
+    if (current instanceof ArrayBuffer) {
+      addItems(current.byteLength);
+      continue;
+    }
+    for (const key of Object.keys(current))
+      visit((current as Record<string, unknown>)[key]);
+  }
+}
+
+/** Recurrence: every building update starts from the previous committed bar. */
+export function series<T>(initial: T, update: (previous: Readonly<T>) => T): T {
   const frame = authoringFrame();
-  const state = useKernel(`series-${typeof initial}`, () => ({
-    committed: initial,
-  }));
-  const value = update(state.committed);
-  if (typeof value !== typeof initial)
-    throw new TypeError("Series state must preserve its primitive type.");
-  if (frame.phase === "finalized") state.committed = value;
+  const kind = Array.isArray(initial) ? "array" : typeof initial;
+  const structured = initial !== null && typeof initial === "object";
+  const state = useKernel(`series-${kind}`, () => {
+    assertBoundedSeriesCollections(initial);
+    return {
+      committed: structured ? cloneSeriesState(initial) : initial,
+    };
+  });
+  const value = update(cloneSeriesState(state.committed));
+  const valueKind = Array.isArray(value) ? "array" : typeof value;
+  if (valueKind !== kind)
+    throw new TypeError("Series state must preserve its value kind.");
+  assertBoundedSeriesCollections(value);
+  if (frame.phase === "finalized") state.committed = cloneSeriesState(value);
   return value;
+}
+
+/** Append one value while retaining only the newest bounded history. */
+export function appendSeries<T>(
+  history: readonly T[],
+  value: T,
+  keep: number,
+): readonly T[] {
+  const limit = Math.max(1, Math.floor(keep));
+  if (limit === 1) return [value];
+  if (history.length < limit) return [...history, value];
+  return [...history.slice(history.length - limit + 1), value];
+}
+
+/** Read a prior retained value, falling back to the current value when unavailable. */
+export function laggedValue<T>(
+  history: readonly T[],
+  current: T,
+  lag: number,
+): T {
+  const offset = Math.floor(lag);
+  if (offset <= 0) return current;
+  return history.at(-offset) ?? current;
 }
 
 export const priceSources = [

@@ -177,12 +177,15 @@ export interface SignalCandidate {
   readonly finalized: boolean;
 }
 export {
+  appendSeries,
   candlesWithPriceSource,
-  series,
   inputOptions,
+  laggedValue,
+  maxSeriesCollectionItems,
   priceSeries,
   priceSources,
   priceValue,
+  series,
   type PriceSource,
 } from "./series.js";
 export {
@@ -230,8 +233,11 @@ export {
 } from "./plot.js";
 export {
   input,
+  normalizeIndicatorInputValue,
+  normalizeIndicatorParameters,
   type InputApi,
   type InputOptions,
   type NumberInputOptions,
+  type StringInputOptions,
 } from "./input.js";
 export { signal, type SignalOptions } from "./signal.js";

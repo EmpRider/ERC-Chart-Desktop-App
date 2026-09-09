@@ -156,7 +156,7 @@ test("terminates a worker that exceeds the startup budget", async () => {
   assert.equal(workers[0].terminated, true);
 });
 
-test("uses the tighter update budget after the first successful calculation", async () => {
+test("uses the tighter update budget for incremental work after the first successful calculation", async () => {
   const { supervisor, workers } = harness({
     startupTimeoutMs: 100,
     updateTimeoutMs: 10,
@@ -166,12 +166,110 @@ test("uses the tighter update budget after the first successful calculation", as
     workers[0].autoRespond = false;
 
     await assert.rejects(
-      supervisor.sync(request("one", { dataRevision: 2 })),
+      supervisor.sync(
+        request("one", {
+          data: {
+            kind: "building",
+            candle: {
+              instrumentId: "fixture.instrument",
+              timeframeId: "1m",
+              openTimeMs: 60_000,
+              open: 10,
+              high: 12,
+              low: 9,
+              close: 11,
+            },
+          },
+          dataRevision: 2,
+        }),
+      ),
       (error) =>
         error instanceof IndicatorWorkerRuntimeError &&
         error.code === "INDICATOR_WORKER_TIMEOUT",
     );
     assert.equal(workers[0].terminated, true);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+for (const [bars, expectedBudget] of [
+  [10, 70],
+  [100_000, 60_000],
+]) {
+  test(`history budget for ${bars} bars expires at ${expectedBudget} ms`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { supervisor, workers } = harness({
+      startupTimeoutMs: 20,
+      updateTimeoutMs: 10,
+    });
+    try {
+      await supervisor.sync(request("one"));
+      workers[0].autoRespond = false;
+      const pending = supervisor.sync(
+        request("one", {
+          data: {
+            kind: "rebuild",
+            candles: Array.from({ length: bars }, (_, index) => ({
+              instrumentId: "fixture.instrument",
+              timeframeId: "1m",
+              openTimeMs: index * 60_000,
+              open: 10,
+              high: 12,
+              low: 9,
+              close: 11,
+            })),
+          },
+          dataRevision: 2,
+        }),
+      );
+      const rejected = assert.rejects(
+        pending,
+        (error) => error.code === "INDICATOR_WORKER_TIMEOUT",
+      );
+      t.mock.timers.tick(expectedBudget - 1);
+      assert.equal(workers[0].terminated, false);
+      t.mock.timers.tick(1);
+      await rejected;
+      assert.equal(workers[0].terminated, true);
+    } finally {
+      supervisor.dispose();
+    }
+  });
+}
+
+test("gives paginated history rebuilds the full history calculation budget", async () => {
+  const { supervisor, workers } = harness({
+    startupTimeoutMs: 20,
+    updateTimeoutMs: 10,
+  });
+  try {
+    await supervisor.sync(request("one"));
+    workers[0].autoRespond = false;
+
+    const pending = supervisor.sync(
+      request("one", {
+        data: {
+          kind: "rebuild",
+          candles: Array.from({ length: 10 }, (_, index) => ({
+            instrumentId: "fixture.instrument",
+            timeframeId: "1m",
+            openTimeMs: index * 60_000,
+            open: 10,
+            high: 12,
+            low: 9,
+            close: 11,
+          })),
+        },
+        dataRevision: 2,
+      }),
+    );
+    const message = workers[0].messages.at(-1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    workers[0].respond(success(message));
+
+    assert.equal((await pending).dataRevision, 2);
+    assert.equal(workers[0].terminated, false);
   } finally {
     supervisor.dispose();
   }

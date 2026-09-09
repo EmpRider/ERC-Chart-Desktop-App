@@ -6,13 +6,14 @@ import {
   type IndicatorRuntimeSnapshot,
   type InstrumentId,
   type InstalledIndicatorDefinition,
-  type InstalledIndicatorInputDefinition,
   type TimeframeId,
 } from "@erc-chart/contracts";
-import type {
-  IndicatorInputValue,
-  IndicatorPluginModule,
-  RuntimeIndicatorInstance,
+import {
+  normalizeIndicatorParameters,
+  type IndicatorInputDefinition,
+  type IndicatorInputValue,
+  type IndicatorPluginModule,
+  type RuntimeIndicatorInstance,
 } from "@erc-chart/indicator-sdk";
 import type {
   IndicatorWorkerDisposeMessage,
@@ -52,50 +53,13 @@ function sameCandleIdentity(left: Candle, right: Candle): boolean {
   );
 }
 
-function normalizeInput(
-  input: InstalledIndicatorInputDefinition,
-  supplied: IndicatorInputValue | undefined,
-): IndicatorInputValue {
-  const value = supplied ?? input.defaultValue;
-  if (input.type === "boolean") {
-    if (typeof value !== "boolean")
-      throw new Error(`${input.key} must be boolean.`);
-    return value;
-  }
-  if (input.type === "number") {
-    if (typeof value !== "number" || !Number.isFinite(value))
-      throw new Error(`${input.key} must be a finite number.`);
-    if (input.min !== undefined && value < input.min)
-      throw new Error(`${input.key} is below its minimum.`);
-    if (input.max !== undefined && value > input.max)
-      throw new Error(`${input.key} is above its maximum.`);
-    return value;
-  }
-  if (typeof value !== "string" || value.length > 8_192)
-    throw new Error(`${input.key} must be a string.`);
-  if (
-    input.options !== undefined &&
-    !input.options.some((option) => option.value === value)
-  ) {
-    throw new Error(`${input.key} is not one of its supported options.`);
-  }
-  return value;
-}
-
 function normalizeParameters(
   definition: InstalledIndicatorDefinition,
   supplied: IndicatorParameterValues,
 ): Readonly<Record<string, IndicatorInputValue>> {
-  const allowed = new Set(definition.inputs.map((input) => input.key));
-  if (Object.keys(supplied).some((key) => !allowed.has(key)))
-    throw new Error("Indicator parameters contain an unknown input.");
-  return Object.freeze(
-    Object.fromEntries(
-      definition.inputs.map((input) => [
-        input.key,
-        normalizeInput(input, supplied[input.key]),
-      ]),
-    ),
+  return normalizeIndicatorParameters(
+    definition.inputs as readonly IndicatorInputDefinition[],
+    supplied,
   );
 }
 

@@ -27,7 +27,10 @@ generates the existing plugin definition and implements the worker lifecycle.
 The build tool generates the package manifest and integrity hashes.
 
 The callback receives the current candle's OHLCV, instrument/timeframe identity,
-`openTimeMs`, `index`, `isConfirmed`, `hl2`, `hlc3`, and `ohlc4`. Placement defaults
+`openTimeMs`, `index`, `isConfirmed`, `isHistory`, `isHistoryFinalizedTail`, `hl2`,
+`hlc3`, and `ohlc4`. `isHistory` is true while retained candles are replayed;
+`isHistoryFinalizedTail` marks the last finalized candle before the retained
+building candle. Placement defaults
 to `overlay`; specify `placement: "pane"` for an oscillator.
 
 ## Understanding `({ close, low }) => { ... }`
@@ -71,19 +74,21 @@ call to discover declarations; see **Execution and correctness** below.
 
 ## Available calls
 
-| API                                                                     | Behavior                                                                                  |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `input.int`, `input.float`, `input.bool`, `input.string`, `input.color` | Generate settings controls; optional title, group, description, effect and numeric bounds |
-| `ta.sma`, `ta.ema`, `ta.rsi`                                            | `ta.ema(14)` uses close; `ta.ema(value, 14)` uses a calculated scalar                     |
-| `ta.atr(14)`, `ta.dmi(14)`                                              | Use the current candle and committed kernels                                              |
-| `ta.highest(14)`, `ta.lowest(14)`                                       | Default to high/low; accept `(value, length)` too                                         |
-| `ta.crossover(a, b)`, `ta.crossunder(a, b)`                             | Scalar crossing conditions                                                                |
-| `ta.movingAverage(value, type, length)`                                 | Existing moving-average catalogue with a scalar source                                    |
-| `plot.line`, `plot.hline`, `plot.histogram`                             | Plot one numeric value or `null`, with optional title/color/width/style                   |
-| `plot.shape`                                                            | Plot an up/down marker at a numeric price, or `null` to hide it                           |
-| `plot.box`, `plot.segment`, `plot.remove`                               | Create/update/delete drawings by stable ID; no author-owned output arrays                 |
-| `series(initial, update)`                                               | A scalar recurrence with automatic provisional rollback                                   |
-| `signal(condition, direction, options?)`                                | Emit a finalized long/short/neutral signal; optional ID/confidence                        |
+| API                                                                     | Behavior                                                                                                                                   |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `input.int`, `input.float`, `input.bool`, `input.string`, `input.color` | Generate settings controls; optional stable key, title, group, description, effect and bounds; string option tuples infer their union type |
+| `ta.sma`, `ta.ema`, `ta.rsi`                                            | `ta.ema(14)` uses close; `ta.ema(value, 14)` uses a calculated scalar                                                                      |
+| `ta.atr(14)`, `ta.dmi(14)`                                              | Use the current candle and committed kernels                                                                                               |
+| `ta.highest(14)`, `ta.lowest(14)`                                       | Default to high/low; accept `(value, length)` too                                                                                          |
+| `ta.crossover(a, b)`, `ta.crossunder(a, b)`                             | Scalar crossing conditions                                                                                                                 |
+| `ta.movingAverage(value, type, length)`                                 | Existing moving-average catalogue with a scalar source                                                                                     |
+| `plot.line`, `plot.hline`, `plot.histogram`                             | Plot one numeric value or `null`, with optional title/color/width/style                                                                    |
+| `plot.shape`                                                            | Plot an up/down marker at a numeric price, or `null` to hide it                                                                            |
+| `plot.box`, `plot.segment`, `plot.remove`                               | Create/update/delete drawings by stable ID; no author-owned output arrays                                                                  |
+| `plot.drawings(key, render)`                                            | Run direct `plot.box`/`plot.segment` calls in a managed scope; omitted IDs are removed automatically and building updates roll back        |
+| `series(initial, update)`                                               | A recurrence with automatic provisional rollback; supports primitive or structured state                                                   |
+| `appendSeries(history, value, keep)`, `laggedValue(...)`                | Maintain small bounded custom histories without repeating slice/lag boilerplate                                                            |
+| `signal(condition, direction, options?)`                                | Emit a finalized long/short/neutral signal; optional ID/confidence                                                                         |
 
 Existing array-based `ta` calls still work for legacy indicators and reference
 calculations. Scalar authoring calls require an active `defineIndicator` callback.
@@ -95,8 +100,39 @@ signal(crossedAbove, "long", { id: "cross-up" });
 ```
 
 Call stateful `ta` helpers outside the `series` update callback, then use their
-values in the recurrence. Recurrences accept number, boolean or string state;
-the update function must preserve its type and have no external side effects.
+values in the recurrence. Recurrences can hold primitive or structured state.
+The update function must preserve the value kind and have no external side
+effects. Treat previous structured state as immutable and return new objects or
+arrays for changes. Across a structured series value, retained collection
+containers (arrays, maps, sets and typed arrays) may hold at most 4,096 items in
+total. Raw `ArrayBuffer` and `DataView` values count their `byteLength` toward
+the same aggregate limit; exceeding 4,096 throws `RangeError`. Custom class
+instances are unsupported, including when nested in plain objects or collections.
+Keep custom histories bounded with helpers such as `appendSeries`.
+
+For Pine-like drawing code, prefer a managed drawing scope when a collection of
+boxes or segments changes over time:
+
+```ts
+plot.drawings("poc-zones", () => {
+  for (const zone of zones) {
+    plot.box({
+      id: zone.id,
+      startTimeMs: zone.startTimeMs,
+      endTimeMs: openTimeMs,
+      top: zone.high,
+      bottom: zone.low,
+      color: zone.color,
+    });
+  }
+});
+```
+
+The indicator emits each drawing directly. The SDK remembers which IDs belong to
+that scope, updates same-ID drawings, removes IDs that are no longer emitted, and
+rolls provisional building-bar changes back automatically. Pass `null` as the
+render callback only when intentionally preserving the scope without reconciling
+it on that calculation, such as an optimized intermediate history replay.
 
 ## Execution and correctness
 
@@ -113,17 +149,28 @@ conditionally calling `plot.line`. Colors and widths may change per bar. Titles,
 plot types, line styles and marker directions are declarations and stay fixed.
 Input values and TA lengths may change through a configuration rebuild, not
 as a function of individual candle prices. Changing the declaration order in a
-new plugin version can change generated input/plot keys; treat that as a settings
-migration when publishing updates.
+new plugin version can change generated input/plot keys; use explicit stable
+`key` values when settings/output compatibility matters.
+
+Persisted plugin settings are normalized against the current input declarations
+before calculation. Missing inputs receive their current defaults, stale unknown
+keys are ignored, invalid booleans/strings fall back to defaults, unsupported
+string options fall back to the declared default, and numeric values are bounded
+and rounded to the declared step. Indicator authors should not write a separate
+`toParams`, validation, or config-migration function for these cases. Keep the
+same explicit input `key` when a setting continues to represent the same concept.
 
 Callbacks must be synchronous and free of external side effects. Use `series`
 instead of module-global mutable state. Drawings may be conditional: their
 building-bar changes roll back on the next replacement; finalized drawings
 persist until replaced, removed, or evicted by the documented retention cap.
+Inside `plot.drawings`, drawings omitted from the completed scope are removed by
+the SDK, so authors do not need to keep a parallel drawing-ID list.
 Signals are emitted only on confirmed bars.
 
 The SDK bounds instances to 100,000 points, 128 input/value-plot declarations,
-256 TA/recurrence calls, 1,000 retained drawings, and 10,000 retained signals.
+256 TA/recurrence calls, 4,096 retained structured-series collection items,
+2,000 retained drawings, and 10,000 retained signals.
 Drawing/signal retention evicts the oldest entries at their caps. There is no
 network access, storage, implicit multi-timeframe acquisition, arbitrary Pine
 syntax, table/text-label drawing API, or filled-band plot in this authoring API.
@@ -145,11 +192,14 @@ updates does not itself require a chart reset. The renderer serializes worker
 calculations and retains one latest pending chart state. Unchanged overlays and
 signals are not retransmitted on every tick by SDK-authored indicators.
 
-The legacy ATR Rope + UT Bot example now updates its building candle and output
-point without copying history. **Its finalized-bar handler still rebuilds the
-legacy POC/signal calculation.** That complex indicator has not been rewritten
-onto the new scalar API; the new API supports incremental finalization. Neither
-this change nor the microbenchmark establishes a four-chart FPS guarantee.
+ATR Rope + UT Bot now uses the authored API. Its rope, UT Bot, follow-signal and
+rolling POC migration state are committed with `series`, while plots, drawings
+and signals use the same `plot`/`signal` surface as smaller indicators. Its input
+types are inferred directly from declarations, bounded source history uses SDK
+helpers, and POC zones call `plot.box`/`plot.segment` directly inside a managed
+`plot.drawings` scope instead of constructing an overlay array. Building
+replacements roll back to committed state and finalized bars advance
+incrementally. This does not establish a four-chart FPS guarantee.
 
 ## Build and import
 
@@ -186,8 +236,19 @@ its package version is now `0.1.3`.
 
 ## Verification and reference use
 
+After building, `npm run test:performance` enforces the SDK's 60-second maximum
+history budget for structured series, 2,000 stable drawings over 100,000 bars,
+and the authored ATR fixture. It also checks ATR building/finalized updates
+against the 100 ms worker budget. See the performance assessment for workloads,
+measurements and limits; this is not a measured whole-application FPS gate.
+
 Run `node tools/indicator-tick-performance.mjs` after building. It checks for
 history materialization and output cloning while reporting synthetic timings.
+Run `node tools/indicator-series-performance.mjs` to replay 100,000 bars with a
+structured series holding the maximum 4,096 retained collection items. On this
+workspace's September 9 run, that bounded worst-case replay took approximately
+21.4 seconds. The measurement is domain-only and is not an application latency or
+FPS target.
 On this workspace's September 8 run, 100 derived 2m ticks with 100,000 source
 bars took approximately 1.59 ms, versus the earlier 1,004 ms observation.
 1,000 legacy ATR Rope building updates took approximately 2.16 ms with either

@@ -13,6 +13,7 @@ export const indicatorImportApproveChannel =
 export const indicatorImportCancelChannel =
   "erc-chart:indicator-import-cancel" as const;
 export const indicatorsListChannel = "erc-chart:indicators-list" as const;
+export const indicatorRemoveChannel = "erc-chart:indicator-remove" as const;
 
 export type IndicatorInputEffect = "calculation" | "presentation";
 
@@ -363,8 +364,16 @@ function isIndicatorRuntimeEntryUrl(
     url.port !== "" ||
     url.username !== "" ||
     url.password !== "" ||
-    url.search !== "" ||
     url.hash !== ""
+  ) {
+    return false;
+  }
+  const revision = url.searchParams.get("revision");
+  if (
+    revision === null ||
+    !/^[a-f0-9]{64}$/u.test(revision) ||
+    [...url.searchParams.keys()].some((key) => key !== "revision") ||
+    url.searchParams.getAll("revision").length !== 1
   ) {
     return false;
   }

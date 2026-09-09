@@ -1,3 +1,4 @@
+import { sameDrawing } from "./drawing-equality.js";
 import {
   hostApiVersion,
   indicatorContractVersion,
@@ -34,6 +35,8 @@ export interface IndicatorOptions {
 export interface IndicatorBar extends Candle {
   readonly index: number;
   readonly isConfirmed: boolean;
+  readonly isHistory: boolean;
+  readonly isHistoryFinalizedTail: boolean;
   readonly hl2: number;
   readonly hlc3: number;
   readonly ohlc4: number;
@@ -41,15 +44,32 @@ export interface IndicatorBar extends Candle {
 
 export type IndicatorCalculation = (bar: IndicatorBar) => void;
 
+function overlaysEqual(
+  left: readonly IndicatorOverlay[],
+  right: readonly IndicatorOverlay[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined || b === undefined || !sameDrawing(a, b)) return false;
+  }
+  return true;
+}
+
 function barContext(
   candle: Candle,
   index: number,
   confirmed: boolean,
+  historyReplay: boolean,
+  historyFinalizedTail: boolean,
 ): IndicatorBar {
   return Object.freeze({
     ...candle,
     index,
     isConfirmed: confirmed,
+    isHistory: historyReplay,
+    isHistoryFinalizedTail: historyFinalizedTail,
     hl2: (candle.high + candle.low) / 2,
     hlc3: (candle.high + candle.low + candle.close) / 3,
     ohlc4: (candle.open + candle.high + candle.low + candle.close) / 4,
@@ -76,6 +96,8 @@ export function defineIndicator(
   const discovery: AuthoringFrame = {
     candle: sample,
     phase: "building",
+    historyReplay: false,
+    historyFinalizedTail: false,
     discovery: true,
     kernels: [],
     kernelIndex: 0,
@@ -91,7 +113,15 @@ export function defineIndicator(
   };
   const run = (frame: AuthoringFrame, index: number): void => {
     const result: unknown = withAuthoringFrame(frame, () =>
-      calculate(barContext(frame.candle, index, frame.phase === "finalized")),
+      calculate(
+        barContext(
+          frame.candle,
+          index,
+          frame.phase === "finalized",
+          frame.historyReplay,
+          frame.historyFinalizedTail,
+        ),
+      ),
     );
     if (result !== undefined) {
       // Surface the contract error synchronously and consume a rejected async callback result.
@@ -165,12 +195,16 @@ export function defineIndicator(
       const evaluate = (
         candle: Candle,
         phase: "building" | "finalized",
+        historyReplay = false,
+        historyFinalizedTail = false,
       ): void => {
         validate(candle);
         const previousOverlays = overlays;
         const frame: AuthoringFrame = {
           candle,
           phase,
+          historyReplay,
+          historyFinalizedTail,
           discovery: false,
           kernels,
           kernelIndex: 0,
@@ -206,11 +240,14 @@ export function defineIndicator(
               if (value === null) nextDrawings.delete(id);
               else nextDrawings.set(id, value);
             }
-            while (nextDrawings.size > 1_000) {
+            while (nextDrawings.size > 2_000) {
               const oldest = nextDrawings.keys().next().value;
               if (oldest !== undefined) nextDrawings.delete(oldest);
             }
-            overlays = [...nextDrawings.values()];
+            const candidateOverlays = [...nextDrawings.values()];
+            overlays = overlaysEqual(candidateOverlays, previousOverlays)
+              ? previousOverlays
+              : candidateOverlays;
           } else overlays = committedOverlays;
           // Validate only this point and changed bounded geometry, never the historical point array.
           const emitted: SignalCandidate[] = frame.signals.map((value) => ({
@@ -275,6 +312,7 @@ export function defineIndicator(
           failed = false;
           visualRevision = 0;
           let previous = -1;
+          const lastFinalizedIndex = history.length - 2;
           for (let index = 0; index < history.length; index += 1) {
             const candle = history[index];
             if (candle === undefined || candle.openTimeMs <= previous) {
@@ -286,6 +324,8 @@ export function defineIndicator(
             evaluate(
               candle,
               index === history.length - 1 ? "building" : "finalized",
+              true,
+              index === lastFinalizedIndex,
             );
             previous = candle.openTimeMs;
           }
@@ -295,12 +335,13 @@ export function defineIndicator(
           if (
             (lastFinalized !== undefined &&
               candle.openTimeMs <= lastFinalized.openTimeMs) ||
-            (building !== undefined &&
-              candle.openTimeMs !== building.openTimeMs)
+            (building !== undefined && candle.openTimeMs < building.openTimeMs)
           )
             throw new Error(
-              "Building update requires the current bar; finalize before advancing or reload corrected history.",
+              "Building update is older than the current indicator state; reload corrected history.",
             );
+          if (building !== undefined && candle.openTimeMs > building.openTimeMs)
+            evaluate(building, "finalized");
           evaluate(candle, "building");
         },
         onFinalizedBar(candle) {

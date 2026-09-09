@@ -43,7 +43,7 @@ before/after interactive FPS recording of the user's live session.
 - Changed legacy ATR building updates to replace their current candle/point in
   place. Added visual revisions so unchanged drawings/signals are retained
   without being retransmitted.
-- Added a Pine-inspired scalar SDK: `defineIndicator`, `input`, scalar `ta`,
+- Added a Pine-inspired authored SDK: `defineIndicator`, `input`, scalar `ta`,
   `series`, `plot`, and `signal`. Definitions, output arrays and lifecycle
   handling are generated internally. Provisional calculations roll back to the
   last committed bar before each tick, preventing cumulative intrabar errors.
@@ -57,6 +57,34 @@ For the legacy ATR building handler, 1,000 updates took approximately 2.16 ms
 with either 1,000 or 100,000 historical bars. These single-run measurements
 exclude rendering, SQLite and transport; they are not whole-application latency
 or FPS measurements.
+
+The authored structured-series contract now caps retained collection items at
+4,096. `node tools/indicator-series-performance.mjs` replays 100,000 bars while
+holding that maximum state size. On the September 9 workspace run it completed
+in approximately 21.4 seconds and produced 100,000 points. This is a synthetic
+SDK-only boundary measurement, not whole-application latency.
+
+PR #114 follow-up: `npm run test:performance` now runs the structured-series,
+drawing reconciliation and authored ATR benchmarks in CI. History workloads
+must finish within the worker's 60,000 ms maximum; ATR building and finalized
+updates must each stay below 100 ms. The worker timeout tests also verify the
+per-bar formula and 60,000 ms cap using controlled timers.
+
+September 9 observations on Node 26.8.1, Windows (single runs):
+
+| Workload                                                |   Observed time |
+| ------------------------------------------------------- | --------------: |
+| 100,000 bars, 4,096 numeric series items                |         23.99 s |
+| 100,000 bars, 2,000 stable drawings                     |         38.67 s |
+| Authored ATR, 100,000 bars, default inputs              |         19.46 s |
+| Authored ATR, 1,000 building updates after that history | 116.52 ms total |
+| Authored ATR, one finalized update after that history   |         0.65 ms |
+
+Drawing replay before reusing unchanged frozen geometry measured 49.25 s in
+isolation and 79.01 s while other tests were running. Reusing the committed
+geometry avoids allocating and freezing 2,000 replacement objects per candle.
+The ATR fixture uses flat synthetic candles; it does not exercise maximum POC
+zone settings. These component budgets do not establish whole-application FPS.
 
 Validation completed:
 
@@ -76,11 +104,11 @@ number of plots/drawings and author code. Extrema use amortized constant-time
 queues; arbitrary loops or moving-average variants cannot all promise strict
 constant work.
 
-The **legacy ATR Rope + UT Bot finalized-bar handler still rebuilds POC/signals**.
-Migrating that calculation to persistent committed state remains necessary to
-remove its bar-close spike. The new scalar SDK supports incremental finalization,
-but the complex legacy indicator has not been fully migrated. Renderer rollover
-can also materialize session history; ordinary same-bar ticks avoid that copy.
+ATR Rope + UT Bot now uses the authored API and persistent committed state for
+its rope, UT Bot, signal-follow and rolling POC calculations. Finalized bars
+advance that state incrementally and building updates reuse the last committed
+state. Renderer rollover can still materialize session history; ordinary
+same-bar ticks avoid that copy.
 
 Initial load, timeframe/instrument changes, calculation settings, historical
 corrections, missed multi-bar catch-up and retention resets may rebuild from the
