@@ -181,6 +181,7 @@ export {
   candlesWithPriceSource,
   inputOptions,
   laggedValue,
+  maxSeriesCollectionItems,
   priceSeries,
   priceSources,
   priceValue,

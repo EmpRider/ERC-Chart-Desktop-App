@@ -311,3 +311,103 @@ test("restores the original same-version indicator when replacement installation
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("restores an orphaned same-version package when registry activation fails", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "erc-indicator-activation-rollback-"),
+  );
+  const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
+  const stagingRoot = path.join(root, "staging");
+  const installationRoot = path.join(root, "installed");
+  let request = 0;
+  const initialService = createIndicatorImportService({
+    storage: createStorage(database),
+    stagingRoot,
+    installationRoot,
+    createRequestId: () => `indicator-activation-initial-${++request}`,
+  });
+  let failingService;
+  try {
+    const firstBuilt = await buildAtrRopeUtBotIndicatorPackage({
+      root: repoRoot,
+      outputRoot: path.join(root, "source-first"),
+    });
+    const firstPreview = await initialService.preview({
+      kind: "folder",
+      path: firstBuilt.packageRoot,
+    });
+    const firstInstalled = await initialService.approve(firstPreview.requestId);
+    const installedEntryPath = path.join(
+      installationRoot,
+      firstInstalled.pluginId,
+      firstInstalled.version,
+      "dist",
+      "index.js",
+    );
+    const originalEntry = await readFile(installedEntryPath, "utf8");
+    await disablePlugin(
+      database,
+      firstInstalled.pluginId,
+      firstInstalled.version,
+    );
+    await deletePlugin(
+      database,
+      firstInstalled.pluginId,
+      firstInstalled.version,
+    );
+    await initialService.shutdown();
+
+    const storage = createStorage(database);
+    failingService = createIndicatorImportService({
+      storage: {
+        ...storage,
+        async activatePlugin() {
+          throw new Error("fixture activation failure");
+        },
+      },
+      stagingRoot,
+      installationRoot,
+      createRequestId: () => `indicator-activation-replacement-${++request}`,
+    });
+    const replacementBuilt = await buildAtrRopeUtBotIndicatorPackage({
+      root: repoRoot,
+      outputRoot: path.join(root, "source-replacement"),
+    });
+    const entryPath = path.join(
+      replacementBuilt.packageRoot,
+      "dist",
+      "index.js",
+    );
+    const replacementEntry = `${await readFile(entryPath, "utf8")}\n// activation replacement build\n`;
+    await writeFile(entryPath, replacementEntry, "utf8");
+    const manifestPath = path.join(replacementBuilt.packageRoot, "plugin.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.integrity.files[manifest.entry] = sha256(
+      Buffer.from(replacementEntry),
+    );
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      "utf8",
+    );
+    const replacementPreview = await failingService.preview({
+      kind: "folder",
+      path: replacementBuilt.packageRoot,
+    });
+
+    await assert.rejects(
+      failingService.approve(replacementPreview.requestId),
+      /fixture activation failure/u,
+    );
+    assert.equal(
+      getPlugin(database, firstInstalled.pluginId, firstInstalled.version),
+      undefined,
+    );
+    assert.equal(await readFile(installedEntryPath, "utf8"), originalEntry);
+  } finally {
+    await failingService?.shutdown();
+    await initialService.shutdown();
+    database.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

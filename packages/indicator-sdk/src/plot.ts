@@ -122,37 +122,6 @@ function sameDrawing(left: IndicatorOverlay, right: IndicatorOverlay): boolean {
   return false;
 }
 
-function syncDrawings(drawings: readonly IndicatorOverlay[] | null): void {
-  const frame = authoringFrame();
-  const state = useKernel<DrawingScopeState>("plot-sync", () => ({
-    committed: new Map<string, IndicatorOverlay>(),
-  }));
-  if (frame.discovery || drawings === null) return;
-  if (drawings.length > 2_000)
-    throw new RangeError(
-      "At most 2,000 drawings are allowed in one drawing scope.",
-    );
-
-  const next = new Map<string, IndicatorOverlay>();
-  for (const drawing of drawings) {
-    if (!drawing.id || drawing.id.length > 256)
-      throw new RangeError("Drawings require a bounded stable id.");
-    next.set(drawing.id, Object.freeze({ ...drawing }));
-  }
-
-  for (const [id, drawing] of next) {
-    const previous = state.committed.get(id);
-    if (previous === undefined || !sameDrawing(previous, drawing))
-      frame.overlayUpdates.set(id, drawing);
-  }
-  for (const id of state.committed.keys()) {
-    if (!next.has(id)) frame.overlayUpdates.set(id, null);
-  }
-  if (frame.overlayUpdates.size > 2_000)
-    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
-  if (frame.phase === "finalized") state.committed = next;
-}
-
 function drawingScope(key: string, render: (() => void) | null): void {
   if (!key || key.length > 128)
     throw new RangeError("Drawing scopes require a bounded stable key.");
@@ -195,7 +164,6 @@ export interface PlotApi {
   readonly segment: (value: Omit<IndicatorLineSegment, "kind">) => void;
   readonly remove: (id: string) => void;
   readonly drawings: (key: string, render: (() => void) | null) => void;
-  readonly sync: (drawings: readonly IndicatorOverlay[] | null) => void;
 }
 export const plot: PlotApi = Object.freeze({
   line: (value: number | null, options?: PlotOptions): void =>
@@ -225,5 +193,4 @@ export const plot: PlotApi = Object.freeze({
       );
   },
   drawings: drawingScope,
-  sync: syncDrawings,
 });

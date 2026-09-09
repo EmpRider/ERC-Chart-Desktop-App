@@ -210,6 +210,28 @@ test("structured series state is isolated from nested mutations and returned-val
   instance.dispose();
 });
 
+test("structured series rejects retained collections above the documented limit", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.series-limit.main", name: "Series limit" },
+    ({ close }) => {
+      const state = series({ values: [] }, (previous) => {
+        previous.values.push(close);
+        return previous;
+      });
+      plot.line(state.values.length);
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  assert.throws(
+    () =>
+      instance.onHistory(
+        Array.from({ length: 4_098 }, (_, index) => candle(index)),
+      ),
+    /Series state collections may contain at most 4,096 items/u,
+  );
+  instance.dispose();
+});
+
 test("provisional drawings roll back and finalized drawings persist without author-owned arrays", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.draw.main", name: "Draw" },
@@ -238,68 +260,6 @@ test("provisional drawings roll back and finalized drawings persist without auth
   const revision = instance.snapshot().visualRevision;
   instance.onBuildingBar(candle(2, 11));
   assert.equal(instance.snapshot().visualRevision, revision);
-  instance.dispose();
-});
-
-test("plot.sync owns drawing diff, removal and provisional rollback", () => {
-  const plugin = defineIndicator(
-    { id: "erc.indicator.sync-draw.main", name: "Sync draw" },
-    ({ close, openTimeMs }) => {
-      plot.sync(
-        close > 15
-          ? [
-              {
-                id: "zone",
-                kind: "box",
-                startTimeMs: openTimeMs,
-                endTimeMs: openTimeMs + 60_000,
-                top: close,
-                bottom: close - 1,
-                color: "#008800",
-              },
-            ]
-          : [],
-      );
-    },
-  );
-  const instance = plugin.createInstance({}, context);
-  instance.onHistory([candle(0, 20), candle(1, 20)]);
-  assert.equal(instance.snapshot().overlays.length, 1);
-  assert.equal(instance.snapshot().overlays[0].top, 20);
-
-  instance.onBuildingBar(candle(1, 10));
-  assert.equal(instance.snapshot().overlays.length, 0);
-  instance.onBuildingBar(candle(1, 22));
-  assert.equal(instance.snapshot().overlays.length, 1);
-  assert.equal(instance.snapshot().overlays[0].top, 22);
-
-  instance.onFinalizedBar(candle(1, 22));
-  instance.onBuildingBar(candle(2, 10));
-  assert.equal(instance.snapshot().overlays.length, 0);
-  instance.dispose();
-});
-
-test("plot.sync rejects drawing arrays above the drawing-scope limit", () => {
-  const plugin = defineIndicator(
-    { id: "erc.indicator.sync-limit.main", name: "Sync limit" },
-    ({ openTimeMs }) => {
-      plot.sync(
-        Array.from({ length: 2_001 }, (_, index) => ({
-          id: `zone-${index}`,
-          kind: "box",
-          startTimeMs: openTimeMs,
-          endTimeMs: openTimeMs + 60_000,
-          top: index + 1,
-          bottom: index,
-        })),
-      );
-    },
-  );
-  const instance = plugin.createInstance({}, context);
-  assert.throws(
-    () => instance.onHistory([candle(0), candle(1)]),
-    /At most 2,000 drawings are allowed in one drawing scope/u,
-  );
   instance.dispose();
 });
 

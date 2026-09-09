@@ -86,7 +86,6 @@ call to discover declarations; see **Execution and correctness** below.
 | `plot.shape`                                                            | Plot an up/down marker at a numeric price, or `null` to hide it                                                                            |
 | `plot.box`, `plot.segment`, `plot.remove`                               | Create/update/delete drawings by stable ID; no author-owned output arrays                                                                  |
 | `plot.drawings(key, render)`                                            | Run direct `plot.box`/`plot.segment` calls in a managed scope; omitted IDs are removed automatically and building updates roll back        |
-| `plot.sync(drawings)`                                                   | Reconcile a complete declarative drawing set; the SDK owns change detection, removals, provisional rollback and retention                  |
 | `series(initial, update)`                                               | A recurrence with automatic provisional rollback; supports primitive or structured state                                                   |
 | `appendSeries(history, value, keep)`, `laggedValue(...)`                | Maintain small bounded custom histories without repeating slice/lag boilerplate                                                            |
 | `signal(condition, direction, options?)`                                | Emit a finalized long/short/neutral signal; optional ID/confidence                                                                         |
@@ -104,7 +103,9 @@ Call stateful `ta` helpers outside the `series` update callback, then use their
 values in the recurrence. Recurrences can hold primitive or structured state.
 The update function must preserve the value kind and have no external side
 effects. Treat previous structured state as immutable and return new objects or
-arrays for changes.
+arrays for changes. Across a structured series value, retained collection
+containers (arrays, maps, sets and typed arrays) may hold at most 4,096 items in
+total. Keep custom histories bounded with helpers such as `appendSeries`.
 
 For Pine-like drawing code, prefer a managed drawing scope when a collection of
 boxes or segments changes over time:
@@ -165,7 +166,8 @@ the SDK, so authors do not need to keep a parallel drawing-ID list.
 Signals are emitted only on confirmed bars.
 
 The SDK bounds instances to 100,000 points, 128 input/value-plot declarations,
-256 TA/recurrence calls, 2,000 retained drawings, and 10,000 retained signals.
+256 TA/recurrence calls, 4,096 retained structured-series collection items,
+2,000 retained drawings, and 10,000 retained signals.
 Drawing/signal retention evicts the oldest entries at their caps. There is no
 network access, storage, implicit multi-timeframe acquisition, arbitrary Pine
 syntax, table/text-label drawing API, or filled-band plot in this authoring API.
@@ -233,6 +235,11 @@ its package version is now `0.1.3`.
 
 Run `node tools/indicator-tick-performance.mjs` after building. It checks for
 history materialization and output cloning while reporting synthetic timings.
+Run `node tools/indicator-series-performance.mjs` to replay 100,000 bars with a
+structured series holding the maximum 4,096 retained collection items. On this
+workspace's September 9 run, that bounded worst-case replay took approximately
+21.4 seconds. The measurement is domain-only and is not an application latency or
+FPS target.
 On this workspace's September 8 run, 100 derived 2m ticks with 100,000 source
 bars took approximately 1.59 ms, versus the earlier 1,004 ms observation.
 1,000 legacy ATR Rope building updates took approximately 2.16 ms with either

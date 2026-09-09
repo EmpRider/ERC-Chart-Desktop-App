@@ -58,6 +58,12 @@ with either 1,000 or 100,000 historical bars. These single-run measurements
 exclude rendering, SQLite and transport; they are not whole-application latency
 or FPS measurements.
 
+The authored structured-series contract now caps retained collection items at
+4,096. `node tools/indicator-series-performance.mjs` replays 100,000 bars while
+holding that maximum state size. On the September 9 workspace run it completed
+in approximately 21.4 seconds and produced 100,000 points. This is a synthetic
+SDK-only boundary measurement, not whole-application latency.
+
 Validation completed:
 
 - Unit suite: 501 passed, two existing Windows symlink-permission skips.

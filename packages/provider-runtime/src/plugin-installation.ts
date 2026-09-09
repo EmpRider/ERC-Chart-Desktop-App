@@ -11,6 +11,12 @@ const pluginVersionPattern =
 export interface PluginInstallationOptions {
   readonly installationRoot: string;
   readonly replaceExisting?: boolean;
+  readonly deferReplacementCommit?: boolean;
+}
+
+export interface PluginReplacementTransaction {
+  readonly commit: () => Promise<void>;
+  readonly rollback: () => Promise<void>;
 }
 
 export interface InstalledPluginPackage {
@@ -19,6 +25,7 @@ export interface InstalledPluginPackage {
   readonly version: string;
   readonly manifest: PluginManifest;
   readonly packageHash: string;
+  readonly replacement?: PluginReplacementTransaction;
 }
 
 async function optionalStat(targetPath: string) {
@@ -73,6 +80,7 @@ export async function installStagedPlugin(
 ): Promise<InstalledPluginPackage> {
   let pluginDirectory: string | undefined;
   let replacementBackupPath: string | undefined;
+  let installationPath: string | undefined;
   try {
     const manifest = checkedStagedManifest(staged);
     const installationRoot = checkedInstallationRoot(options.installationRoot);
@@ -88,7 +96,7 @@ export async function installStagedPlugin(
       path.join(managedRoot, manifest.id),
       "Plugin installation directory",
     );
-    const installationPath = path.join(pluginDirectory, manifest.version);
+    installationPath = path.join(pluginDirectory, manifest.version);
     const existingInfo = await optionalStat(installationPath);
     if (existingInfo !== undefined) {
       if (!options.replaceExisting)
@@ -108,10 +116,12 @@ export async function installStagedPlugin(
       await rename(await realpath(staged.stagingPath), installationPath);
     } catch (error) {
       if (replacementBackupPath !== undefined) {
-        await rename(replacementBackupPath, installationPath).catch(
-          () => undefined,
-        );
-        replacementBackupPath = undefined;
+        try {
+          await rename(replacementBackupPath, installationPath);
+          replacementBackupPath = undefined;
+        } catch {
+          // Keep the backup path so the outer recovery handler can retry.
+        }
       }
       if ((error as NodeJS.ErrnoException).code === "EXDEV") {
         throw new Error(
@@ -122,12 +132,49 @@ export async function installStagedPlugin(
       throw error;
     }
 
-    if (replacementBackupPath !== undefined) {
+    if (
+      replacementBackupPath !== undefined &&
+      !options.deferReplacementCommit
+    ) {
       await rm(replacementBackupPath, { recursive: true, force: true }).catch(
         () => undefined,
       );
       replacementBackupPath = undefined;
     }
+
+    const replacement =
+      replacementBackupPath === undefined
+        ? undefined
+        : ({
+            commit: async (): Promise<void> => {
+              if (replacementBackupPath === undefined) return;
+              await rm(replacementBackupPath, { recursive: true, force: true });
+              replacementBackupPath = undefined;
+            },
+            rollback: async (): Promise<void> => {
+              if (
+                replacementBackupPath === undefined ||
+                pluginDirectory === undefined ||
+                installationPath === undefined
+              )
+                return;
+              const replacementPath = path.join(
+                pluginDirectory,
+                `.${manifest.version}.rollback-${randomUUID()}`,
+              );
+              await rename(installationPath, replacementPath);
+              try {
+                await rename(replacementBackupPath, installationPath);
+                replacementBackupPath = undefined;
+              } catch (error) {
+                await rename(replacementPath, installationPath).catch(
+                  () => undefined,
+                );
+                throw error;
+              }
+              await rm(replacementPath, { recursive: true, force: true });
+            },
+          } satisfies PluginReplacementTransaction);
 
     return {
       installationPath,
@@ -135,16 +182,22 @@ export async function installStagedPlugin(
       version: manifest.version,
       manifest,
       packageHash: staged.packageHash,
+      ...(replacement === undefined ? {} : { replacement }),
     };
   } catch (error) {
     await rm(staged.stagingPath, { recursive: true, force: true });
-    if (replacementBackupPath !== undefined && pluginDirectory !== undefined) {
-      const manifest = staged.manifest;
-      const installationPath = path.join(pluginDirectory, manifest.version);
+    if (
+      replacementBackupPath !== undefined &&
+      pluginDirectory !== undefined &&
+      installationPath !== undefined
+    ) {
       if ((await optionalStat(installationPath)) === undefined) {
-        await rename(replacementBackupPath, installationPath).catch(
-          () => undefined,
-        );
+        try {
+          await rename(replacementBackupPath, installationPath);
+          replacementBackupPath = undefined;
+        } catch {
+          // Preserve the original installation backup for manual recovery.
+        }
       }
     }
     if (pluginDirectory !== undefined) {

@@ -35,6 +35,7 @@ export {
 export type {
   InstalledPluginPackage,
   PluginInstallationOptions,
+  PluginReplacementTransaction,
 } from "./plugin-installation.js";
 
 export async function stagePluginPackage(

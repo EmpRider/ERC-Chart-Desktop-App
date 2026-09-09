@@ -268,6 +268,7 @@ export function createIndicatorImportService(
         installed = await installStagedPlugin(staged, {
           installationRoot: options.installationRoot,
           replaceExisting: true,
+          deferReplacementCommit: true,
         });
         await options.storage.putPlugin({
           pluginId: installed.pluginId,
@@ -284,6 +285,7 @@ export function createIndicatorImportService(
           installed.pluginId,
           installed.version,
         );
+        await installed.replacement?.commit();
       }
       pending.delete(requestId);
       return toSummary(
@@ -316,11 +318,15 @@ export function createIndicatorImportService(
           .catch(() => false);
       }
       if (existingEntry === undefined && installed !== undefined) {
-        await removeInstalledPlugin(
-          { installationRoot: options.installationRoot },
-          installed.pluginId,
-          installed.version,
-        ).catch(() => undefined);
+        if (installed.replacement !== undefined) {
+          await installed.replacement.rollback().catch(() => undefined);
+        } else {
+          await removeInstalledPlugin(
+            { installationRoot: options.installationRoot },
+            installed.pluginId,
+            installed.version,
+          ).catch(() => undefined);
+        }
       } else if (installed === undefined) {
         await discardStagedPlugin(staged).catch(() => undefined);
       }
