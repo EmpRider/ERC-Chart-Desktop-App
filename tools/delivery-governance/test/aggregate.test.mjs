@@ -78,6 +78,16 @@ test("docs-only application accepts skipped application jobs", () =>
     }).ok,
     true,
   ));
+test("docs-only application rejects an application job that ran", () =>
+  assert.equal(
+    aggregateResults({
+      ...base,
+      applicationPresent: true,
+      docsOnly: true,
+      applicationLinux: "success",
+    }).ok,
+    false,
+  ));
 test("cancelled jobs fail", () =>
   assert.equal(
     aggregateResults({
