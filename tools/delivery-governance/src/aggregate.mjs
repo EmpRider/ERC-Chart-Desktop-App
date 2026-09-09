@@ -10,10 +10,26 @@ export function aggregateResults({
   applicationLinux,
   applicationWindows,
   applicationPresent,
+  docsOnly = false,
+  governanceOnly = false,
   epicToMain,
 }) {
   if (governance !== "success")
     return fail(`Delivery gates failed: Governance result is '${governance}'.`);
+
+  if (docsOnly || governanceOnly) {
+    if (applicationLinux !== "skipped" || applicationWindows !== "skipped") {
+      return fail(
+        "Delivery gates failed: application jobs must be skipped for documentation-only or delivery-governance-only pull requests.",
+      );
+    }
+    return {
+      ok: true,
+      summary: docsOnly
+        ? "Delivery gates passed. Application gates are not applicable to documentation-only changes."
+        : "Delivery gates passed. Application gates are not applicable to delivery-governance-only changes.",
+    };
+  }
 
   if (!applicationPresent) {
     if (applicationLinux !== "skipped" || applicationWindows !== "skipped") {
@@ -52,11 +68,18 @@ export function aggregateResults({
 }
 
 export function aggregateFromEnvironment(environment) {
+  const applicationPresent =
+    environment.APPLICATION_CONTRACT_PRESENT === undefined
+      ? environment.APPLICATION_PRESENT === "true"
+      : environment.APPLICATION_CONTRACT_PRESENT === "true";
+
   return aggregateResults({
     governance: environment.GOVERNANCE_RESULT,
     applicationLinux: environment.APPLICATION_LINUX_RESULT,
     applicationWindows: environment.APPLICATION_WINDOWS_RESULT,
-    applicationPresent: environment.APPLICATION_PRESENT === "true",
+    applicationPresent,
+    docsOnly: environment.DOCS_ONLY === "true",
+    governanceOnly: environment.GOVERNANCE_ONLY === "true",
     epicToMain: environment.EPIC_TO_MAIN === "true",
   });
 }
