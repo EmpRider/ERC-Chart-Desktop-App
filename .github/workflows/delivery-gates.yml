@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       application_present: ${{ steps.application.outputs.application_present }}
+      docs_only: ${{ steps.context.outputs.docs_only }}
+      governance_only: ${{ steps.context.outputs.governance_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -55,9 +57,32 @@ jobs:
           else
             echo "base_is_ancestor=false" >> "$GITHUB_OUTPUT"
           fi
+
+          mapfile -t changed_files < <(git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA")
+          docs_only=false
+          governance_only=false
+          if ((${#changed_files[@]} > 0)); then
+            docs_only=true
+            governance_only=true
+            for file in "${changed_files[@]}"; do
+              case "$file" in
+                docs/*|*.md|*.mdx) ;;
+                *) docs_only=false ;;
+              esac
+              case "$file" in
+                .github/workflows/delivery-gates.yml|tools/delivery-governance/*) ;;
+                *) governance_only=false ;;
+              esac
+            done
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "governance_only=$governance_only" >> "$GITHUB_OUTPUT"
+
           {
             echo 'changed_files<<EOF'
-            git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA"
+            if ((${#changed_files[@]} > 0)); then
+              printf '%s\n' "${changed_files[@]}"
+            fi
             echo EOF
           } >> "$GITHUB_OUTPUT"
       - name: Test governance tool
@@ -90,7 +115,10 @@ jobs:
   application-linux:
     name: Application / Linux
     needs: governance
-    if: needs.governance.outputs.application_present == 'true'
+    if: >-
+      needs.governance.outputs.application_present == 'true' &&
+      needs.governance.outputs.docs_only != 'true' &&
+      needs.governance.outputs.governance_only != 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -134,6 +162,8 @@ jobs:
     needs: governance
     if: >-
       needs.governance.outputs.application_present == 'true' &&
+      needs.governance.outputs.docs_only != 'true' &&
+      needs.governance.outputs.governance_only != 'true' &&
       startsWith(github.head_ref, 'epic/') &&
       github.base_ref == 'main'
     runs-on: windows-2025
@@ -185,7 +215,10 @@ jobs:
           GOVERNANCE_RESULT: ${{ needs.governance.result }}
           APPLICATION_LINUX_RESULT: ${{ needs.application-linux.result }}
           APPLICATION_WINDOWS_RESULT: ${{ needs.application-windows.result }}
-          APPLICATION_PRESENT: ${{ needs.governance.outputs.application_present }}
+          APPLICATION_PRESENT: ${{ needs.governance.outputs.application_present == 'true' && needs.governance.outputs.docs_only != 'true' && needs.governance.outputs.governance_only != 'true' }}
+          APPLICATION_CONTRACT_PRESENT: ${{ needs.governance.outputs.application_present }}
+          DOCS_ONLY: ${{ needs.governance.outputs.docs_only }}
+          GOVERNANCE_ONLY: ${{ needs.governance.outputs.governance_only }}
           EPIC_TO_MAIN: ${{ startsWith(github.head_ref, 'epic/') && github.base_ref == 'main' }}
         run: |
           set -euo pipefail
