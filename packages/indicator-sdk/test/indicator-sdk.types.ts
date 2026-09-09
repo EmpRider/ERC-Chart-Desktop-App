@@ -19,15 +19,17 @@ export const authored = defineIndicator(
     const value: number = ta.ema(close, length);
     const atr: number = ta.atr(length);
     const rsi: number = ta.rsi(length);
-    const previousByIndex: number = close[1];
+    // Raw TypeScript applies noUncheckedIndexedAccess before the package
+    // transform lowers bracket history access to history(close, 1).
+    const previousByIndex: number | undefined = close[1];
     const previousByAt: number = close.at(1);
     const previousByFunction: number = history(close, 1);
     const previousDerived: number = history(close * 2, 1);
     const previousVolume: number = history(volume, 1);
+    void previousByIndex;
     plot.line(
       value +
         atr +
-        previousByIndex +
         previousByAt +
         previousByFunction +
         previousDerived +
