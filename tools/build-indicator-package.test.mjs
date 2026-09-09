@@ -11,6 +11,8 @@ import {
 } from "../packages/provider-runtime/dist/index.js";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 
+const repoRoot = path.resolve(import.meta.dirname, "..");
+
 test("packages a scalar-authored indicator with generated metadata and a self-contained runtime", async (t) => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "erc-authored-package-"),
@@ -90,6 +92,75 @@ test("packages a scalar-authored indicator with generated metadata and a self-co
     }),
     /belong to the package id/,
   );
+});
+
+test("packages Pine-style history syntax through the authoring transform", async (t) => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "erc-history-package-"),
+  );
+  const sourceDirectory = await mkdtemp(
+    path.join(repoRoot, ".history-syntax-source-"),
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => rm(sourceDirectory, { recursive: true, force: true }));
+
+  const source = path.join(sourceDirectory, "history.ts");
+  await writeFile(
+    source,
+    `import { defineIndicator, history, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator(
+  { id: "erc.indicator.history-syntax.main", name: "History syntax" },
+  ({ close }) => {
+    plot.line(close[1], { key: "indexed" });
+    plot.line(close.at(1), { key: "at" });
+    plot.line(history(close, 1), { key: "explicit" });
+  },
+);
+`,
+    "utf8",
+  );
+
+  const { manifest, packageRoot } = await buildIndicatorPackage({
+    source,
+    outputRoot: path.join(directory, "package"),
+    id: "erc.indicator.history-syntax",
+    version: "0.1.0",
+  });
+  const entry = await readFile(path.join(packageRoot, manifest.entry));
+  const { default: plugin } = await import(
+    `data:text/javascript;base64,${entry.toString("base64")}`
+  );
+  const instance = plugin.createInstance(
+    {},
+    { instrumentId: "TEST", timeframeId: "1m" },
+  );
+  instance.onHistory(
+    [10, 11, 12].map((close, index) => ({
+      instrumentId: "TEST",
+      timeframeId: "1m",
+      openTimeMs: index * 60_000,
+      open: close - 1,
+      high: close + 1,
+      low: close - 2,
+      close,
+      volume: 1,
+    })),
+  );
+  const points = instance.snapshot().points;
+  assert.deepEqual(
+    points.map((point) => point.values.indexed),
+    [null, 10, 11],
+  );
+  assert.deepEqual(
+    points.map((point) => point.values.at),
+    [null, 10, 11],
+  );
+  assert.deepEqual(
+    points.map((point) => point.values.explicit),
+    [null, 10, 11],
+  );
+  instance.dispose();
 });
 
 test("archive generation does not depend on locale-sensitive string comparison", async (t) => {
