@@ -1,3 +1,4 @@
+import { sameDrawing } from "./drawing-equality.js";
 import {
   hostApiVersion,
   indicatorContractVersion,
@@ -51,39 +52,7 @@ function overlaysEqual(
   for (let index = 0; index < left.length; index += 1) {
     const a = left[index];
     const b = right[index];
-    if (
-      a === undefined ||
-      b === undefined ||
-      a.kind !== b.kind ||
-      a.id !== b.id
-    )
-      return false;
-    if (a.kind === "box" && b.kind === "box") {
-      if (
-        a.startTimeMs !== b.startTimeMs ||
-        a.endTimeMs !== b.endTimeMs ||
-        a.top !== b.top ||
-        a.bottom !== b.bottom ||
-        a.color !== b.color ||
-        a.borderColor !== b.borderColor
-      )
-        return false;
-      continue;
-    }
-    if (a.kind === "line-segment" && b.kind === "line-segment") {
-      if (
-        a.startTimeMs !== b.startTimeMs ||
-        a.endTimeMs !== b.endTimeMs ||
-        a.startValue !== b.startValue ||
-        a.endValue !== b.endValue ||
-        a.color !== b.color ||
-        a.width !== b.width ||
-        a.style !== b.style
-      )
-        return false;
-      continue;
-    }
-    return false;
+    if (a === undefined || b === undefined || !sameDrawing(a, b)) return false;
   }
   return true;
 }

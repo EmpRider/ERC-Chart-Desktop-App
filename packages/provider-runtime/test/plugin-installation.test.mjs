@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -293,7 +295,20 @@ test("can defer replacement cleanup until the caller commits or rolls back", asy
       deferReplacementCommit: true,
     });
     assert.ok(committed.replacement);
-    await committed.replacement.commit();
+    const originalRm = fs.rm;
+    try {
+      fs.rm = async (target, options) => {
+        if (String(target).includes(".replacement-"))
+          throw new Error("fixture backup cleanup failure");
+        return originalRm(target, options);
+      };
+      syncBuiltinESMExports();
+      await committed.replacement.commit();
+      await committed.replacement.rollback();
+    } finally {
+      fs.rm = originalRm;
+      syncBuiltinESMExports();
+    }
     assert.equal(
       await readFile(
         path.join(committed.installationPath, "dist", "index.js"),
@@ -301,9 +316,12 @@ test("can defer replacement cleanup until the caller commits or rolls back", asy
       ),
       "export default 'committed';\n",
     );
-    assert.deepEqual(await readdir(path.dirname(committed.installationPath)), [
-      "1.0.0",
-    ]);
+    const remaining = await readdir(path.dirname(committed.installationPath));
+    assert.ok(remaining.includes("1.0.0"));
+    assert.equal(
+      remaining.filter((name) => name.includes(".replacement-")).length,
+      1,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

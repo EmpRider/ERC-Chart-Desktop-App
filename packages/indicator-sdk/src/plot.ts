@@ -1,3 +1,4 @@
+import { sameDrawing } from "./drawing-equality.js";
 import { authoringFrame, useKernel } from "./authoring-context.js";
 import type {
   IndicatorBox,
@@ -22,6 +23,7 @@ interface DrawingScopeState {
 }
 
 let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
+let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
 
 function valuePlot(
   kind: IndicatorPlotDefinition["kind"],
@@ -83,9 +85,14 @@ function overlay(value: IndicatorBox | IndicatorLineSegment): void {
   if (frame.discovery) return;
   if (!value.id || value.id.length > 256)
     throw new RangeError("Drawings require a bounded stable id.");
-  const frozen = Object.freeze({ ...value });
   if (activeDrawingCollector !== undefined) {
-    activeDrawingCollector.set(value.id, frozen);
+    const previous = activeCommittedDrawings?.get(value.id);
+    activeDrawingCollector.set(
+      value.id,
+      previous !== undefined && sameDrawing(previous, value)
+        ? previous
+        : Object.freeze(value),
+    );
     if (activeDrawingCollector.size > 2_000)
       throw new RangeError(
         "At most 2,000 drawings are allowed in one drawing scope.",
@@ -93,33 +100,9 @@ function overlay(value: IndicatorBox | IndicatorLineSegment): void {
     return;
   }
   // Same-id drawings replace earlier geometry; oldest drawings are retained within a fixed cap.
-  frame.overlayUpdates.set(value.id, frozen);
+  frame.overlayUpdates.set(value.id, Object.freeze(value));
   if (frame.overlayUpdates.size > 2_000)
     throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
-}
-
-function sameDrawing(left: IndicatorOverlay, right: IndicatorOverlay): boolean {
-  if (left.kind !== right.kind || left.id !== right.id) return false;
-  if (left.kind === "box" && right.kind === "box")
-    return (
-      left.startTimeMs === right.startTimeMs &&
-      left.endTimeMs === right.endTimeMs &&
-      left.top === right.top &&
-      left.bottom === right.bottom &&
-      left.color === right.color &&
-      left.borderColor === right.borderColor
-    );
-  if (left.kind === "line-segment" && right.kind === "line-segment")
-    return (
-      left.startTimeMs === right.startTimeMs &&
-      left.endTimeMs === right.endTimeMs &&
-      left.startValue === right.startValue &&
-      left.endValue === right.endValue &&
-      left.color === right.color &&
-      left.width === right.width &&
-      left.style === right.style
-    );
-  return false;
 }
 
 function drawingScope(key: string, render: (() => void) | null): void {
@@ -135,16 +118,17 @@ function drawingScope(key: string, render: (() => void) | null): void {
 
   const next = new Map<string, IndicatorOverlay>();
   activeDrawingCollector = next;
+  activeCommittedDrawings = state.committed;
   try {
     render();
   } finally {
     activeDrawingCollector = undefined;
+    activeCommittedDrawings = undefined;
   }
 
   for (const [id, drawing] of next) {
     const previous = state.committed.get(id);
-    if (previous === undefined || !sameDrawing(previous, drawing))
-      frame.overlayUpdates.set(id, drawing);
+    if (previous !== drawing) frame.overlayUpdates.set(id, drawing);
   }
   for (const id of state.committed.keys()) {
     if (!next.has(id)) frame.overlayUpdates.set(id, null);

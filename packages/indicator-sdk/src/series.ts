@@ -50,9 +50,9 @@ function cloneSeriesState<T>(value: T): T {
     }
     const prototype = Object.getPrototypeOf(current);
     if (prototype !== Object.prototype && prototype !== null) {
-      const result = structuredClone(current);
-      seen.set(current, result);
-      return result;
+      throw new TypeError(
+        "Series state does not support custom class instances.",
+      );
     }
     const result = Object.create(prototype) as Record<string, unknown>;
     seen.set(current, result);

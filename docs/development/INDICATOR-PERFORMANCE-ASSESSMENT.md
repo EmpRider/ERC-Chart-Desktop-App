@@ -64,6 +64,28 @@ holding that maximum state size. On the September 9 workspace run it completed
 in approximately 21.4 seconds and produced 100,000 points. This is a synthetic
 SDK-only boundary measurement, not whole-application latency.
 
+PR #114 follow-up: `npm run test:performance` now runs the structured-series,
+drawing reconciliation and authored ATR benchmarks in CI. History workloads
+must finish within the worker's 60,000 ms maximum; ATR building and finalized
+updates must each stay below 100 ms. The worker timeout tests also verify the
+per-bar formula and 60,000 ms cap using controlled timers.
+
+September 9 observations on Node 26.8.1, Windows (single runs):
+
+| Workload                                                |   Observed time |
+| ------------------------------------------------------- | --------------: |
+| 100,000 bars, 4,096 numeric series items                |         23.99 s |
+| 100,000 bars, 2,000 stable drawings                     |         38.67 s |
+| Authored ATR, 100,000 bars, default inputs              |         19.46 s |
+| Authored ATR, 1,000 building updates after that history | 116.52 ms total |
+| Authored ATR, one finalized update after that history   |         0.65 ms |
+
+Drawing replay before reusing unchanged frozen geometry measured 49.25 s in
+isolation and 79.01 s while other tests were running. Reusing the committed
+geometry avoids allocating and freezing 2,000 replacement objects per candle.
+The ATR fixture uses flat synthetic candles; it does not exercise maximum POC
+zone settings. These component budgets do not establish whole-application FPS.
+
 Validation completed:
 
 - Unit suite: 501 passed, two existing Windows symlink-permission skips.

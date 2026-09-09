@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -256,61 +258,103 @@ test("reinstalls the same indicator version with a new runtime revision and remo
   }
 });
 
-test("restores the original same-version indicator when replacement installation fails", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "erc-indicator-rollback-"));
-  const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
-  let request = 0;
-  const stagingRoot = path.join(root, "staging");
-  const installationRoot = path.join(root, "installed");
-  const service = createIndicatorImportService({
-    storage: createStorage(database),
-    stagingRoot,
-    installationRoot,
-    createRequestId: () => `indicator-rollback-${++request}`,
-  });
-  try {
-    const firstBuilt = await buildAtrRopeUtBotIndicatorPackage({
-      root: repoRoot,
-      outputRoot: path.join(root, "source-first"),
-    });
-    const firstPreview = await service.preview({
-      kind: "folder",
-      path: firstBuilt.packageRoot,
-    });
-    const firstInstalled = await service.approve(firstPreview.requestId);
-    const installedEntryPath = path.join(
-      installationRoot,
-      firstInstalled.pluginId,
-      firstInstalled.version,
-      "dist",
-      "index.js",
+for (const restoreFailures of [0, 1, 2]) {
+  test(`replacement failure with ${restoreFailures} restore failures preserves safe registry state`, async () => {
+    const originalRename = fs.rename;
+    let restoreAttempts = 0;
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "erc-indicator-rollback-"),
     );
-    const originalEntry = await readFile(installedEntryPath, "utf8");
+    const database = await openStorageDatabase(
+      path.join(root, "storage.sqlite"),
+    );
+    let request = 0;
+    const stagingRoot = path.join(root, "staging");
+    const installationRoot = path.join(root, "installed");
+    const service = createIndicatorImportService({
+      storage: createStorage(database),
+      stagingRoot,
+      installationRoot,
+      createRequestId: () => `indicator-rollback-${++request}`,
+    });
+    try {
+      const firstBuilt = await buildAtrRopeUtBotIndicatorPackage({
+        root: repoRoot,
+        outputRoot: path.join(root, "source-first"),
+      });
+      const firstPreview = await service.preview({
+        kind: "folder",
+        path: firstBuilt.packageRoot,
+      });
+      const firstInstalled = await service.approve(firstPreview.requestId);
+      const installedEntryPath = path.join(
+        installationRoot,
+        firstInstalled.pluginId,
+        firstInstalled.version,
+        "dist",
+        "index.js",
+      );
+      const originalEntry = await readFile(installedEntryPath, "utf8");
 
-    const replacementBuilt = await buildAtrRopeUtBotIndicatorPackage({
-      root: repoRoot,
-      outputRoot: path.join(root, "source-replacement"),
-    });
-    const replacementPreview = await service.preview({
-      kind: "folder",
-      path: replacementBuilt.packageRoot,
-    });
-    const stagedEntries = await readdir(stagingRoot);
-    assert.equal(stagedEntries.length, 1);
-    await rm(path.join(stagingRoot, stagedEntries[0]), {
-      recursive: true,
-      force: true,
-    });
-
-    await assert.rejects(service.approve(replacementPreview.requestId));
-    assert.deepEqual(await service.list(), [firstInstalled]);
-    assert.equal(await readFile(installedEntryPath, "utf8"), originalEntry);
-  } finally {
-    await service.shutdown();
-    database.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      const replacementBuilt = await buildAtrRopeUtBotIndicatorPackage({
+        root: repoRoot,
+        outputRoot: path.join(root, "source-replacement"),
+      });
+      const replacementPreview = await service.preview({
+        kind: "folder",
+        path: replacementBuilt.packageRoot,
+      });
+      const stagedEntries = await readdir(stagingRoot);
+      assert.equal(stagedEntries.length, 1);
+      const stagedPath = await fs.realpath(
+        path.join(stagingRoot, stagedEntries[0]),
+      );
+      fs.rename = async (source, destination) => {
+        if (source === stagedPath)
+          throw new Error("fixture staged rename failure");
+        if (String(source).includes(".replacement-")) {
+          restoreAttempts += 1;
+          if (restoreAttempts <= restoreFailures)
+            throw new Error("fixture restore failure");
+        }
+        return originalRename(source, destination);
+      };
+      syncBuiltinESMExports();
+      await assert.rejects(service.approve(replacementPreview.requestId));
+      assert.equal(restoreAttempts, restoreFailures === 0 ? 1 : 2);
+      if (restoreFailures < 2) {
+        assert.deepEqual(await service.list(), [firstInstalled]);
+        assert.equal(await readFile(installedEntryPath, "utf8"), originalEntry);
+      } else {
+        assert.deepEqual(await service.list(), []);
+        assert.equal(
+          getPlugin(database, firstInstalled.pluginId, firstInstalled.version)
+            .status,
+          "disabled",
+        );
+        await assert.rejects(access(installedEntryPath), { code: "ENOENT" });
+        const directory = path.join(installationRoot, firstInstalled.pluginId);
+        const backup = (await readdir(directory)).find((name) =>
+          name.includes(".replacement-"),
+        );
+        assert.ok(backup);
+        assert.equal(
+          await readFile(
+            path.join(directory, backup, "dist", "index.js"),
+            "utf8",
+          ),
+          originalEntry,
+        );
+      }
+    } finally {
+      fs.rename = originalRename;
+      syncBuiltinESMExports();
+      await service.shutdown();
+      database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("restores an orphaned same-version package when registry activation fails", async () => {
   const root = await mkdtemp(

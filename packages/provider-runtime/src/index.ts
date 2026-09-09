@@ -30,6 +30,7 @@ export type {
 export { defaultPluginPackageLimits, discardStagedPlugin };
 export {
   installStagedPlugin,
+  PluginInstallationRecoveryError,
   removeInstalledPlugin,
 } from "./plugin-installation.js";
 export type {

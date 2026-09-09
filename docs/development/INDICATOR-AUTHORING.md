@@ -105,7 +105,10 @@ The update function must preserve the value kind and have no external side
 effects. Treat previous structured state as immutable and return new objects or
 arrays for changes. Across a structured series value, retained collection
 containers (arrays, maps, sets and typed arrays) may hold at most 4,096 items in
-total. Keep custom histories bounded with helpers such as `appendSeries`.
+total. Raw `ArrayBuffer` and `DataView` values count their `byteLength` toward
+the same aggregate limit; exceeding 4,096 throws `RangeError`. Custom class
+instances are unsupported, including when nested in plain objects or collections.
+Keep custom histories bounded with helpers such as `appendSeries`.
 
 For Pine-like drawing code, prefer a managed drawing scope when a collection of
 boxes or segments changes over time:
@@ -232,6 +235,12 @@ updated legacy indicator separately, run `node tools/build-atr-rope-utbot-indica
 its package version is now `0.1.3`.
 
 ## Verification and reference use
+
+After building, `npm run test:performance` enforces the SDK's 60-second maximum
+history budget for structured series, 2,000 stable drawings over 100,000 bars,
+and the authored ATR fixture. It also checks ATR building/finalized updates
+against the 100 ms worker budget. See the performance assessment for workloads,
+measurements and limits; this is not a measured whole-application FPS gate.
 
 Run `node tools/indicator-tick-performance.mjs` after building. It checks for
 history materialization and output cloning while reporting synthetic timings.

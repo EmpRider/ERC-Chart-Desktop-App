@@ -210,6 +210,45 @@ test("structured series state is isolated from nested mutations and returned-val
   instance.dispose();
 });
 
+test("structured series rejects custom instances nested in collections", () => {
+  class CustomState {
+    value = 1;
+  }
+  for (const initial of [
+    { child: new CustomState() },
+    new Map([["child", new CustomState()]]),
+  ]) {
+    assert.throws(
+      () =>
+        defineIndicator(
+          { id: "erc.indicator.custom-state.main", name: "Custom state" },
+          () => series(initial, (previous) => previous),
+        ),
+      /does not support custom class instances/u,
+    );
+  }
+});
+
+test("structured series preserves null-prototype objects", () => {
+  const initial = Object.assign(Object.create(null), { value: 2 });
+  const plugin = defineIndicator(
+    { id: "erc.indicator.null-state.main", name: "Null state" },
+    () => {
+      const state = series(initial, (previous) => {
+        assert.equal(Object.getPrototypeOf(previous), null);
+        previous.value += 1;
+        return previous;
+      });
+      plot.line(state.value);
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0), candle(1)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 4);
+  assert.equal(initial.value, 2);
+  instance.dispose();
+});
+
 test("structured series rejects retained collections above the documented limit", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.series-limit.main", name: "Series limit" },

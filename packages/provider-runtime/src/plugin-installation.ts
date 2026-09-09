@@ -19,6 +19,17 @@ export interface PluginReplacementTransaction {
   readonly rollback: () => Promise<void>;
 }
 
+/** The original package remains in backup and must not be activated. */
+export class PluginInstallationRecoveryError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "Plugin installation could not be restored; the plugin must remain disabled.",
+      { cause },
+    );
+    this.name = "PluginInstallationRecoveryError";
+  }
+}
+
 export interface InstalledPluginPackage {
   readonly installationPath: string;
   readonly pluginId: string;
@@ -105,11 +116,12 @@ export async function installStagedPlugin(
         );
       if (!existingInfo.isDirectory() || existingInfo.isSymbolicLink())
         throw new Error("Installed plugin path must be a real directory.");
-      replacementBackupPath = path.join(
+      const backupPath = path.join(
         pluginDirectory,
         `.${manifest.version}.replacement-${randomUUID()}`,
       );
-      await rename(installationPath, replacementBackupPath);
+      await rename(installationPath, backupPath);
+      replacementBackupPath = backupPath;
     }
 
     try {
@@ -148,7 +160,10 @@ export async function installStagedPlugin(
         : ({
             commit: async (): Promise<void> => {
               if (replacementBackupPath === undefined) return;
-              await rm(replacementBackupPath, { recursive: true, force: true });
+              await rm(replacementBackupPath, {
+                recursive: true,
+                force: true,
+              }).catch(() => undefined);
               replacementBackupPath = undefined;
             },
             rollback: async (): Promise<void> => {
@@ -185,21 +200,25 @@ export async function installStagedPlugin(
       ...(replacement === undefined ? {} : { replacement }),
     };
   } catch (error) {
-    await rm(staged.stagingPath, { recursive: true, force: true });
     if (
       replacementBackupPath !== undefined &&
       pluginDirectory !== undefined &&
       installationPath !== undefined
     ) {
-      if ((await optionalStat(installationPath)) === undefined) {
-        try {
+      try {
+        if ((await optionalStat(installationPath)) === undefined) {
           await rename(replacementBackupPath, installationPath);
           replacementBackupPath = undefined;
-        } catch {
-          // Preserve the original installation backup for manual recovery.
         }
+      } catch {
+        // An inaccessible path is not evidence of successful restoration.
       }
     }
+    await rm(staged.stagingPath, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    if (replacementBackupPath !== undefined)
+      throw new PluginInstallationRecoveryError(error);
     if (pluginDirectory !== undefined) {
       try {
         await rmdir(pluginDirectory);

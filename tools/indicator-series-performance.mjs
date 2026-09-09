@@ -44,6 +44,10 @@ try {
   const started = performance.now();
   instance.onHistory(candles);
   const elapsedMs = performance.now() - started;
+  assert.ok(
+    elapsedMs < 60_000,
+    `Structured series replay exceeded the 60,000 ms worker budget: ${elapsedMs}`,
+  );
   assert.equal(instance.snapshot().points.length, historyBars);
   assert.equal(initial[0], 0, "series must not mutate shared initial state");
   console.log(

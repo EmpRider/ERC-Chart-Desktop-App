@@ -10,6 +10,7 @@ import {
 import {
   discardStagedPlugin,
   installStagedPlugin,
+  PluginInstallationRecoveryError,
   removeInstalledPlugin,
   stagePluginPackage,
   type PluginPackageSource,
@@ -255,15 +256,10 @@ export function createIndicatorImportService(
           staged.manifest.id,
           staged.manifest.version,
         );
-        try {
-          installed = await installStagedPlugin(staged, {
-            installationRoot: options.installationRoot,
-            replaceExisting: true,
-          });
-        } catch (error) {
-          await options.storage.putPlugin(existingEntry);
-          throw error;
-        }
+        installed = await installStagedPlugin(staged, {
+          installationRoot: options.installationRoot,
+          replaceExisting: true,
+        });
       } else {
         installed = await installStagedPlugin(staged, {
           installationRoot: options.installationRoot,
@@ -303,7 +299,11 @@ export function createIndicatorImportService(
         registryCreated &&
         installed === undefined
       ) {
-        await options.storage.putPlugin(existingEntry).catch(() => undefined);
+        await options.storage.putPlugin(
+          error instanceof PluginInstallationRecoveryError
+            ? { ...existingEntry, status: "disabled" }
+            : existingEntry,
+        );
       }
       if (
         existingEntry === undefined &&
