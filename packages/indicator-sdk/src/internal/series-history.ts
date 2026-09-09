@@ -26,9 +26,7 @@ export function historyValue(currentValue: number, barsBack: number): number {
     committed: [],
   }));
   const value =
-    offset === 0
-      ? currentValue
-      : (state.committed.at(-offset) ?? Number.NaN);
+    offset === 0 ? currentValue : (state.committed.at(-offset) ?? Number.NaN);
   if (frame.phase === "finalized") state.committed.push(currentValue);
   return value;
 }
