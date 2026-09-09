@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   isInstalledIndicatorDefinition,
+  isPluginId,
   isPluginManifest,
   type IndicatorImportPreview,
   type InstalledIndicatorSummary,
@@ -101,7 +102,7 @@ function packageHashFromIntegrity(integrityHash: string): string {
 }
 
 function requirePluginId(value: string): string {
-  if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)+$/u.test(value)) {
+  if (!isPluginId(value)) {
     throw new Error("Indicator plugin ID is invalid.");
   }
   return value;

@@ -41,6 +41,12 @@ function valuePlot(
   )
     throw new RangeError("Plot width must be greater than 0 and at most 20.");
   if (frame.discovery) {
+    if (
+      frame.plots.some(
+        (plot) => plot.key === key || (plot.outputKey ?? plot.key) === key,
+      )
+    )
+      throw new Error("Plot keys must be unique.");
     frame.plots.push({
       key,
       outputKey: key,
@@ -122,12 +128,13 @@ function syncDrawings(drawings: readonly IndicatorOverlay[] | null): void {
     committed: new Map<string, IndicatorOverlay>(),
   }));
   if (frame.discovery || drawings === null) return;
+  if (drawings.length > 2_000)
+    throw new RangeError(
+      "At most 2,000 drawings are allowed in one drawing scope.",
+    );
 
   const next = new Map<string, IndicatorOverlay>();
-  const start = Math.max(0, drawings.length - 2_000);
-  for (let index = start; index < drawings.length; index += 1) {
-    const drawing = drawings[index];
-    if (drawing === undefined) continue;
+  for (const drawing of drawings) {
     if (!drawing.id || drawing.id.length > 256)
       throw new RangeError("Drawings require a bounded stable id.");
     next.set(drawing.id, Object.freeze({ ...drawing }));

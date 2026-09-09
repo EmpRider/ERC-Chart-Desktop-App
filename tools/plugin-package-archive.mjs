@@ -25,7 +25,7 @@ async function collectPackageFiles(packageRoot, relativeDirectory = "") {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries.sort((left, right) =>
-    left.name.localeCompare(right.name),
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   )) {
     const relativePath = path.join(relativeDirectory, entry.name);
     if (entry.isSymbolicLink()) {

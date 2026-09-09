@@ -8,11 +8,11 @@ export function series<T>(initial: T, update: (previous: Readonly<T>) => T): T {
   const state = useKernel(`series-${kind}`, () => ({
     committed: initial,
   }));
-  const value = update(state.committed);
+  const value = update(structuredClone(state.committed));
   const valueKind = Array.isArray(value) ? "array" : typeof value;
   if (valueKind !== kind)
     throw new TypeError("Series state must preserve its value kind.");
-  if (frame.phase === "finalized") state.committed = value;
+  if (frame.phase === "finalized") state.committed = structuredClone(value);
   return value;
 }
 

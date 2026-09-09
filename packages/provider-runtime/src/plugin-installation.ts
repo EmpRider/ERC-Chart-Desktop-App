@@ -123,7 +123,9 @@ export async function installStagedPlugin(
     }
 
     if (replacementBackupPath !== undefined) {
-      await rm(replacementBackupPath, { recursive: true, force: true });
+      await rm(replacementBackupPath, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
       replacementBackupPath = undefined;
     }
 

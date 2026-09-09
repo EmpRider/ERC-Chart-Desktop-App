@@ -115,6 +115,25 @@ test("history replay marks the finalized tail before the building candle", () =>
     history: false,
     finalizedTail: false,
   });
+  instance.onBuildingBar(candle(3, 100));
+  assert.equal(
+    seen.filter((value) => value.confirmed).length,
+    3,
+    "newer building candles auto-finalize the previous building candle",
+  );
+  assert.deepEqual(seen.slice(-2), [
+    { index: 2, confirmed: true, history: false, finalizedTail: false },
+    { index: 3, confirmed: false, history: false, finalizedTail: false },
+  ]);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.openTimeMs),
+    [0, 60_000, 120_000, 180_000],
+  );
+  instance.onFinalizedBar(candle(2, 99));
+  assert.throws(
+    () => instance.onFinalizedBar(candle(2, 98)),
+    /history rebuild/u,
+  );
   instance.dispose();
 });
 
@@ -169,6 +188,26 @@ test("scalar recurrences roll back provisional state and remain isolated per ins
   assert.equal(first.snapshot().points.at(-1).values.plot_0, 37);
   first.dispose();
   second.dispose();
+});
+
+test("structured series state is isolated from nested mutations and returned-value mutations", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.structured-state.main", name: "Structured state" },
+    (bar) => {
+      const state = series({ values: [] }, (previous) => {
+        previous.values.push(bar.close);
+        return previous;
+      });
+      plot.line(state.values.reduce((sum, value) => sum + value, 0));
+      if (bar.isConfirmed) state.values.push(1_000);
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 21);
+  instance.onBuildingBar(candle(1, 20));
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 30);
+  instance.dispose();
 });
 
 test("provisional drawings roll back and finalized drawings persist without author-owned arrays", () => {
@@ -238,6 +277,44 @@ test("plot.sync owns drawing diff, removal and provisional rollback", () => {
   instance.onBuildingBar(candle(2, 10));
   assert.equal(instance.snapshot().overlays.length, 0);
   instance.dispose();
+});
+
+test("plot.sync rejects drawing arrays above the drawing-scope limit", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.sync-limit.main", name: "Sync limit" },
+    ({ openTimeMs }) => {
+      plot.sync(
+        Array.from({ length: 2_001 }, (_, index) => ({
+          id: `zone-${index}`,
+          kind: "box",
+          startTimeMs: openTimeMs,
+          endTimeMs: openTimeMs + 60_000,
+          top: index + 1,
+          bottom: index,
+        })),
+      );
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  assert.throws(
+    () => instance.onHistory([candle(0), candle(1)]),
+    /At most 2,000 drawings are allowed in one drawing scope/u,
+  );
+  instance.dispose();
+});
+
+test("plot discovery rejects duplicate output keys", () => {
+  assert.throws(
+    () =>
+      defineIndicator(
+        { id: "erc.indicator.duplicate-plot.main", name: "Duplicate plot" },
+        () => {
+          plot.line(1, { key: "shared" });
+          plot.histogram(2, { key: "shared" });
+        },
+      ),
+    /Plot keys must be unique/u,
+  );
 });
 
 test("plot.drawings reconciles direct plot.box calls without author-owned drawing arrays", () => {

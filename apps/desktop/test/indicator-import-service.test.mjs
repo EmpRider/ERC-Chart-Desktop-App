@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -216,6 +223,11 @@ test("reinstalls the same indicator version with a new runtime revision and remo
     );
     assert.deepEqual(await service.list(), [replacementInstalled]);
 
+    await assert.rejects(
+      service.remove(`erc.${"a".repeat(125)}`),
+      /Indicator plugin ID is invalid/u,
+    );
+
     assert.equal(await service.remove(replacementInstalled.pluginId), true);
     assert.deepEqual(await service.list(), []);
     assert.equal(
@@ -237,6 +249,62 @@ test("reinstalls the same indicator version with a new runtime revision and remo
       ),
       { code: "ENOENT" },
     );
+  } finally {
+    await service.shutdown();
+    database.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("restores the original same-version indicator when replacement installation fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-indicator-rollback-"));
+  const database = await openStorageDatabase(path.join(root, "storage.sqlite"));
+  let request = 0;
+  const stagingRoot = path.join(root, "staging");
+  const installationRoot = path.join(root, "installed");
+  const service = createIndicatorImportService({
+    storage: createStorage(database),
+    stagingRoot,
+    installationRoot,
+    createRequestId: () => `indicator-rollback-${++request}`,
+  });
+  try {
+    const firstBuilt = await buildAtrRopeUtBotIndicatorPackage({
+      root: repoRoot,
+      outputRoot: path.join(root, "source-first"),
+    });
+    const firstPreview = await service.preview({
+      kind: "folder",
+      path: firstBuilt.packageRoot,
+    });
+    const firstInstalled = await service.approve(firstPreview.requestId);
+    const installedEntryPath = path.join(
+      installationRoot,
+      firstInstalled.pluginId,
+      firstInstalled.version,
+      "dist",
+      "index.js",
+    );
+    const originalEntry = await readFile(installedEntryPath, "utf8");
+
+    const replacementBuilt = await buildAtrRopeUtBotIndicatorPackage({
+      root: repoRoot,
+      outputRoot: path.join(root, "source-replacement"),
+    });
+    const replacementPreview = await service.preview({
+      kind: "folder",
+      path: replacementBuilt.packageRoot,
+    });
+    const stagedEntries = await readdir(stagingRoot);
+    assert.equal(stagedEntries.length, 1);
+    await rm(path.join(stagingRoot, stagedEntries[0]), {
+      recursive: true,
+      force: true,
+    });
+
+    await assert.rejects(service.approve(replacementPreview.requestId));
+    assert.deepEqual(await service.list(), [firstInstalled]);
+    assert.equal(await readFile(installedEntryPath, "utf8"), originalEntry);
   } finally {
     await service.shutdown();
     database.close();

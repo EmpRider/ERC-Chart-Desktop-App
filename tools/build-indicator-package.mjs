@@ -37,6 +37,7 @@ export async function buildIndicatorPackage({
     sourcePath.startsWith(packageRoot + path.sep)
   )
     throw new Error("Build output must not contain the indicator source.");
+  await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
   await build({
     entryPoints: [sourcePath],
