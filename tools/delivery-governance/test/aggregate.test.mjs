@@ -68,6 +68,16 @@ test("epic-to-main passes with Windows success", () =>
     }).ok,
     true,
   ));
+test("docs-only application accepts skipped application jobs", () =>
+  assert.equal(
+    aggregateResults({
+      ...base,
+      applicationPresent: true,
+      docsOnly: true,
+      epicToMain: true,
+    }).ok,
+    true,
+  ));
 test("cancelled jobs fail", () =>
   assert.equal(
     aggregateResults({
