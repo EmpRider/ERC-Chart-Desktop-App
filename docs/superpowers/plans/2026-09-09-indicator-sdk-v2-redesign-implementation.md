@@ -114,11 +114,13 @@ This is the intended responsibility map. Existing files may be split when they c
 ### Task 1: Lock the SDK v2 public semantic contract
 
 **Files:**
+
 - Modify: `packages/indicator-sdk/src/index.ts`
 - Create or modify: `packages/indicator-sdk/test/indicator-sdk.types.ts`
 - Modify: `docs/development/INDICATOR-AUTHORING.md`
 
 **Interfaces:**
+
 - Produces the public names and call shapes that every later task implements.
 - No legacy API preservation requirement.
 
@@ -182,6 +184,7 @@ git commit -m "feat(indicators): define SDK v2 authoring contract"
 ### Task 2: Implement hidden call-site identities in the authoring compiler
 
 **Files:**
+
 - Create: `tools/indicator-authoring-transform.mjs`
 - Create: `tools/indicator-authoring/identity.mjs`
 - Create: `tools/indicator-authoring/callsite-transform.mjs`
@@ -189,6 +192,7 @@ git commit -m "feat(indicators): define SDK v2 authoring contract"
 - Create: `tools/indicator-authoring-transform.test.mjs` or follow the existing tools test layout
 
 **Interfaces:**
+
 - Produces: deterministic hidden token passed to runtime calls, conceptually `__erc.callsite("...")`.
 - Consumes: author source files during package build.
 
@@ -238,6 +242,7 @@ git commit -m "feat(indicators): add v2 authoring transform"
 ### Task 3: Implement Pine-style series history
 
 **Files:**
+
 - Create: `tools/indicator-authoring/history-transform.mjs`
 - Rewrite: `packages/indicator-sdk/src/series.ts`
 - Create: `packages/indicator-sdk/src/internal/series-history.ts`
@@ -245,6 +250,7 @@ git commit -m "feat(indicators): add v2 authoring transform"
 - Modify: `packages/indicator-sdk/test/indicator-sdk.types.ts`
 
 **Interfaces:**
+
 - Produces: equivalent semantics for `close[1]`, `history(close, 1)`, and `close.at(1)`.
 - Runtime canonical operation: a hidden source-series reference plus integer offset.
 
@@ -287,6 +293,7 @@ git commit -m "feat(indicators): add Pine-style series history"
 ### Task 4: Rebuild `ta.*` for hidden identity, overloads, and incremental kernels
 
 **Files:**
+
 - Rewrite: `packages/indicator-sdk/src/ta.ts`
 - Create: `packages/indicator-sdk/src/internal/ta-kernels.ts`
 - Modify: `packages/indicator-sdk/src/internal/execution-context.ts`
@@ -294,6 +301,7 @@ git commit -m "feat(indicators): add Pine-style series history"
 - Modify: `packages/indicator-sdk/test/indicator-sdk.types.ts`
 
 **Interfaces:**
+
 - Public examples:
 
 ```ts
@@ -344,6 +352,7 @@ git commit -m "feat(indicators): rebuild technical analysis runtime"
 ### Task 5: Rebuild inputs and generic constants
 
 **Files:**
+
 - Rewrite: `packages/indicator-sdk/src/input.ts`
 - Create: `packages/indicator-sdk/src/constants.ts`
 - Modify: `packages/contracts/src/indicator-management.ts`
@@ -397,6 +406,7 @@ git commit -m "feat(indicators): add v2 inputs and constants"
 ### Task 6: Rebuild scalar plots and conditional plot semantics
 
 **Files:**
+
 - Rewrite: `packages/indicator-sdk/src/plot.ts`
 - Modify: `packages/indicator-sdk/src/internal/execution-context.ts`
 - Modify: `packages/contracts/src/indicator-management.ts`
@@ -443,6 +453,7 @@ git commit -m "feat(indicators): make plots callsite driven"
 ### Task 7: Add shapes with text and text-size semantics
 
 **Files:**
+
 - Modify: `packages/indicator-sdk/src/plot.ts`
 - Modify: `packages/indicator-sdk/src/constants.ts`
 - Modify: `packages/contracts/src/indicator-management.ts`
@@ -493,6 +504,7 @@ git commit -m "feat(indicators): add marker text and sizing"
 ### Task 8: Build persistent drawing handles with hidden IDs
 
 **Files:**
+
 - Rewrite drawing portions of `packages/indicator-sdk/src/plot.ts`
 - Create: `packages/indicator-sdk/src/internal/drawings.ts`
 - Modify: `packages/indicator-sdk/src/indicator.ts`
@@ -554,6 +566,7 @@ git commit -m "feat(indicators): add persistent drawing handles"
 ### Task 9: Build the effective provider timeframe resolver
 
 **Files:**
+
 - Modify: `packages/data-service/src/timeframes.ts`
 - Modify if needed: `packages/provider-sdk/src/index.ts`
 - Create: `packages/indicator-runtime/src/source-capabilities.ts`
@@ -604,6 +617,7 @@ git commit -m "feat(indicators): resolve provider-driven timeframes"
 ### Task 10: Build the Indicator Source Engine
 
 **Files:**
+
 - Create: `packages/indicator-runtime/src/source-engine.ts`
 - Modify: `packages/indicator-runtime/src/index.ts`
 - Modify: `packages/indicator-runtime/src/worker-entry.ts`
@@ -660,6 +674,7 @@ git commit -m "feat(indicators): add provider-aware source engine"
 ### Task 11: Add indicator-level and TA-level timeframe controls
 
 **Files:**
+
 - Modify: `packages/indicator-sdk/src/indicator.ts`
 - Modify: `packages/indicator-sdk/src/input.ts`
 - Modify: `packages/indicator-sdk/src/ta.ts`
@@ -704,6 +719,7 @@ git commit -m "feat(indicators): add dynamic multi-timeframe authoring"
 ### Task 12: Build candle transformation registry and Heikin Ashi
 
 **Files:**
+
 - Create: `packages/indicator-runtime/src/candle-transform.ts`
 - Create: `packages/indicator-runtime/src/heikin-ashi.ts`
 - Modify: `packages/indicator-runtime/src/source-engine.ts`
@@ -757,6 +773,7 @@ git commit -m "feat(indicators): add Heikin Ashi source transforms"
 ### Task 13: Rebuild signal semantics around source confirmation and no-lookahead
 
 **Files:**
+
 - Rewrite: `packages/indicator-sdk/src/signal.ts`
 - Create: `packages/indicator-sdk/src/internal/signals.ts`
 - Modify: `packages/indicator-runtime/src/source-engine.ts`
@@ -811,6 +828,7 @@ git commit -m "feat(indicators): enforce safe signal semantics"
 ### Task 14: Evolve worker/runtime contracts for v2 provenance and deltas
 
 **Files:**
+
 - Modify: `packages/contracts/src/indicator-management.ts`
 - Modify: `packages/indicator-runtime/src/worker-entry.ts`
 - Modify: `packages/indicator-runtime/src/result-validation.ts`
@@ -818,6 +836,7 @@ git commit -m "feat(indicators): enforce safe signal semantics"
 - Modify runtime contract tests
 
 **Interfaces:**
+
 - Public author handles/series never cross this boundary.
 - Worker transport remains plain validated data.
 
@@ -849,10 +868,12 @@ git commit -m "feat(indicators): evolve v2 worker contracts"
 ### Task 15: Complete renderer integration for v2 plots, drawings, and MTF alignment
 
 **Files:**
+
 - Modify: `packages/renderer/src/plugin-indicators.ts`
 - Modify renderer tests
 
 **Interfaces:**
+
 - Consumes normalized runtime points/overlays/signals only.
 - No public SDK objects or KLineCharts handles cross into indicator code.
 
@@ -880,10 +901,12 @@ git commit -m "feat(indicators): render SDK v2 outputs"
 ### Task 16: Rewrite ATR Rope + UT Bot as the flagship SDK v2 proof
 
 **Files:**
+
 - Rewrite: `packages/indicator-examples/src/atr-rope-utbot.ts`
 - Modify/add its focused tests/fixtures
 
 **Interfaces:**
+
 - Must use SDK v2 only.
 - Trading/domain logic stays local; framework plumbing disappears.
 
@@ -929,10 +952,12 @@ git commit -m "refactor(indicators): port ATR Rope UT Bot to SDK v2"
 ### Task 17: Rewrite all remaining maintained indicators
 
 **Files:**
+
 - Modify all maintained indicator example/built-in source files discovered under `packages/indicator-examples` and application-owned indicator directories.
 - Add/update semantic fixtures for each.
 
 **Interfaces:**
+
 - SDK v2 only.
 
 - [ ] **Step 1: Inventory every maintained indicator**
@@ -962,11 +987,13 @@ git commit -m "refactor(indicators): port RSI example to SDK v2"
 ### Task 18: Remove SDK v1-only authoring/runtime code
 
 **Files:**
+
 - Delete/modify obsolete exports in `packages/indicator-sdk/src/*`
 - Delete obsolete compatibility paths in runtime/contracts/renderer
 - Update tests/docs
 
 **Interfaces:**
+
 - SDK v2 is the only supported indicator authoring model.
 
 - [ ] **Step 1: Search for v1-only APIs**
@@ -997,10 +1024,12 @@ git commit -m "refactor(indicators): remove SDK v1 authoring surface"
 ### Task 19: Performance, lookahead, replay, and resource acceptance suite
 
 **Files:**
+
 - Add/modify focused performance/correctness tests in SDK/runtime/data-service suites
 - Modify delivery/performance test registration only if existing project conventions require it
 
 **Interfaces:**
+
 - Measures platform guarantees, not author implementation choices.
 
 - [ ] **Step 1: Add incremental-complexity instrumentation tests**
@@ -1043,11 +1072,13 @@ git commit -m "test(indicators): add SDK v2 acceptance coverage"
 ### Task 20: Final author documentation and examples
 
 **Files:**
+
 - Rewrite: `docs/development/INDICATOR-AUTHORING.md`
 - Update relevant SDK architecture docs that describe the old surface
 - Add concise example indicators under the existing examples package
 
 **Interfaces:**
+
 - Documentation teaches v2 only.
 
 - [ ] **Step 1: Write a 5-minute beginner tutorial**
