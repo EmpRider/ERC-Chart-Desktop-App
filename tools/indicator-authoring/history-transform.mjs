@@ -333,7 +333,7 @@ export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
   return {
     name: "indicator-history-transform",
     setup(build) {
-      build.onLoad({ filter: /\.[cm]?[jt]sx?$/u }, async (args) => {
+      build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
         if (root !== undefined && !isWithinRoot(root, args.path)) return undefined;
         const sourceText = await readFile(args.path, "utf8");
         const transformed = transformIndicatorHistory(sourceText, args.path);
