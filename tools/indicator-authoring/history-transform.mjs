@@ -65,8 +65,84 @@ function validateLiteralOffset(node, sourceFile) {
   );
 }
 
-function isBuiltInSeries(node) {
-  return ts.isIdentifier(node) && builtInSeriesNames.has(node.text);
+function collectBindingNames(name, target) {
+  if (ts.isIdentifier(name)) {
+    target.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, target);
+  }
+}
+
+function seriesBindings(callback) {
+  const result = new Set();
+  const parameter = callback.parameters[0];
+  if (parameter === undefined || !ts.isObjectBindingPattern(parameter.name)) {
+    return result;
+  }
+  for (const element of parameter.name.elements) {
+    if (!ts.isIdentifier(element.name)) continue;
+    const sourceName =
+      element.propertyName === undefined
+        ? element.name.text
+        : ts.isIdentifier(element.propertyName)
+          ? element.propertyName.text
+          : undefined;
+    if (sourceName !== undefined && builtInSeriesNames.has(sourceName)) {
+      result.add(element.name.text);
+    }
+  }
+  return result;
+}
+
+function isIndicatorCallback(node) {
+  const parent = node.parent;
+  return (
+    ts.isCallExpression(parent) &&
+    parent.arguments[1] === node &&
+    ts.isIdentifier(parent.expression) &&
+    parent.expression.text === "defineIndicator"
+  );
+}
+
+function withoutBindings(active, names) {
+  if (active.size === 0 || names.size === 0) return active;
+  const next = new Set(active);
+  for (const name of names) next.delete(name);
+  return next;
+}
+
+function directBlockBindings(block) {
+  const names = new Set();
+  for (const statement of block.statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        collectBindingNames(declaration.name, names);
+      }
+      continue;
+    }
+    if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isEnumDeclaration(statement)) &&
+      statement.name !== undefined
+    ) {
+      names.add(statement.name.text);
+    }
+  }
+  return names;
+}
+
+function loopBindings(node) {
+  const names = new Set();
+  const initializer = node.initializer;
+  if (initializer !== undefined && ts.isVariableDeclarationList(initializer)) {
+    for (const declaration of initializer.declarations) {
+      collectBindingNames(declaration.name, names);
+    }
+  }
+  return names;
 }
 
 function uniqueHelperName(sourceText) {
@@ -90,10 +166,12 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
 
   const transformer = (context) => {
     const { factory } = context;
-    const visit = (node) => {
+
+    const visitWithBindings = (node, active) => {
       if (
         ts.isElementAccessExpression(node) &&
-        isBuiltInSeries(node.expression) &&
+        ts.isIdentifier(node.expression) &&
+        active.has(node.expression.text) &&
         node.argumentExpression !== undefined
       ) {
         validateLiteralOffset(node.argumentExpression, sourceFile);
@@ -103,7 +181,9 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
           undefined,
           [
             node.expression,
-            ts.visitNode(node.argumentExpression, visit),
+            ts.visitNode(node.argumentExpression, (child) =>
+              visitWithBindings(child, active),
+            ),
           ],
         );
       }
@@ -111,7 +191,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
         node.expression.name.text === "at" &&
-        isBuiltInSeries(node.expression.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        active.has(node.expression.expression.text) &&
         node.arguments.length === 1
       ) {
         const offset = node.arguments[0];
@@ -121,7 +202,10 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         return factory.createCallExpression(
           factory.createIdentifier(helperName),
           undefined,
-          [node.expression.expression, ts.visitNode(offset, visit)],
+          [
+            node.expression.expression,
+            ts.visitNode(offset, (child) => visitWithBindings(child, active)),
+          ],
         );
       }
       if (
@@ -133,9 +217,76 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         const offset = node.arguments[1];
         if (offset !== undefined) validateLiteralOffset(offset, sourceFile);
       }
-      return ts.visitEachChild(node, visit, context);
+
+      if (
+        (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+        isIndicatorCallback(node)
+      ) {
+        const indicatorBindings = seriesBindings(node);
+        return ts.visitEachChild(
+          node,
+          (child) => visitWithBindings(child, indicatorBindings),
+          context,
+        );
+      }
+
+      if (ts.isFunctionLike(node)) {
+        const names = new Set();
+        for (const parameter of node.parameters) {
+          collectBindingNames(parameter.name, names);
+        }
+        if (node.name !== undefined && ts.isIdentifier(node.name)) {
+          names.add(node.name.text);
+        }
+        const scoped = withoutBindings(active, names);
+        return ts.visitEachChild(
+          node,
+          (child) => visitWithBindings(child, scoped),
+          context,
+        );
+      }
+
+      if (ts.isBlock(node)) {
+        const scoped = withoutBindings(active, directBlockBindings(node));
+        return ts.visitEachChild(
+          node,
+          (child) => visitWithBindings(child, scoped),
+          context,
+        );
+      }
+
+      if (
+        ts.isForStatement(node) ||
+        ts.isForInStatement(node) ||
+        ts.isForOfStatement(node)
+      ) {
+        const scoped = withoutBindings(active, loopBindings(node));
+        return ts.visitEachChild(
+          node,
+          (child) => visitWithBindings(child, scoped),
+          context,
+        );
+      }
+
+      if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
+        const names = new Set();
+        collectBindingNames(node.variableDeclaration.name, names);
+        const scoped = withoutBindings(active, names);
+        return ts.visitEachChild(
+          node,
+          (child) => visitWithBindings(child, scoped),
+          context,
+        );
+      }
+
+      return ts.visitEachChild(
+        node,
+        (child) => visitWithBindings(child, active),
+        context,
+      );
     };
-    return (root) => ts.visitNode(root, visit);
+
+    return (root) => visitWithBindings(root, new Set());
   };
 
   const result = ts.transform(sourceFile, [transformer]);
