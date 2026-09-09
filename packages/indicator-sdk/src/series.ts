@@ -39,10 +39,7 @@ export type IndicatorSeriesBar = Omit<
  * `barsBack = 0` returns the current value. Missing history returns NaN. The
  * authoring compiler lowers `close[n]` and `close.at(n)` to this operation.
  */
-export function history(
-  source: number | undefined,
-  barsBack: number,
-): number {
+export function history(source: number | undefined, barsBack: number): number {
   return historyValue(source ?? Number.NaN, barsBack);
 }
 
