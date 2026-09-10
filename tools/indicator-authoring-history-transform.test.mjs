@@ -83,7 +83,10 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
 `;
   const transformed = transformIndicatorHistory(source, "switch-shadowed.ts");
   assert.equal(transformed.changed, true);
-  assert.match(transformed.code, /const historical = __ercHistory\(close, 1\);/u);
+  assert.match(
+    transformed.code,
+    /const historical = __ercHistory\(close, 1\);/u,
+  );
   assert.match(transformed.code, /return close\[1\];/u);
 });
 
