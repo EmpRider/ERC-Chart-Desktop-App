@@ -18,7 +18,8 @@ export interface CompilerCallsite {
   };
 }
 
-const callsiteId = /^erc-v2-(input|ta|state|plot|drawing|signal)-[0-9a-f]{24}$/u;
+const callsiteId =
+  /^erc-v2-(input|ta|state|plot|drawing|signal)-[0-9a-f]{24}$/u;
 
 function invalidCallsite(callee: string): TypeError {
   return new TypeError(
