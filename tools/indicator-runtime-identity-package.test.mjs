@@ -186,3 +186,152 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("plot outputs follow compiler identity when execution order changes", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function fastPlot(value) {
+  plot.line(value, { key: "fast", title: "Fast" });
+}
+function slowPlot(value) {
+  plot.line(value * 10, { key: "slow", title: "Slow" });
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-plot.main", name: "Runtime identity plot" },
+  ({ close }) => {
+    if (close > 15) {
+      slowPlot(close);
+      fastPlot(close);
+    } else {
+      fastPlot(close);
+      slowPlot(close);
+    }
+  },
+);
+`,
+    "erc.indicator.runtime-identity-plot",
+  );
+
+  const fast = plugin.definition.plots.find((definition) => definition.outputKey === "fast");
+  const slow = plugin.definition.plots.find((definition) => definition.outputKey === "slow");
+  assert.ok(fast);
+  assert.ok(slow);
+  assert.match(fast.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
+  assert.match(slow.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
+  assert.notEqual(fast.key, slow.key);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const points = instance.snapshot().points;
+    assert.deepEqual(points.map((point) => point.values.fast), [10, 20, 10]);
+    assert.deepEqual(points.map((point) => point.values.slow), [100, 200, 100]);
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("drawing scope state follows compiler identity when execution order changes", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function fastDraw(value, openTimeMs) {
+  plot.drawings("fast", () => {
+    plot.box({
+      id: "fast-zone",
+      startTimeMs: openTimeMs,
+      endTimeMs: openTimeMs + 60_000,
+      top: value,
+      bottom: value - 1,
+      color: "#008800",
+    });
+  });
+}
+function slowDraw(value, openTimeMs) {
+  plot.drawings("slow", () => {
+    plot.box({
+      id: "slow-zone",
+      startTimeMs: openTimeMs,
+      endTimeMs: openTimeMs + 60_000,
+      top: value * 10,
+      bottom: value * 10 - 1,
+      color: "#880000",
+    });
+  });
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-drawing.main", name: "Runtime identity drawing" },
+  ({ close, openTimeMs }) => {
+    if (close > 15) {
+      slowDraw(close, openTimeMs);
+      fastDraw(close, openTimeMs);
+    } else {
+      fastDraw(close, openTimeMs);
+      slowDraw(close, openTimeMs);
+    }
+  },
+);
+`,
+    "erc.indicator.runtime-identity-drawing",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const overlays = instance.snapshot().overlays;
+    assert.equal(overlays.length, 2);
+    assert.equal(overlays.find((overlay) => overlay.id === "fast-zone")?.top, 10);
+    assert.equal(overlays.find((overlay) => overlay.id === "slow-zone")?.top, 100);
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("signals follow compiler identity when execution order changes", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+
+function fastSignal() {
+  signal(true, "long");
+}
+function slowSignal() {
+  signal(true, "short");
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-signal.main", name: "Runtime identity signal" },
+  ({ close }) => {
+    if (close > 15) {
+      slowSignal();
+      fastSignal();
+    } else {
+      fastSignal();
+      slowSignal();
+    }
+  },
+);
+`,
+    "erc.indicator.runtime-identity-signal",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const signals = instance.snapshot().signals;
+    assert.equal(signals.length, 4);
+    const long = signals.filter((value) => value.direction === "long");
+    const short = signals.filter((value) => value.direction === "short");
+    assert.equal(long.length, 2);
+    assert.equal(short.length, 2);
+    const callsite = (id) => id.slice(0, id.lastIndexOf(":"));
+    assert.match(callsite(long[0].id), /^erc-v2-signal-[0-9a-f]{24}$/u);
+    assert.equal(callsite(long[0].id), callsite(long[1].id));
+    assert.equal(callsite(short[0].id), callsite(short[1].id));
+    assert.notEqual(callsite(long[0].id), callsite(short[0].id));
+  } finally {
+    instance.dispose();
+  }
+});
