@@ -50,7 +50,9 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
 });
 
 test("package build applies the composed authoring transform", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "erc-callsite-source-"));
+  const root = await mkdtemp(
+    path.join(import.meta.dirname, ".callsite-source-"),
+  );
   const output = await mkdtemp(path.join(os.tmpdir(), "erc-callsite-output-"));
   cleanup(t, root);
   cleanup(t, output);
