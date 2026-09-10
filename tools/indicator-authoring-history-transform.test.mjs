@@ -130,6 +130,67 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /return close\[1\];/u);
 });
 
+test("preserves function-scoped var source shadows declared in nested blocks", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const historical = close[1];
+  const nested = () => {
+    const local = close[1];
+    if (historical) {
+      var close = [10, 20, 30];
+    }
+    return local + close[1];
+  };
+  return historical + nested();
+});
+`;
+  const transformed = transformIndicatorHistory(source, "var-source-shadow.ts");
+  assert.equal(transformed.changed, true);
+  assert.match(
+    transformed.code,
+    /const historical = __ercHistory\(close, 1\);/u,
+  );
+  assert.match(transformed.code, /const local = close\[1\];/u);
+  assert.match(transformed.code, /return local \+ close\[1\];/u);
+});
+
+test("does not validate function-scoped var history helpers declared in nested loops", () => {
+  const source = `
+import { defineIndicator, history } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const historical = close[1];
+  const nested = () => {
+    const local = history(close, -2);
+    for (let index = 0; index < 1; index += 1) {
+      var history = (value, offset) => value + offset;
+    }
+    return local;
+  };
+  return historical + nested();
+});
+`;
+  const transformed = transformIndicatorHistory(source, "var-history-shadow.ts");
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /history\(close, -2\)/u);
+});
+
+test("does not rewrite callbacks owned by function-scoped var defineIndicator bindings", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function wrapper() {
+  defineIndicator({ id: "local" }, ({ close }) => close[1]);
+  for (let index = 0; index < 1; index += 1) {
+    var defineIndicator = (_options, calculate) => calculate({ close: [10, 20, 30] });
+  }
+}
+wrapper();
+`;
+  const transformed = transformIndicatorHistory(source, "var-define-shadow.ts");
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
 test("rejects invalid literal history offsets during authoring transform", () => {
   for (const expression of [
     "close[-1]",
