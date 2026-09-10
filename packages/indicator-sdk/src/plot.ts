@@ -50,6 +50,7 @@ function valuePlot(
       options.width > 20)
   )
     throw new RangeError("Plot width must be greater than 0 and at most 20.");
+  let resolvedOutputKey = outputKey;
   if (frame.discovery) {
     if (
       frame.plots.some((plot) => {
@@ -91,12 +92,14 @@ function valuePlot(
       throw new Error(
         "Plot declarations must preserve their identity, kind, key and options on every bar.",
       );
+    resolvedOutputKey = definition.outputKey ?? definition.key;
   }
-  frame.point.values[outputKey] =
+  frame.point.values[resolvedOutputKey] =
     value !== null && Number.isFinite(value) ? value : null;
   if (options.color !== undefined)
-    frame.point.colors[outputKey] = options.color;
-  if (options.width !== undefined) frame.point.sizes[outputKey] = options.width;
+    frame.point.colors[resolvedOutputKey] = options.color;
+  if (options.width !== undefined)
+    frame.point.sizes[resolvedOutputKey] = options.width;
 }
 
 function overlay(value: IndicatorBox | IndicatorLineSegment): void {
