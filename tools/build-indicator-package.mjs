@@ -55,6 +55,9 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
+  const historyTransform = indicatorHistoryTransformPlugin({
+    sourceRoot: authoringRoot,
+  });
   await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
   await build({
@@ -65,7 +68,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
-    plugins: [indicatorHistoryTransformPlugin({ sourceRoot: authoringRoot })],
+    plugins: [historyTransform],
   });
   await build({
     entryPoints: [sourcePath],
@@ -75,7 +78,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "node24",
     minify: false,
-    plugins: [indicatorHistoryTransformPlugin({ sourceRoot: authoringRoot })],
+    plugins: [historyTransform],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`
