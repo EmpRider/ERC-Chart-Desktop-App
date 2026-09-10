@@ -7,9 +7,14 @@ import test from "node:test";
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
 
 function runNode(arguments_) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("NODE_TEST")) delete env[key];
+  }
   return spawnSync(process.execPath, arguments_, {
     cwd: repositoryRoot,
     encoding: "utf8",
+    env,
   });
 }
 
@@ -51,7 +56,9 @@ test("ECDD-220 focused runtime identity fixture", () => {
   }
 
   assert.equal(build?.status, 0, `${build?.stdout ?? ""}${build?.stderr ?? ""}`);
-  assert.fail(
-    `FOCUSED_STATUS=${focused?.status ?? "missing"}\nFOCUSED_STDOUT\n${focused?.stdout ?? ""}\nFOCUSED_STDERR\n${focused?.stderr ?? ""}`,
+  assert.equal(
+    focused?.status,
+    0,
+    `${focused?.stdout ?? ""}${focused?.stderr ?? ""}`,
   );
 });
