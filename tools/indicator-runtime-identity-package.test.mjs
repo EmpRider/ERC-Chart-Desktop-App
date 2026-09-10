@@ -140,3 +140,49 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("TA state follows compiler identity when execution order changes", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+function fastAverage(value) {
+  return ta.ema(value, 2);
+}
+function slowAverage(value) {
+  return ta.ema(value * 10, 2);
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-ta.main", name: "Runtime identity TA" },
+  ({ close }) => {
+    let fast;
+    let slow;
+    if (close > 15) {
+      slow = slowAverage(close);
+      fast = fastAverage(close);
+    } else {
+      fast = fastAverage(close);
+      slow = slowAverage(close);
+    }
+    plot.line(fast, { key: "fast", title: "Fast" });
+    plot.line(slow, { key: "slow", title: "Slow" });
+  },
+);
+`,
+    "erc.indicator.runtime-identity-ta",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const points = instance.snapshot().points;
+    assert.equal(points[0].values.fast, null);
+    assert.equal(points[0].values.slow, null);
+    assert.equal(points[1].values.fast, 15);
+    assert.equal(points[1].values.slow, 150);
+    assert.ok(Math.abs(points[2].values.fast - 35 / 3) < 1e-12);
+    assert.ok(Math.abs(points[2].values.slow - 350 / 3) < 1e-12);
+  } finally {
+    instance.dispose();
+  }
+});
