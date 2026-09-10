@@ -19,7 +19,10 @@ export default defineIndicator(
 `;
 
 test("lowers history in a locally referenced indicator callback", () => {
-  const transformed = transformIndicatorHistory(authoredSource, "referenced.ts");
+  const transformed = transformIndicatorHistory(
+    authoredSource,
+    "referenced.ts",
+  );
   assert.equal(transformed.changed, true);
   assert.match(transformed.code, /__ercHistory\(close, 1\)/u);
 });
