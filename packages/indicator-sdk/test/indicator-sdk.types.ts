@@ -11,6 +11,14 @@ import {
   type IndicatorInstance,
   type SignalCandidate,
 } from "../src/index.js";
+import type { IndicatorBar as CanonicalIndicatorBar } from "../src/indicator.js";
+import type { SeriesNumber } from "../src/series.js";
+
+declare const canonicalBar: CanonicalIndicatorBar;
+const canonicalClose: SeriesNumber = canonicalBar.close;
+const canonicalVolume: SeriesNumber = canonicalBar.volume;
+void canonicalClose;
+void canonicalVolume;
 
 export const authored = defineIndicator(
   { id: "fixture.authored", name: "Authored" },
