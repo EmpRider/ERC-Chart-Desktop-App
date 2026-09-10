@@ -179,6 +179,7 @@ export interface SignalCandidate {
 export {
   appendSeries,
   candlesWithPriceSource,
+  history,
   inputOptions,
   laggedValue,
   maxSeriesCollectionItems,
@@ -187,6 +188,7 @@ export {
   priceValue,
   series,
   type PriceSource,
+  type SeriesNumber,
 } from "./series.js";
 export {
   sma,
@@ -221,9 +223,9 @@ export {
 } from "./ta.js";
 export {
   defineIndicator,
-  type IndicatorOptions,
   type IndicatorBar,
   type IndicatorCalculation,
+  type IndicatorOptions,
 } from "./indicator.js";
 export {
   plot,

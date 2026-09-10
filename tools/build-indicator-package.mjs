@@ -1,13 +1,30 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
+import { indicatorHistoryTransformPlugin } from "./indicator-authoring/history-transform.mjs";
 import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function findAuthoringRoot(sourcePath) {
+  const fallback = path.dirname(sourcePath);
+  let current = fallback;
+  while (true) {
+    try {
+      await access(path.join(current, "package.json"));
+      return current;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return fallback;
+    current = parent;
+  }
 }
 
 export async function buildIndicatorPackage({
@@ -37,6 +54,10 @@ export async function buildIndicatorPackage({
     sourcePath.startsWith(packageRoot + path.sep)
   )
     throw new Error("Build output must not contain the indicator source.");
+  const authoringRoot = await findAuthoringRoot(sourcePath);
+  const historyTransform = indicatorHistoryTransformPlugin({
+    sourceRoot: authoringRoot,
+  });
   await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
   await build({
@@ -47,6 +68,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
+    plugins: [historyTransform],
   });
   await build({
     entryPoints: [sourcePath],
@@ -56,6 +78,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "node24",
     minify: false,
+    plugins: [historyTransform],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`
