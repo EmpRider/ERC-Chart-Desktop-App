@@ -28,6 +28,18 @@ test("lowers a referenced callback", () => {
   assert.match(result.code, /__ercHistory\(close, 1\)/u);
 });
 
+test("rejects an unresolved referenced callback", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+import { calculate } from "./calculate.js";
+defineIndicator({ id: "fixture", name: "Fixture" }, calculate);
+`;
+  assert.throws(
+    () => transformIndicatorHistory(source, "unresolved.ts"),
+    /defineIndicator callback reference "calculate" must be declared in the same module/u,
+  );
+});
+
 test("covers plugin root filtering and loaders", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-history-root-"));
   const outside = await mkdtemp(path.join(os.tmpdir(), "erc-history-out-"));
@@ -43,6 +55,16 @@ test("covers plugin root filtering and loaders", async (t) => {
   assert.equal(typeof load, "function");
   const outsideFile = path.join(outside, "outside.ts");
   assert.equal(await load({ path: outsideFile }), undefined);
+
+  const dependencyRoot = path.join(root, "node_modules", "dependency");
+  await mkdir(dependencyRoot, { recursive: true });
+  const dependencyFile = path.join(dependencyRoot, "indicator.ts");
+  await writeFile(
+    dependencyFile,
+    `import { defineIndicator } from "@erc-chart/indicator-sdk";\ndefineIndicator({ id: "dependency", name: "Dependency" }, ({ close }) => close[1]);\n`,
+    "utf8",
+  );
+  assert.equal(await load({ path: dependencyFile }), undefined);
 
   const cases = [
     ["tsx", "tsx"],
