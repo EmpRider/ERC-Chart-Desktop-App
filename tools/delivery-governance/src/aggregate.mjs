@@ -7,7 +7,6 @@ function fail(summary) {
 
 export function aggregateResults({
   governance,
-  applicationLinux,
   applicationWindows,
   applicationPresent,
   docsOnly = false,
@@ -18,7 +17,7 @@ export function aggregateResults({
     return fail(`Delivery gates failed: Governance result is '${governance}'.`);
 
   if (docsOnly || governanceOnly) {
-    if (applicationLinux !== "skipped" || applicationWindows !== "skipped") {
+    if (applicationWindows !== "skipped") {
       return fail(
         "Delivery gates failed: application jobs must be skipped for documentation-only or delivery-governance-only pull requests.",
       );
@@ -32,7 +31,7 @@ export function aggregateResults({
   }
 
   if (!applicationPresent) {
-    if (applicationLinux !== "skipped" || applicationWindows !== "skipped") {
+    if (applicationWindows !== "skipped") {
       return fail(
         "Delivery gates failed: application jobs must be skipped when root package.json is absent.",
       );
@@ -44,26 +43,17 @@ export function aggregateResults({
     };
   }
 
-  if (applicationLinux !== "success") {
-    return fail(
-      `Delivery gates failed: Application / Linux result is '${applicationLinux}'.`,
-    );
-  }
-  if (epicToMain && applicationWindows !== "success") {
+  if (applicationWindows !== "success") {
     return fail(
       `Delivery gates failed: Application / Windows result is '${applicationWindows}'.`,
     );
   }
-  if (!epicToMain && applicationWindows !== "skipped") {
-    return fail(
-      "Delivery gates failed: Application / Windows must be skipped for task-to-epic pull requests.",
-    );
-  }
+
   return {
     ok: true,
     summary: epicToMain
       ? "Delivery gates passed for epic-to-main, including Windows packaging checks."
-      : "Delivery gates passed for task-to-epic; Windows packaging checks are not applicable.",
+      : "Delivery gates passed for task-to-epic on Windows; packaging checks are not applicable.",
   };
 }
 
@@ -75,7 +65,6 @@ export function aggregateFromEnvironment(environment) {
 
   return aggregateResults({
     governance: environment.GOVERNANCE_RESULT,
-    applicationLinux: environment.APPLICATION_LINUX_RESULT,
     applicationWindows: environment.APPLICATION_WINDOWS_RESULT,
     applicationPresent,
     docsOnly: environment.DOCS_ONLY === "true",
