@@ -124,13 +124,26 @@ function overlay(value: IndicatorBox | IndicatorLineSegment): void {
     throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
 }
 
-function drawingScope(key: string, render: (() => void) | null): void {
+function drawingScope(
+  key: string,
+  render: (() => void) | null,
+  hiddenCallsite?: unknown,
+): void {
   if (!key || key.length > 128)
     throw new RangeError("Drawing scopes require a bounded stable key.");
   const frame = authoringFrame();
-  const state = useKernel<DrawingScopeState>(`plot-drawings:${key}`, () => ({
-    committed: new Map<string, IndicatorOverlay>(),
-  }));
+  const callsite = readCompilerCallsite(
+    hiddenCallsite,
+    "drawing",
+    "plot.drawings",
+  );
+  const state = useKernel<DrawingScopeState>(
+    `plot-drawings:${key}`,
+    () => ({
+      committed: new Map<string, IndicatorOverlay>(),
+    }),
+    callsite,
+  );
   if (frame.discovery || render === null) return;
   if (activeDrawingCollector !== undefined)
     throw new Error("Drawing scopes cannot be nested.");
