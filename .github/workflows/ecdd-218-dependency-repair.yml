@@ -34,7 +34,7 @@ jobs:
           const governance = JSON.parse(fs.readFileSync(governancePath, 'utf8'));
           root.scripts['format:check'] = 'prettier --check apps packages docs/development tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries .github/workflows package.json tsconfig.base.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md';
           delete root.overrides;
-          governance.devDependencies['markdownlint-cli2'] = 'github:DavidAnson/markdownlint-cli2#55d5a6c74127a24f4c369611ee0d3e972b7097ab';
+          governance.devDependencies['markdownlint-cli2'] = 'https://github.com/DavidAnson/markdownlint-cli2/archive/55d5a6c74127a24f4c369611ee0d3e972b7097ab.tar.gz';
           fs.writeFileSync(rootPath, `${JSON.stringify(root, null, 2)}\n`);
           fs.writeFileSync(governancePath, `${JSON.stringify(governance, null, 2)}\n`);
           NODE
