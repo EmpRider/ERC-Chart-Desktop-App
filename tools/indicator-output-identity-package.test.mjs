@@ -86,3 +86,44 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("drawing scope state survives reordering", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function fast(value, openTimeMs) {
+  plot.drawings("fast", () => {
+    plot.box({ id: "fast-zone", startTimeMs: openTimeMs, endTimeMs: openTimeMs + 60_000, top: value, bottom: value - 1, color: "#008800" });
+  });
+}
+function slow(value, openTimeMs) {
+  plot.drawings("slow", () => {
+    plot.box({ id: "slow-zone", startTimeMs: openTimeMs, endTimeMs: openTimeMs + 60_000, top: value * 10, bottom: value * 10 - 1, color: "#880000" });
+  });
+}
+export default defineIndicator(
+  { id: "erc.indicator.drawing-identity.main", name: "Drawing identity" },
+  ({ close, openTimeMs }) => {
+    if (close > 15) { slow(close, openTimeMs); fast(close, openTimeMs); }
+    else { fast(close, openTimeMs); slow(close, openTimeMs); }
+  },
+);
+`,
+    "erc.indicator.drawing-identity",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const overlays = instance.snapshot().overlays;
+    assert.equal(
+      overlays.find((overlay) => overlay.id === "fast-zone")?.top,
+      10,
+    );
+    assert.equal(
+      overlays.find((overlay) => overlay.id === "slow-zone")?.top,
+      100,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
