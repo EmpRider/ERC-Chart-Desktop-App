@@ -1,5 +1,9 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
+import {
+  readCompilerCallsite,
+  type CompilerCallsite,
+} from "./internal/callsite.js";
 
 export const movingAverageTypes = [
   "sma",
@@ -651,26 +655,39 @@ export function createMovingAverageKernel(
   }
 }
 
+function taCallsite(
+  hiddenCallsite: unknown,
+  callee: string,
+): CompilerCallsite | undefined {
+  return readCompilerCallsite(hiddenCallsite, "ta", callee);
+}
+
 export function movingAverage(
   values: readonly number[],
   type: MovingAverageType,
   period: number,
+  hiddenCallsite?: unknown,
 ): number[];
 export function movingAverage(
   value: number,
   type: MovingAverageType,
   period: number,
+  hiddenCallsite?: unknown,
 ): number;
 export function movingAverage(
   values: readonly number[] | number,
   type: MovingAverageType,
   period: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
+  const callsite = taCallsite(hiddenCallsite, "ta.movingAverage");
   if (typeof values === "number") {
     const frame = authoringFrame();
     const length = authoringLength(period);
-    return useKernel(`ma:${type}:${length}`, () =>
-      createMovingAverageKernel(type, length),
+    return useKernel(
+      `ma:${type}:${length}`,
+      () => createMovingAverageKernel(type, length),
+      callsite,
     ).update(values, frame.phase);
   }
   const kernel = createMovingAverageKernel(type, period);
@@ -709,19 +726,30 @@ export function createAtrKernel(periodValue: number): CandleTaKernel<number> {
   };
 }
 
-export function atr(period: number): number;
-export function atr(candles: readonly Candle[], period: number): number[];
+export function atr(
+  period: number,
+  reserved?: undefined,
+  hiddenCallsite?: unknown,
+): number;
+export function atr(
+  candles: readonly Candle[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function atr(
   candles: readonly Candle[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
+  const callsite = taCallsite(hiddenCallsite, "ta.atr");
   if (typeof candles === "number") {
     const frame = authoringFrame();
     const length = authoringLength(candles);
-    return useKernel(`atr:${length}`, () => createAtrKernel(length)).update(
-      frame.candle,
-      frame.phase,
-    );
+    return useKernel(
+      `atr:${length}`,
+      () => createAtrKernel(length),
+      callsite,
+    ).update(frame.candle, frame.phase);
   }
   const kernel = createAtrKernel(period ?? 14);
   return candles.map((candle) => kernel.update(candle, "finalized"));
@@ -784,19 +812,30 @@ export function createDmiKernel(periodValue: number): CandleTaKernel<DmiPoint> {
   };
 }
 
-export function dmi(period: number): DmiPoint;
-export function dmi(candles: readonly Candle[], period: number): DmiSeries;
+export function dmi(
+  period: number,
+  reserved?: undefined,
+  hiddenCallsite?: unknown,
+): DmiPoint;
+export function dmi(
+  candles: readonly Candle[],
+  period: number,
+  hiddenCallsite?: unknown,
+): DmiSeries;
 export function dmi(
   candles: readonly Candle[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): DmiSeries | DmiPoint {
+  const callsite = taCallsite(hiddenCallsite, "ta.dmi");
   if (typeof candles === "number") {
     const frame = authoringFrame();
     const length = authoringLength(candles);
-    return useKernel(`dmi:${length}`, () => createDmiKernel(length)).update(
-      frame.candle,
-      frame.phase,
-    );
+    return useKernel(
+      `dmi:${length}`,
+      () => createDmiKernel(length),
+      callsite,
+    ).update(frame.candle, frame.phase);
   }
   const kernel = createDmiKernel(period ?? 14);
   const adx: number[] = [];
@@ -840,14 +879,31 @@ export function createRsiKernel(periodValue: number): NumericTaKernel {
   };
 }
 
-export function rsi(valueOrLength: number, period?: number): number;
-export function rsi(values: readonly number[], period: number): number[];
+export function rsi(
+  valueOrLength: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number;
+export function rsi(
+  values: readonly number[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function rsi(
   values: readonly number[] | number,
   periodValue?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
   if (typeof values === "number")
-    return numericCall("rsi", values, periodValue, createRsiKernel);
+    return numericCall(
+      "rsi",
+      values,
+      periodValue,
+      createRsiKernel,
+      "close",
+      hiddenCallsite,
+    );
+  taCallsite(hiddenCallsite, "ta.rsi");
   const kernel = createRsiKernel(periodValue ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
@@ -907,26 +963,60 @@ export function createLowestKernel(period: number): NumericTaKernel {
   return new ExtremumKernel(period, "lowest");
 }
 
-export function highest(valueOrLength: number, period?: number): number;
-export function highest(values: readonly number[], period: number): number[];
+export function highest(
+  valueOrLength: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number;
+export function highest(
+  values: readonly number[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function highest(
   values: readonly number[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
   if (typeof values === "number")
-    return numericCall("highest", values, period, createHighestKernel, "high");
+    return numericCall(
+      "highest",
+      values,
+      period,
+      createHighestKernel,
+      "high",
+      hiddenCallsite,
+    );
+  taCallsite(hiddenCallsite, "ta.highest");
   const kernel = createHighestKernel(period ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
 
-export function lowest(valueOrLength: number, period?: number): number;
-export function lowest(values: readonly number[], period: number): number[];
+export function lowest(
+  valueOrLength: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number;
+export function lowest(
+  values: readonly number[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function lowest(
   values: readonly number[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
   if (typeof values === "number")
-    return numericCall("lowest", values, period, createLowestKernel, "low");
+    return numericCall(
+      "lowest",
+      values,
+      period,
+      createLowestKernel,
+      "low",
+      hiddenCallsite,
+    );
+  taCallsite(hiddenCallsite, "ta.lowest");
   const kernel = createLowestKernel(period ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
@@ -966,17 +1056,24 @@ export function createCrossunderKernel(): CrossKernel {
   return createCrossKernel("under");
 }
 
-export function crossover(left: number, right: number): boolean;
+export function crossover(
+  left: number,
+  right: number,
+  hiddenCallsite?: unknown,
+): boolean;
 export function crossover(
   left: readonly number[],
   right: readonly number[],
+  hiddenCallsite?: unknown,
 ): boolean[];
 export function crossover(
   left: readonly number[] | number,
   right: readonly number[] | number,
+  hiddenCallsite?: unknown,
 ): boolean[] | boolean {
+  const callsite = taCallsite(hiddenCallsite, "ta.crossover");
   if (typeof left === "number" && typeof right === "number") {
-    return useKernel("crossover", createCrossoverKernel).update(
+    return useKernel("crossover", createCrossoverKernel, callsite).update(
       left,
       right,
       authoringFrame().phase,
@@ -995,17 +1092,24 @@ export function crossover(
   );
 }
 
-export function crossunder(left: number, right: number): boolean;
+export function crossunder(
+  left: number,
+  right: number,
+  hiddenCallsite?: unknown,
+): boolean;
 export function crossunder(
   left: readonly number[],
   right: readonly number[],
+  hiddenCallsite?: unknown,
 ): boolean[];
 export function crossunder(
   left: readonly number[] | number,
   right: readonly number[] | number,
+  hiddenCallsite?: unknown,
 ): boolean[] | boolean {
+  const callsite = taCallsite(hiddenCallsite, "ta.crossunder");
   if (typeof left === "number" && typeof right === "number") {
-    return useKernel("crossunder", createCrossunderKernel).update(
+    return useKernel("crossunder", createCrossunderKernel, callsite).update(
       left,
       right,
       authoringFrame().phase,
@@ -1080,24 +1184,44 @@ function numericCall(
   period: number | undefined,
   create: (length: number) => NumericTaKernel,
   source: "close" | "high" | "low" = "close",
+  hiddenCallsite?: unknown,
 ): number {
   const frame = authoringFrame();
   const length = authoringLength(period ?? valueOrPeriod);
   const value = period === undefined ? frame.candle[source] : valueOrPeriod;
-  return useKernel(`${name}:${length}`, () => create(length)).update(
+  const callsite = taCallsite(hiddenCallsite, `ta.${name}`);
+  return useKernel(`${name}:${length}`, () => create(length), callsite).update(
     value,
     frame.phase,
   );
 }
 
-export function sma(value: number, period?: number): number {
-  return numericCall("sma", value, period, (length) =>
-    createMovingAverageKernel("sma", length),
+export function sma(
+  value: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number {
+  return numericCall(
+    "sma",
+    value,
+    period,
+    (length) => createMovingAverageKernel("sma", length),
+    "close",
+    hiddenCallsite,
   );
 }
 
-export function ema(value: number, period?: number): number {
-  return numericCall("ema", value, period, (length) =>
-    createMovingAverageKernel("ema", length),
+export function ema(
+  value: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number {
+  return numericCall(
+    "ema",
+    value,
+    period,
+    (length) => createMovingAverageKernel("ema", length),
+    "close",
+    hiddenCallsite,
   );
 }
