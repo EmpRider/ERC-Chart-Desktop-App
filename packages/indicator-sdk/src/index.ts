@@ -210,7 +210,6 @@ export {
   movingAverage,
   movingAverageTypes,
   rsi,
-  ta,
   trueRange,
   type CandleTaKernel,
   type CrossKernel,
@@ -221,6 +220,7 @@ export {
   type TaUpdatePhase,
   type TechnicalAnalysisApi,
 } from "./ta.js";
+export { ta } from "./ta-v2.js";
 export {
   defineIndicator,
   type IndicatorBar,
