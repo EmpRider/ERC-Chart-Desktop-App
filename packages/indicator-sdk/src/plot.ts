@@ -27,10 +27,7 @@ let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
 let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
 
 type ValuePlotCallee =
-  | "plot.line"
-  | "plot.hline"
-  | "plot.histogram"
-  | "plot.shape";
+  "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
 
 function valuePlot(
   kind: IndicatorPlotDefinition["kind"],
@@ -44,7 +41,7 @@ function valuePlot(
   const index = frame.plotIndex++;
   if (index >= 128)
     throw new RangeError("An indicator may declare at most 128 plots.");
-  const outputKey = options.key ?? callsite?.id ?? `plot_${index}`;
+  const outputKey = options.key ?? `plot_${index}`;
   const key = callsite?.id ?? outputKey;
   if (
     options.width !== undefined &&
@@ -97,7 +94,8 @@ function valuePlot(
   }
   frame.point.values[outputKey] =
     value !== null && Number.isFinite(value) ? value : null;
-  if (options.color !== undefined) frame.point.colors[outputKey] = options.color;
+  if (options.color !== undefined)
+    frame.point.colors[outputKey] = options.color;
   if (options.width !== undefined) frame.point.sizes[outputKey] = options.width;
 }
 
@@ -186,13 +184,7 @@ export const plot: PlotApi = Object.freeze({
     options?: PlotOptions,
     hiddenCallsite?: unknown,
   ): void =>
-    valuePlot(
-      "histogram",
-      "plot.histogram",
-      value,
-      options,
-      hiddenCallsite,
-    ),
+    valuePlot("histogram", "plot.histogram", value, options, hiddenCallsite),
   shape: (
     value: number | null,
     options?: ShapeOptions,
