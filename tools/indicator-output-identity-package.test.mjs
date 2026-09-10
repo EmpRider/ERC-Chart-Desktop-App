@@ -87,6 +87,46 @@ export default defineIndicator(
   }
 });
 
+test("unkeyed plot outputs follow compiler identity when execution order changes", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function fast(value) { plot.line(value, { title: "Fast" }); }
+function slow(value) { plot.line(value * 10, { title: "Slow" }); }
+export default defineIndicator(
+  { id: "erc.indicator.unkeyed-output-identity.main", name: "Unkeyed output identity" },
+  ({ close }) => {
+    if (close > 15) { slow(close); fast(close); }
+    else { fast(close); slow(close); }
+  },
+);
+`,
+    "erc.indicator.unkeyed-output-identity",
+  );
+
+  const fast = plugin.definition.plots.find((value) => value.label === "Fast");
+  const slow = plugin.definition.plots.find((value) => value.label === "Slow");
+  assert.equal(fast.outputKey, "plot_0");
+  assert.equal(slow.outputKey, "plot_1");
+  assert.match(fast.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
+  assert.match(slow.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const points = instance.snapshot().points;
+    assert.deepEqual(
+      points.map((point) => point.values.plot_0),
+      [10, 20, 10],
+    );
+    assert.deepEqual(
+      points.map((point) => point.values.plot_1),
+      [100, 200, 100],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("drawing scope state survives reordering", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
