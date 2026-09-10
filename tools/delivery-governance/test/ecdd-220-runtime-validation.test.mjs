@@ -47,7 +47,19 @@ test("ECDD-220 focused runtime identity fixture", () => {
         "--test",
         path.join(
           repositoryRoot,
+          "tools/indicator-runtime-identity-package.test.mjs",
+        ),
+        path.join(
+          repositoryRoot,
           "tools/indicator-output-identity-package.test.mjs",
+        ),
+        path.join(
+          repositoryRoot,
+          "tools/indicator-authoring-callsite-transform.test.mjs",
+        ),
+        path.join(
+          repositoryRoot,
+          "packages/indicator-sdk/test/authoring.test.mjs",
         ),
       ]);
     }
