@@ -49,6 +49,15 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   assert.match(result.code, /__ercCallsite:\s*"v2"/u);
 });
 
+test("requires a source root for collision-safe package identities", async () => {
+  const module = await loadTransform();
+  assert.equal(typeof module?.indicatorAuthoringTransformPlugin, "function");
+  assert.throws(
+    () => module.indicatorAuthoringTransformPlugin(),
+    /sourceRoot.*required/u,
+  );
+});
+
 test("package build applies the composed authoring transform", async (t) => {
   const root = await mkdtemp(
     path.join(import.meta.dirname, ".callsite-source-"),
