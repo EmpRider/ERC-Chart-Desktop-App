@@ -48,13 +48,52 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close: sourceClose }) => 
   assert.match(transformed.code, /return sourceClose\[1\];/u);
 });
 
+test("does not validate lexically shadowed history helpers", () => {
+  const source = `
+import { defineIndicator, history } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const historical = close[1];
+  if (historical) {
+    function history(value, offset) {
+      return value + offset;
+    }
+    return history(close, -2);
+  }
+  return historical;
+});
+`;
+  const transformed = transformIndicatorHistory(source, "shadowed-history.ts");
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(close, 1\)/u);
+  assert.match(transformed.code, /history\(close, -2\)/u);
+});
+
+test("preserves switch-case lexical shadowing for source bindings", () => {
+  const source = `
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const historical = close[1];
+  switch (historical) {
+    case 1:
+      const close = [10, 20, 30];
+      return close[1];
+    default:
+      return historical;
+  }
+});
+`;
+  const transformed = transformIndicatorHistory(source, "switch-shadowed.ts");
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /const historical = __ercHistory\(close, 1\);/u);
+  assert.match(transformed.code, /return close\[1\];/u);
+});
+
 test("rejects invalid literal history offsets during authoring transform", () => {
   for (const expression of [
     "close[-1]",
     "close.at(1.5)",
     "history(close, -2)",
   ]) {
-    const source = `defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => { plot.line(${expression}); });`;
+    const source = `import { defineIndicator, history, plot } from "@erc-chart/indicator-sdk";\ndefineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => { plot.line(${expression}); });`;
     assert.throws(
       () => transformIndicatorHistory(source, "invalid.ts"),
       /history offsets must be non-negative safe integers/u,
