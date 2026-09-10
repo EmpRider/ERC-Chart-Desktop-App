@@ -107,6 +107,7 @@ jobs:
           NODE
           npm install --package-lock-only --ignore-scripts --audit=false
           npm ci --audit=false
+          npx prettier --write tools/delivery-governance/src/markdown-lint.mjs
           npm run audit:ci
           npm --workspace tools/delivery-governance run lint:markdown
           npm run format:check
