@@ -115,7 +115,15 @@ export default defineIndicator(
   try {
     instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
     const overlays = instance.snapshot().overlays;
-    assert.fail(JSON.stringify(overlays));
+    assert.equal(overlays.length, 2);
+    assert.equal(
+      overlays.find((overlay) => overlay.id === "fast-zone")?.top,
+      10,
+    );
+    assert.equal(
+      overlays.find((overlay) => overlay.id === "slow-zone")?.top,
+      100,
+    );
   } finally {
     instance.dispose();
   }
