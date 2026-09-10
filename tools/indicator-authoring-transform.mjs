@@ -33,7 +33,9 @@ export function transformIndicatorAuthoring(
 
 export function indicatorAuthoringTransformPlugin({ sourceRoot } = {}) {
   if (typeof sourceRoot !== "string" || sourceRoot.length === 0)
-    throw new TypeError("indicatorAuthoringTransformPlugin sourceRoot is required.");
+    throw new TypeError(
+      "indicatorAuthoringTransformPlugin sourceRoot is required.",
+    );
   const root = path.resolve(sourceRoot);
   return {
     name: "indicator-authoring-transform",
