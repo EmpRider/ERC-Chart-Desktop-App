@@ -4,6 +4,7 @@ import { transformIndicatorHistory } from "./indicator-authoring/history-transfo
 
 test("lowers indicator source history access without boxing current values", () => {
   const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, high: sourceHigh }) => {
   const current = close + 10;
   const indexed = close[1];
@@ -52,8 +53,22 @@ defineIndicator({ id: "fixture" }, ({ close }) => close[1]);
   assert.equal(transformed.code, source);
 });
 
+test("does not rewrite a lexically shadowed SDK defineIndicator binding", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+{
+  const defineIndicator = (_options, calculate) => calculate({ close: [10, 20, 30] });
+  defineIndicator({ id: "fixture" }, ({ close }) => close[1]);
+}
+`;
+  const transformed = transformIndicatorHistory(source, "shadowed-define.ts");
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
 test("does not rewrite same-named locals outside or inside shadowing scopes", () => {
   const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
 const close = [1, 2, 3];
 const outside = close[1];
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close: sourceClose }) => {
@@ -94,6 +109,7 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
 
 test("preserves switch-case lexical shadowing for source bindings", () => {
   const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   const historical = close[1];
   switch (historical) {
