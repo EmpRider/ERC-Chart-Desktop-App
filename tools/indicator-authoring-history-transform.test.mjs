@@ -147,7 +147,10 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   return historical + nested();
 });
 `;
-    const transformed = transformIndicatorHistory(source, "var-source-shadow.ts");
+    const transformed = transformIndicatorHistory(
+      source,
+      "var-source-shadow.ts",
+    );
     assert.equal(transformed.changed, true);
     assert.match(
       transformed.code,
@@ -175,7 +178,10 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   return historical + nested();
 });
 `;
-    const transformed = transformIndicatorHistory(source, "var-history-shadow.ts");
+    const transformed = transformIndicatorHistory(
+      source,
+      "var-history-shadow.ts",
+    );
     assert.equal(transformed.changed, true);
     assert.match(transformed.code, /history\(close, -2\)/u);
   },
@@ -194,7 +200,10 @@ function wrapper() {
 }
 wrapper();
 `;
-    const transformed = transformIndicatorHistory(source, "var-define-shadow.ts");
+    const transformed = transformIndicatorHistory(
+      source,
+      "var-define-shadow.ts",
+    );
     assert.equal(transformed.changed, false);
     assert.equal(transformed.code, source);
   },
