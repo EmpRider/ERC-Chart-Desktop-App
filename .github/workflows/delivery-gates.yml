@@ -41,6 +41,8 @@ jobs:
         run: npm install --global npm@12.0.2
       - name: Install governance dependencies
         run: npm ci --ignore-scripts --audit=false
+      - name: Audit dependencies
+        run: npm run audit:ci
       - name: Build pull-request context
         id: context
         shell: bash
@@ -142,7 +144,6 @@ jobs:
       - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
-      - run: npm run audit:ci
       - run: npm run version:check
       - name: Package Windows installer
         if: startsWith(github.head_ref, 'epic/') && github.base_ref == 'main'
