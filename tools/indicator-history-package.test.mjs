@@ -16,7 +16,7 @@ const candle = (index, close) => ({
   volume: index + 1,
 });
 
-test("packaged indicators give bracket, at, and history source access identical semantics", async (t) => {
+test("packaged indicators give built-in source history forms identical semantics", async (t) => {
   const sourceDirectory = await mkdtemp(
     path.join(import.meta.dirname, ".history-authoring-"),
   );
@@ -32,11 +32,14 @@ test("packaged indicators give bracket, at, and history source access identical 
 
 export default defineIndicator(
   { id: "erc.indicator.history-syntax.main", name: "History syntax" },
-  ({ close, volume }) => {
+  ({ open, high, low, close, volume }) => {
     plot.line(close[1], { key: "indexed" });
     plot.line(close.at(1), { key: "at" });
     plot.line(history(close, 1), { key: "function" });
     plot.line(history(close * 2, 1), { key: "derived" });
+    plot.line(open[1], { key: "openIndexed" });
+    plot.line(high.at(1), { key: "highAt" });
+    plot.line(low[1], { key: "lowIndexed" });
     plot.line(volume[1], { key: "volumeIndexed" });
     plot.line(volume.at(1), { key: "volumeAt" });
     plot.line(history(volume, 1), { key: "volumeFunction" });
@@ -65,6 +68,18 @@ export default defineIndicator(
       [null, 10, 11],
     );
   }
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.openIndexed),
+    [null, 9, 10],
+  );
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.highAt),
+    [null, 11, 12],
+  );
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.lowIndexed),
+    [null, 8, 9],
+  );
   for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"]) {
     assert.deepEqual(
       instance.snapshot().points.map((point) => point.values[key]),
@@ -79,6 +94,9 @@ export default defineIndicator(
   instance.onBuildingBar(candle(2, 40));
   for (const key of ["indexed", "at", "function"])
     assert.equal(instance.snapshot().points.at(-1).values[key], 11);
+  assert.equal(instance.snapshot().points.at(-1).values.openIndexed, 10);
+  assert.equal(instance.snapshot().points.at(-1).values.highAt, 12);
+  assert.equal(instance.snapshot().points.at(-1).values.lowIndexed, 9);
   for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"])
     assert.equal(instance.snapshot().points.at(-1).values[key], 2);
   assert.equal(instance.snapshot().points.at(-1).values.derived, 22);
@@ -87,6 +105,9 @@ export default defineIndicator(
   instance.onBuildingBar(candle(3, 50));
   for (const key of ["indexed", "at", "function"])
     assert.equal(instance.snapshot().points.at(-1).values[key], 40);
+  assert.equal(instance.snapshot().points.at(-1).values.openIndexed, 39);
+  assert.equal(instance.snapshot().points.at(-1).values.highAt, 41);
+  assert.equal(instance.snapshot().points.at(-1).values.lowIndexed, 38);
   for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"])
     assert.equal(instance.snapshot().points.at(-1).values[key], 3);
   assert.equal(instance.snapshot().points.at(-1).values.derived, 80);
