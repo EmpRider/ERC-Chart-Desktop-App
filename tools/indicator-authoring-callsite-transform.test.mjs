@@ -91,7 +91,10 @@ signal(trend > 0, "long");
 void period;
 `);
 
-    assert.match(result.code, /input\.int\(14, undefined, __ercCallsite_\d+\)/u);
+    assert.match(
+      result.code,
+      /input\.int\(14, undefined, __ercCallsite_\d+\)/u,
+    );
     assert.match(result.code, /ta\.ema\(14, undefined, __ercCallsite_\d+\)/u);
     assert.match(
       result.code,
