@@ -1,28 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { transformIndicatorCallsites } from "./indicator-authoring/callsite-transform.mjs";
+import {
+  isDependencyPath,
+  isWithinRoot,
+  loaderFor,
+} from "./indicator-authoring/esbuild-utils.mjs";
 import { transformIndicatorHistory } from "./indicator-authoring/history-transform.mjs";
-
-function loader(fileName) {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".tsx")) return "tsx";
-  if (lower.endsWith(".jsx")) return "jsx";
-  if (lower.endsWith(".ts") || lower.endsWith(".mts") || lower.endsWith(".cts"))
-    return "ts";
-  return "js";
-}
-
-function isWithinRoot(root, fileName) {
-  const relative = path.relative(root, fileName);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  );
-}
-
-function isDependencyPath(fileName) {
-  return path.resolve(fileName).split(path.sep).includes("node_modules");
-}
 
 function stableSourceFileId(root, fileName) {
   return path.relative(root, fileName).replaceAll(path.sep, "/");
@@ -63,7 +47,7 @@ export function indicatorAuthoringTransformPlugin({ sourceRoot } = {}) {
           sourceFileId: stableSourceFileId(root, args.path),
         });
         if (!transformed.changed) return undefined;
-        return { contents: transformed.code, loader: loader(args.path) };
+        return { contents: transformed.code, loader: loaderFor(args.path) };
       });
     },
   };
