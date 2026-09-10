@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -12,19 +13,47 @@ function runNode(arguments_) {
   });
 }
 
-test("ECDD-220 focused runtime identity fixture", () => {
-  const build = runNode([
-    path.join(repositoryRoot, "node_modules/@typescript/native/bin/tsc"),
-    "-b",
-    "--pretty",
-    "false",
-    "--force",
-  ]);
-  assert.equal(build.status, 0, `${build.stdout}${build.stderr}`);
+function cleanBuildOutput() {
+  for (const relativePath of [
+    "packages/contracts/dist",
+    "packages/indicator-sdk/dist",
+  ]) {
+    rmSync(path.join(repositoryRoot, relativePath), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
 
-  const focused = runNode([
-    "--test",
-    path.join(repositoryRoot, "tools/indicator-output-identity-package.test.mjs"),
-  ]);
-  assert.equal(focused.status, 0, `${focused.stdout}${focused.stderr}`);
+test("ECDD-220 focused runtime identity fixture", () => {
+  let build;
+  let focused;
+  try {
+    build = runNode([
+      path.join(repositoryRoot, "node_modules/@typescript/native/bin/tsc"),
+      "-b",
+      "packages/indicator-sdk",
+      "--pretty",
+      "false",
+      "--force",
+    ]);
+    if (build.status === 0) {
+      focused = runNode([
+        "--test",
+        path.join(
+          repositoryRoot,
+          "tools/indicator-output-identity-package.test.mjs",
+        ),
+      ]);
+    }
+  } finally {
+    cleanBuildOutput();
+  }
+
+  assert.equal(build?.status, 0, `${build?.stdout ?? ""}${build?.stderr ?? ""}`);
+  assert.equal(
+    focused?.status,
+    0,
+    `${focused?.stdout ?? ""}${focused?.stderr ?? ""}`,
+  );
 });
