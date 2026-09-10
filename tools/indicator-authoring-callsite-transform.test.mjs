@@ -76,18 +76,30 @@ export default defineIndicator(
 test("keeps identities stable across unrelated insertion and declaration reordering", async () => {
   const before = await transform(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
+const helperA = 1;
+const helperB = 2;
 export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   const period = input.int(14, { title: "Period" });
   const trend = ta.ema(close, period);
   plot.line(trend, { key: "trend" });
+  void helperA;
+  void helperB;
 });
 `);
   const after = await transform(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
+const helperB = 2;
 const unrelated = 42;
+const helperA = 1;
 export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
-  plot.line(ta.ema(close, input.int(14, { title: "Period" })), { key: "trend" });
+  const localUnrelated = close * 2;
+  const period = input.int(14, { title: "Period" });
+  const trend = ta.ema(close, period);
+  void localUnrelated;
+  plot.line(trend, { key: "trend" });
   void unrelated;
+  void helperA;
+  void helperB;
 });
 `);
 
