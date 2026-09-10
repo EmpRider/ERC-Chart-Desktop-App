@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,15 +80,18 @@ test("markdown lint runner rejects malformed JSONC", async () => {
   assert.match(`${result.stdout}\n${result.stderr}`, /Unable to parse/);
 });
 
-test("markdown lint runner rejects fenced code without a language", async () => {
-  const result = await runMarkdownLintFixture(
-    '{"config":{"default":true,"MD013":false,"MD040":true}}',
-    "# Invalid fence\n\n```\ntext\n```\n",
-  );
+test(
+  "markdown lint runner rejects fenced code without a language",
+  async () => {
+    const result = await runMarkdownLintFixture(
+      '{"config":{"default":true,"MD013":false,"MD040":true}}',
+      "# Invalid fence\n\n```\ntext\n```\n",
+    );
 
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}\n${result.stderr}`, /MD040/);
-});
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /MD040/);
+  },
+);
 
 test("root quality commands include the governance workspace", async () => {
   const packageJson = JSON.parse(
