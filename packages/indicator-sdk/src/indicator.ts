@@ -12,10 +12,6 @@ import {
   type AuthoringFrame,
   type KernelSlot,
 } from "./authoring-context.js";
-import {
-  readCompilerMarker,
-  withCompilerCallsitesRequired,
-} from "./internal/callsite.js";
 import type {
   IndicatorDefinition,
   IndicatorInputDefinition,
@@ -94,13 +90,7 @@ function barContext(
 export function defineIndicator(
   options: IndicatorOptions,
   calculate: IndicatorCalculation,
-): IndicatorPluginModule;
-export function defineIndicator(
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-  hiddenCompiler?: unknown,
 ): IndicatorPluginModule {
-  const compilerCallsitesRequired = readCompilerMarker(hiddenCompiler);
   const inputs: IndicatorInputDefinition[] = [];
   const plots: IndicatorPlotDefinition[] = [];
   const sample: Candle = {
@@ -133,15 +123,13 @@ export function defineIndicator(
   };
   const run = (frame: AuthoringFrame, index: number): void => {
     const result: unknown = withAuthoringFrame(frame, () =>
-      withCompilerCallsitesRequired(compilerCallsitesRequired, () =>
-        calculate(
-          barContext(
-            frame.candle,
-            index,
-            frame.phase === "finalized",
-            frame.historyReplay,
-            frame.historyFinalizedTail,
-          ),
+      calculate(
+        barContext(
+          frame.candle,
+          index,
+          frame.phase === "finalized",
+          frame.historyReplay,
+          frame.historyFinalizedTail,
         ),
       ),
     );
