@@ -24,6 +24,7 @@ import type {
   RuntimeIndicatorInstance,
   SignalCandidate,
 } from "./index.js";
+import type { SeriesNumber } from "./series.js";
 
 export interface IndicatorOptions {
   readonly id: string;
@@ -32,15 +33,22 @@ export interface IndicatorOptions {
   readonly placement?: "overlay" | "pane";
 }
 
-export type IndicatorBar = Omit<Candle, "volume"> & {
-  readonly volume: number;
+export type IndicatorBar = Omit<
+  Candle,
+  "open" | "high" | "low" | "close" | "volume"
+> & {
+  readonly open: SeriesNumber;
+  readonly high: SeriesNumber;
+  readonly low: SeriesNumber;
+  readonly close: SeriesNumber;
+  readonly volume: SeriesNumber;
   readonly index: number;
   readonly isConfirmed: boolean;
   readonly isHistory: boolean;
   readonly isHistoryFinalizedTail: boolean;
-  readonly hl2: number;
-  readonly hlc3: number;
-  readonly ohlc4: number;
+  readonly hl2: SeriesNumber;
+  readonly hlc3: SeriesNumber;
+  readonly ohlc4: SeriesNumber;
 };
 
 export type IndicatorCalculation = (bar: IndicatorBar) => void;
@@ -75,7 +83,7 @@ function barContext(
     hl2: (candle.high + candle.low) / 2,
     hlc3: (candle.high + candle.low + candle.close) / 3,
     ohlc4: (candle.open + candle.high + candle.low + candle.close) / 4,
-  });
+  }) as unknown as IndicatorBar;
 }
 
 /** Declares metadata once; executes one scalar calculation per building/finalized bar. */
