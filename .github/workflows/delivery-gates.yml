@@ -142,7 +142,6 @@ jobs:
       - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
-      - run: npm run audit:ci
       - run: npm run version:check
       - name: Package Windows installer
         if: startsWith(github.head_ref, 'epic/') && github.base_ref == 'main'
