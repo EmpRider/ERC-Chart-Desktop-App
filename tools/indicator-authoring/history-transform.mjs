@@ -12,6 +12,7 @@ const builtInSeriesNames = new Set([
   "hlc3",
   "ohlc4",
 ]);
+const nonFunctionBinding = Symbol("non-function-binding");
 
 function scriptKind(fileName) {
   const lower = fileName.toLowerCase();
@@ -73,6 +74,12 @@ function collectBindingNames(name, target) {
   for (const element of name.elements) {
     if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, target);
   }
+}
+
+function bindingNameIncludes(name, requestedName) {
+  const names = new Set();
+  collectBindingNames(name, names);
+  return names.has(requestedName);
 }
 
 function seriesBindings(callback) {
@@ -211,6 +218,227 @@ function functionBindings(node) {
   return names;
 }
 
+function variableFunctionBinding(declaration, requestedName) {
+  if (!bindingNameIncludes(declaration.name, requestedName)) return undefined;
+  if (
+    ts.isIdentifier(declaration.name) &&
+    declaration.name.text === requestedName &&
+    declaration.initializer !== undefined &&
+    (ts.isArrowFunction(declaration.initializer) ||
+      ts.isFunctionExpression(declaration.initializer))
+  ) {
+    return declaration.initializer;
+  }
+  return nonFunctionBinding;
+}
+
+function statementBinding(statement, requestedName) {
+  if (ts.isVariableStatement(statement)) {
+    for (const declaration of statement.declarationList.declarations) {
+      const binding = variableFunctionBinding(declaration, requestedName);
+      if (binding !== undefined) return binding;
+    }
+    return undefined;
+  }
+  if (
+    ts.isFunctionDeclaration(statement) &&
+    statement.name?.text === requestedName
+  ) {
+    return statement;
+  }
+  if (
+    (ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) &&
+    statement.name?.text === requestedName
+  ) {
+    return nonFunctionBinding;
+  }
+  return undefined;
+}
+
+function importBindsName(statement, requestedName) {
+  if (!ts.isImportDeclaration(statement)) return false;
+  const clause = statement.importClause;
+  if (clause === undefined || clause.isTypeOnly) return false;
+  if (clause.name?.text === requestedName) return true;
+  const bindings = clause.namedBindings;
+  if (bindings === undefined) return false;
+  if (ts.isNamespaceImport(bindings)) return bindings.name.text === requestedName;
+  return bindings.elements.some(
+    (element) => !element.isTypeOnly && element.name.text === requestedName,
+  );
+}
+
+function directScopeBinding(scope, requestedName) {
+  const statements = ts.isCaseBlock(scope)
+    ? scope.clauses.flatMap((clause) => [...clause.statements])
+    : scope.statements;
+  if (ts.isSourceFile(scope)) {
+    for (const statement of statements) {
+      if (importBindsName(statement, requestedName)) return nonFunctionBinding;
+    }
+  }
+  for (const statement of statements) {
+    const binding = statementBinding(statement, requestedName);
+    if (binding !== undefined) return binding;
+  }
+  return undefined;
+}
+
+function functionScopedVarBinding(node, requestedName) {
+  const body = node.body;
+  if (body === undefined) return undefined;
+  let resolved;
+  let ambiguous = false;
+
+  const visit = (current) => {
+    if (ambiguous) return;
+    if (
+      current !== body &&
+      (ts.isFunctionLike(current) ||
+        ts.isClassDeclaration(current) ||
+        ts.isClassExpression(current))
+    ) {
+      return;
+    }
+    if (
+      ts.isVariableDeclarationList(current) &&
+      (current.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      for (const declaration of current.declarations) {
+        const binding = variableFunctionBinding(declaration, requestedName);
+        if (binding === undefined) continue;
+        if (resolved !== undefined) {
+          ambiguous = true;
+          return;
+        }
+        resolved = binding;
+      }
+    }
+    ts.forEachChild(current, visit);
+  };
+
+  visit(body);
+  return ambiguous ? nonFunctionBinding : resolved;
+}
+
+function functionScopeBinding(node, requestedName) {
+  for (const parameter of node.parameters) {
+    if (bindingNameIncludes(parameter.name, requestedName)) {
+      return nonFunctionBinding;
+    }
+  }
+  if (node.name !== undefined && ts.isIdentifier(node.name)) {
+    if (node.name.text === requestedName) return node;
+  }
+  return functionScopedVarBinding(node, requestedName);
+}
+
+function loopScopeBinding(node, requestedName) {
+  const initializer = node.initializer;
+  if (
+    initializer === undefined ||
+    !ts.isVariableDeclarationList(initializer) ||
+    (initializer.flags & ts.NodeFlags.BlockScoped) === 0
+  ) {
+    return undefined;
+  }
+  for (const declaration of initializer.declarations) {
+    const binding = variableFunctionBinding(declaration, requestedName);
+    if (binding !== undefined) return binding;
+  }
+  return undefined;
+}
+
+function bindingInScope(scope, requestedName) {
+  if (ts.isSourceFile(scope) || ts.isBlock(scope) || ts.isCaseBlock(scope)) {
+    return directScopeBinding(scope, requestedName);
+  }
+  if (ts.isFunctionLike(scope)) {
+    return functionScopeBinding(scope, requestedName);
+  }
+  if (
+    ts.isForStatement(scope) ||
+    ts.isForInStatement(scope) ||
+    ts.isForOfStatement(scope)
+  ) {
+    return loopScopeBinding(scope, requestedName);
+  }
+  if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
+    return bindingNameIncludes(scope.variableDeclaration.name, requestedName)
+      ? nonFunctionBinding
+      : undefined;
+  }
+  return undefined;
+}
+
+function resolveLocalFunctionReference(identifier) {
+  let current = identifier.parent;
+  while (current !== undefined) {
+    const binding = bindingInScope(current, identifier.text);
+    if (binding !== undefined) {
+      return binding === nonFunctionBinding ? undefined : binding;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function scopedNames(node) {
+  if (ts.isFunctionLike(node)) return functionBindings(node);
+  if (ts.isBlock(node) || ts.isCaseBlock(node)) return directBlockBindings(node);
+  if (
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node)
+  ) {
+    return loopBindings(node);
+  }
+  if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
+    const names = new Set();
+    collectBindingNames(node.variableDeclaration.name, names);
+    return names;
+  }
+  return undefined;
+}
+
+function referencedIndicatorCallbacks(
+  sourceFile,
+  rootDefineIndicatorBindings,
+) {
+  const callbacks = new Set();
+
+  const visit = (node, defineIndicatorHelpers) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      defineIndicatorHelpers.has(node.expression.text)
+    ) {
+      const callback = node.arguments[1];
+      if (callback !== undefined && ts.isIdentifier(callback)) {
+        const resolved = resolveLocalFunctionReference(callback);
+        if (resolved === undefined) {
+          throw new SyntaxError(
+            `${sourceFile.fileName}: defineIndicator callback reference "${callback.text}" must be declared in the same module`,
+          );
+        }
+        callbacks.add(resolved);
+      }
+    }
+
+    const names = scopedNames(node);
+    const scoped =
+      names === undefined
+        ? defineIndicatorHelpers
+        : withoutBindings(defineIndicatorHelpers, names);
+    ts.forEachChild(node, (child) => visit(child, scoped));
+  };
+
+  ts.forEachChild(sourceFile, (child) =>
+    visit(child, rootDefineIndicatorBindings),
+  );
+  return callbacks;
+}
+
 function uniqueHelperName(sourceText) {
   let candidate = "__ercHistory";
   while (new RegExp(`\\b${candidate}\\b`, "u").test(sourceText)) {
@@ -232,6 +460,10 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
   const rootDefineIndicatorBindings = sdkNamedBindings(
     sourceFile,
     "defineIndicator",
+  );
+  const referencedCallbacks = referencedIndicatorCallbacks(
+    sourceFile,
+    rootDefineIndicatorBindings,
   );
   let changed = false;
 
@@ -307,8 +539,10 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
       }
 
       if (
-        (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
-        isIndicatorCallback(node, defineIndicatorHelpers)
+        ts.isFunctionLike(node) &&
+        (referencedCallbacks.has(node) ||
+          ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+            isIndicatorCallback(node, defineIndicatorHelpers)))
       ) {
         const indicatorBindings = seriesBindings(node);
         const names = functionBindings(node);
@@ -480,6 +714,10 @@ function isWithinRoot(root, fileName) {
   );
 }
 
+function isDependencyPath(fileName) {
+  return path.resolve(fileName).split(path.sep).includes("node_modules");
+}
+
 export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
   const root = sourceRoot === undefined ? undefined : path.resolve(sourceRoot);
   return {
@@ -487,6 +725,7 @@ export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
     setup(build) {
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
         if (root !== undefined && !isWithinRoot(root, args.path)) return undefined;
+        if (isDependencyPath(args.path)) return undefined;
         const sourceText = await readFile(args.path, "utf8");
         const transformed = transformIndicatorHistory(sourceText, args.path);
         if (!transformed.changed) return undefined;
