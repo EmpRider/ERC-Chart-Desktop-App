@@ -1,10 +1,13 @@
-export type CompilerCallsiteKind =
-  | "input"
-  | "ta"
-  | "state"
-  | "plot"
-  | "drawing"
-  | "signal";
+const compilerCallsiteKinds = [
+  "input",
+  "ta",
+  "state",
+  "plot",
+  "drawing",
+  "signal",
+] as const;
+
+export type CompilerCallsiteKind = (typeof compilerCallsiteKinds)[number];
 
 export interface CompilerCallsite {
   readonly __ercCallsite: "v2";
@@ -31,6 +34,7 @@ export function readCompilerCallsite(
   kind: CompilerCallsiteKind,
   callee: string,
 ): CompilerCallsite | undefined {
+  if (!compilerCallsiteKinds.includes(kind)) throw invalidCallsite(callee);
   if (value === undefined) return undefined;
   if (
     value === null ||
