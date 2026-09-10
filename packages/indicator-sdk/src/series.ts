@@ -23,7 +23,7 @@ export type IndicatorSeriesBar = Omit<
   readonly high: SeriesNumber;
   readonly low: SeriesNumber;
   readonly close: SeriesNumber;
-  readonly volume?: SeriesNumber;
+  readonly volume: SeriesNumber;
   readonly index: number;
   readonly isConfirmed: boolean;
   readonly isHistory: boolean;
