@@ -99,10 +99,6 @@ export default defineIndicator(
     const historyStarted = performance.now();
     instance.onHistory(candles);
     const historyElapsedMs = performance.now() - historyStarted;
-    assert.ok(
-      historyElapsedMs < historyBudgetMs,
-      `SDK v2 identity history replay exceeded the ${historyBudgetMs} ms worker budget: ${historyElapsedMs}`,
-    );
     assert.equal(instance.snapshot().points.length, historyBars);
 
     let maximumBuildingMs = 0;
@@ -116,18 +112,10 @@ export default defineIndicator(
       );
     }
     const buildingElapsedMs = performance.now() - buildingStarted;
-    assert.ok(
-      maximumBuildingMs < updateBudgetMs,
-      `SDK v2 identity building update exceeded the ${updateBudgetMs} ms worker budget: ${maximumBuildingMs}`,
-    );
 
     const finalizedStarted = performance.now();
-    instance.onFinalizedBar(candle(historyBars, 205));
+    instance.onFinalizedBar(candle(historyBars - 1, 205));
     const finalizedElapsedMs = performance.now() - finalizedStarted;
-    assert.ok(
-      finalizedElapsedMs < updateBudgetMs,
-      `SDK v2 identity finalization exceeded the ${updateBudgetMs} ms worker budget: ${finalizedElapsedMs}`,
-    );
 
     console.log(
       JSON.stringify({
@@ -141,6 +129,19 @@ export default defineIndicator(
         finalizedElapsedMs,
         updateBudgetMs,
       }),
+    );
+
+    assert.ok(
+      historyElapsedMs < historyBudgetMs,
+      `SDK v2 identity history replay exceeded the ${historyBudgetMs} ms worker budget: ${historyElapsedMs}`,
+    );
+    assert.ok(
+      maximumBuildingMs < updateBudgetMs,
+      `SDK v2 identity building update exceeded the ${updateBudgetMs} ms worker budget: ${maximumBuildingMs}`,
+    );
+    assert.ok(
+      finalizedElapsedMs < updateBudgetMs,
+      `SDK v2 identity finalization exceeded the ${updateBudgetMs} ms worker budget: ${finalizedElapsedMs}`,
     );
   } finally {
     instance.dispose();
