@@ -16,7 +16,7 @@ const candle = (index, close) => ({
   volume: index + 1,
 });
 
-test("packaged indicators give built-in source history forms identical semantics", async (t) => {
+test("packaged indicators preserve relative imports while lowering built-in history", async (t) => {
   const sourceDirectory = await mkdtemp(
     path.join(import.meta.dirname, ".history-authoring-"),
   );
@@ -25,24 +25,30 @@ test("packaged indicators give built-in source history forms identical semantics
   );
   t.after(() => rm(sourceDirectory, { recursive: true, force: true }));
   t.after(() => rm(outputDirectory, { recursive: true, force: true }));
+  await writeFile(
+    path.join(sourceDirectory, "history-offset.ts"),
+    "export const historyOffset = 1;\n",
+    "utf8",
+  );
   const source = path.join(sourceDirectory, "indicator.ts");
   await writeFile(
     source,
     `import { defineIndicator, history, plot } from "@erc-chart/indicator-sdk";
+import { historyOffset } from "./history-offset.ts";
 
 export default defineIndicator(
   { id: "erc.indicator.history-syntax.main", name: "History syntax" },
   ({ open, high, low, close, volume }) => {
-    plot.line(close[1], { key: "indexed" });
-    plot.line(close.at(1), { key: "at" });
-    plot.line(history(close, 1), { key: "function" });
-    plot.line(history(close * 2, 1), { key: "derived" });
-    plot.line(open[1], { key: "openIndexed" });
-    plot.line(high.at(1), { key: "highAt" });
-    plot.line(low[1], { key: "lowIndexed" });
-    plot.line(volume[1], { key: "volumeIndexed" });
-    plot.line(volume.at(1), { key: "volumeAt" });
-    plot.line(history(volume, 1), { key: "volumeFunction" });
+    plot.line(close[historyOffset], { key: "indexed" });
+    plot.line(close.at(historyOffset), { key: "at" });
+    plot.line(history(close, historyOffset), { key: "function" });
+    plot.line(history(close * 2, historyOffset), { key: "derived" });
+    plot.line(open[historyOffset], { key: "openIndexed" });
+    plot.line(high.at(historyOffset), { key: "highAt" });
+    plot.line(low[historyOffset], { key: "lowIndexed" });
+    plot.line(volume[historyOffset], { key: "volumeIndexed" });
+    plot.line(volume.at(historyOffset), { key: "volumeAt" });
+    plot.line(history(volume, historyOffset), { key: "volumeFunction" });
   },
 );
 `,
