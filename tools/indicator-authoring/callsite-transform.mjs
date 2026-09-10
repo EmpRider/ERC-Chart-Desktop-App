@@ -1,9 +1,5 @@
 import ts from "typescript";
-import {
-  functionBindings,
-  scopedNames,
-  scriptKind,
-} from "./ast-scope.mjs";
+import { scopedNames, scriptKind } from "./ast-scope.mjs";
 import {
   semanticCallsiteKey,
   stableCallsiteId,
