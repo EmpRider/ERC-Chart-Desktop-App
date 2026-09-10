@@ -130,7 +130,7 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /return close\[1\];/u);
 });
 
-test("preserves function-scoped var source shadows declared in nested blocks", () => {
+test("preserves nested var source shadowing", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
@@ -145,10 +145,7 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   return historical + nested();
 });
 `;
-  const transformed = transformIndicatorHistory(
-    source,
-    "var-source-shadow.ts",
-  );
+  const transformed = transformIndicatorHistory(source, "var-source.ts");
   assert.equal(transformed.changed, true);
   assert.match(
     transformed.code,
@@ -158,7 +155,7 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /return local \+ close\[1\];/u);
 });
 
-test("does not validate function-scoped var history helpers declared in nested loops", () => {
+test("preserves nested var history shadowing", () => {
   const source = `
 import { defineIndicator, history } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
@@ -173,15 +170,12 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   return historical + nested();
 });
 `;
-  const transformed = transformIndicatorHistory(
-    source,
-    "var-history-shadow.ts",
-  );
+  const transformed = transformIndicatorHistory(source, "var-history.ts");
   assert.equal(transformed.changed, true);
   assert.match(transformed.code, /history\(close, -2\)/u);
 });
 
-test("does not rewrite callbacks owned by function-scoped var defineIndicator bindings", () => {
+test("preserves nested var defineIndicator shadowing", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
 function wrapper() {
@@ -192,10 +186,7 @@ function wrapper() {
 }
 wrapper();
 `;
-  const transformed = transformIndicatorHistory(
-    source,
-    "var-define-shadow.ts",
-  );
+  const transformed = transformIndicatorHistory(source, "var-define.ts");
   assert.equal(transformed.changed, false);
   assert.equal(transformed.code, source);
 });
