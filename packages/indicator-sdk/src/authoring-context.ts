@@ -46,7 +46,6 @@ interface FrameKernelUsage {
 }
 
 let active: AuthoringFrame | undefined;
-let activeKernelCallsite: CompilerCallsite | undefined;
 const frameKernelUsage = new WeakMap<AuthoringFrame, FrameKernelUsage>();
 const identityKernelStores = new WeakMap<
   KernelSlot[],
@@ -68,19 +67,6 @@ export function withAuthoringFrame<T>(frame: AuthoringFrame, run: () => T): T {
     return run();
   } finally {
     active = previous;
-  }
-}
-
-export function withKernelCallsite<T>(
-  callsite: CompilerCallsite,
-  run: () => T,
-): T {
-  const previous = activeKernelCallsite;
-  activeKernelCallsite = callsite;
-  try {
-    return run();
-  } finally {
-    activeKernelCallsite = previous;
   }
 }
 
@@ -113,23 +99,22 @@ export function useKernel<T>(
     throw new RangeError("An indicator may use at most 256 TA calls.");
 
   const usage = kernelUsage(frame);
-  const identity = callsite ?? activeKernelCallsite;
-  if (identity !== undefined) {
-    if (usage.identities.has(identity.id))
+  if (callsite !== undefined) {
+    if (usage.identities.has(callsite.id))
       throw new Error(
-        `Compiler call-site identity ${identity.id} for ${identity.callee} executed more than once in one bar.`,
+        `Compiler call-site identity ${callsite.id} for ${callsite.callee} executed more than once in one bar.`,
       );
-    usage.identities.add(identity.id);
+    usage.identities.add(callsite.id);
     const store = identityKernelStore(frame.kernels);
-    const existing = store.get(identity.id);
+    const existing = store.get(callsite.id);
     if (existing === undefined) {
       const value = create();
-      store.set(identity.id, { signature, value });
+      store.set(callsite.id, { signature, value });
       return value;
     }
     if (existing.signature !== signature)
       throw new Error(
-        `Runtime state for ${identity.callee} at compiler call-site ${identity.id} changed shape; change inputs to rebuild.`,
+        `Runtime state for ${callsite.callee} at compiler call-site ${callsite.id} changed shape; change inputs to rebuild.`,
       );
     return existing.value as T;
   }
