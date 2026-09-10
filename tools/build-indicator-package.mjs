@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
-import { indicatorHistoryTransformPlugin } from "./indicator-authoring/history-transform.mjs";
+import { indicatorAuthoringTransformPlugin } from "./indicator-authoring-transform.mjs";
 import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
 function sha256(value) {
@@ -55,7 +55,7 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
-  const historyTransform = indicatorHistoryTransformPlugin({
+  const authoringTransform = indicatorAuthoringTransformPlugin({
     sourceRoot: authoringRoot,
   });
   await rm(packageRoot, { recursive: true, force: true });
@@ -68,7 +68,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
-    plugins: [historyTransform],
+    plugins: [authoringTransform],
   });
   await build({
     entryPoints: [sourcePath],
@@ -78,7 +78,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "node24",
     minify: false,
-    plugins: [historyTransform],
+    plugins: [authoringTransform],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`

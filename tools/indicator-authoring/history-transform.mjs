@@ -1,6 +1,17 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
+import {
+  collectBindingNames,
+  functionBindings,
+  scopedNames,
+  scriptKind,
+} from "./ast-scope.mjs";
+import {
+  isDependencyPath,
+  isWithinRoot,
+  loaderFor,
+} from "./esbuild-utils.mjs";
 
 const builtInSeriesNames = new Set([
   "open",
@@ -13,32 +24,6 @@ const builtInSeriesNames = new Set([
   "ohlc4",
 ]);
 const nonFunctionBinding = Symbol("non-function-binding");
-
-function scriptKind(fileName) {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".tsx")) return ts.ScriptKind.TSX;
-  if (lower.endsWith(".jsx")) return ts.ScriptKind.JSX;
-  if (
-    lower.endsWith(".js") ||
-    lower.endsWith(".mjs") ||
-    lower.endsWith(".cjs")
-  )
-    return ts.ScriptKind.JS;
-  return ts.ScriptKind.TS;
-}
-
-function loader(fileName) {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".tsx")) return "tsx";
-  if (lower.endsWith(".jsx")) return "jsx";
-  if (
-    lower.endsWith(".ts") ||
-    lower.endsWith(".mts") ||
-    lower.endsWith(".cts")
-  )
-    return "ts";
-  return "js";
-}
 
 function literalOffset(node) {
   if (ts.isNumericLiteral(node)) return Number(node.text.replaceAll("_", ""));
@@ -64,16 +49,6 @@ function validateLiteralOffset(node, sourceFile) {
   throw new SyntaxError(
     `${sourceFile.fileName}:${location.line + 1}:${location.character + 1} history offsets must be non-negative safe integers`,
   );
-}
-
-function collectBindingNames(name, target) {
-  if (ts.isIdentifier(name)) {
-    target.add(name.text);
-    return;
-  }
-  for (const element of name.elements) {
-    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, target);
-  }
 }
 
 function bindingNameIncludes(name, requestedName) {
@@ -142,80 +117,6 @@ function withoutBindings(active, names) {
   const next = new Set(active);
   for (const name of names) next.delete(name);
   return next;
-}
-
-function directBlockBindings(block) {
-  const names = new Set();
-  const statements = ts.isCaseBlock(block)
-    ? block.clauses.flatMap((clause) => [...clause.statements])
-    : block.statements;
-  for (const statement of statements) {
-    if (ts.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        collectBindingNames(declaration.name, names);
-      }
-      continue;
-    }
-    if (
-      (ts.isFunctionDeclaration(statement) ||
-        ts.isClassDeclaration(statement) ||
-        ts.isEnumDeclaration(statement)) &&
-      statement.name !== undefined
-    ) {
-      names.add(statement.name.text);
-    }
-  }
-  return names;
-}
-
-function loopBindings(node) {
-  const names = new Set();
-  const initializer = node.initializer;
-  if (initializer !== undefined && ts.isVariableDeclarationList(initializer)) {
-    for (const declaration of initializer.declarations) {
-      collectBindingNames(declaration.name, names);
-    }
-  }
-  return names;
-}
-
-function collectFunctionScopedVarBindings(node, names) {
-  const body = node.body;
-  if (body === undefined) return;
-
-  const visit = (current) => {
-    if (
-      current !== body &&
-      (ts.isFunctionLike(current) ||
-        ts.isClassDeclaration(current) ||
-        ts.isClassExpression(current))
-    ) {
-      return;
-    }
-    if (
-      ts.isVariableDeclarationList(current) &&
-      (current.flags & ts.NodeFlags.BlockScoped) === 0
-    ) {
-      for (const declaration of current.declarations) {
-        collectBindingNames(declaration.name, names);
-      }
-    }
-    ts.forEachChild(current, visit);
-  };
-
-  visit(body);
-}
-
-function functionBindings(node) {
-  const names = new Set();
-  for (const parameter of node.parameters) {
-    collectBindingNames(parameter.name, names);
-  }
-  if (node.name !== undefined && ts.isIdentifier(node.name)) {
-    names.add(node.name.text);
-  }
-  collectFunctionScopedVarBindings(node, names);
-  return names;
 }
 
 function variableFunctionBinding(declaration, requestedName) {
@@ -379,24 +280,6 @@ function resolveLocalFunctionReference(identifier) {
       return binding === nonFunctionBinding ? undefined : binding;
     }
     current = current.parent;
-  }
-  return undefined;
-}
-
-function scopedNames(node) {
-  if (ts.isFunctionLike(node)) return functionBindings(node);
-  if (ts.isBlock(node) || ts.isCaseBlock(node)) return directBlockBindings(node);
-  if (
-    ts.isForStatement(node) ||
-    ts.isForInStatement(node) ||
-    ts.isForOfStatement(node)
-  ) {
-    return loopBindings(node);
-  }
-  if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
-    const names = new Set();
-    collectBindingNames(node.variableDeclaration.name, names);
-    return names;
   }
   return undefined;
 }
@@ -646,18 +529,6 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
   return { code, changed };
 }
 
-function isWithinRoot(root, fileName) {
-  const relative = path.relative(root, fileName);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  );
-}
-
-function isDependencyPath(fileName) {
-  return path.resolve(fileName).split(path.sep).includes("node_modules");
-}
-
 export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
   const root = sourceRoot === undefined ? undefined : path.resolve(sourceRoot);
   return {
@@ -669,7 +540,7 @@ export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
         const sourceText = await readFile(args.path, "utf8");
         const transformed = transformIndicatorHistory(sourceText, args.path);
         if (!transformed.changed) return undefined;
-        return { contents: transformed.code, loader: loader(args.path) };
+        return { contents: transformed.code, loader: loaderFor(args.path) };
       });
     },
   };
