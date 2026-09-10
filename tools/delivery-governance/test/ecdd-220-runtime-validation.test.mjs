@@ -7,10 +7,9 @@ import test from "node:test";
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
 
 function runNode(arguments_) {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("NODE_TEST")) delete env[key];
-  }
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("NODE_TEST")),
+  );
   return spawnSync(process.execPath, arguments_, {
     cwd: repositoryRoot,
     encoding: "utf8",
