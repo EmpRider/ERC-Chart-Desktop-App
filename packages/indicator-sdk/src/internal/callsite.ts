@@ -1,13 +1,10 @@
-const compilerCallsiteKinds = [
-  "input",
-  "ta",
-  "state",
-  "plot",
-  "drawing",
-  "signal",
-] as const;
-
-export type CompilerCallsiteKind = (typeof compilerCallsiteKinds)[number];
+export type CompilerCallsiteKind =
+  | "input"
+  | "ta"
+  | "state"
+  | "plot"
+  | "drawing"
+  | "signal";
 
 export interface CompilerCallsite {
   readonly __ercCallsite: "v2";
