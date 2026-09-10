@@ -73,6 +73,25 @@ export default defineIndicator(
   assert.match(result.code, /plot\.shape\([^;]*__ercCallsite_/u);
 });
 
+test("reserves compiler-only argument slots without consuming optional author arguments", async () => {
+  const result = await transform(`
+import { input, plot, signal, ta } from "@erc-chart/indicator-sdk";
+const period = input.int(14);
+const trend = ta.ema(14);
+plot.line(trend);
+signal(trend > 0, "long");
+void period;
+`);
+
+  assert.match(result.code, /input\.int\(14, undefined, __ercCallsite_\d+\)/u);
+  assert.match(result.code, /ta\.ema\(14, undefined, __ercCallsite_\d+\)/u);
+  assert.match(result.code, /plot\.line\(trend, undefined, __ercCallsite_\d+\)/u);
+  assert.match(
+    result.code,
+    /signal\(trend > 0, "long", undefined, __ercCallsite_\d+\)/u,
+  );
+});
+
 test("keeps identities stable across unrelated insertion and declaration reordering", async () => {
   const before = await transform(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
