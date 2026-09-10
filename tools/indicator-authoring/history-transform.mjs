@@ -172,6 +172,33 @@ function loopBindings(node) {
   return names;
 }
 
+function collectFunctionScopedVarBindings(node, names) {
+  const body = node.body;
+  if (body === undefined) return;
+
+  const visit = (current) => {
+    if (
+      current !== body &&
+      (ts.isFunctionLike(current) ||
+        ts.isClassDeclaration(current) ||
+        ts.isClassExpression(current))
+    ) {
+      return;
+    }
+    if (
+      ts.isVariableDeclarationList(current) &&
+      (current.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      for (const declaration of current.declarations) {
+        collectBindingNames(declaration.name, names);
+      }
+    }
+    ts.forEachChild(current, visit);
+  };
+
+  visit(body);
+}
+
 function functionBindings(node) {
   const names = new Set();
   for (const parameter of node.parameters) {
@@ -180,6 +207,7 @@ function functionBindings(node) {
   if (node.name !== undefined && ts.isIdentifier(node.name)) {
     names.add(node.name.text);
   }
+  collectFunctionScopedVarBindings(node, names);
   return names;
 }
 
