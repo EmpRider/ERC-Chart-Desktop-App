@@ -128,3 +128,38 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("signal identity survives reordering", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function fastSignal() { signal(true, "long"); }
+function slowSignal() { signal(true, "short"); }
+export default defineIndicator(
+  { id: "erc.indicator.signal-identity.main", name: "Signal identity" },
+  ({ close }) => {
+    if (close > 15) { slowSignal(); fastSignal(); }
+    else { fastSignal(); slowSignal(); }
+  },
+);
+`,
+    "erc.indicator.signal-identity",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    const signals = instance.snapshot().signals ?? [];
+    assert.equal(signals.length, 4);
+    const long = signals.filter((value) => value.direction === "long");
+    const short = signals.filter((value) => value.direction === "short");
+    assert.equal(long.length, 2);
+    assert.equal(short.length, 2);
+    const callsite = (id) => id.slice(0, id.lastIndexOf(":"));
+    assert.match(callsite(long[0].id), /^erc-v2-signal-[0-9a-f]{24}$/u);
+    assert.equal(callsite(long[0].id), callsite(long[1].id));
+    assert.equal(callsite(short[0].id), callsite(short[1].id));
+    assert.notEqual(callsite(long[0].id), callsite(short[0].id));
+  } finally {
+    instance.dispose();
+  }
+});
