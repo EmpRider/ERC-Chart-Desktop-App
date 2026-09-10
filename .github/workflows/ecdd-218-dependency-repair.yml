@@ -1,0 +1,57 @@
+name: ECDD-218 dependency repair
+
+on:
+  push:
+    branches:
+      - task/ECDD-218-sdk-v2-source-history
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: task/ECDD-218-sdk-v2-source-history
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.1
+          package-manager-cache: false
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Generate and verify dependency state
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const rootPath = 'package.json';
+          const governancePath = 'tools/delivery-governance/package.json';
+          const root = JSON.parse(fs.readFileSync(rootPath, 'utf8'));
+          const governance = JSON.parse(fs.readFileSync(governancePath, 'utf8'));
+          root.scripts['format:check'] = 'prettier --check apps packages docs/development tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries .github/workflows package.json tsconfig.base.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md';
+          delete root.overrides;
+          governance.devDependencies['markdownlint-cli2'] = 'github:DavidAnson/markdownlint-cli2#55d5a6c74127a24f4c369611ee0d3e972b7097ab';
+          fs.writeFileSync(rootPath, `${JSON.stringify(root, null, 2)}\n`);
+          fs.writeFileSync(governancePath, `${JSON.stringify(governance, null, 2)}\n`);
+          NODE
+          npm install --package-lock-only --ignore-scripts --audit=false
+          npm ci --audit=false
+          npm run audit:ci
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          rm .github/workflows/ecdd-218-dependency-repair.yml
+          git diff --check
+      - name: Commit generated lock state
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json tools/delivery-governance/package.json .github/workflows/ecdd-218-dependency-repair.yml
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m 'chore(ci): pin audit-safe markdownlint source'
+          git push origin HEAD:task/ECDD-218-sdk-v2-source-history
