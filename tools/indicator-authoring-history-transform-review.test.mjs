@@ -63,7 +63,9 @@ test("covers plugin root filtering and loaders", async (t) => {
 });
 
 test("covers the authoring package root", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "erc-author-root-"));
+  const root = await mkdtemp(
+    path.join(import.meta.dirname, ".history-review-root-"),
+  );
   const output = await mkdtemp(path.join(os.tmpdir(), "erc-author-out-"));
   cleanup(t, root);
   cleanup(t, output);
