@@ -4,7 +4,7 @@ interface SeriesHistoryState {
   readonly committed: number[];
 }
 
-export function normalizeHistoryOffset(barsBack: number): number {
+function normalizeHistoryOffset(barsBack: number): number {
   if (!Number.isSafeInteger(barsBack) || barsBack < 0) {
     throw new RangeError("History offset must be a non-negative safe integer.");
   }
