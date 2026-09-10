@@ -15,6 +15,7 @@ const excludedFiles = new Set([
 ]);
 const excludedDirectories = new Set([".git", "node_modules"]);
 
+/** Collect markdown files covered by the repository governance lint policy. */
 async function collectMarkdownFiles(directory) {
   const files = [];
   const entries = await fs.readdir(directory, { withFileTypes: true });
