@@ -51,7 +51,7 @@ export default defineIndicator(
   });
   const entry = await readFile(path.join(packageRoot, manifest.entry));
   const { default: plugin } = await import(
-    `data:text/javascript;base64,${entry.toString("base64")}`
+    `data:text/javascript;base64,${entry.toString("base64")}`,
   );
 
   for (const historyBars of [1_000, 100_000]) {
