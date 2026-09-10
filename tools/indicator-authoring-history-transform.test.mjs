@@ -28,6 +28,30 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, high: sourceHigh }
   assert.match(transformed.code, /values\.at\(0\)/u);
 });
 
+test("resolves SDK defineIndicator aliases before lowering source history", () => {
+  const source = `
+import { defineIndicator as define } from "@erc-chart/indicator-sdk";
+define({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  return close[1];
+});
+`;
+  const transformed = transformIndicatorHistory(source, "aliased-define.ts");
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(close, 1\)/u);
+});
+
+test("does not rewrite callbacks owned by an unrelated defineIndicator binding", () => {
+  const source = `
+function defineIndicator(_options, calculate) {
+  return calculate({ close: [10, 20, 30] });
+}
+defineIndicator({ id: "fixture" }, ({ close }) => close[1]);
+`;
+  const transformed = transformIndicatorHistory(source, "unrelated-define.ts");
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
 test("does not rewrite same-named locals outside or inside shadowing scopes", () => {
   const source = `
 const close = [1, 2, 3];
