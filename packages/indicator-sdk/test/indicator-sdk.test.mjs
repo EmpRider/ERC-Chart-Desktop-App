@@ -62,6 +62,23 @@ test("history uses identical finalized and provisional bars-back semantics", () 
   instance.dispose();
 });
 
+test("normalizes missing raw volume to the unavailable numeric state", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.volume-history.main", name: "Volume history" },
+    ({ volume }) => {
+      plot.line(Number.isNaN(volume) ? 1 : 0, { key: "isUnavailable" });
+      plot.line(history(volume, 0), { key: "currentVolume" });
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([{ ...candle(0, 10), volume: undefined }]);
+
+  const point = instance.snapshot().points.at(-1);
+  assert.equal(point.values.isUnavailable, 1);
+  assert.equal(point.values.currentVolume, null);
+  instance.dispose();
+});
+
 test("history rejects negative and fractional offsets", () => {
   for (const barsBack of [-1, 1.5]) {
     assert.throws(
