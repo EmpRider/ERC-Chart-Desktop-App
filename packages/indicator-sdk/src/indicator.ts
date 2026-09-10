@@ -32,7 +32,8 @@ export interface IndicatorOptions {
   readonly placement?: "overlay" | "pane";
 }
 
-export interface IndicatorBar extends Candle {
+export type IndicatorBar = Omit<Candle, "volume"> & {
+  readonly volume: number;
   readonly index: number;
   readonly isConfirmed: boolean;
   readonly isHistory: boolean;
@@ -40,7 +41,7 @@ export interface IndicatorBar extends Candle {
   readonly hl2: number;
   readonly hlc3: number;
   readonly ohlc4: number;
-}
+};
 
 export type IndicatorCalculation = (bar: IndicatorBar) => void;
 
@@ -66,6 +67,7 @@ function barContext(
 ): IndicatorBar {
   return Object.freeze({
     ...candle,
+    volume: candle.volume ?? Number.NaN,
     index,
     isConfirmed: confirmed,
     isHistory: historyReplay,
