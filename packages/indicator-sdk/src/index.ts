@@ -191,9 +191,6 @@ export {
   type SeriesNumber,
 } from "./series.js";
 export {
-  sma,
-  ema,
-  atr,
   createAtrKernel,
   createDmiKernel,
   createRsiKernel,
@@ -201,15 +198,8 @@ export {
   createLowestKernel,
   createCrossoverKernel,
   createCrossunderKernel,
-  crossover,
-  crossunder,
   createMovingAverageKernel,
-  dmi,
-  highest,
-  lowest,
-  movingAverage,
   movingAverageTypes,
-  rsi,
   trueRange,
   type CandleTaKernel,
   type CrossKernel,
@@ -220,7 +210,19 @@ export {
   type TaUpdatePhase,
   type TechnicalAnalysisApi,
 } from "./ta.js";
-export { ta } from "./ta-v2.js";
+export {
+  atr,
+  crossover,
+  crossunder,
+  dmi,
+  ema,
+  highest,
+  lowest,
+  movingAverage,
+  rsi,
+  sma,
+  ta,
+} from "./ta-v2.js";
 export {
   defineIndicator,
   type IndicatorBar,

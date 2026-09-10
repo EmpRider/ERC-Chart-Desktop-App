@@ -28,7 +28,7 @@ function withTaIdentity<T>(
   return callsite === undefined ? run() : withKernelCallsite(callsite, run);
 }
 
-function sma(
+export function sma(
   valueOrLength: number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -38,7 +38,7 @@ function sma(
   );
 }
 
-function ema(
+export function ema(
   valueOrLength: number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -48,19 +48,19 @@ function ema(
   );
 }
 
-function movingAverage(
+export function movingAverage(
   values: readonly number[],
   type: MovingAverageType,
   period: number,
   hiddenCallsite?: unknown,
 ): number[];
-function movingAverage(
+export function movingAverage(
   value: number,
   type: MovingAverageType,
   period: number,
   hiddenCallsite?: unknown,
 ): number;
-function movingAverage(
+export function movingAverage(
   values: readonly number[] | number,
   type: MovingAverageType,
   period: number,
@@ -73,17 +73,17 @@ function movingAverage(
   );
 }
 
-function atr(
+export function atr(
   period: number,
   reserved?: undefined,
   hiddenCallsite?: unknown,
 ): number;
-function atr(
+export function atr(
   candles: readonly Candle[],
   period: number,
   hiddenCallsite?: unknown,
 ): number[];
-function atr(
+export function atr(
   candlesOrPeriod: readonly Candle[] | number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -95,17 +95,17 @@ function atr(
   );
 }
 
-function dmi(
+export function dmi(
   period: number,
   reserved?: undefined,
   hiddenCallsite?: unknown,
 ): DmiPoint;
-function dmi(
+export function dmi(
   candles: readonly Candle[],
   period: number,
   hiddenCallsite?: unknown,
 ): DmiSeries;
-function dmi(
+export function dmi(
   candlesOrPeriod: readonly Candle[] | number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -117,17 +117,17 @@ function dmi(
   );
 }
 
-function rsi(
+export function rsi(
   valueOrLength: number,
   period?: number,
   hiddenCallsite?: unknown,
 ): number;
-function rsi(
+export function rsi(
   values: readonly number[],
   period: number,
   hiddenCallsite?: unknown,
 ): number[];
-function rsi(
+export function rsi(
   values: readonly number[] | number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -139,17 +139,17 @@ function rsi(
   );
 }
 
-function highest(
+export function highest(
   valueOrLength: number,
   period?: number,
   hiddenCallsite?: unknown,
 ): number;
-function highest(
+export function highest(
   values: readonly number[],
   period: number,
   hiddenCallsite?: unknown,
 ): number[];
-function highest(
+export function highest(
   values: readonly number[] | number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -161,17 +161,17 @@ function highest(
   );
 }
 
-function lowest(
+export function lowest(
   valueOrLength: number,
   period?: number,
   hiddenCallsite?: unknown,
 ): number;
-function lowest(
+export function lowest(
   values: readonly number[],
   period: number,
   hiddenCallsite?: unknown,
 ): number[];
-function lowest(
+export function lowest(
   values: readonly number[] | number,
   period?: number,
   hiddenCallsite?: unknown,
@@ -183,17 +183,17 @@ function lowest(
   );
 }
 
-function crossover(
+export function crossover(
   left: number,
   right: number,
   hiddenCallsite?: unknown,
 ): boolean;
-function crossover(
+export function crossover(
   left: readonly number[],
   right: readonly number[],
   hiddenCallsite?: unknown,
 ): boolean[];
-function crossover(
+export function crossover(
   left: readonly number[] | number,
   right: readonly number[] | number,
   hiddenCallsite?: unknown,
@@ -207,17 +207,17 @@ function crossover(
   });
 }
 
-function crossunder(
+export function crossunder(
   left: number,
   right: number,
   hiddenCallsite?: unknown,
 ): boolean;
-function crossunder(
+export function crossunder(
   left: readonly number[],
   right: readonly number[],
   hiddenCallsite?: unknown,
 ): boolean[];
-function crossunder(
+export function crossunder(
   left: readonly number[] | number,
   right: readonly number[] | number,
   hiddenCallsite?: unknown,
