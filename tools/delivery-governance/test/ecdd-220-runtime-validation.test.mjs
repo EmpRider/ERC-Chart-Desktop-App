@@ -67,7 +67,11 @@ test("ECDD-220 focused runtime identity fixture", () => {
     cleanBuildOutput();
   }
 
-  assert.equal(build?.status, 0, `${build?.stdout ?? ""}${build?.stderr ?? ""}`);
+  assert.equal(
+    build?.status,
+    0,
+    `${build?.stdout ?? ""}${build?.stderr ?? ""}`,
+  );
   assert.equal(
     focused?.status,
     0,
