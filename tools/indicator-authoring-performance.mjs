@@ -88,7 +88,7 @@ try {
   console.log(
     JSON.stringify({
       component: "indicator-authoring-package",
-      representativeCallsites: 52,
+      representativeCallsites: 53,
       transformIterations,
       historyOnlyAverageMs,
       composedAverageMs,
