@@ -10,6 +10,7 @@ const historyBudgetMs = 60_000;
 const updateBudgetMs = 100;
 const historyBars = 100_000;
 const buildingUpdates = 1_000;
+const maximumIdentityDeclarations = 128;
 const context = { instrumentId: "PERF", timeframeId: "1m" };
 const candle = (index, close = 100 + (index % 20) / 10) => ({
   ...context,
@@ -145,6 +146,91 @@ export default defineIndicator(
     );
   } finally {
     instance.dispose();
+  }
+
+  const maximumCardinalitySource = path.join(
+    sourceDirectory,
+    "maximum-cardinality.ts",
+  );
+  const inputDeclarations = Array.from(
+    { length: maximumIdentityDeclarations },
+    (_, index) =>
+      `    const input${index} = input.int(${index + 1}, { title: "Input ${index}" });`,
+  ).join("\n");
+  const plotDeclarations = Array.from(
+    { length: maximumIdentityDeclarations },
+    (_, index) =>
+      `    plot.line(close + input${index}, { title: "Plot ${index}" });`,
+  ).join("\n");
+  await writeFile(
+    maximumCardinalitySource,
+    `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-cardinality.main", name: "Runtime identity cardinality" },
+  ({ close }) => {
+${inputDeclarations}
+${plotDeclarations}
+  },
+);
+`,
+    "utf8",
+  );
+
+  const maximumCardinalityPackage = await buildIndicatorPackage({
+    source: maximumCardinalitySource,
+    outputRoot: path.join(outputDirectory, "maximum-cardinality-package"),
+    id: "erc.indicator.runtime-identity-cardinality",
+    version: "0.1.0",
+  });
+  const maximumCardinalityEntry = await readFile(
+    path.join(
+      maximumCardinalityPackage.packageRoot,
+      maximumCardinalityPackage.manifest.entry,
+    ),
+  );
+  const { default: maximumCardinalityPlugin } = await import(
+    `data:text/javascript;base64,${maximumCardinalityEntry.toString("base64")}`
+  );
+  const maximumCardinalityInstance = maximumCardinalityPlugin.createInstance(
+    {},
+    context,
+  );
+  try {
+    maximumCardinalityInstance.onHistory([candle(0)]);
+    let maximumCardinalityBuildingMs = 0;
+    const maximumCardinalityStarted = performance.now();
+    for (let index = 0; index < buildingUpdates; index += 1) {
+      const updateStarted = performance.now();
+      maximumCardinalityInstance.onBuildingBar(
+        candle(0, 300 + (index % 20) / 10),
+      );
+      maximumCardinalityBuildingMs = Math.max(
+        maximumCardinalityBuildingMs,
+        performance.now() - updateStarted,
+      );
+    }
+    const maximumCardinalityElapsedMs =
+      performance.now() - maximumCardinalityStarted;
+
+    console.log(
+      JSON.stringify({
+        component: "indicator-runtime-identity-max-cardinality",
+        inputs: maximumIdentityDeclarations,
+        plots: maximumIdentityDeclarations,
+        buildingUpdates,
+        buildingElapsedMs: maximumCardinalityElapsedMs,
+        maximumBuildingMs: maximumCardinalityBuildingMs,
+        updateBudgetMs,
+      }),
+    );
+
+    assert.ok(
+      maximumCardinalityBuildingMs < updateBudgetMs,
+      `SDK v2 maximum-cardinality identity lookup exceeded the ${updateBudgetMs} ms worker budget: ${maximumCardinalityBuildingMs}`,
+    );
+  } finally {
+    maximumCardinalityInstance.dispose();
   }
 } finally {
   await rm(sourceDirectory, { recursive: true, force: true });
