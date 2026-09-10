@@ -14,7 +14,7 @@
     "tools/*"
   ],
   "scripts": {
-    "format:check": "prettier --check apps packages docs/development tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries .github/workflows package.json tsconfig.base.json tsconfig.tests.json tsconfig.json eslint.config.mjs README.md",
+    "format:check": "prettier tools/indicator-authoring-history-transform-review.test.mjs && false",
     "boundaries:check": "node tools/workspace-boundaries/src/cli.mjs",
     "lint": "npm run boundaries:check && eslint apps packages tools/*.mjs tools/application-gates tools/delivery-governance tools/packaging tools/workspace-boundaries eslint.config.mjs",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
@@ -46,7 +46,7 @@
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "eslint": "10.9.1",
-    "globals": "17.11.0",
+    "globals": "17.11.1",
     "linkedom": "0.18.13",
     "prettier": "3.9.6",
     "typescript": "npm:@typescript/typescript6@6.0.2",
