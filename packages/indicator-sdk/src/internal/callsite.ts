@@ -1,10 +1,13 @@
-export type CompilerCallsiteKind =
-  | "input"
-  | "ta"
-  | "state"
-  | "plot"
-  | "drawing"
-  | "signal";
+const compilerCallsiteKinds = [
+  "input",
+  "ta",
+  "state",
+  "plot",
+  "drawing",
+  "signal",
+] as const;
+
+export type CompilerCallsiteKind = (typeof compilerCallsiteKinds)[number];
 
 export interface CompilerCallsite {
   readonly __ercCallsite: "v2";
@@ -18,8 +21,7 @@ export interface CompilerCallsite {
   };
 }
 
-const callsiteId =
-  /^erc-v2-(input|ta|state|plot|drawing|signal)-[0-9a-f]{24}$/u;
+const callsiteSuffix = /^[0-9a-f]{24}$/u;
 
 function invalidCallsite(callee: string): TypeError {
   return new TypeError(
@@ -45,13 +47,14 @@ export function readCompilerCallsite(
     throw invalidCallsite(callee);
   const candidate = value as Partial<CompilerCallsite>;
   const source = candidate.source;
+  const prefix = `erc-v2-${kind}-`;
   if (
     candidate.__ercCallsite !== "v2" ||
     candidate.kind !== kind ||
     candidate.callee !== callee ||
     typeof candidate.id !== "string" ||
-    !callsiteId.test(candidate.id) ||
-    !candidate.id.startsWith(`erc-v2-${kind}-`) ||
+    !candidate.id.startsWith(prefix) ||
+    !callsiteSuffix.test(candidate.id.slice(prefix.length)) ||
     source === null ||
     typeof source !== "object" ||
     typeof source.file !== "string" ||
