@@ -96,13 +96,14 @@ function seriesBindings(callback) {
   return result;
 }
 
-function sdkHistoryBindings(sourceFile) {
+function sdkNamedBindings(sourceFile, requestedName) {
   const result = new Set();
   for (const statement of sourceFile.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== "@erc-chart/indicator-sdk"
+      statement.moduleSpecifier.text !== "@erc-chart/indicator-sdk" ||
+      statement.importClause?.isTypeOnly === true
     ) {
       continue;
     }
@@ -111,20 +112,21 @@ function sdkHistoryBindings(sourceFile) {
       continue;
     }
     for (const element of namedBindings.elements) {
+      if (element.isTypeOnly) continue;
       const importedName = element.propertyName?.text ?? element.name.text;
-      if (importedName === "history") result.add(element.name.text);
+      if (importedName === requestedName) result.add(element.name.text);
     }
   }
   return result;
 }
 
-function isIndicatorCallback(node) {
+function isIndicatorCallback(node, defineIndicatorHelpers) {
   const parent = node.parent;
   return (
     ts.isCallExpression(parent) &&
     parent.arguments[1] === node &&
     ts.isIdentifier(parent.expression) &&
-    parent.expression.text === "defineIndicator"
+    defineIndicatorHelpers.has(parent.expression.text)
   );
 }
 
@@ -198,13 +200,22 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
     scriptKind(fileName),
   );
   const helperName = uniqueHelperName(sourceText);
-  const rootHistoryBindings = sdkHistoryBindings(sourceFile);
+  const rootHistoryBindings = sdkNamedBindings(sourceFile, "history");
+  const rootDefineIndicatorBindings = sdkNamedBindings(
+    sourceFile,
+    "defineIndicator",
+  );
   let changed = false;
 
   const transformer = (context) => {
     const { factory } = context;
 
-    const visitWithBindings = (node, active, historyHelpers) => {
+    const visitWithBindings = (
+      node,
+      active,
+      historyHelpers,
+      defineIndicatorHelpers,
+    ) => {
       if (
         ts.isElementAccessExpression(node) &&
         ts.isIdentifier(node.expression) &&
@@ -219,7 +230,12 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
           [
             node.expression,
             ts.visitNode(node.argumentExpression, (child) =>
-              visitWithBindings(child, active, historyHelpers),
+              visitWithBindings(
+                child,
+                active,
+                historyHelpers,
+                defineIndicatorHelpers,
+              ),
             ),
           ],
         );
@@ -242,7 +258,12 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
           [
             node.expression.expression,
             ts.visitNode(offset, (child) =>
-              visitWithBindings(child, active, historyHelpers),
+              visitWithBindings(
+                child,
+                active,
+                historyHelpers,
+                defineIndicatorHelpers,
+              ),
             ),
           ],
         );
@@ -259,17 +280,24 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
 
       if (
         (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
-        isIndicatorCallback(node)
+        isIndicatorCallback(node, defineIndicatorHelpers)
       ) {
         const indicatorBindings = seriesBindings(node);
-        const scopedHistoryHelpers = withoutBindings(
-          historyHelpers,
-          functionBindings(node),
+        const names = functionBindings(node);
+        const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+        const scopedDefineIndicatorHelpers = withoutBindings(
+          defineIndicatorHelpers,
+          names,
         );
         return ts.visitEachChild(
           node,
           (child) =>
-            visitWithBindings(child, indicatorBindings, scopedHistoryHelpers),
+            visitWithBindings(
+              child,
+              indicatorBindings,
+              scopedHistoryHelpers,
+              scopedDefineIndicatorHelpers,
+            ),
           context,
         );
       }
@@ -278,10 +306,19 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         const names = functionBindings(node);
         const scoped = withoutBindings(active, names);
         const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+        const scopedDefineIndicatorHelpers = withoutBindings(
+          defineIndicatorHelpers,
+          names,
+        );
         return ts.visitEachChild(
           node,
           (child) =>
-            visitWithBindings(child, scoped, scopedHistoryHelpers),
+            visitWithBindings(
+              child,
+              scoped,
+              scopedHistoryHelpers,
+              scopedDefineIndicatorHelpers,
+            ),
           context,
         );
       }
@@ -290,10 +327,19 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         const names = directBlockBindings(node);
         const scoped = withoutBindings(active, names);
         const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+        const scopedDefineIndicatorHelpers = withoutBindings(
+          defineIndicatorHelpers,
+          names,
+        );
         return ts.visitEachChild(
           node,
           (child) =>
-            visitWithBindings(child, scoped, scopedHistoryHelpers),
+            visitWithBindings(
+              child,
+              scoped,
+              scopedHistoryHelpers,
+              scopedDefineIndicatorHelpers,
+            ),
           context,
         );
       }
@@ -306,10 +352,19 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         const names = loopBindings(node);
         const scoped = withoutBindings(active, names);
         const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+        const scopedDefineIndicatorHelpers = withoutBindings(
+          defineIndicatorHelpers,
+          names,
+        );
         return ts.visitEachChild(
           node,
           (child) =>
-            visitWithBindings(child, scoped, scopedHistoryHelpers),
+            visitWithBindings(
+              child,
+              scoped,
+              scopedHistoryHelpers,
+              scopedDefineIndicatorHelpers,
+            ),
           context,
         );
       }
@@ -319,23 +374,43 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         collectBindingNames(node.variableDeclaration.name, names);
         const scoped = withoutBindings(active, names);
         const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+        const scopedDefineIndicatorHelpers = withoutBindings(
+          defineIndicatorHelpers,
+          names,
+        );
         return ts.visitEachChild(
           node,
           (child) =>
-            visitWithBindings(child, scoped, scopedHistoryHelpers),
+            visitWithBindings(
+              child,
+              scoped,
+              scopedHistoryHelpers,
+              scopedDefineIndicatorHelpers,
+            ),
           context,
         );
       }
 
       return ts.visitEachChild(
         node,
-        (child) => visitWithBindings(child, active, historyHelpers),
+        (child) =>
+          visitWithBindings(
+            child,
+            active,
+            historyHelpers,
+            defineIndicatorHelpers,
+          ),
         context,
       );
     };
 
     return (root) =>
-      visitWithBindings(root, new Set(), rootHistoryBindings);
+      visitWithBindings(
+        root,
+        new Set(),
+        rootHistoryBindings,
+        rootDefineIndicatorBindings,
+      );
   };
 
   const result = ts.transform(sourceFile, [transformer]);
