@@ -470,6 +470,34 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
   const transformer = (context) => {
     const { factory } = context;
 
+    function descendWithBindings(
+      node,
+      names,
+      active,
+      historyHelpers,
+      defineIndicatorHelpers,
+      activeOverride,
+    ) {
+      const scopedActive =
+        activeOverride ?? withoutBindings(active, names);
+      const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+      const scopedDefineIndicatorHelpers = withoutBindings(
+        defineIndicatorHelpers,
+        names,
+      );
+      return ts.visitEachChild(
+        node,
+        (child) =>
+          visitWithBindings(
+            child,
+            scopedActive,
+            scopedHistoryHelpers,
+            scopedDefineIndicatorHelpers,
+          ),
+        context,
+      );
+    }
+
     const visitWithBindings = (
       node,
       active,
@@ -544,112 +572,24 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
           ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
             isIndicatorCallback(node, defineIndicatorHelpers)))
       ) {
-        const indicatorBindings = seriesBindings(node);
-        const names = functionBindings(node);
-        const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
-        const scopedDefineIndicatorHelpers = withoutBindings(
-          defineIndicatorHelpers,
-          names,
-        );
-        return ts.visitEachChild(
+        return descendWithBindings(
           node,
-          (child) =>
-            visitWithBindings(
-              child,
-              indicatorBindings,
-              scopedHistoryHelpers,
-              scopedDefineIndicatorHelpers,
-            ),
-          context,
+          functionBindings(node),
+          active,
+          historyHelpers,
+          defineIndicatorHelpers,
+          seriesBindings(node),
         );
       }
 
-      if (ts.isFunctionLike(node)) {
-        const names = functionBindings(node);
-        const scoped = withoutBindings(active, names);
-        const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
-        const scopedDefineIndicatorHelpers = withoutBindings(
-          defineIndicatorHelpers,
-          names,
-        );
-        return ts.visitEachChild(
+      const names = scopedNames(node);
+      if (names !== undefined) {
+        return descendWithBindings(
           node,
-          (child) =>
-            visitWithBindings(
-              child,
-              scoped,
-              scopedHistoryHelpers,
-              scopedDefineIndicatorHelpers,
-            ),
-          context,
-        );
-      }
-
-      if (ts.isBlock(node) || ts.isCaseBlock(node)) {
-        const names = directBlockBindings(node);
-        const scoped = withoutBindings(active, names);
-        const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
-        const scopedDefineIndicatorHelpers = withoutBindings(
-          defineIndicatorHelpers,
           names,
-        );
-        return ts.visitEachChild(
-          node,
-          (child) =>
-            visitWithBindings(
-              child,
-              scoped,
-              scopedHistoryHelpers,
-              scopedDefineIndicatorHelpers,
-            ),
-          context,
-        );
-      }
-
-      if (
-        ts.isForStatement(node) ||
-        ts.isForInStatement(node) ||
-        ts.isForOfStatement(node)
-      ) {
-        const names = loopBindings(node);
-        const scoped = withoutBindings(active, names);
-        const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
-        const scopedDefineIndicatorHelpers = withoutBindings(
+          active,
+          historyHelpers,
           defineIndicatorHelpers,
-          names,
-        );
-        return ts.visitEachChild(
-          node,
-          (child) =>
-            visitWithBindings(
-              child,
-              scoped,
-              scopedHistoryHelpers,
-              scopedDefineIndicatorHelpers,
-            ),
-          context,
-        );
-      }
-
-      if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
-        const names = new Set();
-        collectBindingNames(node.variableDeclaration.name, names);
-        const scoped = withoutBindings(active, names);
-        const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
-        const scopedDefineIndicatorHelpers = withoutBindings(
-          defineIndicatorHelpers,
-          names,
-        );
-        return ts.visitEachChild(
-          node,
-          (child) =>
-            visitWithBindings(
-              child,
-              scoped,
-              scopedHistoryHelpers,
-              scopedDefineIndicatorHelpers,
-            ),
-          context,
         );
       }
 
