@@ -16,7 +16,7 @@ const candle = (index, close) => ({
   volume: index + 1,
 });
 
-test("packaged indicators give close[1], close.at(1), and history(close, 1) identical semantics", async (t) => {
+test("packaged indicators give bracket, at, and history source access identical semantics", async (t) => {
   const sourceDirectory = await mkdtemp(
     path.join(import.meta.dirname, ".history-authoring-"),
   );
@@ -32,11 +32,14 @@ test("packaged indicators give close[1], close.at(1), and history(close, 1) iden
 
 export default defineIndicator(
   { id: "erc.indicator.history-syntax.main", name: "History syntax" },
-  ({ close }) => {
+  ({ close, volume }) => {
     plot.line(close[1], { key: "indexed" });
     plot.line(close.at(1), { key: "at" });
     plot.line(history(close, 1), { key: "function" });
     plot.line(history(close * 2, 1), { key: "derived" });
+    plot.line(volume[1], { key: "volumeIndexed" });
+    plot.line(volume.at(1), { key: "volumeAt" });
+    plot.line(history(volume, 1), { key: "volumeFunction" });
   },
 );
 `,
@@ -62,6 +65,12 @@ export default defineIndicator(
       [null, 10, 11],
     );
   }
+  for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"]) {
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[key]),
+      [null, 1, 2],
+    );
+  }
   assert.deepEqual(
     instance.snapshot().points.map((point) => point.values.derived),
     [null, 20, 22],
@@ -70,12 +79,16 @@ export default defineIndicator(
   instance.onBuildingBar(candle(2, 40));
   for (const key of ["indexed", "at", "function"])
     assert.equal(instance.snapshot().points.at(-1).values[key], 11);
+  for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"])
+    assert.equal(instance.snapshot().points.at(-1).values[key], 2);
   assert.equal(instance.snapshot().points.at(-1).values.derived, 22);
 
   instance.onFinalizedBar(candle(2, 40));
   instance.onBuildingBar(candle(3, 50));
   for (const key of ["indexed", "at", "function"])
     assert.equal(instance.snapshot().points.at(-1).values[key], 40);
+  for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"])
+    assert.equal(instance.snapshot().points.at(-1).values[key], 3);
   assert.equal(instance.snapshot().points.at(-1).values.derived, 80);
   instance.dispose();
 });
