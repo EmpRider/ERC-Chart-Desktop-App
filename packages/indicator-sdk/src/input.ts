@@ -1,5 +1,8 @@
 import { authoringFrame } from "./authoring-context.js";
-import { readCompilerCallsite, type CompilerCallsite } from "./internal/callsite.js";
+import {
+  readCompilerCallsite,
+  type CompilerCallsite,
+} from "./internal/callsite.js";
 import type {
   IndicatorInputDefinition,
   IndicatorInputOption,
@@ -135,7 +138,8 @@ function metadata(
   options: InputOptions,
   callsite: CompilerCallsite | undefined,
 ) {
-  const key = callsite?.id ?? options.key ?? `input_${authoringFrame().inputIndex}`;
+  const key =
+    callsite?.id ?? options.key ?? `input_${authoringFrame().inputIndex}`;
   return {
     key,
     label: options.title ?? options.key ?? key,
@@ -210,7 +214,11 @@ function stringInput(
     !choices.some((option) => option.value === defaultValue)
   )
     throw new RangeError("String input default must be one of its options.");
-  const callsite = readCompilerCallsite(hiddenCallsite, "input", "input.string");
+  const callsite = readCompilerCallsite(
+    hiddenCallsite,
+    "input",
+    "input.string",
+  );
   return readInput(
     {
       ...metadata(options, callsite),
