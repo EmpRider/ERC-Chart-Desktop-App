@@ -109,9 +109,7 @@ export default defineIndicator(
     const buildingStarted = performance.now();
     for (let index = 0; index < buildingUpdates; index += 1) {
       const updateStarted = performance.now();
-      instance.onBuildingBar(
-        candle(historyBars - 1, 200 + (index % 20) / 10),
-      );
+      instance.onBuildingBar(candle(historyBars - 1, 200 + (index % 20) / 10));
       maximumBuildingMs = Math.max(
         maximumBuildingMs,
         performance.now() - updateStarted,
