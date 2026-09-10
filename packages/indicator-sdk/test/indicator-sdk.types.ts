@@ -25,15 +25,21 @@ export const authored = defineIndicator(
     const previousByAt: number = close.at(1);
     const previousByFunction: number = history(close, 1);
     const previousDerived: number = history(close * 2, 1);
-    const previousVolume: number = history(volume, 1);
+    const currentVolume: number = volume;
+    const previousVolumeByIndex: number | undefined = volume[1];
+    const previousVolumeByAt: number = volume.at(1);
+    const previousVolumeByFunction: number = history(volume, 1);
     void previousByIndex;
+    void previousVolumeByIndex;
     plot.line(
       value +
         atr +
         previousByAt +
         previousByFunction +
         previousDerived +
-        previousVolume,
+        currentVolume +
+        previousVolumeByAt +
+        previousVolumeByFunction,
       { title: "Band", color: "#00ff00" },
     );
     plot.histogram(rsi);
