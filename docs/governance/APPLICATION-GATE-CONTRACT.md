@@ -15,7 +15,7 @@ The stable `Delivery gates` workflow exists before the application scaffold. Unt
 | `test:integration` | ECDD-56 | Windows | Run isolated integration tests and fail on any test failure. |
 | `build` | ECDD-54 | Windows | Build the declared workspace without publishing or signing. |
 | `test:performance` | ECDD-56 | Windows | Run reproducible performance checks and fail declared regressions. |
-| `audit:ci` | ECDD-56 | Governance | Run the approved dependency/security audit and fail blocking findings. |
+| `audit:ci` | ECDD-56 | Release | Run the approved dependency/security audit and fail blocking findings before release publication. |
 | `version:check` | ECDD-54 | Windows | Validate version consistency without changing versions. |
 | `package:win` | ECDD-62 | Windows | Build the unsigned NSIS x64 installer without publishing it. |
 | `smoke:installer` | ECDD-62 | Windows | Exercise the installer smoke contract and fail unsafe or incomplete packaging. |
@@ -31,6 +31,6 @@ ECDD-62 owns `package:win`, `smoke:installer`, checksum generation, tag creation
 - `Application / Windows` runs for task-to-epic and epic-to-main pull requests whenever the root application manifest is present and the change is not documentation-only or delivery-governance-only.
 - Windows installer packaging and installer smoke steps run only for an `epic/*` pull request targeting `main`.
 - `Application / Linux` is not part of the pull-request delivery gates while the project targets Windows releases only.
-- The dependency audit remains in the platform-independent `Governance` job; it does not represent a Linux application build or release gate.
+- `audit:ci` remains enforced by the release workflow and is not part of pull-request delivery gates.
 - A skipped Windows job is valid only for documentation-only changes, delivery-governance-only changes, or when no application manifest exists.
 - Cancelled jobs and missing required scripts fail the aggregate gate.
