@@ -4,6 +4,7 @@ import { aggregateResults } from "../src/aggregate.mjs";
 
 const base = {
   governance: "success",
+  applicationLinux: "skipped",
   applicationWindows: "skipped",
   applicationPresent: false,
   epicToMain: false,
@@ -11,11 +12,20 @@ const base = {
 
 test("governance failure always fails", () =>
   assert.equal(aggregateResults({ ...base, governance: "failure" }).ok, false));
-test("no application accepts skipped Windows job", () =>
+test("no application accepts skipped jobs", () =>
   assert.equal(aggregateResults(base).ok, true));
-test("no application rejects a falsely successful Windows job", () =>
+test("no application rejects a falsely successful application job", () =>
   assert.equal(
-    aggregateResults({ ...base, applicationWindows: "success" }).ok,
+    aggregateResults({ ...base, applicationLinux: "success" }).ok,
+    false,
+  ));
+test("application manifest requires Linux success", () =>
+  assert.equal(
+    aggregateResults({
+      ...base,
+      applicationPresent: true,
+      applicationLinux: "failure",
+    }).ok,
     false,
   ));
 test("task-to-epic accepts skipped Windows", () =>
@@ -23,6 +33,7 @@ test("task-to-epic accepts skipped Windows", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
+      applicationLinux: "success",
     }).ok,
     true,
   ));
@@ -31,6 +42,7 @@ test("task-to-epic rejects a Windows job that ran", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
+      applicationLinux: "success",
       applicationWindows: "success",
     }).ok,
     false,
@@ -40,6 +52,7 @@ test("epic-to-main requires Windows success", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
+      applicationLinux: "success",
       epicToMain: true,
     }).ok,
     false,
@@ -49,12 +62,13 @@ test("epic-to-main passes with Windows success", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
+      applicationLinux: "success",
       applicationWindows: "success",
       epicToMain: true,
     }).ok,
     true,
   ));
-test("docs-only application accepts skipped Windows job", () =>
+test("docs-only application accepts skipped application jobs", () =>
   assert.equal(
     aggregateResults({
       ...base,
@@ -64,17 +78,17 @@ test("docs-only application accepts skipped Windows job", () =>
     }).ok,
     true,
   ));
-test("docs-only application rejects a Windows job that ran", () =>
+test("docs-only application rejects an application job that ran", () =>
   assert.equal(
     aggregateResults({
       ...base,
       applicationPresent: true,
       docsOnly: true,
-      applicationWindows: "success",
+      applicationLinux: "success",
     }).ok,
     false,
   ));
-test("governance-only application accepts skipped Windows job", () =>
+test("governance-only application accepts skipped application jobs", () =>
   assert.equal(
     aggregateResults({
       ...base,
@@ -83,13 +97,12 @@ test("governance-only application accepts skipped Windows job", () =>
     }).ok,
     true,
   ));
-test("cancelled required Windows job fails", () =>
+test("cancelled jobs fail", () =>
   assert.equal(
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationWindows: "cancelled",
-      epicToMain: true,
+      applicationLinux: "cancelled",
     }).ok,
     false,
   ));
