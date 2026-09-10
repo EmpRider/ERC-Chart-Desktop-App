@@ -21,12 +21,44 @@ export interface CompilerCallsite {
   };
 }
 
+interface CompilerMarker {
+  readonly __ercCompiler: "v2";
+}
+
 const callsiteSuffix = /^[0-9a-f]{24}$/u;
+let compilerCallsitesRequired = false;
 
 function invalidCallsite(callee: string): TypeError {
   return new TypeError(
     `Invalid compiler call-site metadata for ${callee}; rebuild the indicator package with the SDK v2 authoring compiler.`,
   );
+}
+
+export function readCompilerMarker(value: unknown): boolean {
+  if (value === undefined) return false;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("__ercCompiler" in value) ||
+    (value as Partial<CompilerMarker>).__ercCompiler !== "v2"
+  )
+    throw new TypeError(
+      "Invalid SDK v2 compiler metadata; rebuild the indicator package with the SDK v2 authoring compiler.",
+    );
+  return true;
+}
+
+export function withCompilerCallsitesRequired<T>(
+  required: boolean,
+  run: () => T,
+): T {
+  const previous = compilerCallsitesRequired;
+  compilerCallsitesRequired = required;
+  try {
+    return run();
+  } finally {
+    compilerCallsitesRequired = previous;
+  }
 }
 
 export function readCompilerCallsite(
@@ -35,7 +67,13 @@ export function readCompilerCallsite(
   callee: string,
 ): CompilerCallsite | undefined {
   if (!compilerCallsiteKinds.includes(kind)) throw invalidCallsite(callee);
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    if (compilerCallsitesRequired)
+      throw new TypeError(
+        `Missing compiler call-site identity for ${callee}; rebuild the indicator package with the SDK v2 authoring compiler.`,
+      );
+    return undefined;
+  }
   if (
     value === null ||
     typeof value !== "object" ||
