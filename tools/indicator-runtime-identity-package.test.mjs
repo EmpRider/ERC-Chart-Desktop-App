@@ -98,3 +98,45 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("recurrence state follows compiler identity when execution order changes", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot, series } from "@erc-chart/indicator-sdk";
+
+function fastState() {
+  return series(0, (previous) => previous + 1);
+}
+function slowState() {
+  return series(100, (previous) => previous + 10);
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-series.main", name: "Runtime identity series" },
+  ({ close }) => {
+    let fast;
+    let slow;
+    if (close > 15) {
+      slow = slowState();
+      fast = fastState();
+    } else {
+      fast = fastState();
+      slow = slowState();
+    }
+    plot.line(fast * 1_000 + slow, { key: "result", title: "Result" });
+  },
+);
+`,
+    "erc.indicator.runtime-identity-series",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values.result),
+      [1_110, 2_120, 3_130],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
