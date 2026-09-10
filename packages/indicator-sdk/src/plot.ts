@@ -1,5 +1,6 @@
 import { sameDrawing } from "./drawing-equality.js";
 import { authoringFrame, useKernel } from "./authoring-context.js";
+import { readCompilerCallsite } from "./internal/callsite.js";
 import type {
   IndicatorBox,
   IndicatorLineSegment,
@@ -25,16 +26,26 @@ interface DrawingScopeState {
 let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
 let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
 
+type ValuePlotCallee =
+  | "plot.line"
+  | "plot.hline"
+  | "plot.histogram"
+  | "plot.shape";
+
 function valuePlot(
   kind: IndicatorPlotDefinition["kind"],
+  callee: ValuePlotCallee,
   value: number | null,
   options: ShapeOptions = {},
+  hiddenCallsite?: unknown,
 ): void {
   const frame = authoringFrame();
+  const callsite = readCompilerCallsite(hiddenCallsite, "plot", callee);
   const index = frame.plotIndex++;
   if (index >= 128)
     throw new RangeError("An indicator may declare at most 128 plots.");
-  const key = options.key ?? `plot_${index}`;
+  const outputKey = options.key ?? callsite?.id ?? `plot_${index}`;
+  const key = callsite?.id ?? outputKey;
   if (
     options.width !== undefined &&
     (!Number.isFinite(options.width) ||
@@ -44,14 +55,20 @@ function valuePlot(
     throw new RangeError("Plot width must be greater than 0 and at most 20.");
   if (frame.discovery) {
     if (
-      frame.plots.some(
-        (plot) => plot.key === key || (plot.outputKey ?? plot.key) === key,
-      )
+      frame.plots.some((plot) => {
+        const existingOutputKey = plot.outputKey ?? plot.key;
+        return (
+          plot.key === key ||
+          plot.key === outputKey ||
+          existingOutputKey === key ||
+          existingOutputKey === outputKey
+        );
+      })
     )
       throw new Error("Plot keys must be unique.");
     frame.plots.push({
       key,
-      outputKey: key,
+      outputKey,
       kind,
       label: options.title ?? `Plot ${index + 1}`,
       ...(options.color === undefined ? {} : { color: options.color }),
@@ -62,22 +79,26 @@ function valuePlot(
         : { direction: options.direction }),
     });
   } else {
-    const definition = frame.plots[index];
+    const definition =
+      callsite === undefined
+        ? frame.plots[index]
+        : frame.plots.find((plot) => plot.key === callsite.id);
     if (
-      definition?.key !== key ||
+      definition === undefined ||
       definition.kind !== kind ||
-      definition.label !== (options.title ?? `Plot ${index + 1}`) ||
+      (options.key !== undefined && definition.outputKey !== options.key) ||
+      (options.title !== undefined && definition.label !== options.title) ||
       definition.style !== options.style ||
       definition.direction !== options.direction
     )
       throw new Error(
-        "Plot declarations must remain in the same order on every bar; use null to hide a value.",
+        "Plot declarations must preserve their identity, kind, key and options on every bar.",
       );
   }
-  frame.point.values[key] =
+  frame.point.values[outputKey] =
     value !== null && Number.isFinite(value) ? value : null;
-  if (options.color !== undefined) frame.point.colors[key] = options.color;
-  if (options.width !== undefined) frame.point.sizes[key] = options.width;
+  if (options.color !== undefined) frame.point.colors[outputKey] = options.color;
+  if (options.width !== undefined) frame.point.sizes[outputKey] = options.width;
 }
 
 function overlay(value: IndicatorBox | IndicatorLineSegment): void {
@@ -150,14 +171,33 @@ export interface PlotApi {
   readonly drawings: (key: string, render: (() => void) | null) => void;
 }
 export const plot: PlotApi = Object.freeze({
-  line: (value: number | null, options?: PlotOptions): void =>
-    valuePlot("line", value, options),
-  hline: (value: number | null, options?: PlotOptions): void =>
-    valuePlot("hline", value, options),
-  histogram: (value: number | null, options?: PlotOptions): void =>
-    valuePlot("histogram", value, options),
-  shape: (value: number | null, options?: ShapeOptions): void =>
-    valuePlot("shape", value, options),
+  line: (
+    value: number | null,
+    options?: PlotOptions,
+    hiddenCallsite?: unknown,
+  ): void => valuePlot("line", "plot.line", value, options, hiddenCallsite),
+  hline: (
+    value: number | null,
+    options?: PlotOptions,
+    hiddenCallsite?: unknown,
+  ): void => valuePlot("hline", "plot.hline", value, options, hiddenCallsite),
+  histogram: (
+    value: number | null,
+    options?: PlotOptions,
+    hiddenCallsite?: unknown,
+  ): void =>
+    valuePlot(
+      "histogram",
+      "plot.histogram",
+      value,
+      options,
+      hiddenCallsite,
+    ),
+  shape: (
+    value: number | null,
+    options?: ShapeOptions,
+    hiddenCallsite?: unknown,
+  ): void => valuePlot("shape", "plot.shape", value, options, hiddenCallsite),
   box: (value: Omit<IndicatorBox, "kind">): void =>
     overlay({ ...value, kind: "box" }),
   segment: (value: Omit<IndicatorLineSegment, "kind">): void =>
