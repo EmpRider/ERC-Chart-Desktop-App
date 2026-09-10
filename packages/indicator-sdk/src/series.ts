@@ -15,24 +15,6 @@ export type SeriesNumber = number & {
   readonly at: (barsBack: number) => number;
 };
 
-export type IndicatorSeriesBar = Omit<
-  Candle,
-  "open" | "high" | "low" | "close" | "volume"
-> & {
-  readonly open: SeriesNumber;
-  readonly high: SeriesNumber;
-  readonly low: SeriesNumber;
-  readonly close: SeriesNumber;
-  readonly volume: SeriesNumber;
-  readonly index: number;
-  readonly isConfirmed: boolean;
-  readonly isHistory: boolean;
-  readonly isHistoryFinalizedTail: boolean;
-  readonly hl2: SeriesNumber;
-  readonly hlc3: SeriesNumber;
-  readonly ohlc4: SeriesNumber;
-};
-
 /**
  * Read a prior value from the same scalar source.
  *
