@@ -180,8 +180,10 @@ function propertyPath(expression) {
 function classifyCall(node, bindings) {
   if (ts.isIdentifier(node.expression)) {
     const imported = bindings.get(node.expression.text);
-    if (imported === "signal") return { kind: "signal", callee: "signal" };
-    if (imported === "series") return { kind: "state", callee: "series" };
+    if (imported === "signal")
+      return { kind: "signal", callee: "signal", authorArity: 3 };
+    if (imported === "series")
+      return { kind: "state", callee: "series", authorArity: 2 };
     return undefined;
   }
   if (!ts.isPropertyAccessExpression(node.expression)) return undefined;
@@ -189,15 +191,26 @@ function classifyCall(node, bindings) {
   const imported = bindings.get(node.expression.expression.text);
   if (imported === undefined) return undefined;
   const method = node.expression.name.text;
-  if (imported === "input") return { kind: "input", callee: `input.${method}` };
+  if (imported === "input")
+    return { kind: "input", callee: `input.${method}`, authorArity: 2 };
   if (imported === "ta")
     return statefulTaMethods.has(method)
-      ? { kind: "ta", callee: `ta.${method}` }
+      ? {
+          kind: "ta",
+          callee: `ta.${method}`,
+          authorArity: method === "movingAverage" ? 3 : 2,
+        }
       : undefined;
   if (imported === "plot")
     return {
       kind: drawingMethods.has(method) ? "drawing" : "plot",
       callee: `plot.${method}`,
+      authorArity:
+        method === "box" || method === "segment" || method === "remove"
+          ? 1
+          : method === "fill"
+            ? 3
+            : 2,
     };
   return undefined;
 }
@@ -410,7 +423,10 @@ export function transformIndicatorCallsites(
           callee: classified.callee,
           source: sourceLocation(node, sourceFile, sourceFileId),
         });
-        callsiteByNode.set(node, metadata);
+        callsiteByNode.set(node, {
+          metadata,
+          authorArity: classified.authorArity,
+        });
         callsBySemanticKey.set(semanticKey, metadata);
         callsById.set(id, { semanticKey, metadata });
         callsites.push(metadata);
@@ -435,13 +451,17 @@ export function transformIndicatorCallsites(
   const transformer = (context) => {
     const { factory } = context;
     const visit = (node) => {
-      const metadata = callsiteByNode.get(node);
-      if (metadata !== undefined && ts.isCallExpression(node)) {
+      const callsite = callsiteByNode.get(node);
+      if (callsite !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);
-        const argumentsWithCallsite = [
-          ...node.arguments.map((argument) => ts.visitNode(argument, visit)),
-          factory.createIdentifier(tokenNames.get(metadata)),
-        ];
+        const argumentsWithCallsite = node.arguments.map((argument) =>
+          ts.visitNode(argument, visit),
+        );
+        while (argumentsWithCallsite.length < callsite.authorArity)
+          argumentsWithCallsite.push(factory.createIdentifier("undefined"));
+        argumentsWithCallsite.push(
+          factory.createIdentifier(tokenNames.get(callsite.metadata)),
+        );
         return factory.updateCallExpression(
           node,
           expression,
