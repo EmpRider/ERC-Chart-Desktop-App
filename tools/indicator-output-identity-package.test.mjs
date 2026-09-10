@@ -91,12 +91,12 @@ test("drawing scope state survives reordering", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 function fast(value, openTimeMs) {
-  plot.drawings("fast", () => {
+  plot.drawings("shared", () => {
     plot.box({ id: "fast-zone", startTimeMs: openTimeMs, endTimeMs: openTimeMs + 60_000, top: value, bottom: value - 1, color: "#008800" });
   });
 }
 function slow(value, openTimeMs) {
-  plot.drawings("slow", () => {
+  plot.drawings("shared", () => {
     plot.box({ id: "slow-zone", startTimeMs: openTimeMs, endTimeMs: openTimeMs + 60_000, top: value * 10, bottom: value * 10 - 1, color: "#880000" });
   });
 }
