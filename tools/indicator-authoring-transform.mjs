@@ -59,8 +59,7 @@ export function indicatorAuthoringTransformPlugin({ sourceRoot } = {}) {
     name: "indicator-authoring-transform",
     setup(build) {
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-        if (root !== undefined && !isWithinRoot(root, args.path))
-          return undefined;
+        if (root !== undefined && !isWithinRoot(root, args.path)) return undefined;
         if (isDependencyPath(args.path)) return undefined;
         const sourceText = await readFile(args.path, "utf8");
         const transformed = transformIndicatorAuthoring(sourceText, {
