@@ -70,9 +70,7 @@ export default defineIndicator(
       assert.equal(instance.snapshot().points.length, historyBars);
 
       for (let index = 0; index < 20; index += 1) {
-        instance.onBuildingBar(
-          candle(historyBars - 1, 20 + (index % 10) / 10),
-        );
+        instance.onBuildingBar(candle(historyBars - 1, 20 + (index % 10) / 10));
       }
       let maximumBuildingMs = 0;
       const buildingStarted = performance.now();
