@@ -163,3 +163,23 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("packaged v2 runtime rejects a missing compiler identity", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(
+        `import { defineIndicator, plot, signal } from "@erc-chart/indicator-sdk";
+const emit = signal;
+export default defineIndicator(
+  { id: "erc.indicator.missing-identity.main", name: "Missing identity" },
+  ({ close }) => {
+    plot.line(close);
+    emit(close > 0, "long");
+  },
+);
+`,
+        "erc.indicator.missing-identity",
+      ),
+    /Missing compiler call-site identity for signal; rebuild the indicator package with the SDK v2 authoring compiler/u,
+  );
+});
