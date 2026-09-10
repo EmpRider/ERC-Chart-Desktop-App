@@ -28,10 +28,8 @@ function callsiteMap(result) {
   return new Map(result.callsites.map((value) => [value.callee, value.id]));
 }
 
-test(
-  "injects hidden identities for every in-scope authoring family",
-  async () => {
-    const result = await transform(`
+test("injects hidden identities for every in-scope authoring family", async () => {
+  const result = await transform(`
 import { defineIndicator, input, plot, series, signal, ta } from "@erc-chart/indicator-sdk";
 export default defineIndicator(
   { id: "erc.indicator.callsite.main", name: "Callsite" },
@@ -56,33 +54,30 @@ export default defineIndicator(
 );
 `);
 
-    assert.equal(result.changed, true);
-    assert.deepEqual(
-      result.callsites.map((value) => [value.kind, value.callee]),
-      [
-        ["input", "input.int"],
-        ["ta", "ta.ema"],
-        ["state", "series"],
-        ["plot", "plot.shape"],
-        ["plot", "plot.hline"],
-        ["drawing", "plot.box"],
-        ["signal", "signal"],
-      ],
-    );
-    assert.match(result.code, /__ercCallsite:\s*"v2"/u);
-    assert.doesNotMatch(
-      result.code,
-      /from\s+["']@erc-chart\/indicator-sdk\/internal/u,
-    );
-    assert.match(result.code, /ta\.ema\([^;]*__ercCallsite_/u);
-    assert.match(result.code, /plot\.shape\([^;]*__ercCallsite_/u);
-  },
-);
+  assert.equal(result.changed, true);
+  assert.deepEqual(
+    result.callsites.map((value) => [value.kind, value.callee]),
+    [
+      ["input", "input.int"],
+      ["ta", "ta.ema"],
+      ["state", "series"],
+      ["plot", "plot.shape"],
+      ["plot", "plot.hline"],
+      ["drawing", "plot.box"],
+      ["signal", "signal"],
+    ],
+  );
+  assert.match(result.code, /__ercCallsite:\s*"v2"/u);
+  assert.doesNotMatch(
+    result.code,
+    /from\s+["']@erc-chart\/indicator-sdk\/internal/u,
+  );
+  assert.match(result.code, /ta\.ema\([^;]*__ercCallsite_/u);
+  assert.match(result.code, /plot\.shape\([^;]*__ercCallsite_/u);
+});
 
-test(
-  "reserves compiler-only argument slots without consuming optional author arguments",
-  async () => {
-    const result = await transform(`
+test("reserves compiler-only argument slots without consuming optional author arguments", async () => {
+  const result = await transform(`
 import { input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 const period = input.int(14);
 const trend = ta.ema(14);
@@ -91,26 +86,20 @@ signal(trend > 0, "long");
 void period;
 `);
 
-    assert.match(
-      result.code,
-      /input\.int\(14, undefined, __ercCallsite_\d+\)/u,
-    );
-    assert.match(result.code, /ta\.ema\(14, undefined, __ercCallsite_\d+\)/u);
-    assert.match(
-      result.code,
-      /plot\.line\(trend, undefined, __ercCallsite_\d+\)/u,
-    );
-    assert.match(
-      result.code,
-      /signal\(trend > 0, "long", undefined, __ercCallsite_\d+\)/u,
-    );
-  },
-);
+  assert.match(result.code, /input\.int\(14, undefined, __ercCallsite_\d+\)/u);
+  assert.match(result.code, /ta\.ema\(14, undefined, __ercCallsite_\d+\)/u);
+  assert.match(
+    result.code,
+    /plot\.line\(trend, undefined, __ercCallsite_\d+\)/u,
+  );
+  assert.match(
+    result.code,
+    /signal\(trend > 0, "long", undefined, __ercCallsite_\d+\)/u,
+  );
+});
 
-test(
-  "keeps identities stable across unrelated insertion and declaration reordering",
-  async () => {
-    const before = await transform(`
+test("keeps identities stable across unrelated insertion and declaration reordering", async () => {
+  const before = await transform(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
 const helperA = 1;
 const helperB = 2;
@@ -122,7 +111,7 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   void helperB;
 });
 `);
-    const after = await transform(`
+  const after = await transform(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
 const helperB = 2;
 const unrelated = 42;
@@ -139,13 +128,12 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
 });
 `);
 
-    const beforeIds = callsiteMap(before);
-    const afterIds = callsiteMap(after);
-    assert.equal(afterIds.get("input.int"), beforeIds.get("input.int"));
-    assert.equal(afterIds.get("ta.ema"), beforeIds.get("ta.ema"));
-    assert.equal(afterIds.get("plot.line"), beforeIds.get("plot.line"));
-  },
-);
+  const beforeIds = callsiteMap(before);
+  const afterIds = callsiteMap(after);
+  assert.equal(afterIds.get("input.int"), beforeIds.get("input.int"));
+  assert.equal(afterIds.get("ta.ema"), beforeIds.get("ta.ema"));
+  assert.equal(afterIds.get("plot.line"), beforeIds.get("plot.line"));
+});
 
 test("keeps identity independent from diagnostic line numbers", async () => {
   const compact = await transform(`
@@ -171,10 +159,8 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
 });
 
-test(
-  "distinguishes adjacent calls by their semantic binding anchor",
-  async () => {
-    const result = await transform(`
+test("distinguishes adjacent calls by their semantic binding anchor", async () => {
+  const result = await transform(`
 import { defineIndicator, ta } from "@erc-chart/indicator-sdk";
 export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   const fast = ta.ema(close, 14);
@@ -183,25 +169,21 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   void slow;
 });
 `);
-    assert.equal(result.callsites.length, 2);
-    assert.notEqual(result.callsites[0]?.id, result.callsites[1]?.id);
-  },
-);
+  assert.equal(result.callsites.length, 2);
+  assert.notEqual(result.callsites[0]?.id, result.callsites[1]?.id);
+});
 
-test(
-  "distinguishes duplicate-looking calls in different semantic scopes",
-  async () => {
-    const result = await transform(`
+test("distinguishes duplicate-looking calls in different semantic scopes", async () => {
+  const result = await transform(`
 import { ta } from "@erc-chart/indicator-sdk";
 function first(close) { return ta.ema(close, 14); }
 function second(close) { return ta.ema(close, 14); }
 void first;
 void second;
 `);
-    assert.equal(result.callsites.length, 2);
-    assert.notEqual(result.callsites[0]?.id, result.callsites[1]?.id);
-  },
-);
+  assert.equal(result.callsites.length, 2);
+  assert.notEqual(result.callsites[0]?.id, result.callsites[1]?.id);
+});
 
 test("fails closed for an ambiguous duplicate semantic call site", async () => {
   const transformIndicatorCallsites = await loadTransform();
@@ -239,21 +221,18 @@ void calculate;
   assert.equal(result.callsites[0]?.callee, "plot.line");
 });
 
-test(
-  "reports unsupported namespace authoring access instead of silently skipping it",
-  async () => {
-    const transformIndicatorCallsites = await loadTransform();
-    assert.equal(typeof transformIndicatorCallsites, "function");
-    assert.throws(
-      () =>
-        transformIndicatorCallsites(
-          `
+test("reports unsupported namespace authoring access instead of silently skipping it", async () => {
+  const transformIndicatorCallsites = await loadTransform();
+  assert.equal(typeof transformIndicatorCallsites, "function");
+  assert.throws(
+    () =>
+      transformIndicatorCallsites(
+        `
 import * as sdk from "@erc-chart/indicator-sdk";
 sdk.plot.line(1);
 `,
-          { fileName: "src/namespace.ts", sourceFileId: "src/namespace.ts" },
-        ),
-      /namespace SDK authoring access is unsupported.*named imports/u,
-    );
-  },
-);
+        { fileName: "src/namespace.ts", sourceFileId: "src/namespace.ts" },
+      ),
+    /namespace SDK authoring access is unsupported.*named imports/u,
+  );
+});
