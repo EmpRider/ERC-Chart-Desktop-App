@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
+const buildOutputPaths = [
+  "packages/contracts/dist",
+  "packages/indicator-sdk/dist",
+];
 
 function runNode(arguments_) {
   const env = Object.fromEntries(
@@ -17,11 +21,9 @@ function runNode(arguments_) {
   });
 }
 
-function cleanBuildOutput() {
-  for (const relativePath of [
-    "packages/contracts/dist",
-    "packages/indicator-sdk/dist",
-  ]) {
+function cleanBuildOutput(preexistingBuildOutput) {
+  for (const relativePath of buildOutputPaths) {
+    if (preexistingBuildOutput.has(relativePath)) continue;
     rmSync(path.join(repositoryRoot, relativePath), {
       recursive: true,
       force: true,
@@ -30,6 +32,11 @@ function cleanBuildOutput() {
 }
 
 test("ECDD-220 focused runtime identity fixture", () => {
+  const preexistingBuildOutput = new Set(
+    buildOutputPaths.filter((relativePath) =>
+      existsSync(path.join(repositoryRoot, relativePath)),
+    ),
+  );
   let build;
   let focused;
   try {
@@ -63,7 +70,7 @@ test("ECDD-220 focused runtime identity fixture", () => {
       ]);
     }
   } finally {
-    cleanBuildOutput();
+    cleanBuildOutput(preexistingBuildOutput);
   }
 
   assert.equal(
