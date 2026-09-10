@@ -8,11 +8,6 @@ import {
   type Tick,
   type TimeframeId,
 } from "@erc-chart/contracts";
-import {
-  defineIndicator as defineIndicatorRuntime,
-  type IndicatorOptions,
-} from "./indicator.js";
-import type { IndicatorSeriesBar } from "./series.js";
 
 export {
   hostApiVersion as indicatorHostApiVersion,
@@ -226,16 +221,12 @@ export {
   type TaUpdatePhase,
   type TechnicalAnalysisApi,
 } from "./ta.js";
-export type IndicatorBar = IndicatorSeriesBar;
-export type IndicatorCalculation = (bar: IndicatorBar) => void;
-export type { IndicatorOptions };
-export const defineIndicator: (
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-) => IndicatorPluginModule = defineIndicatorRuntime as unknown as (
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-) => IndicatorPluginModule;
+export {
+  defineIndicator,
+  type IndicatorBar,
+  type IndicatorCalculation,
+  type IndicatorOptions,
+} from "./indicator.js";
 export {
   plot,
   type PlotApi,
