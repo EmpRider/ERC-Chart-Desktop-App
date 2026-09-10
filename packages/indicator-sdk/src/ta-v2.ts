@@ -231,7 +231,7 @@ function crossunder(
   });
 }
 
-export const ta = Object.freeze({
+export const ta: TechnicalAnalysisApi = Object.freeze({
   ...rawTa,
   sma,
   ema,
@@ -243,4 +243,4 @@ export const ta = Object.freeze({
   lowest,
   crossover,
   crossunder,
-}) satisfies TechnicalAnalysisApi;
+});
