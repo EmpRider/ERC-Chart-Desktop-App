@@ -1,7 +1,4 @@
-import {
-  authoringFrame,
-  type AuthoringFrame,
-} from "./authoring-context.js";
+import { authoringFrame, type AuthoringFrame } from "./authoring-context.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
 
 export interface SignalOptions {
@@ -39,7 +36,11 @@ export function signal(
       options.confidence > 1)
   )
     throw new RangeError("Signal confidence must be between 0 and 1.");
-  if (callsite !== undefined && !frame.discovery && frame.phase === "finalized") {
+  if (
+    callsite !== undefined &&
+    !frame.discovery &&
+    frame.phase === "finalized"
+  ) {
     const identities = signalIdentities(frame);
     if (identities.has(callsite.id))
       throw new Error(
