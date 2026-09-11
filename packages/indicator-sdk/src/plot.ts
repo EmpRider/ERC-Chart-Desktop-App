@@ -101,18 +101,18 @@ function valuePlot(
       );
 
     const metadata = plotDeclarationMetadata.get(definition);
+    if (metadata === undefined)
+      throw new Error(
+        "Plot declarations must preserve their identity, kind, key and options on every bar.",
+      );
     const keyExplicit = options.key !== undefined;
     const titleExplicit = options.title !== undefined;
     const preservesKey =
-      metadata === undefined
-        ? !keyExplicit || definition.outputKey === options.key
-        : metadata.keyExplicit === keyExplicit &&
-          (!metadata.keyExplicit || definition.outputKey === options.key);
+      metadata.keyExplicit === keyExplicit &&
+      (!metadata.keyExplicit || definition.outputKey === options.key);
     const preservesTitle =
-      metadata === undefined
-        ? !titleExplicit || definition.label === options.title
-        : metadata.titleExplicit === titleExplicit &&
-          (!metadata.titleExplicit || definition.label === options.title);
+      metadata.titleExplicit === titleExplicit &&
+      (!metadata.titleExplicit || definition.label === options.title);
     if (
       definition.kind !== kind ||
       !preservesKey ||
