@@ -201,12 +201,18 @@ function valuePlot(
         `Compiler plot declaration ${callsite.id} for ${callsite.callee} is missing; rebuild the indicator package.`,
       );
   } else {
-    const positionalCapacity = frame.discovery
-      ? frame.plots.length
-      : frame.plotIndex + usage.identities.size;
-    if (positionalCapacity >= 128)
-      throw new RangeError("An indicator may declare at most 128 plots.");
-    index = usage.positionalIndex++;
+    if (frame.discovery) {
+      if (frame.plots.length >= 128)
+        throw new RangeError("An indicator may declare at most 128 plots.");
+      index = frame.plots.length;
+    } else {
+      const compilerDeclarationCount =
+        typeof __ERC_INDICATOR_PLOT_DECLARATIONS__ === "undefined"
+          ? 0
+          : __ERC_INDICATOR_PLOT_DECLARATIONS__.length;
+      index = compilerDeclarationCount + usage.positionalIndex;
+    }
+    usage.positionalIndex += 1;
     frame.plotIndex += 1;
   }
 
