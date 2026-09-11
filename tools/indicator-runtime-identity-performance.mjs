@@ -36,6 +36,64 @@ const createPackagedInstance = async ({ source, outputRoot, id }) => {
   return plugin.createInstance({}, context);
 };
 
+const expectedEma = (committedValues, candidate, period) => {
+  if (committedValues.length + 1 < period) return Number.NaN;
+  if (committedValues.length < period) {
+    return (
+      [...committedValues, candidate].reduce((sum, value) => sum + value, 0) /
+      period
+    );
+  }
+  const alpha = 2 / (period + 1);
+  let average =
+    committedValues
+      .slice(0, period)
+      .reduce((sum, value) => sum + value, 0) / period;
+  for (let index = period; index < committedValues.length; index += 1) {
+    average =
+      alpha * (committedValues[index] ?? 0) + (1 - alpha) * average;
+  }
+  return alpha * candidate + (1 - alpha) * average;
+};
+
+const expectedSma = (committedValues, candidate, period) => {
+  const values = [...committedValues.slice(-(period - 1)), candidate];
+  if (values.length < period) return Number.NaN;
+  return values.reduce((sum, value) => sum + value, 0) / period;
+};
+
+const assertApproxEqual = (actual, expected, label) => {
+  assert.equal(typeof actual, "number", `${label} must be numeric.`);
+  assert.ok(
+    Number.isFinite(actual) && Math.abs(actual - expected) < 1e-9,
+    `${label} expected ${expected}, received ${actual}.`,
+  );
+};
+
+const assertRuntimeState = ({
+  instance,
+  committedCloses,
+  candidateClose,
+  fastCount,
+  slowCount,
+  label,
+}) => {
+  const point = instance.snapshot().points.at(-1);
+  assert.ok(point, `${label} must produce a point.`);
+  assert.equal(point.values["fast-count"], fastCount, `${label} fast count`);
+  assert.equal(point.values["slow-count"], slowCount, `${label} slow count`);
+  assertApproxEqual(
+    point.values.fast,
+    expectedEma(committedCloses, candidateClose, 5),
+    `${label} fast EMA`,
+  );
+  assertApproxEqual(
+    point.values.slow,
+    expectedSma(committedCloses, candidateClose, 14),
+    `${label} slow SMA`,
+  );
+};
+
 const sourceDirectory = await mkdtemp(
   path.join(import.meta.dirname, ".runtime-identity-performance-source-"),
 );
@@ -59,7 +117,7 @@ function fastState(value) {
 
 function slowState(value, openTimeMs) {
   const length = input.int(14, { title: "Slow Length", min: 1, max: 50 });
-  const count = series(100, (previous) => previous + 1);
+  const count = series(100, (previous) => previous + 2);
   const average = ta.sma(value, length);
   plot.line(average, { key: "slow", title: "Slow" });
   plot.drawings("zones", () => {
@@ -88,7 +146,8 @@ export default defineIndicator(
       fast = fastState(close);
     }
     signal(Number.isFinite(fast.average) && fast.average > slow.average, "long");
-    plot.histogram(fast.count - slow.count, { key: "state-delta" });
+    plot.histogram(fast.count, { key: "fast-count", title: "Fast Count" });
+    plot.histogram(slow.count, { key: "slow-count", title: "Slow Count" });
   },
 );
 `,
@@ -101,29 +160,111 @@ export default defineIndicator(
     id: "erc.indicator.runtime-identity-performance",
   });
   try {
+    const lifecycleCandles = Array.from({ length: 20 }, (_, index) =>
+      candle(index),
+    );
+    const lifecycleCommittedCloses = lifecycleCandles
+      .slice(0, -1)
+      .map((value) => value.close);
+    instance.onHistory(lifecycleCandles);
+    assertRuntimeState({
+      instance,
+      committedCloses: lifecycleCommittedCloses,
+      candidateClose: lifecycleCandles.at(-1).close,
+      fastCount: 20,
+      slowCount: 140,
+      label: "lifecycle history",
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const buildingClose = 150 + index / 10;
+      instance.onBuildingBar(candle(19, buildingClose));
+      assertRuntimeState({
+        instance,
+        committedCloses: lifecycleCommittedCloses,
+        candidateClose: buildingClose,
+        fastCount: 20,
+        slowCount: 140,
+        label: `lifecycle building ${index + 1}`,
+      });
+    }
+
+    const lifecycleFinalizedClose = 155;
+    instance.onFinalizedBar(candle(19, lifecycleFinalizedClose));
+    assertRuntimeState({
+      instance,
+      committedCloses: lifecycleCommittedCloses,
+      candidateClose: lifecycleFinalizedClose,
+      fastCount: 20,
+      slowCount: 140,
+      label: "lifecycle finalization",
+    });
+
+    const nextBuildingClose = 160;
+    instance.onBuildingBar(candle(20, nextBuildingClose));
+    assertRuntimeState({
+      instance,
+      committedCloses: [
+        ...lifecycleCommittedCloses,
+        lifecycleFinalizedClose,
+      ],
+      candidateClose: nextBuildingClose,
+      fastCount: 21,
+      slowCount: 142,
+      label: "lifecycle post-finalization building",
+    });
+
     const candles = Array.from({ length: historyBars }, (_, index) =>
       candle(index),
     );
+    const committedCloses = candles.slice(0, -1).map((value) => value.close);
     const historyStarted = performance.now();
     instance.onHistory(candles);
     const historyElapsedMs = performance.now() - historyStarted;
     assert.equal(instance.snapshot().points.length, historyBars);
+    assertRuntimeState({
+      instance,
+      committedCloses,
+      candidateClose: candles.at(-1).close,
+      fastCount: historyBars,
+      slowCount: 100 + 2 * historyBars,
+      label: "performance history",
+    });
 
     let maximumBuildingMs = 0;
+    let latestBuildingClose = Number.NaN;
     const buildingStarted = performance.now();
     for (let index = 0; index < buildingUpdates; index += 1) {
+      latestBuildingClose = 200 + (index % 20) / 10;
       const updateStarted = performance.now();
-      instance.onBuildingBar(candle(historyBars - 1, 200 + (index % 20) / 10));
+      instance.onBuildingBar(candle(historyBars - 1, latestBuildingClose));
       maximumBuildingMs = Math.max(
         maximumBuildingMs,
         performance.now() - updateStarted,
       );
     }
     const buildingElapsedMs = performance.now() - buildingStarted;
+    assertRuntimeState({
+      instance,
+      committedCloses,
+      candidateClose: latestBuildingClose,
+      fastCount: historyBars,
+      slowCount: 100 + 2 * historyBars,
+      label: "performance repeated building",
+    });
 
+    const finalizedClose = 205;
     const finalizedStarted = performance.now();
-    instance.onFinalizedBar(candle(historyBars - 1, 205));
+    instance.onFinalizedBar(candle(historyBars - 1, finalizedClose));
     const finalizedElapsedMs = performance.now() - finalizedStarted;
+    assertRuntimeState({
+      instance,
+      committedCloses,
+      candidateClose: finalizedClose,
+      fastCount: historyBars,
+      slowCount: 100 + 2 * historyBars,
+      label: "performance finalization",
+    });
 
     console.log(
       JSON.stringify({
