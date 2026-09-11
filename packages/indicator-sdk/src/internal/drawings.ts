@@ -16,9 +16,7 @@ export interface DrawingController {
   readonly id: string;
   readonly kind: IndicatorOverlay["kind"];
   write(value: IndicatorOverlay): void;
-  update(
-    update: (current: IndicatorOverlay) => IndicatorOverlay,
-  ): void;
+  update(update: (current: IndicatorOverlay) => IndicatorOverlay): void;
   delete(): void;
 }
 
@@ -84,7 +82,9 @@ export function drawingController(
   const existing = registry.get(id);
   if (existing !== undefined) {
     if (existing.kind !== kind)
-      throw new Error(`Drawing identity ${id} changed kind; rebuild the indicator package.`);
+      throw new Error(
+        `Drawing identity ${id} changed kind; rebuild the indicator package.`,
+      );
     return existing;
   }
 
@@ -119,11 +119,10 @@ export function drawingController(
     },
   });
   registry.set(id, controller);
-  if (registry.size > MAX_DRAWINGS)
-    throw new RangeError("An indicator may retain at most 2,000 drawing handles.");
+  while (registry.size > MAX_DRAWINGS) {
+    const oldest = registry.keys().next().value;
+    if (oldest === undefined) break;
+    registry.delete(oldest);
+  }
   return controller;
-}
-
-export function forgetDrawingHandle(kernels: KernelSlot[], id: string): void {
-  drawingRegistries.get(kernels)?.delete(id);
 }
