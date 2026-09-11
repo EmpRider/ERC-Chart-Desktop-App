@@ -300,11 +300,14 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
     )
       continue;
     const value = staticPrimitive(property.initializer);
-    if (staticPlotDeclarationOptions.has(name) && value === undefined)
+    if (
+      staticPlotDeclarationOptions.has(name) &&
+      typeof value !== "string"
+    )
       throw syntaxError(
         sourceFile,
         property.initializer,
-        `Plot declaration option "${name}" must use a static literal.`,
+        `Plot declaration option "${name}" must use a static string literal.`,
       );
     if (value !== undefined) declaration[name] = value;
   }
