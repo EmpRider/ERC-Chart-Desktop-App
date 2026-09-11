@@ -290,3 +290,75 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("conditional drawing scopes preserve committed geometry while omitted and reconcile on return", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function optionalDrawings(value, openTimeMs) {
+  plot.drawings("optional", () => {
+    plot.box({
+      id: "optional-zone",
+      startTimeMs: openTimeMs,
+      endTimeMs: openTimeMs + 60_000,
+      top: value,
+      bottom: value - 1,
+      color: "#008800",
+    });
+  });
+}
+function alwaysDrawings(value, openTimeMs) {
+  plot.drawings("always", () => {
+    plot.box({
+      id: "always-zone",
+      startTimeMs: openTimeMs,
+      endTimeMs: openTimeMs + 60_000,
+      top: value * 10,
+      bottom: value * 10 - 1,
+      color: "#880000",
+    });
+  });
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.conditional-drawings.main", name: "Conditional drawings" },
+  ({ close, openTimeMs }) => {
+    if (close < 15) optionalDrawings(close, openTimeMs);
+    alwaysDrawings(close, openTimeMs);
+  },
+);
+`,
+    "erc.indicator.conditional-drawings",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  const overlay = (id) =>
+    instance.snapshot().overlays.find((value) => value.id === id);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20)]);
+    assert.equal(overlay("optional-zone")?.top, 10);
+    assert.equal(overlay("always-zone")?.top, 200);
+
+    instance.onFinalizedBar(candle(1, 20));
+    assert.equal(overlay("optional-zone")?.top, 10);
+    assert.equal(overlay("always-zone")?.top, 200);
+
+    instance.onBuildingBar(candle(2, 11));
+    assert.equal(overlay("optional-zone")?.top, 11);
+    assert.equal(overlay("always-zone")?.top, 110);
+
+    instance.onBuildingBar(candle(2, 20));
+    assert.equal(overlay("optional-zone")?.top, 10);
+    assert.equal(overlay("always-zone")?.top, 200);
+
+    instance.onFinalizedBar(candle(2, 11));
+    assert.equal(overlay("optional-zone")?.top, 11);
+    assert.equal(overlay("always-zone")?.top, 110);
+
+    instance.onBuildingBar(candle(3, 20));
+    assert.equal(overlay("optional-zone")?.top, 11);
+    assert.equal(overlay("always-zone")?.top, 200);
+  } finally {
+    instance.dispose();
+  }
+});
