@@ -31,6 +31,7 @@ export interface AuthoringFrame {
     colors: Record<string, string>;
     sizes: Record<string, number>;
   };
+  readonly committedDrawings: ReadonlyMap<string, IndicatorOverlay>;
   readonly overlayUpdates: Map<string, IndicatorOverlay | null>;
   readonly signals: {
     readonly key: string;
