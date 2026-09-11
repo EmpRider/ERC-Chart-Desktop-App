@@ -23,8 +23,17 @@ interface DrawingScopeState {
   committed: Map<string, IndicatorOverlay>;
 }
 
+interface PlotDeclarationMetadata {
+  readonly keyExplicit: boolean;
+  readonly titleExplicit: boolean;
+}
+
 let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
 let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
+const plotDeclarationMetadata = new WeakMap<
+  IndicatorPlotDefinition,
+  PlotDeclarationMetadata
+>();
 
 type ValuePlotCallee =
   "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
@@ -64,7 +73,7 @@ function valuePlot(
       })
     )
       throw new Error("Plot keys must be unique.");
-    frame.plots.push({
+    const definition: IndicatorPlotDefinition = {
       key,
       outputKey,
       kind,
@@ -75,17 +84,31 @@ function valuePlot(
       ...(options.direction === undefined
         ? {}
         : { direction: options.direction }),
+    };
+    frame.plots.push(definition);
+    plotDeclarationMetadata.set(definition, {
+      keyExplicit: options.key !== undefined,
+      titleExplicit: options.title !== undefined,
     });
   } else {
     const definition =
       callsite === undefined
         ? frame.plots[index]
         : frame.plots.find((plot) => plot.key === callsite.id);
+    const metadata =
+      definition === undefined
+        ? undefined
+        : plotDeclarationMetadata.get(definition);
     if (
       definition === undefined ||
       definition.kind !== kind ||
-      (options.key !== undefined && definition.outputKey !== options.key) ||
-      (options.title !== undefined && definition.label !== options.title) ||
+      (metadata !== undefined
+        ? metadata.keyExplicit !== (options.key !== undefined) ||
+          metadata.titleExplicit !== (options.title !== undefined) ||
+          (metadata.keyExplicit && definition.outputKey !== options.key) ||
+          (metadata.titleExplicit && definition.label !== options.title)
+        : (options.key !== undefined && definition.outputKey !== options.key) ||
+          (options.title !== undefined && definition.label !== options.title)) ||
       definition.style !== options.style ||
       definition.direction !== options.direction
     )
