@@ -186,7 +186,7 @@ export async function buildIndicatorPackage({
     sourcePath,
     metadataTransform.authoringTransform,
     metadataTransform.plotDeclarationsByInput,
-    { platform: "node", target: "node24" },
+    { platform: "neutral", target: "es2022" },
   );
   await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
@@ -205,9 +205,9 @@ export async function buildIndicatorPackage({
     entryPoints: [sourcePath],
     outfile: metadataPath,
     bundle: true,
-    platform: "node",
+    platform: "neutral",
     format: "esm",
-    target: "node24",
+    target: "es2022",
     minify: false,
     define: indicatorCompilerDefine(metadataPlotDeclarations),
     plugins: [metadataTransform.authoringTransform],
