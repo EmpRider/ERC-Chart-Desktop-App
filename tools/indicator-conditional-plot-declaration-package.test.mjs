@@ -43,7 +43,7 @@ export default defineIndicator(
         id: "erc.indicator.dynamic-late-plot",
         version: "0.1.0",
       }),
-      /Plot declaration option "title" must use a static literal/u,
+      /Plot declaration option "title" must use a static string literal/u,
     );
   } finally {
     await rm(sourceDirectory, { recursive: true, force: true });
