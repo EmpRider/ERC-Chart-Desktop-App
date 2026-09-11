@@ -7,9 +7,8 @@ const historyBars = 100_000;
 const drawingCount = 2_000;
 const budgetMs = 60_000;
 const drawings = Array.from({ length: drawingCount }, (_, index) => ({
-  id: `zone-${index}`,
-  startTimeMs: 0,
-  endTimeMs: 60_000,
+  left: 0,
+  right: 60_000,
   top: index + 1,
   bottom: index,
   color: "#008800",
@@ -19,10 +18,9 @@ const plugin = defineIndicator(
     id: "erc.indicator.drawings-performance.main",
     name: "Drawing performance",
   },
-  () =>
-    plot.drawings("zones", () => {
-      for (const drawing of drawings) plot.box(drawing);
-    }),
+  () => {
+    for (const drawing of drawings) plot.box(drawing);
+  },
 );
 const candle = (index) => ({
   instrumentId: "PERF",
