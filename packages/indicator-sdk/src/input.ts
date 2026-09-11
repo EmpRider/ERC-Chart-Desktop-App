@@ -187,11 +187,11 @@ function metadata(
   options: InputOptions,
   callsite: CompilerCallsite | undefined,
 ) {
-  const key =
-    callsite?.id ?? options.key ?? `input_${authoringFrame().inputIndex}`;
+  const positionalKey = `input_${authoringFrame().inputIndex}`;
+  const key = callsite?.id ?? options.key ?? positionalKey;
   return {
     key,
-    label: options.title ?? options.key ?? key,
+    label: options.title ?? options.key ?? positionalKey,
     ...(options.group === undefined ? {} : { group: options.group }),
     ...(options.description === undefined
       ? {}
