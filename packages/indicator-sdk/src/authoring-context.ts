@@ -6,6 +6,7 @@ import type {
   IndicatorPlotDefinition,
   IndicatorResultPoint,
 } from "./index.js";
+import type { CompilerCallsite } from "./internal/callsite.js";
 
 export interface KernelSlot {
   readonly signature: string;
@@ -39,7 +40,17 @@ export interface AuthoringFrame {
   signalIndex: number;
 }
 
+interface FrameKernelUsage {
+  positionalIndex: number;
+  readonly identities: Set<string>;
+}
+
 let active: AuthoringFrame | undefined;
+const frameKernelUsage = new WeakMap<AuthoringFrame, FrameKernelUsage>();
+const identityKernelStores = new WeakMap<
+  KernelSlot[],
+  Map<string, KernelSlot>
+>();
 
 export function authoringFrame(): AuthoringFrame {
   if (active === undefined)
@@ -59,12 +70,57 @@ export function withAuthoringFrame<T>(frame: AuthoringFrame, run: () => T): T {
   }
 }
 
-export function useKernel<T>(signature: string, create: () => T): T {
+function kernelUsage(frame: AuthoringFrame): FrameKernelUsage {
+  let usage = frameKernelUsage.get(frame);
+  if (usage === undefined) {
+    usage = { positionalIndex: 0, identities: new Set() };
+    frameKernelUsage.set(frame, usage);
+  }
+  return usage;
+}
+
+function identityKernelStore(kernels: KernelSlot[]): Map<string, KernelSlot> {
+  let store = identityKernelStores.get(kernels);
+  if (store === undefined) {
+    store = new Map();
+    identityKernelStores.set(kernels, store);
+  }
+  return store;
+}
+
+export function useKernel<T>(
+  signature: string,
+  create: () => T,
+  callsite?: CompilerCallsite,
+): T {
   const frame = authoringFrame();
   const index = frame.kernelIndex++;
   if (index >= 256)
     throw new RangeError("An indicator may use at most 256 TA calls.");
-  const existing = frame.kernels[index];
+
+  const usage = kernelUsage(frame);
+  if (callsite !== undefined) {
+    if (usage.identities.has(callsite.id))
+      throw new Error(
+        `Compiler call-site identity ${callsite.id} for ${callsite.callee} executed more than once in one bar.`,
+      );
+    usage.identities.add(callsite.id);
+    const store = identityKernelStore(frame.kernels);
+    const existing = store.get(callsite.id);
+    if (existing === undefined) {
+      const value = create();
+      store.set(callsite.id, { signature, value });
+      return value;
+    }
+    if (existing.signature !== signature)
+      throw new Error(
+        `Runtime state for ${callsite.callee} at compiler call-site ${callsite.id} changed shape; change inputs to rebuild.`,
+      );
+    return existing.value as T;
+  }
+
+  const positionalIndex = usage.positionalIndex++;
+  const existing = frame.kernels[positionalIndex];
   if (existing === undefined) {
     const value = create();
     frame.kernels.push({ signature, value });

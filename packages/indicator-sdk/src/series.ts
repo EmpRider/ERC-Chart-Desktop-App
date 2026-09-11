@@ -1,5 +1,6 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
+import { readCompilerCallsite } from "./internal/callsite.js";
 import { historyValue } from "./internal/series-history.js";
 
 export const maxSeriesCollectionItems = 4_096;
@@ -141,16 +142,25 @@ function assertBoundedSeriesCollections(value: unknown): void {
 }
 
 /** Recurrence: every building update starts from the previous committed bar. */
-export function series<T>(initial: T, update: (previous: Readonly<T>) => T): T {
+export function series<T>(
+  initial: T,
+  update: (previous: Readonly<T>) => T,
+  hiddenCallsite?: unknown,
+): T {
   const frame = authoringFrame();
+  const callsite = readCompilerCallsite(hiddenCallsite, "state", "series");
   const kind = Array.isArray(initial) ? "array" : typeof initial;
   const structured = initial !== null && typeof initial === "object";
-  const state = useKernel(`series-${kind}`, () => {
-    assertBoundedSeriesCollections(initial);
-    return {
-      committed: structured ? cloneSeriesState(initial) : initial,
-    };
-  });
+  const state = useKernel(
+    `series-${kind}`,
+    () => {
+      assertBoundedSeriesCollections(initial);
+      return {
+        committed: structured ? cloneSeriesState(initial) : initial,
+      };
+    },
+    callsite,
+  );
   const value = update(cloneSeriesState(state.committed));
   const valueKind = Array.isArray(value) ? "array" : typeof value;
   if (valueKind !== kind)

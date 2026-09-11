@@ -7,6 +7,10 @@ import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index
 import { indicatorAuthoringTransformPlugin } from "./indicator-authoring-transform.mjs";
 import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
+const indicatorCompilerDefine = {
+  __ERC_INDICATOR_COMPILED__: "true",
+};
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -68,6 +72,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
+    define: indicatorCompilerDefine,
     plugins: [authoringTransform],
   });
   await build({
@@ -78,6 +83,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "node24",
     minify: false,
+    define: indicatorCompilerDefine,
     plugins: [authoringTransform],
   });
   const metadataModule = await import(

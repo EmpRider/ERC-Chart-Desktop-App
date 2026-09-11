@@ -1,4 +1,8 @@
 import { authoringFrame } from "./authoring-context.js";
+import {
+  readCompilerCallsite,
+  type CompilerCallsite,
+} from "./internal/callsite.js";
 import type {
   IndicatorInputDefinition,
   IndicatorInputOption,
@@ -26,6 +30,15 @@ type StringOptionValue<T> = T extends string
   : T extends IndicatorInputOption
     ? T["value"]
     : never;
+
+interface InputDeclarationMetadata {
+  readonly labelExplicit: boolean;
+}
+
+const inputDeclarationMetadata = new WeakMap<
+  IndicatorInputDefinition,
+  InputDeclarationMetadata
+>();
 
 function stepDecimals(step: number): number {
   const text = `${step}`.toLowerCase();
@@ -84,21 +97,109 @@ export function normalizeIndicatorParameters(
   );
 }
 
-function readInput(definition: IndicatorInputDefinition): IndicatorInputValue {
+function sameInputOptions(
+  expected: readonly IndicatorInputOption[] | undefined,
+  options: readonly IndicatorInputOption[] | undefined,
+): boolean {
+  if (expected === options) return true;
+  if (
+    expected === undefined ||
+    options === undefined ||
+    expected.length !== options.length
+  )
+    return false;
+  return expected.every((option, index) => {
+    const candidate = options[index];
+    return (
+      candidate !== undefined &&
+      option.value === candidate.value &&
+      option.label === candidate.label
+    );
+  });
+}
+
+function sameInputDefinition(
+  expected: IndicatorInputDefinition | undefined,
+  definition: IndicatorInputDefinition,
+): boolean {
+  if (
+    expected === undefined ||
+    expected.key !== definition.key ||
+    expected.label !== definition.label ||
+    expected.group !== definition.group ||
+    expected.description !== definition.description ||
+    expected.effect !== definition.effect ||
+    expected.type !== definition.type
+  )
+    return false;
+
+  switch (expected.type) {
+    case "boolean":
+      return (
+        definition.type === "boolean" &&
+        expected.defaultValue === definition.defaultValue
+      );
+    case "number":
+      return (
+        definition.type === "number" &&
+        expected.defaultValue === definition.defaultValue &&
+        expected.min === definition.min &&
+        expected.max === definition.max &&
+        expected.step === definition.step
+      );
+    case "string":
+      return (
+        definition.type === "string" &&
+        expected.defaultValue === definition.defaultValue &&
+        expected.editor === definition.editor &&
+        sameInputOptions(expected.options, definition.options)
+      );
+  }
+}
+
+function readInput(
+  definition: IndicatorInputDefinition,
+  callsite: CompilerCallsite | undefined,
+  labelExplicit: boolean,
+): IndicatorInputValue {
   const frame = authoringFrame();
   const index = frame.inputIndex++;
   if (index >= 128)
     throw new RangeError("An indicator may declare at most 128 inputs.");
-  if (frame.discovery) frame.inputs.push(definition);
-  else {
-    const expected = frame.inputs[index];
+  if (frame.discovery) {
     if (
-      expected?.key !== definition.key ||
-      expected.type !== definition.type ||
-      expected.label !== definition.label
+      callsite !== undefined &&
+      frame.inputs.some((value) => value.key === callsite.id)
     )
       throw new Error(
-        "Input declarations must remain in the same order on every bar.",
+        `Compiler call-site identity ${callsite.id} was used by more than one input declaration.`,
+      );
+    frame.inputs.push(definition);
+    if (callsite !== undefined)
+      inputDeclarationMetadata.set(definition, { labelExplicit });
+  } else {
+    const expected =
+      callsite === undefined
+        ? frame.inputs[index]
+        : frame.inputs.find((value) => value.key === callsite.id);
+    let comparableDefinition = definition;
+    if (callsite !== undefined && expected !== undefined) {
+      const declarationMetadata = inputDeclarationMetadata.get(expected);
+      if (
+        declarationMetadata === undefined ||
+        declarationMetadata.labelExplicit !== labelExplicit
+      )
+        throw new Error(
+          `Input declaration identity ${callsite.id} does not match the discovered input contract.`,
+        );
+      if (!declarationMetadata.labelExplicit)
+        comparableDefinition = { ...definition, label: expected.label };
+    }
+    if (!sameInputDefinition(expected, comparableDefinition))
+      throw new Error(
+        callsite === undefined
+          ? "Input declarations must remain in the same order on every bar."
+          : `Input declaration identity ${callsite.id} does not match the discovered input contract.`,
       );
   }
   return normalizeIndicatorInputValue(
@@ -107,17 +208,25 @@ function readInput(definition: IndicatorInputDefinition): IndicatorInputValue {
   );
 }
 
-function metadata(options: InputOptions) {
-  const key = options.key ?? `input_${authoringFrame().inputIndex}`;
+function metadata(
+  options: InputOptions,
+  callsite: CompilerCallsite | undefined,
+) {
+  const positionalKey = `input_${authoringFrame().inputIndex}`;
+  const key = callsite?.id ?? options.key ?? positionalKey;
   return {
     key,
-    label: options.title ?? key,
+    label: options.title ?? options.key ?? positionalKey,
     ...(options.group === undefined ? {} : { group: options.group }),
     ...(options.description === undefined
       ? {}
       : { description: options.description }),
     ...(options.effect === undefined ? {} : { effect: options.effect }),
   };
+}
+
+function hasExplicitLabel(options: InputOptions): boolean {
+  return options.title !== undefined || options.key !== undefined;
 }
 
 function stringOptions(
@@ -131,6 +240,8 @@ function stringOptions(
 function number(
   defaultValue: number,
   options: NumberInputOptions = {},
+  hiddenCallsite?: unknown,
+  callee = "input.float",
 ): number {
   if (
     !Number.isFinite(defaultValue) ||
@@ -145,14 +256,19 @@ function number(
     (options.max !== undefined && defaultValue > options.max)
   )
     throw new RangeError("Numeric input declaration is invalid.");
-  const value = readInput({
-    ...metadata(options),
-    type: "number",
-    defaultValue,
-    ...(options.min === undefined ? {} : { min: options.min }),
-    ...(options.max === undefined ? {} : { max: options.max }),
-    ...(options.step === undefined ? {} : { step: options.step }),
-  }) as number;
+  const callsite = readCompilerCallsite(hiddenCallsite, "input", callee);
+  const value = readInput(
+    {
+      ...metadata(options, callsite),
+      type: "number",
+      defaultValue,
+      ...(options.min === undefined ? {} : { min: options.min }),
+      ...(options.max === undefined ? {} : { max: options.max }),
+      ...(options.step === undefined ? {} : { step: options.step }),
+    },
+    callsite,
+    hasExplicitLabel(options),
+  ) as number;
   return value;
 }
 
@@ -169,6 +285,7 @@ function stringInput(
 function stringInput(
   defaultValue: string,
   options: StringInputOptions = {},
+  hiddenCallsite?: unknown,
 ): string {
   const choices = stringOptions(options.options);
   if (
@@ -176,12 +293,21 @@ function stringInput(
     !choices.some((option) => option.value === defaultValue)
   )
     throw new RangeError("String input default must be one of its options.");
-  return readInput({
-    ...metadata(options),
-    type: "string",
-    defaultValue,
-    ...(choices === undefined ? {} : { options: choices }),
-  }) as string;
+  const callsite = readCompilerCallsite(
+    hiddenCallsite,
+    "input",
+    "input.string",
+  );
+  return readInput(
+    {
+      ...metadata(options, callsite),
+      type: "string",
+      defaultValue,
+      ...(choices === undefined ? {} : { options: choices }),
+    },
+    callsite,
+    hasExplicitLabel(options),
+  ) as string;
 }
 
 export interface InputApi {
@@ -203,25 +329,62 @@ export interface InputApi {
 
 export const input: InputApi = Object.freeze({
   float: number,
-  int(defaultValue: number, options: NumberInputOptions = {}): number {
+  int(
+    defaultValue: number,
+    options: NumberInputOptions = {},
+    hiddenCallsite?: unknown,
+  ): number {
     if (!Number.isSafeInteger(defaultValue))
       throw new RangeError("Integer input default must be a safe integer.");
-    const value = number(defaultValue, { ...options, step: 1 });
+    const value = number(
+      defaultValue,
+      { ...options, step: 1 },
+      hiddenCallsite,
+      "input.int",
+    );
     if (!Number.isSafeInteger(value)) return defaultValue;
     return value;
   },
-  bool: (defaultValue: boolean, options: InputOptions = {}): boolean =>
-    readInput({
-      ...metadata(options),
-      type: "boolean",
-      defaultValue,
-    }) as boolean,
+  bool: (
+    defaultValue: boolean,
+    options: InputOptions = {},
+    hiddenCallsite?: unknown,
+  ): boolean => {
+    const callsite = readCompilerCallsite(
+      hiddenCallsite,
+      "input",
+      "input.bool",
+    );
+    return readInput(
+      {
+        ...metadata(options, callsite),
+        type: "boolean",
+        defaultValue,
+      },
+      callsite,
+      hasExplicitLabel(options),
+    ) as boolean;
+  },
   string: stringInput,
-  color: (defaultValue: string, options: InputOptions = {}): string =>
-    readInput({
-      ...metadata(options),
-      type: "string",
-      defaultValue,
-      editor: "color",
-    }) as string,
+  color: (
+    defaultValue: string,
+    options: InputOptions = {},
+    hiddenCallsite?: unknown,
+  ): string => {
+    const callsite = readCompilerCallsite(
+      hiddenCallsite,
+      "input",
+      "input.color",
+    );
+    return readInput(
+      {
+        ...metadata(options, callsite),
+        type: "string",
+        defaultValue,
+        editor: "color",
+      },
+      callsite,
+      hasExplicitLabel(options),
+    ) as string;
+  },
 });

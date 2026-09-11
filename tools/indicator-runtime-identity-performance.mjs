@@ -1,0 +1,367 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { buildIndicatorPackage } from "./build-indicator-package.mjs";
+
+// Run after npm run build. This exercises the packaged SDK v2 identity path end to end.
+const historyBudgetMs = 60_000;
+const updateBudgetMs = 100;
+const historyBars = 100_000;
+const buildingUpdates = 1_000;
+const maximumIdentityDeclarations = 128;
+const context = { instrumentId: "PERF", timeframeId: "1m" };
+const candle = (index, close = 100 + (index % 20) / 10) => ({
+  ...context,
+  openTimeMs: index * 60_000,
+  open: close - 1,
+  high: close + 1,
+  low: close - 2,
+  close,
+  volume: index + 1,
+});
+
+const createPackagedInstance = async ({ source, outputRoot, id }) => {
+  const { manifest, packageRoot } = await buildIndicatorPackage({
+    source,
+    outputRoot,
+    id,
+    version: "0.1.0",
+  });
+  const entry = await readFile(path.join(packageRoot, manifest.entry));
+  const { default: plugin } = await import(
+    `data:text/javascript;base64,${entry.toString("base64")}`
+  );
+  return plugin.createInstance({}, context);
+};
+
+const expectedEma = (committedValues, candidate, period) => {
+  if (committedValues.length + 1 < period) return Number.NaN;
+  if (committedValues.length < period) {
+    return (
+      [...committedValues, candidate].reduce((sum, value) => sum + value, 0) /
+      period
+    );
+  }
+  const alpha = 2 / (period + 1);
+  let average =
+    committedValues.slice(0, period).reduce((sum, value) => sum + value, 0) /
+    period;
+  for (let index = period; index < committedValues.length; index += 1) {
+    average = alpha * (committedValues[index] ?? 0) + (1 - alpha) * average;
+  }
+  return alpha * candidate + (1 - alpha) * average;
+};
+
+const expectedSma = (committedValues, candidate, period) => {
+  const values = [...committedValues.slice(-(period - 1)), candidate];
+  if (values.length < period) return Number.NaN;
+  return values.reduce((sum, value) => sum + value, 0) / period;
+};
+
+const assertApproxEqual = (actual, expected, label) => {
+  assert.equal(typeof actual, "number", `${label} must be numeric.`);
+  assert.ok(
+    Number.isFinite(actual) && Math.abs(actual - expected) < 1e-9,
+    `${label} expected ${expected}, received ${actual}.`,
+  );
+};
+
+const assertRuntimeState = ({
+  instance,
+  committedCloses,
+  candidateClose,
+  fastCount,
+  slowCount,
+  label,
+}) => {
+  const point = instance.snapshot().points.at(-1);
+  assert.ok(point, `${label} must produce a point.`);
+  assert.equal(point.values["fast-count"], fastCount, `${label} fast count`);
+  assert.equal(point.values["slow-count"], slowCount, `${label} slow count`);
+  assertApproxEqual(
+    point.values.fast,
+    expectedEma(committedCloses, candidateClose, 5),
+    `${label} fast EMA`,
+  );
+  assertApproxEqual(
+    point.values.slow,
+    expectedSma(committedCloses, candidateClose, 14),
+    `${label} slow SMA`,
+  );
+};
+
+const sourceDirectory = await mkdtemp(
+  path.join(import.meta.dirname, ".runtime-identity-performance-source-"),
+);
+const outputDirectory = await mkdtemp(
+  path.join(os.tmpdir(), "erc-runtime-identity-performance-"),
+);
+
+try {
+  const source = path.join(sourceDirectory, "indicator.ts");
+  await writeFile(
+    source,
+    `import { defineIndicator, input, plot, series, signal, ta } from "@erc-chart/indicator-sdk";
+
+function fastState(value) {
+  const length = input.int(5, { title: "Fast Length", min: 1, max: 50 });
+  const count = series(0, (previous) => previous + 1);
+  const average = ta.ema(value, length);
+  plot.line(average, { key: "fast", title: "Fast" });
+  return { average, count };
+}
+
+function slowState(value, openTimeMs) {
+  const length = input.int(14, { title: "Slow Length", min: 1, max: 50 });
+  const count = series(100, (previous) => previous + 2);
+  const average = ta.sma(value, length);
+  plot.line(average, { key: "slow", title: "Slow" });
+  plot.drawings("zones", () => {
+    plot.box({
+      id: "slow-zone",
+      startTimeMs: openTimeMs,
+      endTimeMs: openTimeMs + 60_000,
+      top: value + 1,
+      bottom: value - 1,
+      color: "#555555",
+    });
+  });
+  return { average, count };
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-performance.main", name: "Runtime identity performance" },
+  ({ close, openTimeMs }) => {
+    let fast;
+    let slow;
+    if (Math.floor(close * 10) % 2 === 0) {
+      fast = fastState(close);
+      slow = slowState(close, openTimeMs);
+    } else {
+      slow = slowState(close, openTimeMs);
+      fast = fastState(close);
+    }
+    signal(Number.isFinite(fast.average) && fast.average > slow.average, "long");
+    plot.histogram(fast.count, { key: "fast-count", title: "Fast Count" });
+    plot.histogram(slow.count, { key: "slow-count", title: "Slow Count" });
+  },
+);
+`,
+    "utf8",
+  );
+
+  const instance = await createPackagedInstance({
+    source,
+    outputRoot: path.join(outputDirectory, "package"),
+    id: "erc.indicator.runtime-identity-performance",
+  });
+  try {
+    const lifecycleCandles = Array.from({ length: 20 }, (_, index) =>
+      candle(index),
+    );
+    const lifecycleCommittedCloses = lifecycleCandles
+      .slice(0, -1)
+      .map((value) => value.close);
+    instance.onHistory(lifecycleCandles);
+    assertRuntimeState({
+      instance,
+      committedCloses: lifecycleCommittedCloses,
+      candidateClose: lifecycleCandles.at(-1).close,
+      fastCount: 20,
+      slowCount: 140,
+      label: "lifecycle history",
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const buildingClose = 150 + index / 10;
+      instance.onBuildingBar(candle(19, buildingClose));
+      assertRuntimeState({
+        instance,
+        committedCloses: lifecycleCommittedCloses,
+        candidateClose: buildingClose,
+        fastCount: 20,
+        slowCount: 140,
+        label: `lifecycle building ${index + 1}`,
+      });
+    }
+
+    const lifecycleFinalizedClose = 155;
+    instance.onFinalizedBar(candle(19, lifecycleFinalizedClose));
+    assertRuntimeState({
+      instance,
+      committedCloses: lifecycleCommittedCloses,
+      candidateClose: lifecycleFinalizedClose,
+      fastCount: 20,
+      slowCount: 140,
+      label: "lifecycle finalization",
+    });
+
+    const nextBuildingClose = 160;
+    instance.onBuildingBar(candle(20, nextBuildingClose));
+    assertRuntimeState({
+      instance,
+      committedCloses: [...lifecycleCommittedCloses, lifecycleFinalizedClose],
+      candidateClose: nextBuildingClose,
+      fastCount: 21,
+      slowCount: 142,
+      label: "lifecycle post-finalization building",
+    });
+
+    const candles = Array.from({ length: historyBars }, (_, index) =>
+      candle(index),
+    );
+    const committedCloses = candles.slice(0, -1).map((value) => value.close);
+    const historyStarted = performance.now();
+    instance.onHistory(candles);
+    const historyElapsedMs = performance.now() - historyStarted;
+    assert.equal(instance.snapshot().points.length, historyBars);
+    assertRuntimeState({
+      instance,
+      committedCloses,
+      candidateClose: candles.at(-1).close,
+      fastCount: historyBars,
+      slowCount: 100 + 2 * historyBars,
+      label: "performance history",
+    });
+
+    let maximumBuildingMs = 0;
+    let latestBuildingClose = Number.NaN;
+    const buildingStarted = performance.now();
+    for (let index = 0; index < buildingUpdates; index += 1) {
+      latestBuildingClose = 200 + (index % 20) / 10;
+      const updateStarted = performance.now();
+      instance.onBuildingBar(candle(historyBars - 1, latestBuildingClose));
+      maximumBuildingMs = Math.max(
+        maximumBuildingMs,
+        performance.now() - updateStarted,
+      );
+    }
+    const buildingElapsedMs = performance.now() - buildingStarted;
+    assertRuntimeState({
+      instance,
+      committedCloses,
+      candidateClose: latestBuildingClose,
+      fastCount: historyBars,
+      slowCount: 100 + 2 * historyBars,
+      label: "performance repeated building",
+    });
+
+    const finalizedClose = 205;
+    const finalizedStarted = performance.now();
+    instance.onFinalizedBar(candle(historyBars - 1, finalizedClose));
+    const finalizedElapsedMs = performance.now() - finalizedStarted;
+    assertRuntimeState({
+      instance,
+      committedCloses,
+      candidateClose: finalizedClose,
+      fastCount: historyBars,
+      slowCount: 100 + 2 * historyBars,
+      label: "performance finalization",
+    });
+
+    console.log(
+      JSON.stringify({
+        component: "indicator-runtime-identity",
+        historyBars,
+        historyElapsedMs,
+        historyBudgetMs,
+        buildingUpdates,
+        buildingElapsedMs,
+        maximumBuildingMs,
+        finalizedElapsedMs,
+        updateBudgetMs,
+      }),
+    );
+
+    assert.ok(
+      historyElapsedMs < historyBudgetMs,
+      `SDK v2 identity history replay exceeded the ${historyBudgetMs} ms worker budget: ${historyElapsedMs}`,
+    );
+    assert.ok(
+      maximumBuildingMs < updateBudgetMs,
+      `SDK v2 identity building update exceeded the ${updateBudgetMs} ms worker budget: ${maximumBuildingMs}`,
+    );
+    assert.ok(
+      finalizedElapsedMs < updateBudgetMs,
+      `SDK v2 identity finalization exceeded the ${updateBudgetMs} ms worker budget: ${finalizedElapsedMs}`,
+    );
+  } finally {
+    instance.dispose();
+  }
+
+  const maximumCardinalitySource = path.join(
+    sourceDirectory,
+    "maximum-cardinality.ts",
+  );
+  const inputDeclarations = Array.from(
+    { length: maximumIdentityDeclarations },
+    (_, index) =>
+      `    const input${index} = input.int(${index + 1}, { title: "Input ${index}" });`,
+  ).join("\n");
+  const plotDeclarations = Array.from(
+    { length: maximumIdentityDeclarations },
+    (_, index) =>
+      `    plot.line(close + input${index}, { title: "Plot ${index}" });`,
+  ).join("\n");
+  await writeFile(
+    maximumCardinalitySource,
+    `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-cardinality.main", name: "Runtime identity cardinality" },
+  ({ close }) => {
+${inputDeclarations}
+${plotDeclarations}
+  },
+);
+`,
+    "utf8",
+  );
+
+  const maximumCardinalityInstance = await createPackagedInstance({
+    source: maximumCardinalitySource,
+    outputRoot: path.join(outputDirectory, "maximum-cardinality-package"),
+    id: "erc.indicator.runtime-identity-cardinality",
+  });
+  try {
+    maximumCardinalityInstance.onHistory([candle(0)]);
+    let maximumCardinalityBuildingMs = 0;
+    const maximumCardinalityStarted = performance.now();
+    for (let index = 0; index < buildingUpdates; index += 1) {
+      const updateStarted = performance.now();
+      maximumCardinalityInstance.onBuildingBar(
+        candle(0, 300 + (index % 20) / 10),
+      );
+      maximumCardinalityBuildingMs = Math.max(
+        maximumCardinalityBuildingMs,
+        performance.now() - updateStarted,
+      );
+    }
+    const maximumCardinalityElapsedMs =
+      performance.now() - maximumCardinalityStarted;
+
+    console.log(
+      JSON.stringify({
+        component: "indicator-runtime-identity-max-cardinality",
+        inputs: maximumIdentityDeclarations,
+        plots: maximumIdentityDeclarations,
+        buildingUpdates,
+        buildingElapsedMs: maximumCardinalityElapsedMs,
+        maximumBuildingMs: maximumCardinalityBuildingMs,
+        updateBudgetMs,
+      }),
+    );
+
+    assert.ok(
+      maximumCardinalityBuildingMs < updateBudgetMs,
+      `SDK v2 maximum-cardinality identity lookup exceeded the ${updateBudgetMs} ms worker budget: ${maximumCardinalityBuildingMs}`,
+    );
+  } finally {
+    maximumCardinalityInstance.dispose();
+  }
+} finally {
+  await rm(sourceDirectory, { recursive: true, force: true });
+  await rm(outputDirectory, { recursive: true, force: true });
+}
