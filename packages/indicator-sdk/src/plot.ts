@@ -164,8 +164,7 @@ function discoveryCompilerDefinition(
   };
   if (
     frame.plots.some(
-      (plot, plotIndex) =>
-        plotIndex !== index && plotKeysCollide(plot, next),
+      (plot, plotIndex) => plotIndex !== index && plotKeysCollide(plot, next),
     )
   )
     throw new Error("Plot keys must be unique.");
