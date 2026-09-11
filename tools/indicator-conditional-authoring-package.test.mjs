@@ -87,3 +87,49 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("conditional TA preserves its state and later TA identities", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+function optionalAverage(value) {
+  return ta.ema(value, 2);
+}
+function alwaysAverage(value) {
+  return ta.ema(value, 2);
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.conditional-ta.main", name: "Conditional TA" },
+  ({ close }) => {
+    const optional = close > 15 ? optionalAverage(close) : null;
+    const always = alwaysAverage(close);
+    plot.line(optional, { key: "optional", title: "Optional" });
+    plot.line(always, { key: "always", title: "Always" });
+  },
+);
+`,
+    "erc.indicator.conditional-ta",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 20),
+      candle(2, 10),
+      candle(3, 30),
+    ]);
+    const points = instance.snapshot().points;
+    assert.deepEqual(
+      points.map((point) => point.values.optional),
+      [null, null, null, 25],
+    );
+    assert.equal(points[0].values.always, null);
+    assert.equal(points[1].values.always, 15);
+    assert.ok(Math.abs(points[2].values.always - 35 / 3) < 1e-12);
+    assert.ok(Math.abs(points[3].values.always - 215 / 9) < 1e-12);
+  } finally {
+    instance.dispose();
+  }
+});
