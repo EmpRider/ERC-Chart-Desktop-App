@@ -127,6 +127,60 @@ export default defineIndicator(
   }
 });
 
+test("plot replay rejects an omitted explicit key", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.plot-key-contract.main", name: "Plot key contract" },
+  ({ close }) => {
+    plot.line(
+      close,
+      close > 15 ? { title: "Stable" } : { key: "stable", title: "Stable" },
+    );
+  },
+);
+`,
+    "erc.indicator.plot-key-contract",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => instance.onHistory([candle(0, 10), candle(1, 20)]),
+      /Plot declarations must preserve their identity, kind, key and options on every bar\./u,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("plot replay rejects an omitted explicit title", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.plot-title-contract.main", name: "Plot title contract" },
+  ({ close }) => {
+    plot.line(
+      close,
+      close > 15 ? { key: "stable" } : { key: "stable", title: "Stable" },
+    );
+  },
+);
+`,
+    "erc.indicator.plot-title-contract",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => instance.onHistory([candle(0, 10), candle(1, 20)]),
+      /Plot declarations must preserve their identity, kind, key and options on every bar\./u,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("drawing scope state survives reordering", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
