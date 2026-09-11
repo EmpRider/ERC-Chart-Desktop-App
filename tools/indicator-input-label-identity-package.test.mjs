@@ -55,3 +55,60 @@ export default defineIndicator(
   for (const definition of plugin.definition.inputs)
     assert.match(definition.key, /^erc-v2-input-[0-9a-f]{24}$/u);
 });
+
+test("implicit input labels remain stable when compiler callsites reorder", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+
+function fastLength() {
+  return input.int(2);
+}
+function slowLength() {
+  return input.int(3);
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.input-label-reorder.main", name: "Input label reorder" },
+  ({ close }) => {
+    let fast;
+    let slow;
+    if (close > 15) {
+      slow = slowLength();
+      fast = fastLength();
+    } else {
+      fast = fastLength();
+      slow = slowLength();
+    }
+    plot.line(fast * 100 + slow, { key: "result", title: "Result" });
+  },
+);
+`,
+    "erc.indicator.input-label-reorder",
+  );
+
+  assert.deepEqual(
+    plugin.definition.inputs.map(({ label }) => label),
+    ["input_0", "input_1"],
+  );
+
+  const context = { instrumentId: "TEST", timeframeId: "1m" };
+  const candle = (index, close) => ({
+    ...context,
+    openTimeMs: index * 60_000,
+    open: close - 1,
+    high: close + 1,
+    low: close - 2,
+    close,
+    volume: index + 1,
+  });
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values.result),
+      [203, 203, 203],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
