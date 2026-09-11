@@ -201,7 +201,10 @@ function valuePlot(
         `Compiler plot declaration ${callsite.id} for ${callsite.callee} is missing; rebuild the indicator package.`,
       );
   } else {
-    if (frame.plotIndex + usage.identities.size >= 128)
+    const positionalCapacity = frame.discovery
+      ? frame.plots.length
+      : frame.plotIndex + usage.identities.size;
+    if (positionalCapacity >= 128)
       throw new RangeError("An indicator may declare at most 128 plots.");
     index = usage.positionalIndex++;
     frame.plotIndex += 1;

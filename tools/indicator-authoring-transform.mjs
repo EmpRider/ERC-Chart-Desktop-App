@@ -28,13 +28,21 @@ export function transformIndicatorAuthoring(
     code: historyResult.code,
     changed: callsiteResult.changed || historyResult.changed,
     callsites: callsiteResult.callsites,
+    plotDeclarations: callsiteResult.plotDeclarations,
   };
 }
 
-export function indicatorAuthoringTransformPlugin({ sourceRoot } = {}) {
+export function indicatorAuthoringTransformPlugin({
+  sourceRoot,
+  onTransform,
+} = {}) {
   if (typeof sourceRoot !== "string" || sourceRoot.length === 0)
     throw new TypeError(
       "indicatorAuthoringTransformPlugin sourceRoot is required.",
+    );
+  if (onTransform !== undefined && typeof onTransform !== "function")
+    throw new TypeError(
+      "indicatorAuthoringTransformPlugin onTransform must be a function.",
     );
   const root = path.resolve(sourceRoot);
   return {
@@ -47,6 +55,10 @@ export function indicatorAuthoringTransformPlugin({ sourceRoot } = {}) {
         const transformed = transformIndicatorAuthoring(sourceText, {
           fileName: args.path,
           sourceFileId: stableSourceFileId(root, args.path),
+        });
+        onTransform?.({
+          fileName: path.resolve(args.path),
+          plotDeclarations: transformed.plotDeclarations,
         });
         if (!transformed.changed) return undefined;
         return { contents: transformed.code, loader: loaderFor(args.path) };

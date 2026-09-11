@@ -263,6 +263,26 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
         );
       continue;
     }
+    if (
+      ts.isMethodDeclaration(property) ||
+      ts.isGetAccessorDeclaration(property) ||
+      ts.isSetAccessorDeclaration(property)
+    ) {
+      const name = staticPropertyName(property.name);
+      if (name === undefined)
+        throw syntaxError(
+          sourceFile,
+          property,
+          "Plot option names must be static so declaration metadata can be compiled.",
+        );
+      if (staticPlotDeclarationOptions.has(name))
+        throw syntaxError(
+          sourceFile,
+          property,
+          `Plot declaration option "${name}" must use a static literal.`,
+        );
+      continue;
+    }
     if (!ts.isPropertyAssignment(property)) continue;
     const name = staticPropertyName(property.name);
     if (name === undefined)

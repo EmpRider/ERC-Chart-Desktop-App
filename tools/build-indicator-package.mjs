@@ -5,7 +5,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
 import { indicatorAuthoringTransformPlugin } from "./indicator-authoring-transform.mjs";
-import { transformIndicatorCallsites } from "./indicator-authoring/callsite-transform.mjs";
 import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
 const indicatorCompilerBaseDefine = {
@@ -30,18 +29,6 @@ async function findAuthoringRoot(sourcePath) {
     if (parent === current) return fallback;
     current = parent;
   }
-}
-
-function withinRoot(root, fileName) {
-  const relative = path.relative(root, fileName);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  );
-}
-
-function compilerSourceFileId(root, fileName) {
-  return path.relative(root, fileName).replaceAll(path.sep, "/");
 }
 
 function comparePlotDeclarations(left, right) {
@@ -77,8 +64,8 @@ function normalizePlotDeclarations(values) {
 
 async function collectCompilerPlotDeclarations(
   sourcePath,
-  authoringRoot,
   authoringTransform,
+  plotDeclarationsByInput,
 ) {
   const prebuild = await build({
     entryPoints: [sourcePath],
@@ -105,16 +92,9 @@ async function collectCompilerPlotDeclarations(
 
   const byId = new Map();
   for (const inputName of inputNames) {
-    const inputPath = path.resolve(inputName);
-    if (!withinRoot(authoringRoot, inputPath)) continue;
-    if (inputPath.includes(`${path.sep}node_modules${path.sep}`)) continue;
-    if (!/\.[cm]?[jt]sx?$/u.test(inputPath)) continue;
-    const sourceText = await readFile(inputPath, "utf8");
-    const transformed = transformIndicatorCallsites(sourceText, {
-      fileName: inputPath,
-      sourceFileId: compilerSourceFileId(authoringRoot, inputPath),
-    });
-    for (const declaration of transformed.plotDeclarations) {
+    const declarations = plotDeclarationsByInput.get(path.resolve(inputName));
+    if (declarations === undefined) continue;
+    for (const declaration of declarations) {
       const existing = byId.get(declaration.id);
       if (existing !== undefined) {
         if (JSON.stringify(existing) !== JSON.stringify(declaration))
@@ -157,13 +137,17 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
+  const plotDeclarationsByInput = new Map();
   const authoringTransform = indicatorAuthoringTransformPlugin({
     sourceRoot: authoringRoot,
+    onTransform({ fileName, plotDeclarations }) {
+      plotDeclarationsByInput.set(fileName, plotDeclarations);
+    },
   });
   const compilerPlotDeclarations = await collectCompilerPlotDeclarations(
     sourcePath,
-    authoringRoot,
     authoringTransform,
+    plotDeclarationsByInput,
   );
   const indicatorCompilerDefine = {
     ...indicatorCompilerBaseDefine,
