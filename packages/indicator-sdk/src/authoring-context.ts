@@ -94,16 +94,15 @@ export function useKernel<T>(
   callsite?: CompilerCallsite,
 ): T {
   const frame = authoringFrame();
-  const index = frame.kernelIndex++;
-  if (index >= 256)
-    throw new RangeError("An indicator may use at most 256 TA calls.");
-
   const usage = kernelUsage(frame);
+
   if (callsite !== undefined) {
     if (usage.identities.has(callsite.id))
       throw new Error(
         `Compiler call-site identity ${callsite.id} for ${callsite.callee} executed more than once in one bar.`,
       );
+    if (frame.kernelIndex + usage.identities.size >= 256)
+      throw new RangeError("An indicator may use at most 256 TA calls.");
     usage.identities.add(callsite.id);
     const store = identityKernelStore(frame.kernels);
     const existing = store.get(callsite.id);
@@ -119,6 +118,9 @@ export function useKernel<T>(
     return existing.value as T;
   }
 
+  if (frame.kernelIndex + usage.identities.size >= 256)
+    throw new RangeError("An indicator may use at most 256 TA calls.");
+  frame.kernelIndex += 1;
   const positionalIndex = usage.positionalIndex++;
   const existing = frame.kernels[positionalIndex];
   if (existing === undefined) {
