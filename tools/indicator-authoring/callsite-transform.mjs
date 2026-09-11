@@ -26,6 +26,12 @@ const scalarPlotKinds = new Map([
   ["histogram", "histogram"],
   ["shape", "shape"],
 ]);
+const staticPlotDeclarationOptions = new Set([
+  "key",
+  "title",
+  "style",
+  "direction",
+]);
 
 function withoutNames(map, names) {
   if (map.size === 0 || names.size === 0) return map;
@@ -220,7 +226,7 @@ function staticPrimitive(node) {
   return undefined;
 }
 
-function compilerPlotDeclaration(node, classified, metadata) {
+function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
   if (classified.kind !== "plot") return undefined;
   const method = classified.callee.slice("plot.".length);
   const kind = scalarPlotKinds.get(method);
@@ -233,12 +239,38 @@ function compilerPlotDeclaration(node, classified, metadata) {
     source: metadata.source,
   };
   const options = node.arguments[1];
-  if (options === undefined || !ts.isObjectLiteralExpression(options))
-    return Object.freeze(declaration);
+  if (options === undefined) return Object.freeze(declaration);
+  if (!ts.isObjectLiteralExpression(options))
+    throw syntaxError(
+      sourceFile,
+      options,
+      "Plot options must use an object literal so declaration metadata can be compiled.",
+    );
 
   for (const property of options.properties) {
+    if (ts.isSpreadAssignment(property))
+      throw syntaxError(
+        sourceFile,
+        property,
+        "Plot options cannot use spreads because declaration metadata must be statically knowable.",
+      );
+    if (ts.isShorthandPropertyAssignment(property)) {
+      if (staticPlotDeclarationOptions.has(property.name.text))
+        throw syntaxError(
+          sourceFile,
+          property,
+          `Plot declaration option "${property.name.text}" must use a static literal.`,
+        );
+      continue;
+    }
     if (!ts.isPropertyAssignment(property)) continue;
     const name = staticPropertyName(property.name);
+    if (name === undefined)
+      throw syntaxError(
+        sourceFile,
+        property,
+        "Plot option names must be static so declaration metadata can be compiled.",
+      );
     if (
       name !== "key" &&
       name !== "title" &&
@@ -249,6 +281,12 @@ function compilerPlotDeclaration(node, classified, metadata) {
     )
       continue;
     const value = staticPrimitive(property.initializer);
+    if (staticPlotDeclarationOptions.has(name) && value === undefined)
+      throw syntaxError(
+        sourceFile,
+        property.initializer,
+        `Plot declaration option "${name}" must use a static literal.`,
+      );
     if (value !== undefined) declaration[name] = value;
   }
   return Object.freeze(declaration);
@@ -390,6 +428,7 @@ export function transformIndicatorCallsites(
           node,
           classified,
           metadata,
+          sourceFile,
         );
         if (plotDeclaration !== undefined)
           plotDeclarations.push(plotDeclaration);
