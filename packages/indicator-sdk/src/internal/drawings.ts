@@ -142,6 +142,8 @@ export function drawingController(
   while (registry.size > MAX_DRAWINGS) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
+    const evicted = registry.get(oldest);
+    if (evicted !== undefined) evicted.committed = undefined;
     registry.delete(oldest);
   }
   return controller;
