@@ -176,16 +176,10 @@ export async function buildIndicatorPackage({
   const authoringRoot = await findAuthoringRoot(sourcePath);
   const entryTransform = authoringTransformContext(authoringRoot);
   const metadataTransform = authoringTransformContext(authoringRoot);
-  const entryPlotDeclarations = await collectCompilerPlotDeclarations(
+  const plotDeclarations = await collectCompilerPlotDeclarations(
     sourcePath,
     entryTransform.authoringTransform,
     entryTransform.plotDeclarationsByInput,
-    { platform: "neutral", target: "es2022" },
-  );
-  const metadataPlotDeclarations = await collectCompilerPlotDeclarations(
-    sourcePath,
-    metadataTransform.authoringTransform,
-    metadataTransform.plotDeclarationsByInput,
     { platform: "neutral", target: "es2022" },
   );
   await rm(packageRoot, { recursive: true, force: true });
@@ -198,7 +192,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
-    define: indicatorCompilerDefine(entryPlotDeclarations),
+    define: indicatorCompilerDefine(plotDeclarations),
     plugins: [entryTransform.authoringTransform],
   });
   await build({
@@ -209,7 +203,7 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
-    define: indicatorCompilerDefine(metadataPlotDeclarations),
+    define: indicatorCompilerDefine(plotDeclarations),
     plugins: [metadataTransform.authoringTransform],
   });
   const metadataModule = await import(
