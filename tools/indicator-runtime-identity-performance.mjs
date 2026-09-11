@@ -22,6 +22,20 @@ const candle = (index, close = 100 + (index % 20) / 10) => ({
   volume: index + 1,
 });
 
+const createPackagedInstance = async ({ source, outputRoot, id }) => {
+  const { manifest, packageRoot } = await buildIndicatorPackage({
+    source,
+    outputRoot,
+    id,
+    version: "0.1.0",
+  });
+  const entry = await readFile(path.join(packageRoot, manifest.entry));
+  const { default: plugin } = await import(
+    `data:text/javascript;base64,${entry.toString("base64")}`
+  );
+  return plugin.createInstance({}, context);
+};
+
 const sourceDirectory = await mkdtemp(
   path.join(import.meta.dirname, ".runtime-identity-performance-source-"),
 );
@@ -81,18 +95,11 @@ export default defineIndicator(
     "utf8",
   );
 
-  const { manifest, packageRoot } = await buildIndicatorPackage({
+  const instance = await createPackagedInstance({
     source,
     outputRoot: path.join(outputDirectory, "package"),
     id: "erc.indicator.runtime-identity-performance",
-    version: "0.1.0",
   });
-  const entry = await readFile(path.join(packageRoot, manifest.entry));
-  const { default: plugin } = await import(
-    `data:text/javascript;base64,${entry.toString("base64")}`
-  );
-
-  const instance = plugin.createInstance({}, context);
   try {
     const candles = Array.from({ length: historyBars }, (_, index) =>
       candle(index),
@@ -177,25 +184,11 @@ ${plotDeclarations}
     "utf8",
   );
 
-  const maximumCardinalityPackage = await buildIndicatorPackage({
+  const maximumCardinalityInstance = await createPackagedInstance({
     source: maximumCardinalitySource,
     outputRoot: path.join(outputDirectory, "maximum-cardinality-package"),
     id: "erc.indicator.runtime-identity-cardinality",
-    version: "0.1.0",
   });
-  const maximumCardinalityEntry = await readFile(
-    path.join(
-      maximumCardinalityPackage.packageRoot,
-      maximumCardinalityPackage.manifest.entry,
-    ),
-  );
-  const { default: maximumCardinalityPlugin } = await import(
-    `data:text/javascript;base64,${maximumCardinalityEntry.toString("base64")}`
-  );
-  const maximumCardinalityInstance = maximumCardinalityPlugin.createInstance(
-    {},
-    context,
-  );
   try {
     maximumCardinalityInstance.onHistory([candle(0)]);
     let maximumCardinalityBuildingMs = 0;
