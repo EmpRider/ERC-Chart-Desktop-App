@@ -367,17 +367,14 @@ function box(value: BoxDrawing, hiddenCallsite?: unknown): BoxHandle {
       controller.update((current) => {
         if (current.kind !== "box")
           throw new Error("Drawing handle kind changed unexpectedly.");
+        const borderColor = patch.borderColor ?? current.borderColor;
         const next: BoxDrawing = {
           left: patch.left ?? current.startTimeMs,
           right: patch.right ?? current.endTimeMs,
           top: patch.top ?? current.top,
           bottom: patch.bottom ?? current.bottom,
           color: patch.color ?? current.color,
-          ...(patch.borderColor !== undefined
-            ? { borderColor: patch.borderColor }
-            : current.borderColor === undefined
-              ? {}
-              : { borderColor: current.borderColor }),
+          ...(borderColor === undefined ? {} : { borderColor }),
         };
         return boxOverlay(controller.id, next);
       });
