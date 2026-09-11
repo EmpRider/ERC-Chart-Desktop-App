@@ -127,9 +127,11 @@ export default defineIndicator(
   }
 });
 
-test("plot replay rejects an omitted explicit key", async () => {
-  const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+test("compiler rejects dynamic plot options that can omit an explicit key", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(
+        `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 export default defineIndicator(
   { id: "erc.indicator.plot-key-contract.main", name: "Plot key contract" },
   ({ close }) => {
@@ -140,23 +142,17 @@ export default defineIndicator(
   },
 );
 `,
-    "erc.indicator.plot-key-contract",
+        "erc.indicator.plot-key-contract",
+      ),
+    /Plot options must use an object literal so declaration metadata can be compiled\./u,
   );
-
-  const instance = plugin.createInstance({}, context);
-  try {
-    assert.throws(
-      () => instance.onHistory([candle(0, 10), candle(1, 20)]),
-      /Plot declarations must preserve their identity, kind, key and options on every bar\./u,
-    );
-  } finally {
-    instance.dispose();
-  }
 });
 
-test("plot replay rejects an omitted explicit title", async () => {
-  const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+test("compiler rejects dynamic plot options that can omit an explicit title", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(
+        `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 export default defineIndicator(
   { id: "erc.indicator.plot-title-contract.main", name: "Plot title contract" },
   ({ close }) => {
@@ -167,18 +163,10 @@ export default defineIndicator(
   },
 );
 `,
-    "erc.indicator.plot-title-contract",
+        "erc.indicator.plot-title-contract",
+      ),
+    /Plot options must use an object literal so declaration metadata can be compiled\./u,
   );
-
-  const instance = plugin.createInstance({}, context);
-  try {
-    assert.throws(
-      () => instance.onHistory([candle(0, 10), candle(1, 20)]),
-      /Plot declarations must preserve their identity, kind, key and options on every bar\./u,
-    );
-  } finally {
-    instance.dispose();
-  }
 });
 
 test("drawing scope state survives reordering", async () => {
