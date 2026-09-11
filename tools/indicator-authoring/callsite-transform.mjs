@@ -20,6 +20,18 @@ const statefulTaMethods = new Set([
   "sma",
 ]);
 const drawingMethods = new Set(["box", "drawings", "remove", "segment"]);
+const scalarPlotKinds = new Map([
+  ["line", "line"],
+  ["hline", "hline"],
+  ["histogram", "histogram"],
+  ["shape", "shape"],
+]);
+const staticPlotDeclarationOptions = new Set([
+  "key",
+  "title",
+  "style",
+  "direction",
+]);
 
 function withoutNames(map, names) {
   if (map.size === 0 || names.size === 0) return map;
@@ -196,6 +208,112 @@ function sourceLocation(node, sourceFile, sourceFileId) {
   });
 }
 
+function staticPropertyName(name) {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  return undefined;
+}
+
+function staticPrimitive(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+    return node.text;
+  if (ts.isNumericLiteral(node)) return Number(node.text);
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(node.operand)
+  )
+    return -Number(node.operand.text);
+  return undefined;
+}
+
+function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
+  if (classified.kind !== "plot") return undefined;
+  const method = classified.callee.slice("plot.".length);
+  const kind = scalarPlotKinds.get(method);
+  if (kind === undefined) return undefined;
+
+  const declaration = {
+    id: metadata.id,
+    kind,
+    source: metadata.source,
+  };
+  const options = node.arguments[1];
+  if (options === undefined) return Object.freeze(declaration);
+  if (!ts.isObjectLiteralExpression(options))
+    throw syntaxError(
+      sourceFile,
+      options,
+      "Plot options must use an object literal so declaration metadata can be compiled.",
+    );
+
+  for (const property of options.properties) {
+    if (ts.isSpreadAssignment(property))
+      throw syntaxError(
+        sourceFile,
+        property,
+        "Plot options cannot use spreads because declaration metadata must be statically knowable.",
+      );
+    if (ts.isShorthandPropertyAssignment(property)) {
+      if (staticPlotDeclarationOptions.has(property.name.text))
+        throw syntaxError(
+          sourceFile,
+          property,
+          `Plot declaration option "${property.name.text}" must use a static literal.`,
+        );
+      continue;
+    }
+    if (
+      ts.isMethodDeclaration(property) ||
+      ts.isGetAccessorDeclaration(property) ||
+      ts.isSetAccessorDeclaration(property)
+    ) {
+      const name = staticPropertyName(property.name);
+      if (name === undefined)
+        throw syntaxError(
+          sourceFile,
+          property,
+          "Plot option names must be static so declaration metadata can be compiled.",
+        );
+      if (staticPlotDeclarationOptions.has(name))
+        throw syntaxError(
+          sourceFile,
+          property,
+          `Plot declaration option "${name}" must use a static literal.`,
+        );
+      continue;
+    }
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = staticPropertyName(property.name);
+    if (name === undefined)
+      throw syntaxError(
+        sourceFile,
+        property,
+        "Plot option names must be static so declaration metadata can be compiled.",
+      );
+    if (
+      name !== "key" &&
+      name !== "title" &&
+      name !== "color" &&
+      name !== "width" &&
+      name !== "style" &&
+      name !== "direction"
+    )
+      continue;
+    const value = staticPrimitive(property.initializer);
+    if (
+      staticPlotDeclarationOptions.has(name) &&
+      typeof value !== "string"
+    )
+      throw syntaxError(
+        sourceFile,
+        property.initializer,
+        `Plot declaration option "${name}" must use a static string literal.`,
+      );
+    if (value !== undefined) declaration[name] = value;
+  }
+  return Object.freeze(declaration);
+}
+
 function syntaxError(sourceFile, node, message) {
   const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
   return new SyntaxError(
@@ -271,6 +389,7 @@ export function transformIndicatorCallsites(
   const callsBySemanticKey = new Map();
   const callsById = new Map();
   const callsites = [];
+  const plotDeclarations = [];
 
   const collect = (node, bindings, namespaceLike) => {
     if (ts.isCallExpression(node)) {
@@ -327,6 +446,14 @@ export function transformIndicatorCallsites(
         callsBySemanticKey.set(semanticKey, metadata);
         callsById.set(id, { semanticKey, metadata });
         callsites.push(metadata);
+        const plotDeclaration = compilerPlotDeclaration(
+          node,
+          classified,
+          metadata,
+          sourceFile,
+        );
+        if (plotDeclaration !== undefined)
+          plotDeclarations.push(plotDeclaration);
       }
     }
 
@@ -339,7 +466,13 @@ export function transformIndicatorCallsites(
   };
 
   collect(sourceFile, rootBindings.named, rootBindings.namespaceLike);
-  if (callsites.length === 0) return { code: sourceText, changed: false, callsites };
+  if (callsites.length === 0)
+    return {
+      code: sourceText,
+      changed: false,
+      callsites,
+      plotDeclarations,
+    };
 
   const prefix = uniqueTokenPrefix(sourceText);
   const tokenNames = new Map(
@@ -390,5 +523,5 @@ export function transformIndicatorCallsites(
   ]);
   const code = printer.printFile(withMetadata);
   result.dispose();
-  return { code, changed: true, callsites };
+  return { code, changed: true, callsites, plotDeclarations };
 }
