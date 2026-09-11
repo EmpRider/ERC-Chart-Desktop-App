@@ -62,6 +62,33 @@ function normalizePlotDeclarations(values) {
   }));
 }
 
+function emittedPlotCallsiteIds(outputFiles) {
+  const code = outputFiles.map((file) => file.text).join("\n");
+  const callsiteTokens = new Map();
+  const callsitePattern =
+    /([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*Object\.freeze\(\{\s*__ercCallsite:\s*"v2",\s*id:\s*"([^"]+)",\s*kind:\s*"plot"/gu;
+  for (const match of code.matchAll(callsitePattern)) {
+    const token = match[1];
+    const id = match[2];
+    if (token !== undefined && id !== undefined) callsiteTokens.set(token, id);
+  }
+
+  const references = new Map(
+    [...callsiteTokens.keys()].map((token) => [token, 0]),
+  );
+  for (const match of code.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/gu)) {
+    const token = match[0];
+    const count = references.get(token);
+    if (count !== undefined) references.set(token, count + 1);
+  }
+
+  const emitted = new Set();
+  for (const [token, id] of callsiteTokens) {
+    if ((references.get(token) ?? 0) > 1) emitted.add(id);
+  }
+  return emitted;
+}
+
 async function collectCompilerPlotDeclarations(
   sourcePath,
   authoringTransform,
@@ -71,7 +98,6 @@ async function collectCompilerPlotDeclarations(
     entryPoints: [sourcePath],
     bundle: true,
     write: false,
-    metafile: true,
     platform: "neutral",
     format: "esm",
     target: "es2022",
@@ -83,18 +109,11 @@ async function collectCompilerPlotDeclarations(
     plugins: [authoringTransform],
   });
 
-  const inputNames = new Set();
-  for (const output of Object.values(prebuild.metafile.outputs)) {
-    for (const [inputName, input] of Object.entries(output.inputs)) {
-      if (input.bytesInOutput > 0) inputNames.add(inputName);
-    }
-  }
-
+  const emittedCallsites = emittedPlotCallsiteIds(prebuild.outputFiles);
   const byId = new Map();
-  for (const inputName of inputNames) {
-    const declarations = plotDeclarationsByInput.get(path.resolve(inputName));
-    if (declarations === undefined) continue;
+  for (const declarations of plotDeclarationsByInput.values()) {
     for (const declaration of declarations) {
+      if (!emittedCallsites.has(declaration.id)) continue;
       const existing = byId.get(declaration.id);
       if (existing !== undefined) {
         if (JSON.stringify(existing) !== JSON.stringify(declaration))
