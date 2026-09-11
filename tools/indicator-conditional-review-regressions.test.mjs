@@ -57,7 +57,6 @@ export default defineIndicator(
 test("a positional plot cannot extend 128 predeclared compiler plots", async () => {
   const declarations = Array.from({ length: 128 }, (_, index) => ({
     id: `erc-v2-plot-${index.toString(16).padStart(24, "0")}`,
-    callee: "plot.line",
     kind: "line",
     outputKey: `compiled_${index}`,
     label: `Compiled ${index + 1}`,
@@ -101,7 +100,6 @@ test("positional replay resolves definitions appended after compiler plots", asy
   const declarations = [
     {
       id: "erc-v2-plot-000000000000000000000001",
-      callee: "plot.line",
       kind: "line",
       outputKey: "compiled",
       label: "Compiled",
