@@ -97,7 +97,6 @@ export function drawingController(
     return existing.controller;
   }
 
-  let entry: DrawingRegistryEntry;
   const controller: DrawingController = Object.freeze({
     id,
     kind,
@@ -137,7 +136,7 @@ export function drawingController(
       if (active.phase === "finalized") entry.committed = undefined;
     },
   });
-  entry = { controller };
+  const entry: DrawingRegistryEntry = { controller };
   registry.set(id, entry);
   while (registry.size > MAX_DRAWINGS) {
     const oldest = registry.keys().next().value;
