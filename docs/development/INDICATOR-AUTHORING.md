@@ -84,10 +84,10 @@ call to discover declarations; see **Execution and correctness** below.
 | `ta.movingAverage(value, type, length)`                                 | Existing moving-average catalogue with a scalar source                                                                                     |
 | `plot.line`, `plot.hline`, `plot.histogram`                             | Plot one numeric value or `null`, with optional title/color/width/style                                                                    |
 | `plot.shape`                                                            | Plot an up/down marker at a numeric price, or `null` to hide it                                                                            |
-| `plot.box`, `plot.segment`                                              | Create or revisit an SDK-identified drawing and return a handle with `set()` / `delete()`                                                   |
+| `plot.box`, `plot.segment`                                              | Create or revisit an SDK-owned drawing; return a handle with `set()` / `delete()`.                                                         |
 | `series(initial, update)`                                               | A recurrence with automatic provisional rollback; supports primitive or structured state                                                   |
 | `appendSeries(history, value, keep)`, `laggedValue(...)`                | Maintain small bounded custom histories without repeating slice/lag boilerplate                                                            |
-| `signal(condition, direction, options?)`                                | Emit a finalized long/short/neutral signal; options may include confidence, while persistence identity remains SDK-owned                    |
+| `signal(condition, direction, options?)`                                | Emit a finalized signal; options may include confidence; identity remains SDK-owned.                                                       |
 
 Existing array-based `ta` calls still work for legacy indicators and reference
 calculations. Scalar authoring calls require an active `defineIndicator` callback.
