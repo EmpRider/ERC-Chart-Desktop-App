@@ -204,10 +204,7 @@ export default defineIndicator(
     instance.onBuildingBar(candle(20, nextBuildingClose));
     assertRuntimeState({
       instance,
-      committedCloses: [
-        ...lifecycleCommittedCloses,
-        lifecycleFinalizedClose,
-      ],
+      committedCloses: [...lifecycleCommittedCloses, lifecycleFinalizedClose],
       candidateClose: nextBuildingClose,
       fastCount: 21,
       slowCount: 142,
