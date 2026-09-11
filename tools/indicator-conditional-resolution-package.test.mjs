@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 
@@ -67,6 +68,15 @@ export default defineIndicator(
     assert.equal(plots.length, 1);
     assert.equal(plots[0]?.outputKey, "node-plot");
     assert.equal(plots[0]?.label, "Node plot");
+
+    const entryModule = await import(
+      `${pathToFileURL(path.join(result.packageRoot, "dist", "index.js")).href}?test=${Date.now()}`
+    );
+    const entryPlots = entryModule.default.definition.plots;
+    assert.deepEqual(
+      entryPlots.map(({ key, outputKey, label }) => ({ key, outputKey, label })),
+      plots.map(({ key, outputKey, label }) => ({ key, outputKey, label })),
+    );
   } finally {
     await rm(sourceDirectory, { recursive: true, force: true });
     await rm(outputDirectory, { recursive: true, force: true });
