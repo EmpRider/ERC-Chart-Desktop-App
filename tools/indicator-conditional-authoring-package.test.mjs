@@ -215,13 +215,13 @@ export default defineIndicator(
     "erc.indicator.late-conditional-plot",
   );
 
-  const late = plugin.definition.plots.find((value) => value.outputKey === "late");
+  const late = plugin.definition.plots.find(
+    (value) => value.outputKey === "late",
+  );
   assert.equal(late?.kind, "line");
   assert.equal(late?.label, "Late");
   assert.equal(late?.style, "dotted");
-  assert.ok(
-    plugin.definition.outputs.some((value) => value.key === "late"),
-  );
+  assert.ok(plugin.definition.outputs.some((value) => value.key === "late"));
 
   const instance = plugin.createInstance({}, context);
   try {
