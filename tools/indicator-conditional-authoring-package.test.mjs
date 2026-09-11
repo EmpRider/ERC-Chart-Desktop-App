@@ -133,3 +133,114 @@ export default defineIndicator(
     instance.dispose();
   }
 });
+
+test("conditional plot omission preserves declaration metadata and later plot identities", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function optionalPlot(value) {
+  plot.line(value, {
+    key: "optional",
+    title: "Optional",
+    color: "#1188cc",
+    width: 2,
+    style: "dashed",
+  });
+}
+function alwaysPlot(value) {
+  plot.line(value * 10, { key: "always", title: "Always" });
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.conditional-plot.main", name: "Conditional plot" },
+  ({ close }) => {
+    if (close < 15) optionalPlot(close);
+    alwaysPlot(close);
+  },
+);
+`,
+    "erc.indicator.conditional-plot",
+  );
+
+  const optional = plugin.definition.plots.find(
+    (value) => value.outputKey === "optional",
+  );
+  assert.equal(optional?.kind, "line");
+  assert.equal(optional?.label, "Optional");
+  assert.equal(optional?.color, "#1188cc");
+  assert.equal(optional?.width, 2);
+  assert.equal(optional?.style, "dashed");
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 20),
+      candle(2, 10),
+      candle(3, 30),
+    ]);
+    const points = instance.snapshot().points;
+    assert.deepEqual(
+      points.map((point) => point.values.optional),
+      [10, undefined, 10, undefined],
+    );
+    assert.deepEqual(
+      points.map((point) => point.values.always),
+      [100, 200, 100, 300],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("a conditional plot skipped during discovery is still declared and may execute later", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function latePlot(value) {
+  plot.line(value, { key: "late", title: "Late", style: "dotted" });
+}
+function alwaysPlot(value) {
+  plot.line(value * 10, { key: "always", title: "Always" });
+}
+
+export default defineIndicator(
+  { id: "erc.indicator.late-conditional-plot.main", name: "Late conditional plot" },
+  ({ close }) => {
+    if (close > 15) latePlot(close);
+    alwaysPlot(close);
+  },
+);
+`,
+    "erc.indicator.late-conditional-plot",
+  );
+
+  const late = plugin.definition.plots.find((value) => value.outputKey === "late");
+  assert.equal(late?.kind, "line");
+  assert.equal(late?.label, "Late");
+  assert.equal(late?.style, "dotted");
+  assert.ok(
+    plugin.definition.outputs.some((value) => value.key === "late"),
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 20),
+      candle(2, 10),
+      candle(3, 30),
+    ]);
+    const points = instance.snapshot().points;
+    assert.deepEqual(
+      points.map((point) => point.values.late),
+      [undefined, 20, undefined, 30],
+    );
+    assert.deepEqual(
+      points.map((point) => point.values.always),
+      [100, 200, 100, 300],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
