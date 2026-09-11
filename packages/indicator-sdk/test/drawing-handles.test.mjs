@@ -18,7 +18,11 @@ const boxCallsite = Object.freeze({
   id: "erc-v2-drawing-000000000000000000000001",
   kind: "drawing",
   callee: "plot.box",
-  source: Object.freeze({ file: "drawing-handles.test.mjs", line: 1, column: 1 }),
+  source: Object.freeze({
+    file: "drawing-handles.test.mjs",
+    line: 1,
+    column: 1,
+  }),
 });
 
 const rollbackBoxCallsite = Object.freeze({
@@ -26,7 +30,11 @@ const rollbackBoxCallsite = Object.freeze({
   id: "erc-v2-drawing-000000000000000000000002",
   kind: "drawing",
   callee: "plot.box",
-  source: Object.freeze({ file: "drawing-handles.test.mjs", line: 2, column: 1 }),
+  source: Object.freeze({
+    file: "drawing-handles.test.mjs",
+    line: 2,
+    column: 1,
+  }),
 });
 
 test("finalized drawing handles persist until updated or deleted", () => {
