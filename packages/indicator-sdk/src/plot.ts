@@ -28,7 +28,6 @@ type ValuePlotCallee =
 
 interface CompilerPlotDeclaration {
   readonly id: string;
-  readonly callee: ValuePlotCallee;
   readonly kind: IndicatorPlotDefinition["kind"];
   readonly outputKey: string;
   readonly label: string;
@@ -301,7 +300,6 @@ function overlay(value: IndicatorBox | IndicatorLineSegment): void {
       );
     return;
   }
-  // Same-id drawings replace earlier geometry; oldest drawings are retained within a fixed cap.
   frame.overlayUpdates.set(value.id, Object.freeze(value));
   if (frame.overlayUpdates.size > 2_000)
     throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
