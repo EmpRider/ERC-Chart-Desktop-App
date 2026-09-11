@@ -54,6 +54,24 @@ export default defineIndicator(
   }
 });
 
+test("compiler rejects non-string frozen plot declaration metadata", () => {
+  for (const name of ["key", "title", "style", "direction"]) {
+    assert.throws(
+      () =>
+        transformIndicatorCallsites(
+          `import { plot } from "@erc-chart/indicator-sdk";
+plot.line(1, { ${name}: 123 });
+`,
+          { fileName: "indicator.ts", sourceFileId: "indicator.ts" },
+        ),
+      new RegExp(
+        `Plot declaration option "${name}" must use a static string literal\\.`,
+        "u",
+      ),
+    );
+  }
+});
+
 test("a positional plot cannot extend 128 predeclared compiler plots", async () => {
   const declarations = Array.from({ length: 128 }, (_, index) => ({
     id: `erc-v2-plot-${index.toString(16).padStart(24, "0")}`,
