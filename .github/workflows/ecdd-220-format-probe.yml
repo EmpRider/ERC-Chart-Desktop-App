@@ -1,0 +1,31 @@
+name: ECDD-220 format probe
+
+on:
+  push:
+    branches:
+      - task/ECDD-220-runtime-identity-persistence
+
+permissions:
+  contents: read
+
+jobs:
+  prettier-diff:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.1
+          package-manager-cache: false
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Install dependencies
+        run: npm ci --audit=false
+      - name: Print Prettier diff
+        shell: bash
+        run: |
+          npx prettier --write tools/indicator-runtime-identity-performance.mjs
+          git diff -- tools/indicator-runtime-identity-performance.mjs
+          test -n "$(git diff -- tools/indicator-runtime-identity-performance.mjs)"
