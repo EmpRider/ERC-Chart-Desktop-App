@@ -95,45 +95,44 @@ export function useKernel<T>(
 ): T {
   const frame = authoringFrame();
   const usage = kernelUsage(frame);
-  const store = identityKernelStore(frame.kernels);
 
   if (callsite !== undefined) {
     if (usage.identities.has(callsite.id))
       throw new Error(
         `Compiler call-site identity ${callsite.id} for ${callsite.callee} executed more than once in one bar.`,
       );
-    const existing = store.get(callsite.id);
-    if (existing !== undefined) {
-      usage.identities.add(callsite.id);
-      if (existing.signature !== signature)
-        throw new Error(
-          `Runtime state for ${callsite.callee} at compiler call-site ${callsite.id} changed shape; change inputs to rebuild.`,
-        );
-      return existing.value as T;
-    }
-    if (frame.kernels.length + store.size >= 256)
+    if (frame.kernelIndex + usage.identities.size >= 256)
       throw new RangeError("An indicator may use at most 256 TA calls.");
-    const value = create();
     usage.identities.add(callsite.id);
-    store.set(callsite.id, { signature, value });
-    return value;
-  }
-
-  const positionalIndex = usage.positionalIndex++;
-  const existing = frame.kernels[positionalIndex];
-  frame.kernelIndex += 1;
-  if (existing !== undefined) {
+    const store = identityKernelStore(frame.kernels);
+    const existing = store.get(callsite.id);
+    if (existing === undefined) {
+      const value = create();
+      store.set(callsite.id, { signature, value });
+      return value;
+    }
     if (existing.signature !== signature)
       throw new Error(
-        "TA calls and lengths must remain in the same order on every bar; change inputs to rebuild.",
+        `Runtime state for ${callsite.callee} at compiler call-site ${callsite.id} changed shape; change inputs to rebuild.`,
       );
     return existing.value as T;
   }
-  if (frame.kernels.length + store.size >= 256)
+
+  if (frame.kernelIndex + usage.identities.size >= 256)
     throw new RangeError("An indicator may use at most 256 TA calls.");
-  const value = create();
-  frame.kernels.push({ signature, value });
-  return value;
+  frame.kernelIndex += 1;
+  const positionalIndex = usage.positionalIndex++;
+  const existing = frame.kernels[positionalIndex];
+  if (existing === undefined) {
+    const value = create();
+    frame.kernels.push({ signature, value });
+    return value;
+  }
+  if (existing.signature !== signature)
+    throw new Error(
+      "TA calls and lengths must remain in the same order on every bar; change inputs to rebuild.",
+    );
+  return existing.value as T;
 }
 
 export function newPoint(
