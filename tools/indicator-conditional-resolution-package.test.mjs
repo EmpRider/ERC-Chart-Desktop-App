@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 
-test("package declarations follow each platform resolution graph", async () => {
+test("package declarations match the shipped runtime resolution graph", async () => {
   const sourceDirectory = await mkdtemp(
     path.join(import.meta.dirname, ".conditional-resolution-source-"),
   );
@@ -66,8 +66,8 @@ export default defineIndicator(
     });
     const plots = result.manifest.capabilities.indicatorDefinition.plots;
     assert.equal(plots.length, 1);
-    assert.equal(plots[0]?.outputKey, "node-plot");
-    assert.equal(plots[0]?.label, "Node plot");
+    assert.equal(plots[0]?.outputKey, "default-plot");
+    assert.equal(plots[0]?.label, "Default plot");
 
     const entryUrl = pathToFileURL(
       path.join(result.packageRoot, "dist", "index.js"),
