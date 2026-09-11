@@ -68,7 +68,7 @@ ${conditionalSeriesCalls(count, options)}
 test("conditional compiler kernels enforce the 256-slot persistent limit across bars", async () => {
   const { default: plugin } = await packagedPlugin(
     sourceWithConditionalSeries(257),
-    "erc.indicator.kernel-capacity.main",
+    "erc.indicator.kernel-capacity",
   );
   const instance = plugin.createInstance({}, context);
   try {
@@ -87,7 +87,7 @@ test("conditional compiler kernels enforce the 256-slot persistent limit across 
 test("conditional compiler kernels may reuse an existing slot at the 256-slot limit", async () => {
   const { default: plugin } = await packagedPlugin(
     sourceWithConditionalSeries(256, { repeatFirstAt: 256 }),
-    "erc.indicator.kernel-capacity.main",
+    "erc.indicator.kernel-capacity",
   );
   const instance = plugin.createInstance({}, context);
   try {
