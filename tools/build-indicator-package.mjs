@@ -75,7 +75,11 @@ function normalizePlotDeclarations(values) {
   }));
 }
 
-async function collectCompilerPlotDeclarations(sourcePath, authoringRoot) {
+async function collectCompilerPlotDeclarations(
+  sourcePath,
+  authoringRoot,
+  authoringTransform,
+) {
   const prebuild = await build({
     entryPoints: [sourcePath],
     bundle: true,
@@ -89,7 +93,7 @@ async function collectCompilerPlotDeclarations(sourcePath, authoringRoot) {
       ...indicatorCompilerBaseDefine,
       __ERC_INDICATOR_PLOT_DECLARATIONS__: "[]",
     },
-    plugins: [indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot })],
+    plugins: [authoringTransform],
   });
 
   const inputNames = new Set();
@@ -153,9 +157,13 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
+  const authoringTransform = indicatorAuthoringTransformPlugin({
+    sourceRoot: authoringRoot,
+  });
   const compilerPlotDeclarations = await collectCompilerPlotDeclarations(
     sourcePath,
     authoringRoot,
+    authoringTransform,
   );
   const indicatorCompilerDefine = {
     ...indicatorCompilerBaseDefine,
@@ -174,7 +182,7 @@ export async function buildIndicatorPackage({
     target: "es2022",
     minify: false,
     define: indicatorCompilerDefine,
-    plugins: [indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot })],
+    plugins: [authoringTransform],
   });
   await build({
     entryPoints: [sourcePath],
@@ -185,7 +193,7 @@ export async function buildIndicatorPackage({
     target: "node24",
     minify: false,
     define: indicatorCompilerDefine,
-    plugins: [indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot })],
+    plugins: [authoringTransform],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`
