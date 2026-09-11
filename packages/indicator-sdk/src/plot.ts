@@ -24,10 +24,7 @@ export interface ShapeOptions extends PlotOptions {
 }
 
 type ValuePlotCallee =
-  | "plot.line"
-  | "plot.hline"
-  | "plot.histogram"
-  | "plot.shape";
+  "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
 
 interface CompilerPlotDeclaration {
   readonly id: string;
@@ -44,8 +41,7 @@ interface CompilerPlotDeclaration {
 }
 
 declare const __ERC_INDICATOR_PLOT_DECLARATIONS__:
-  | readonly CompilerPlotDeclaration[]
-  | undefined;
+  readonly CompilerPlotDeclaration[] | undefined;
 
 interface DrawingScopeState {
   committed: Map<string, IndicatorOverlay>;
@@ -106,15 +102,9 @@ export function compilerPlotDefinitions(): IndicatorPlotDefinition[] {
       outputKey: declaration.outputKey,
       kind: declaration.kind,
       label: declaration.label,
-      ...(declaration.color === undefined
-        ? {}
-        : { color: declaration.color }),
-      ...(declaration.width === undefined
-        ? {}
-        : { width: declaration.width }),
-      ...(declaration.style === undefined
-        ? {}
-        : { style: declaration.style }),
+      ...(declaration.color === undefined ? {} : { color: declaration.color }),
+      ...(declaration.width === undefined ? {} : { width: declaration.width }),
+      ...(declaration.style === undefined ? {} : { style: declaration.style }),
       ...(declaration.direction === undefined
         ? {}
         : { direction: declaration.direction }),
@@ -153,22 +143,37 @@ function preservesPlotDeclaration(
   );
 }
 
-function discoveryPresentationDefinition(
+function discoveryCompilerDefinition(
   frame: AuthoringFrame,
   index: number,
   definition: IndicatorPlotDefinition,
-  metadata: PlotDeclarationMetadata,
+  kind: IndicatorPlotDefinition["kind"],
   options: ShapeOptions,
 ): IndicatorPlotDefinition {
-  if (definition.color === options.color && definition.width === options.width)
-    return definition;
   const next: IndicatorPlotDefinition = {
-    ...definition,
+    key: definition.key,
+    outputKey: options.key ?? definition.outputKey ?? definition.key,
+    kind,
+    label: options.title ?? definition.label ?? definition.key,
     ...(options.color === undefined ? {} : { color: options.color }),
     ...(options.width === undefined ? {} : { width: options.width }),
+    ...(options.style === undefined ? {} : { style: options.style }),
+    ...(options.direction === undefined
+      ? {}
+      : { direction: options.direction }),
   };
+  if (
+    frame.plots.some(
+      (plot, plotIndex) =>
+        plotIndex !== index && plotKeysCollide(plot, next),
+    )
+  )
+    throw new Error("Plot keys must be unique.");
   frame.plots[index] = next;
-  plotDeclarationMetadata.set(next, metadata);
+  plotDeclarationMetadata.set(next, {
+    keyExplicit: options.key !== undefined,
+    titleExplicit: options.title !== undefined,
+  });
   return next;
 }
 
@@ -240,22 +245,24 @@ function valuePlot(
       throw new Error(
         "Plot declarations must preserve their identity, kind, key and options on every bar.",
       );
-    const metadata = plotDeclarationMetadata.get(definition);
-    if (
-      metadata === undefined ||
-      !preservesPlotDeclaration(definition, metadata, kind, options)
-    )
-      throw new Error(
-        "Plot declarations must preserve their identity, kind, key and options on every bar.",
-      );
-    if (frame.discovery && callsite !== undefined)
-      definition = discoveryPresentationDefinition(
+    if (frame.discovery && callsite !== undefined) {
+      definition = discoveryCompilerDefinition(
         frame,
         index,
         definition,
-        metadata,
+        kind,
         options,
       );
+    } else {
+      const metadata = plotDeclarationMetadata.get(definition);
+      if (
+        metadata === undefined ||
+        !preservesPlotDeclaration(definition, metadata, kind, options)
+      )
+        throw new Error(
+          "Plot declarations must preserve their identity, kind, key and options on every bar.",
+        );
+    }
     resolvedOutputKey = definition.outputKey ?? definition.key;
   }
 
