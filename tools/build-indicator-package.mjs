@@ -5,9 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
 import { indicatorAuthoringTransformPlugin } from "./indicator-authoring-transform.mjs";
+import { transformIndicatorCallsites } from "./indicator-authoring/callsite-transform.mjs";
 import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
-const indicatorCompilerDefine = {
+const indicatorCompilerBaseDefine = {
   __ERC_INDICATOR_COMPILED__: "true",
 };
 
@@ -29,6 +30,101 @@ async function findAuthoringRoot(sourcePath) {
     if (parent === current) return fallback;
     current = parent;
   }
+}
+
+function withinRoot(root, fileName) {
+  const relative = path.relative(root, fileName);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function compilerSourceFileId(root, fileName) {
+  return path.relative(root, fileName).replaceAll(path.sep, "/");
+}
+
+function comparePlotDeclarations(left, right) {
+  if (left.source.file !== right.source.file)
+    return left.source.file < right.source.file ? -1 : 1;
+  if (left.source.line !== right.source.line)
+    return left.source.line - right.source.line;
+  if (left.source.column !== right.source.column)
+    return left.source.column - right.source.column;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+function normalizePlotDeclarations(values) {
+  const declarations = [...values].sort(comparePlotDeclarations);
+  if (declarations.length > 128)
+    throw new RangeError("An indicator may declare at most 128 plots.");
+  return declarations.map((value, index) => ({
+    id: value.id,
+    callee: value.callee,
+    kind: value.kind,
+    outputKey: typeof value.key === "string" ? value.key : `plot_${index}`,
+    label: typeof value.title === "string" ? value.title : `Plot ${index + 1}`,
+    keyExplicit: typeof value.key === "string",
+    titleExplicit: typeof value.title === "string",
+    ...(typeof value.color === "string" ? { color: value.color } : {}),
+    ...(typeof value.width === "number" ? { width: value.width } : {}),
+    ...(typeof value.style === "string" ? { style: value.style } : {}),
+    ...(typeof value.direction === "string"
+      ? { direction: value.direction }
+      : {}),
+  }));
+}
+
+async function collectCompilerPlotDeclarations(sourcePath, authoringRoot) {
+  const prebuild = await build({
+    entryPoints: [sourcePath],
+    bundle: true,
+    write: false,
+    metafile: true,
+    platform: "neutral",
+    format: "esm",
+    target: "es2022",
+    minify: false,
+    define: {
+      ...indicatorCompilerBaseDefine,
+      __ERC_INDICATOR_PLOT_DECLARATIONS__: "[]",
+    },
+    plugins: [
+      indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot }),
+    ],
+  });
+
+  const inputNames = new Set();
+  for (const output of Object.values(prebuild.metafile.outputs)) {
+    for (const [inputName, input] of Object.entries(output.inputs)) {
+      if (input.bytesInOutput > 0) inputNames.add(inputName);
+    }
+  }
+
+  const byId = new Map();
+  for (const inputName of inputNames) {
+    const inputPath = path.resolve(inputName);
+    if (!withinRoot(authoringRoot, inputPath)) continue;
+    if (inputPath.includes(`${path.sep}node_modules${path.sep}`)) continue;
+    if (!/\.[cm]?[jt]sx?$/u.test(inputPath)) continue;
+    const sourceText = await readFile(inputPath, "utf8");
+    const transformed = transformIndicatorCallsites(sourceText, {
+      fileName: inputPath,
+      sourceFileId: compilerSourceFileId(authoringRoot, inputPath),
+    });
+    for (const declaration of transformed.plotDeclarations) {
+      const existing = byId.get(declaration.id);
+      if (existing !== undefined) {
+        if (JSON.stringify(existing) !== JSON.stringify(declaration))
+          throw new Error(
+            `Conflicting compiler plot declaration for ${declaration.id}.`,
+          );
+        continue;
+      }
+      byId.set(declaration.id, declaration);
+    }
+  }
+  return normalizePlotDeclarations(byId.values());
 }
 
 export async function buildIndicatorPackage({
@@ -59,9 +155,16 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
-  const authoringTransform = indicatorAuthoringTransformPlugin({
-    sourceRoot: authoringRoot,
-  });
+  const compilerPlotDeclarations = await collectCompilerPlotDeclarations(
+    sourcePath,
+    authoringRoot,
+  );
+  const indicatorCompilerDefine = {
+    ...indicatorCompilerBaseDefine,
+    __ERC_INDICATOR_PLOT_DECLARATIONS__: JSON.stringify(
+      compilerPlotDeclarations,
+    ),
+  };
   await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
   await build({
@@ -73,7 +176,9 @@ export async function buildIndicatorPackage({
     target: "es2022",
     minify: false,
     define: indicatorCompilerDefine,
-    plugins: [authoringTransform],
+    plugins: [
+      indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot }),
+    ],
   });
   await build({
     entryPoints: [sourcePath],
@@ -84,7 +189,9 @@ export async function buildIndicatorPackage({
     target: "node24",
     minify: false,
     define: indicatorCompilerDefine,
-    plugins: [authoringTransform],
+    plugins: [
+      indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot }),
+    ],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`

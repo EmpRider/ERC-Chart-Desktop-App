@@ -1,5 +1,9 @@
 import { sameDrawing } from "./drawing-equality.js";
-import { authoringFrame, useKernel } from "./authoring-context.js";
+import {
+  authoringFrame,
+  useKernel,
+  type AuthoringFrame,
+} from "./authoring-context.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
 import type {
   IndicatorBox,
@@ -19,6 +23,30 @@ export interface ShapeOptions extends PlotOptions {
   readonly direction?: "up" | "down";
 }
 
+type ValuePlotCallee =
+  | "plot.line"
+  | "plot.hline"
+  | "plot.histogram"
+  | "plot.shape";
+
+interface CompilerPlotDeclaration {
+  readonly id: string;
+  readonly callee: ValuePlotCallee;
+  readonly kind: IndicatorPlotDefinition["kind"];
+  readonly outputKey: string;
+  readonly label: string;
+  readonly keyExplicit: boolean;
+  readonly titleExplicit: boolean;
+  readonly color?: string;
+  readonly width?: number;
+  readonly style?: "solid" | "dashed" | "dotted";
+  readonly direction?: "up" | "down";
+}
+
+declare const __ERC_INDICATOR_PLOT_DECLARATIONS__:
+  | readonly CompilerPlotDeclaration[]
+  | undefined;
+
 interface DrawingScopeState {
   committed: Map<string, IndicatorOverlay>;
 }
@@ -28,15 +56,124 @@ interface PlotDeclarationMetadata {
   readonly titleExplicit: boolean;
 }
 
+interface FramePlotUsage {
+  positionalIndex: number;
+  readonly identities: Set<string>;
+}
+
 let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
 let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
 const plotDeclarationMetadata = new WeakMap<
   IndicatorPlotDefinition,
   PlotDeclarationMetadata
 >();
+const framePlotUsage = new WeakMap<AuthoringFrame, FramePlotUsage>();
 
-type ValuePlotCallee =
-  "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
+function plotUsage(frame: AuthoringFrame): FramePlotUsage {
+  let usage = framePlotUsage.get(frame);
+  if (usage === undefined) {
+    usage = { positionalIndex: 0, identities: new Set() };
+    framePlotUsage.set(frame, usage);
+  }
+  return usage;
+}
+
+function plotKeysCollide(
+  left: IndicatorPlotDefinition,
+  right: IndicatorPlotDefinition,
+): boolean {
+  const leftOutput = left.outputKey ?? left.key;
+  const rightOutput = right.outputKey ?? right.key;
+  return (
+    left.key === right.key ||
+    left.key === rightOutput ||
+    leftOutput === right.key ||
+    leftOutput === rightOutput
+  );
+}
+
+export function compilerPlotDefinitions(): IndicatorPlotDefinition[] {
+  const declarations =
+    typeof __ERC_INDICATOR_PLOT_DECLARATIONS__ === "undefined"
+      ? []
+      : __ERC_INDICATOR_PLOT_DECLARATIONS__;
+  if (declarations.length > 128)
+    throw new RangeError("An indicator may declare at most 128 plots.");
+  const definitions: IndicatorPlotDefinition[] = [];
+  for (const declaration of declarations) {
+    const definition: IndicatorPlotDefinition = {
+      key: declaration.id,
+      outputKey: declaration.outputKey,
+      kind: declaration.kind,
+      label: declaration.label,
+      ...(declaration.color === undefined
+        ? {}
+        : { color: declaration.color }),
+      ...(declaration.width === undefined
+        ? {}
+        : { width: declaration.width }),
+      ...(declaration.style === undefined
+        ? {}
+        : { style: declaration.style }),
+      ...(declaration.direction === undefined
+        ? {}
+        : { direction: declaration.direction }),
+    };
+    if (definitions.some((value) => plotKeysCollide(value, definition)))
+      throw new Error("Plot keys must be unique.");
+    definitions.push(definition);
+    plotDeclarationMetadata.set(definition, {
+      keyExplicit: declaration.keyExplicit,
+      titleExplicit: declaration.titleExplicit,
+    });
+  }
+  return definitions;
+}
+
+function preservesPlotDeclaration(
+  definition: IndicatorPlotDefinition,
+  metadata: PlotDeclarationMetadata,
+  kind: IndicatorPlotDefinition["kind"],
+  options: ShapeOptions,
+): boolean {
+  const keyExplicit = options.key !== undefined;
+  const titleExplicit = options.title !== undefined;
+  const preservesKey =
+    metadata.keyExplicit === keyExplicit &&
+    (!metadata.keyExplicit || definition.outputKey === options.key);
+  const preservesTitle =
+    metadata.titleExplicit === titleExplicit &&
+    (!metadata.titleExplicit || definition.label === options.title);
+  return (
+    definition.kind === kind &&
+    preservesKey &&
+    preservesTitle &&
+    definition.style === options.style &&
+    definition.direction === options.direction
+  );
+}
+
+function discoveryPresentationDefinition(
+  frame: AuthoringFrame,
+  index: number,
+  definition: IndicatorPlotDefinition,
+  metadata: PlotDeclarationMetadata,
+  options: ShapeOptions,
+): IndicatorPlotDefinition {
+  if (
+    definition.color === options.color &&
+    definition.width === options.width
+  )
+    return definition;
+  const next: IndicatorPlotDefinition = {
+    ...definition,
+    ...(options.color === undefined ? {} : { color: options.color }),
+    ...(options.width === undefined ? {} : { width: options.width }),
+  };
+  frame.plots[index] = next;
+  plotDeclarationMetadata.set(next, metadata);
+  return next;
+}
 
 function valuePlot(
   kind: IndicatorPlotDefinition["kind"],
@@ -47,11 +184,28 @@ function valuePlot(
 ): void {
   const frame = authoringFrame();
   const callsite = readCompilerCallsite(hiddenCallsite, "plot", callee);
-  const index = frame.plotIndex++;
-  if (index >= 128)
-    throw new RangeError("An indicator may declare at most 128 plots.");
-  const outputKey = options.key ?? `plot_${index}`;
-  const key = callsite?.id ?? outputKey;
+  const usage = plotUsage(frame);
+  let index: number;
+  if (callsite !== undefined) {
+    if (usage.identities.has(callsite.id))
+      throw new Error(
+        `Compiler call-site identity ${callsite.id} for ${callsite.callee} executed more than once in one bar.`,
+      );
+    if (frame.plotIndex + usage.identities.size >= 128)
+      throw new RangeError("An indicator may declare at most 128 plots.");
+    usage.identities.add(callsite.id);
+    index = frame.plots.findIndex((plot) => plot.key === callsite.id);
+    if (index < 0)
+      throw new Error(
+        `Compiler plot declaration ${callsite.id} for ${callsite.callee} is missing; rebuild the indicator package.`,
+      );
+  } else {
+    if (frame.plotIndex + usage.identities.size >= 128)
+      throw new RangeError("An indicator may declare at most 128 plots.");
+    index = usage.positionalIndex++;
+    frame.plotIndex += 1;
+  }
+
   if (
     options.width !== undefined &&
     (!Number.isFinite(options.width) ||
@@ -59,22 +213,12 @@ function valuePlot(
       options.width > 20)
   )
     throw new RangeError("Plot width must be greater than 0 and at most 20.");
-  let resolvedOutputKey = outputKey;
-  if (frame.discovery) {
-    if (
-      frame.plots.some((plot) => {
-        const existingOutputKey = plot.outputKey ?? plot.key;
-        return (
-          plot.key === key ||
-          plot.key === outputKey ||
-          existingOutputKey === key ||
-          existingOutputKey === outputKey
-        );
-      })
-    )
-      throw new Error("Plot keys must be unique.");
+
+  let resolvedOutputKey: string;
+  if (callsite === undefined && frame.discovery) {
+    const outputKey = options.key ?? `plot_${index}`;
     const definition: IndicatorPlotDefinition = {
-      key,
+      key: outputKey,
       outputKey,
       kind,
       label: options.title ?? `Plot ${index + 1}`,
@@ -85,46 +229,39 @@ function valuePlot(
         ? {}
         : { direction: options.direction }),
     };
+    if (frame.plots.some((plot) => plotKeysCollide(plot, definition)))
+      throw new Error("Plot keys must be unique.");
     frame.plots.push(definition);
     plotDeclarationMetadata.set(definition, {
       keyExplicit: options.key !== undefined,
       titleExplicit: options.title !== undefined,
     });
+    resolvedOutputKey = outputKey;
   } else {
-    const definition =
-      callsite === undefined
-        ? frame.plots[index]
-        : frame.plots.find((plot) => plot.key === callsite.id);
+    let definition = frame.plots[index];
     if (definition === undefined)
       throw new Error(
         "Plot declarations must preserve their identity, kind, key and options on every bar.",
       );
-
     const metadata = plotDeclarationMetadata.get(definition);
-    if (metadata === undefined)
-      throw new Error(
-        "Plot declarations must preserve their identity, kind, key and options on every bar.",
-      );
-    const keyExplicit = options.key !== undefined;
-    const titleExplicit = options.title !== undefined;
-    const preservesKey =
-      metadata.keyExplicit === keyExplicit &&
-      (!metadata.keyExplicit || definition.outputKey === options.key);
-    const preservesTitle =
-      metadata.titleExplicit === titleExplicit &&
-      (!metadata.titleExplicit || definition.label === options.title);
     if (
-      definition.kind !== kind ||
-      !preservesKey ||
-      !preservesTitle ||
-      definition.style !== options.style ||
-      definition.direction !== options.direction
+      metadata === undefined ||
+      !preservesPlotDeclaration(definition, metadata, kind, options)
     )
       throw new Error(
         "Plot declarations must preserve their identity, kind, key and options on every bar.",
       );
+    if (frame.discovery && callsite !== undefined)
+      definition = discoveryPresentationDefinition(
+        frame,
+        index,
+        definition,
+        metadata,
+        options,
+      );
     resolvedOutputKey = definition.outputKey ?? definition.key;
   }
+
   frame.point.values[resolvedOutputKey] =
     value !== null && Number.isFinite(value) ? value : null;
   if (options.color !== undefined)
