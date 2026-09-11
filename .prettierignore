@@ -6,4 +6,3 @@ node_modules
 dist
 coverage
 docs/architecture/v1/contracts/
-packages/indicator-sdk/src/plot.ts
