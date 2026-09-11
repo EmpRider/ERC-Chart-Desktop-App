@@ -133,7 +133,7 @@ export function drawingController(
         throw new RangeError(
           "At most 2,000 drawing changes are allowed per bar.",
         );
-      if (active.phase === "finalized") entry.committed = undefined;
+      if (active.phase === "finalized") delete entry.committed;
     },
   });
   const entry: DrawingRegistryEntry = { controller };
@@ -142,7 +142,7 @@ export function drawingController(
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
     const evicted = registry.get(oldest);
-    if (evicted !== undefined) evicted.committed = undefined;
+    if (evicted !== undefined) delete evicted.committed;
     registry.delete(oldest);
   }
   return controller;
