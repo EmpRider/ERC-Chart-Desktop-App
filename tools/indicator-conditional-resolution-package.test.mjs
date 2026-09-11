@@ -69,14 +69,12 @@ export default defineIndicator(
     assert.equal(plots[0]?.outputKey, "node-plot");
     assert.equal(plots[0]?.label, "Node plot");
 
-    const entryModule = await import(
-      `${pathToFileURL(path.join(result.packageRoot, "dist", "index.js")).href}?test=${Date.now()}`
-    );
+    const entryUrl = pathToFileURL(
+      path.join(result.packageRoot, "dist", "index.js"),
+    ).href;
+    const entryModule = await import(`${entryUrl}?test=${Date.now()}`);
     const entryPlots = entryModule.default.definition.plots;
-    assert.deepEqual(
-      entryPlots.map(({ key, outputKey, label }) => ({ key, outputKey, label })),
-      plots.map(({ key, outputKey, label }) => ({ key, outputKey, label })),
-    );
+    assert.deepEqual(entryPlots, plots);
   } finally {
     await rm(sourceDirectory, { recursive: true, force: true });
     await rm(outputDirectory, { recursive: true, force: true });
