@@ -46,10 +46,7 @@ export type BoxHandle = DrawingHandle<BoxDrawing>;
 export type SegmentHandle = DrawingHandle<SegmentDrawing>;
 
 type ValuePlotCallee =
-  | "plot.line"
-  | "plot.hline"
-  | "plot.histogram"
-  | "plot.shape";
+  "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
 
 interface CompilerPlotDeclaration {
   readonly id: string;
@@ -65,8 +62,7 @@ interface CompilerPlotDeclaration {
 }
 
 declare const __ERC_INDICATOR_PLOT_DECLARATIONS__:
-  | readonly CompilerPlotDeclaration[]
-  | undefined;
+  readonly CompilerPlotDeclaration[] | undefined;
 
 interface PlotDeclarationMetadata {
   readonly keyExplicit: boolean;
