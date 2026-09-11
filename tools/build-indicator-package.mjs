@@ -47,7 +47,6 @@ function normalizePlotDeclarations(values) {
     throw new RangeError("An indicator may declare at most 128 plots.");
   return declarations.map((value, index) => ({
     id: value.id,
-    callee: value.callee,
     kind: value.kind,
     outputKey: typeof value.key === "string" ? value.key : `plot_${index}`,
     label: typeof value.title === "string" ? value.title : `Plot ${index + 1}`,
