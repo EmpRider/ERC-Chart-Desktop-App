@@ -31,6 +31,15 @@ type StringOptionValue<T> = T extends string
     ? T["value"]
     : never;
 
+interface InputDeclarationMetadata {
+  readonly labelExplicit: boolean;
+}
+
+const inputDeclarationMetadata = new WeakMap<
+  IndicatorInputDefinition,
+  InputDeclarationMetadata
+>();
+
 function stepDecimals(step: number): number {
   const text = `${step}`.toLowerCase();
   if (text.includes("e-")) {
@@ -151,6 +160,7 @@ function sameInputDefinition(
 function readInput(
   definition: IndicatorInputDefinition,
   callsite: CompilerCallsite | undefined,
+  labelExplicit: boolean,
 ): IndicatorInputValue {
   const frame = authoringFrame();
   const index = frame.inputIndex++;
@@ -165,12 +175,27 @@ function readInput(
         `Compiler call-site identity ${callsite.id} was used by more than one input declaration.`,
       );
     frame.inputs.push(definition);
+    if (callsite !== undefined)
+      inputDeclarationMetadata.set(definition, { labelExplicit });
   } else {
     const expected =
       callsite === undefined
         ? frame.inputs[index]
         : frame.inputs.find((value) => value.key === callsite.id);
-    if (!sameInputDefinition(expected, definition))
+    let comparableDefinition = definition;
+    if (callsite !== undefined && expected !== undefined) {
+      const declarationMetadata = inputDeclarationMetadata.get(expected);
+      if (
+        declarationMetadata === undefined ||
+        declarationMetadata.labelExplicit !== labelExplicit
+      )
+        throw new Error(
+          `Input declaration identity ${callsite.id} does not match the discovered input contract.`,
+        );
+      if (!declarationMetadata.labelExplicit)
+        comparableDefinition = { ...definition, label: expected.label };
+    }
+    if (!sameInputDefinition(expected, comparableDefinition))
       throw new Error(
         callsite === undefined
           ? "Input declarations must remain in the same order on every bar."
@@ -198,6 +223,10 @@ function metadata(
       : { description: options.description }),
     ...(options.effect === undefined ? {} : { effect: options.effect }),
   };
+}
+
+function hasExplicitLabel(options: InputOptions): boolean {
+  return options.title !== undefined || options.key !== undefined;
 }
 
 function stringOptions(
@@ -238,6 +267,7 @@ function number(
       ...(options.step === undefined ? {} : { step: options.step }),
     },
     callsite,
+    hasExplicitLabel(options),
   ) as number;
   return value;
 }
@@ -276,6 +306,7 @@ function stringInput(
       ...(choices === undefined ? {} : { options: choices }),
     },
     callsite,
+    hasExplicitLabel(options),
   ) as string;
 }
 
@@ -331,6 +362,7 @@ export const input: InputApi = Object.freeze({
         defaultValue,
       },
       callsite,
+      hasExplicitLabel(options),
     ) as boolean;
   },
   string: stringInput,
@@ -352,6 +384,7 @@ export const input: InputApi = Object.freeze({
         editor: "color",
       },
       callsite,
+      hasExplicitLabel(options),
     ) as string;
   },
 });
