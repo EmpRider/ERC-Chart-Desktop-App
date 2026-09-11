@@ -60,7 +60,7 @@ function nextDrawingId(
   const sourceIdentity = callsite?.id ?? `dev:${callee}`;
   const occurrence = usage.occurrences.get(sourceIdentity) ?? 0;
   usage.occurrences.set(sourceIdentity, occurrence + 1);
-  return `${sourceIdentity}:${frame.candle.openTimeMs}:${occurrence}`;
+  return `${sourceIdentity}:${occurrence}`;
 }
 
 function pendingDrawing(
