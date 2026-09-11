@@ -3,12 +3,15 @@ import {
   type AuthoringFrame,
   type KernelSlot,
 } from "../authoring-context.js";
+import { sameDrawing } from "../drawing-equality.js";
 import type { IndicatorOverlay } from "../index.js";
 import type { CompilerCallsite } from "./callsite.js";
 
 const MAX_DRAWINGS = 2_000;
 
 interface FrameDrawingUsage {
+  devBoxOccurrence: number;
+  devSegmentOccurrence: number;
   readonly occurrences: Map<string, number>;
 }
 
@@ -20,6 +23,7 @@ interface DrawingRegistryEntry {
 export interface DrawingController {
   readonly id: string;
   readonly kind: IndicatorOverlay["kind"];
+  current(): IndicatorOverlay | undefined;
   write(value: IndicatorOverlay): void;
   update(update: (current: IndicatorOverlay) => IndicatorOverlay): void;
   delete(): void;
@@ -30,11 +34,16 @@ const drawingRegistries = new WeakMap<
   KernelSlot[],
   Map<string, DrawingRegistryEntry>
 >();
+const drawingIds = new WeakMap<KernelSlot[], Map<string, string[]>>();
 
 function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
   let usage = frameDrawingUsage.get(frame);
   if (usage === undefined) {
-    usage = { occurrences: new Map() };
+    usage = {
+      devBoxOccurrence: 0,
+      devSegmentOccurrence: 0,
+      occurrences: new Map(),
+    };
     frameDrawingUsage.set(frame, usage);
   }
   return usage;
@@ -51,16 +60,45 @@ function drawingRegistry(
   return registry;
 }
 
+function cachedDrawingId(
+  kernels: KernelSlot[],
+  sourceIdentity: string,
+  occurrence: number,
+): string {
+  let bySource = drawingIds.get(kernels);
+  if (bySource === undefined) {
+    bySource = new Map();
+    drawingIds.set(kernels, bySource);
+  }
+  let ids = bySource.get(sourceIdentity);
+  if (ids === undefined) {
+    ids = [];
+    bySource.set(sourceIdentity, ids);
+  }
+  let id = ids[occurrence];
+  if (id === undefined) {
+    id = `${sourceIdentity}:${occurrence}`;
+    ids[occurrence] = id;
+  }
+  return id;
+}
+
 function nextDrawingId(
   frame: AuthoringFrame,
   callee: "plot.box" | "plot.segment",
   callsite?: CompilerCallsite,
 ): string {
   const usage = drawingUsage(frame);
-  const sourceIdentity = callsite?.id ?? `dev:${callee}`;
-  const occurrence = usage.occurrences.get(sourceIdentity) ?? 0;
-  usage.occurrences.set(sourceIdentity, occurrence + 1);
-  return `${sourceIdentity}:${occurrence}`;
+  if (callsite === undefined) {
+    const occurrence =
+      callee === "plot.box"
+        ? usage.devBoxOccurrence++
+        : usage.devSegmentOccurrence++;
+    return cachedDrawingId(frame.kernels, `dev:${callee}`, occurrence);
+  }
+  const occurrence = usage.occurrences.get(callsite.id) ?? 0;
+  usage.occurrences.set(callsite.id, occurrence + 1);
+  return cachedDrawingId(frame.kernels, callsite.id, occurrence);
 }
 
 function pendingDrawing(
@@ -68,6 +106,7 @@ function pendingDrawing(
   id: string,
   entry: DrawingRegistryEntry,
 ): IndicatorOverlay | undefined {
+  if (frame.overlayUpdates.size === 0) return entry.committed;
   if (frame.overlayUpdates.has(id))
     return frame.overlayUpdates.get(id) ?? undefined;
   return entry.committed;
@@ -100,12 +139,19 @@ export function drawingController(
   const controller: DrawingController = Object.freeze({
     id,
     kind,
+    current(): IndicatorOverlay | undefined {
+      const active = authoringFrame();
+      if (active.discovery) return undefined;
+      return pendingDrawing(active, id, entry);
+    },
     write(value: IndicatorOverlay): void {
       const active = authoringFrame();
       if (value.id !== id || value.kind !== kind)
         throw new Error(
           "Drawing handles cannot change hidden identity or kind.",
         );
+      const current = pendingDrawing(active, id, entry);
+      if (current !== undefined && sameDrawing(current, value)) return;
       writeDrawing(active, value);
       if (active.phase === "finalized" && !active.discovery)
         entry.committed = Object.freeze(value);
@@ -121,6 +167,7 @@ export function drawingController(
         throw new Error(
           "Drawing handles cannot change hidden identity or kind.",
         );
+      if (sameDrawing(current, next)) return;
       writeDrawing(active, next);
       if (active.phase === "finalized") entry.committed = Object.freeze(next);
     },
