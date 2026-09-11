@@ -68,7 +68,8 @@ function pendingDrawing(
   id: string,
   entry: DrawingRegistryEntry,
 ): IndicatorOverlay | undefined {
-  if (frame.overlayUpdates.has(id)) return frame.overlayUpdates.get(id) ?? undefined;
+  if (frame.overlayUpdates.has(id))
+    return frame.overlayUpdates.get(id) ?? undefined;
   return entry.committed;
 }
 
@@ -103,7 +104,9 @@ export function drawingController(
     write(value: IndicatorOverlay): void {
       const active = authoringFrame();
       if (value.id !== id || value.kind !== kind)
-        throw new Error("Drawing handles cannot change hidden identity or kind.");
+        throw new Error(
+          "Drawing handles cannot change hidden identity or kind.",
+        );
       writeDrawing(active, value);
       if (active.phase === "finalized" && !active.discovery)
         entry.committed = Object.freeze(value);
@@ -116,7 +119,9 @@ export function drawingController(
         throw new Error("Drawing handle is not active.");
       const next = update(current);
       if (next.id !== id || next.kind !== kind)
-        throw new Error("Drawing handles cannot change hidden identity or kind.");
+        throw new Error(
+          "Drawing handles cannot change hidden identity or kind.",
+        );
       writeDrawing(active, next);
       if (active.phase === "finalized") entry.committed = Object.freeze(next);
     },
@@ -126,7 +131,9 @@ export function drawingController(
       if (pendingDrawing(active, id, entry) === undefined) return;
       active.overlayUpdates.set(id, null);
       if (active.overlayUpdates.size > MAX_DRAWINGS)
-        throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
+        throw new RangeError(
+          "At most 2,000 drawing changes are allowed per bar.",
+        );
       if (active.phase === "finalized") entry.committed = undefined;
     },
   });
