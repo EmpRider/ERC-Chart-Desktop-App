@@ -124,3 +124,5 @@ test("building drawing mutations roll back to the committed handle state", () =>
   assert.equal(instance.snapshot().overlays[0].top, 20);
   instance.dispose();
 });
+
+// Diagnostic marker for downstream gate discovery; removed before review-ready state.
