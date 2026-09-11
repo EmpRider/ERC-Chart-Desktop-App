@@ -89,9 +89,7 @@ async function collectCompilerPlotDeclarations(sourcePath, authoringRoot) {
       ...indicatorCompilerBaseDefine,
       __ERC_INDICATOR_PLOT_DECLARATIONS__: "[]",
     },
-    plugins: [
-      indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot }),
-    ],
+    plugins: [indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot })],
   });
 
   const inputNames = new Set();
@@ -176,9 +174,7 @@ export async function buildIndicatorPackage({
     target: "es2022",
     minify: false,
     define: indicatorCompilerDefine,
-    plugins: [
-      indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot }),
-    ],
+    plugins: [indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot })],
   });
   await build({
     entryPoints: [sourcePath],
@@ -189,9 +185,7 @@ export async function buildIndicatorPackage({
     target: "node24",
     minify: false,
     define: indicatorCompilerDefine,
-    plugins: [
-      indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot }),
-    ],
+    plugins: [indicatorAuthoringTransformPlugin({ sourceRoot: authoringRoot })],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`

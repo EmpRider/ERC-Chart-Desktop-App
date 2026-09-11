@@ -160,10 +160,7 @@ function discoveryPresentationDefinition(
   metadata: PlotDeclarationMetadata,
   options: ShapeOptions,
 ): IndicatorPlotDefinition {
-  if (
-    definition.color === options.color &&
-    definition.width === options.width
-  )
+  if (definition.color === options.color && definition.width === options.width)
     return definition;
   const next: IndicatorPlotDefinition = {
     ...definition,
