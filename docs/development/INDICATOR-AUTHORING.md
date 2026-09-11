@@ -59,6 +59,7 @@ This is shorthand for the following callback, with the same behavior:
   const close = candle.close;
   const low = candle.low;
   plot.line(close, { title: "Close" });
+  plot.line(low, { title: "Low" });
 };
 ```
 
