@@ -88,15 +88,64 @@ export function normalizeIndicatorParameters(
   );
 }
 
+function sameInputOptions(
+  expected: readonly IndicatorInputOption[] | undefined,
+  options: readonly IndicatorInputOption[] | undefined,
+): boolean {
+  if (expected === options) return true;
+  if (
+    expected === undefined ||
+    options === undefined ||
+    expected.length !== options.length
+  )
+    return false;
+  return expected.every((option, index) => {
+    const candidate = options[index];
+    return (
+      candidate !== undefined &&
+      option.value === candidate.value &&
+      option.label === candidate.label
+    );
+  });
+}
+
 function sameInputDefinition(
   expected: IndicatorInputDefinition | undefined,
   definition: IndicatorInputDefinition,
 ): boolean {
-  return (
-    expected?.key === definition.key &&
-    expected.type === definition.type &&
-    expected.label === definition.label
-  );
+  if (
+    expected === undefined ||
+    expected.key !== definition.key ||
+    expected.label !== definition.label ||
+    expected.group !== definition.group ||
+    expected.description !== definition.description ||
+    expected.effect !== definition.effect ||
+    expected.type !== definition.type
+  )
+    return false;
+
+  switch (expected.type) {
+    case "boolean":
+      return (
+        definition.type === "boolean" &&
+        expected.defaultValue === definition.defaultValue
+      );
+    case "number":
+      return (
+        definition.type === "number" &&
+        expected.defaultValue === definition.defaultValue &&
+        expected.min === definition.min &&
+        expected.max === definition.max &&
+        expected.step === definition.step
+      );
+    case "string":
+      return (
+        definition.type === "string" &&
+        expected.defaultValue === definition.defaultValue &&
+        expected.editor === definition.editor &&
+        sameInputOptions(expected.options, definition.options)
+      );
+  }
 }
 
 function readInput(
