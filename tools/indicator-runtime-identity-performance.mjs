@@ -118,15 +118,12 @@ function slowState(value, openTimeMs) {
   const count = series(100, (previous) => previous + 2);
   const average = ta.sma(value, length);
   plot.line(average, { key: "slow", title: "Slow" });
-  plot.drawings("zones", () => {
-    plot.box({
-      id: "slow-zone",
-      startTimeMs: openTimeMs,
-      endTimeMs: openTimeMs + 60_000,
-      top: value + 1,
-      bottom: value - 1,
-      color: "#555555",
-    });
+  plot.box({
+    left: openTimeMs,
+    right: openTimeMs + 60_000,
+    top: value + 1,
+    bottom: value - 1,
+    color: "#555555",
   });
   return { average, count };
 }
