@@ -234,7 +234,6 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
 
   const declaration = {
     id: metadata.id,
-    callee: metadata.callee,
     kind,
     source: metadata.source,
   };
