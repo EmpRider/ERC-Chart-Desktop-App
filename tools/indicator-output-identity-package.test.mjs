@@ -204,6 +204,33 @@ export default defineIndicator(
   }
 });
 
+test("signal rejects a repeated compiler identity in one finalized bar", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function emitTwice() {
+  for (let index = 0; index < 2; index += 1) signal(true, "long");
+}
+export default defineIndicator(
+  { id: "erc.indicator.signal-identity-collision.main", name: "Signal identity collision" },
+  ({ isConfirmed }) => {
+    if (isConfirmed) emitTwice();
+  },
+);
+`,
+    "erc.indicator.signal-identity-collision",
+  );
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => instance.onHistory([candle(0, 10), candle(1, 11)]),
+      /Compiler call-site identity .* for signal executed more than once in one finalized bar\./u,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("packaged v2 runtime rejects a missing compiler identity", async () => {
   await assert.rejects(
     () =>
