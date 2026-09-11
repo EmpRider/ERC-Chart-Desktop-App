@@ -1057,22 +1057,18 @@ function drawZones(
         segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
       const color = zoneColor(zone, params);
       if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
-        const id = `${zone.id}:band:${segment.startIndex}`;
         plot.box({
-          id,
-          startTimeMs: segment.startTimeMs,
-          endTimeMs,
+          left: segment.startTimeMs,
+          right: endTimeMs,
           top: segment.bandHigh,
           bottom: segment.bandLow,
           color: rgbaWithAlpha(color, params.bandOpacity),
         });
       }
       if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
-        const id = `${zone.id}:line:${segment.startIndex}`;
         plot.segment({
-          id,
-          startTimeMs: segment.startTimeMs,
-          endTimeMs,
+          left: segment.startTimeMs,
+          right: endTimeMs,
           startValue: segment.center,
           endValue: segment.center,
           color: rgbaWithAlpha(color, params.lineOpacity),
@@ -1461,12 +1457,8 @@ function zoneColor(zone: PocZone, params: Params): string {
 function renderZones(state: PocState, bar: IndicatorBar, params: Params): void {
   const skipHistoricalIntermediate =
     bar.isHistory && bar.isConfirmed && !bar.isHistoryFinalizedTail;
-  plot.drawings(
-    "poc-zones",
-    skipHistoricalIntermediate
-      ? null
-      : () => drawZones(state.zones, params, bar),
-  );
+  if (skipHistoricalIntermediate) return;
+  drawZones(state.zones, params, bar);
 }
 
 const indicator: IndicatorPluginModule = defineIndicator(
@@ -1577,12 +1569,8 @@ const indicator: IndicatorPluginModule = defineIndicator(
       color: params.sellSignalColor,
     });
     renderZones(poc, bar, params);
-    signal(signalState.buy, "long", {
-      id: "erc.indicator.atr-rope-utbot.unified:buy",
-    });
-    signal(signalState.sell, "short", {
-      id: "erc.indicator.atr-rope-utbot.unified:sell",
-    });
+    signal(signalState.buy, "long");
+    signal(signalState.sell, "short");
   },
 );
 
