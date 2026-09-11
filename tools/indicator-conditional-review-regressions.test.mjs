@@ -178,7 +178,17 @@ export default defineIndicator(
       volume: 1,
     },
   ]);
-  assert.equal(instance.snapshot().points[0]?.values.positional, 7);
+  const snapshot = instance.snapshot();
+  assert.equal(snapshot.points[0]?.values.positional, 7);
+  const declared = module.default.definition.plots;
+  assert.equal(declared.length, 2);
+  assert.equal(declared[0]?.key, "erc-v2-plot-000000000000000000000001");
+  assert.equal(declared[0]?.outputKey, "compiled");
+  assert.equal(declared[0]?.label, "Compiled");
+  assert.equal(
+    Object.hasOwn(snapshot.points[0]?.values ?? {}, "compiled"),
+    false,
+  );
   instance.dispose();
 });
 
