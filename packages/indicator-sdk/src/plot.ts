@@ -312,7 +312,9 @@ function assertDrawingNumber(name: string, value: number): void {
 
 function assertSegmentWidth(width: number): void {
   if (!Number.isFinite(width) || width <= 0 || width > 20)
-    throw new RangeError("Drawing width must be greater than 0 and at most 20.");
+    throw new RangeError(
+      "Drawing width must be greater than 0 and at most 20.",
+    );
 }
 
 function boxOverlay(id: string, value: BoxDrawing): IndicatorBox {
@@ -334,7 +336,10 @@ function boxOverlay(id: string, value: BoxDrawing): IndicatorBox {
   };
 }
 
-function segmentOverlay(id: string, value: SegmentDrawing): IndicatorLineSegment {
+function segmentOverlay(
+  id: string,
+  value: SegmentDrawing,
+): IndicatorLineSegment {
   assertDrawingTime("Drawing left", value.left);
   assertDrawingTime("Drawing right", value.right);
   assertDrawingNumber("Drawing startValue", value.startValue);
@@ -392,7 +397,11 @@ function segment(
     "drawing",
     "plot.segment",
   );
-  const controller = drawingController("line-segment", "plot.segment", callsite);
+  const controller = drawingController(
+    "line-segment",
+    "plot.segment",
+    callsite,
+  );
   controller.write(segmentOverlay(controller.id, value));
   return Object.freeze({
     set(patch: Partial<SegmentDrawing>): void {
