@@ -24,6 +24,7 @@ import type {
   RuntimeIndicatorInstance,
   SignalCandidate,
 } from "./index.js";
+import { compilerPlotDefinitions } from "./plot.js";
 import type { SeriesNumber } from "./series.js";
 
 export interface IndicatorOptions {
@@ -92,7 +93,7 @@ export function defineIndicator(
   calculate: IndicatorCalculation,
 ): IndicatorPluginModule {
   const inputs: IndicatorInputDefinition[] = [];
-  const plots: IndicatorPlotDefinition[] = [];
+  const plots: IndicatorPlotDefinition[] = compilerPlotDefinitions();
   const sample: Candle = {
     instrumentId: "metadata" as Candle["instrumentId"],
     timeframeId: "1m" as Candle["timeframeId"],
@@ -233,7 +234,7 @@ export function defineIndicator(
           if (
             frame.kernelIndex !== discovery.kernelIndex ||
             frame.inputIndex !== inputs.length ||
-            frame.plotIndex !== plots.length ||
+            frame.plotIndex !== discovery.plotIndex ||
             kernels.some(
               (slot, index) =>
                 slot.signature.split(":")[0] !==
