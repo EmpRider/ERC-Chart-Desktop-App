@@ -46,12 +46,10 @@ const expectedEma = (committedValues, candidate, period) => {
   }
   const alpha = 2 / (period + 1);
   let average =
-    committedValues
-      .slice(0, period)
-      .reduce((sum, value) => sum + value, 0) / period;
+    committedValues.slice(0, period).reduce((sum, value) => sum + value, 0) /
+    period;
   for (let index = period; index < committedValues.length; index += 1) {
-    average =
-      alpha * (committedValues[index] ?? 0) + (1 - alpha) * average;
+    average = alpha * (committedValues[index] ?? 0) + (1 - alpha) * average;
   }
   return alpha * candidate + (1 - alpha) * average;
 };
