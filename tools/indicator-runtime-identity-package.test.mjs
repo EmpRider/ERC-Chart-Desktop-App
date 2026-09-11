@@ -99,6 +99,64 @@ export default defineIndicator(
   }
 });
 
+test("input replay rejects changed constraints and nested string options at one compiler identity", async () => {
+  const { default: numericPlugin } = await packagedPlugin(
+    `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-input-contract-number.main", name: "Runtime identity numeric input contract" },
+  ({ close }) => {
+    const length = input.float(5, {
+      title: "Length",
+      min: close > 15 ? 2 : 1,
+      max: 20,
+      step: 0.5,
+    });
+    plot.line(length, { key: "result", title: "Result" });
+  },
+);
+`,
+    "erc.indicator.runtime-identity-input-contract-number",
+  );
+
+  const numericInstance = numericPlugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => numericInstance.onHistory([candle(0, 10), candle(1, 20)]),
+      /Input declaration identity .* does not match the discovered input contract\./u,
+    );
+  } finally {
+    numericInstance.dispose();
+  }
+
+  const { default: stringPlugin } = await packagedPlugin(
+    `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.runtime-identity-input-contract-string.main", name: "Runtime identity string input contract" },
+  ({ close }) => {
+    const source = input.string("close", {
+      title: "Source",
+      options: close > 15
+        ? [{ value: "close", label: "Close" }, { value: "high", label: "High" }]
+        : [{ value: "close", label: "Close" }, { value: "open", label: "Open" }],
+    });
+    plot.line(source === "close" ? close : 0, { key: "result", title: "Result" });
+  },
+);
+`,
+    "erc.indicator.runtime-identity-input-contract-string",
+  );
+
+  const stringInstance = stringPlugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => stringInstance.onHistory([candle(0, 10), candle(1, 20)]),
+      /Input declaration identity .* does not match the discovered input contract\./u,
+    );
+  } finally {
+    stringInstance.dispose();
+  }
+});
+
 test("recurrence state follows compiler identity when execution order changes", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot, series } from "@erc-chart/indicator-sdk";
