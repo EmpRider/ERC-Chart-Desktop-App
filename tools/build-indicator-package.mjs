@@ -88,18 +88,30 @@ function emittedPlotCallsiteIds(outputFiles) {
   return emitted;
 }
 
+function authoringTransformContext(sourceRoot) {
+  const plotDeclarationsByInput = new Map();
+  const authoringTransform = indicatorAuthoringTransformPlugin({
+    sourceRoot,
+    onTransform({ fileName, plotDeclarations }) {
+      plotDeclarationsByInput.set(fileName, plotDeclarations);
+    },
+  });
+  return { authoringTransform, plotDeclarationsByInput };
+}
+
 async function collectCompilerPlotDeclarations(
   sourcePath,
   authoringTransform,
   plotDeclarationsByInput,
+  { platform, target },
 ) {
   const prebuild = await build({
     entryPoints: [sourcePath],
     bundle: true,
     write: false,
-    platform: "neutral",
+    platform,
     format: "esm",
-    target: "es2022",
+    target,
     minify: false,
     define: {
       ...indicatorCompilerBaseDefine,
@@ -125,6 +137,13 @@ async function collectCompilerPlotDeclarations(
     }
   }
   return normalizePlotDeclarations(byId.values());
+}
+
+function indicatorCompilerDefine(plotDeclarations) {
+  return {
+    ...indicatorCompilerBaseDefine,
+    __ERC_INDICATOR_PLOT_DECLARATIONS__: JSON.stringify(plotDeclarations),
+  };
 }
 
 export async function buildIndicatorPackage({
@@ -155,24 +174,20 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
-  const plotDeclarationsByInput = new Map();
-  const authoringTransform = indicatorAuthoringTransformPlugin({
-    sourceRoot: authoringRoot,
-    onTransform({ fileName, plotDeclarations }) {
-      plotDeclarationsByInput.set(fileName, plotDeclarations);
-    },
-  });
-  const compilerPlotDeclarations = await collectCompilerPlotDeclarations(
+  const entryTransform = authoringTransformContext(authoringRoot);
+  const metadataTransform = authoringTransformContext(authoringRoot);
+  const entryPlotDeclarations = await collectCompilerPlotDeclarations(
     sourcePath,
-    authoringTransform,
-    plotDeclarationsByInput,
+    entryTransform.authoringTransform,
+    entryTransform.plotDeclarationsByInput,
+    { platform: "neutral", target: "es2022" },
   );
-  const indicatorCompilerDefine = {
-    ...indicatorCompilerBaseDefine,
-    __ERC_INDICATOR_PLOT_DECLARATIONS__: JSON.stringify(
-      compilerPlotDeclarations,
-    ),
-  };
+  const metadataPlotDeclarations = await collectCompilerPlotDeclarations(
+    sourcePath,
+    metadataTransform.authoringTransform,
+    metadataTransform.plotDeclarationsByInput,
+    { platform: "node", target: "node24" },
+  );
   await rm(packageRoot, { recursive: true, force: true });
   await mkdir(entryDirectory, { recursive: true });
   await build({
@@ -183,8 +198,8 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "es2022",
     minify: false,
-    define: indicatorCompilerDefine,
-    plugins: [authoringTransform],
+    define: indicatorCompilerDefine(entryPlotDeclarations),
+    plugins: [entryTransform.authoringTransform],
   });
   await build({
     entryPoints: [sourcePath],
@@ -194,8 +209,8 @@ export async function buildIndicatorPackage({
     format: "esm",
     target: "node24",
     minify: false,
-    define: indicatorCompilerDefine,
-    plugins: [authoringTransform],
+    define: indicatorCompilerDefine(metadataPlotDeclarations),
+    plugins: [metadataTransform.authoringTransform],
   });
   const metadataModule = await import(
     `${pathToFileURL(metadataPath).href}?build=${Date.now()}`
