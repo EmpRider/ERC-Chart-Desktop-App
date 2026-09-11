@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { build } from "esbuild";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
+import { transformIndicatorCallsites } from "./indicator-authoring/callsite-transform.mjs";
 
 async function buildPackage(sourceText, id, additionalFiles = {}) {
   const sourceDirectory = await mkdtemp(
@@ -187,4 +188,15 @@ export function treeShakenPlot() {
   const plots = result.manifest.capabilities.indicatorDefinition.plots;
   assert.equal(plots.length, 1);
   assert.equal(plots[0]?.label, "Live");
+});
+
+test("compiler plot declarations exclude runtime-only callsite metadata", () => {
+  const result = transformIndicatorCallsites(
+    `import { plot } from "@erc-chart/indicator-sdk";
+plot.line(1, { title: "Line" });
+`,
+    { fileName: "indicator.ts", sourceFileId: "indicator.ts" },
+  );
+  assert.equal(result.plotDeclarations.length, 1);
+  assert.equal(Object.hasOwn(result.plotDeclarations[0], "callee"), false);
 });
