@@ -12,6 +12,11 @@ interface FrameDrawingUsage {
   readonly occurrences: Map<string, number>;
 }
 
+interface DrawingRegistryEntry {
+  committed?: IndicatorOverlay;
+  readonly controller: DrawingController;
+}
+
 export interface DrawingController {
   readonly id: string;
   readonly kind: IndicatorOverlay["kind"];
@@ -23,7 +28,7 @@ export interface DrawingController {
 const frameDrawingUsage = new WeakMap<AuthoringFrame, FrameDrawingUsage>();
 const drawingRegistries = new WeakMap<
   KernelSlot[],
-  Map<string, DrawingController>
+  Map<string, DrawingRegistryEntry>
 >();
 
 function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
@@ -35,7 +40,9 @@ function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
   return usage;
 }
 
-function drawingRegistry(kernels: KernelSlot[]): Map<string, DrawingController> {
+function drawingRegistry(
+  kernels: KernelSlot[],
+): Map<string, DrawingRegistryEntry> {
   let registry = drawingRegistries.get(kernels);
   if (registry === undefined) {
     registry = new Map();
@@ -59,9 +66,10 @@ function nextDrawingId(
 function pendingDrawing(
   frame: AuthoringFrame,
   id: string,
+  entry: DrawingRegistryEntry,
 ): IndicatorOverlay | undefined {
   if (frame.overlayUpdates.has(id)) return frame.overlayUpdates.get(id) ?? undefined;
-  return frame.committedDrawings.get(id);
+  return entry.committed;
 }
 
 function writeDrawing(frame: AuthoringFrame, value: IndicatorOverlay): void {
@@ -81,13 +89,14 @@ export function drawingController(
   const registry = drawingRegistry(frame.kernels);
   const existing = registry.get(id);
   if (existing !== undefined) {
-    if (existing.kind !== kind)
+    if (existing.controller.kind !== kind)
       throw new Error(
         `Drawing identity ${id} changed kind; rebuild the indicator package.`,
       );
-    return existing;
+    return existing.controller;
   }
 
+  let entry: DrawingRegistryEntry;
   const controller: DrawingController = Object.freeze({
     id,
     kind,
@@ -96,29 +105,33 @@ export function drawingController(
       if (value.id !== id || value.kind !== kind)
         throw new Error("Drawing handles cannot change hidden identity or kind.");
       writeDrawing(active, value);
+      if (active.phase === "finalized" && !active.discovery)
+        entry.committed = Object.freeze(value);
     },
     update(update: (current: IndicatorOverlay) => IndicatorOverlay): void {
       const active = authoringFrame();
       if (active.discovery) return;
-      const current = pendingDrawing(active, id);
+      const current = pendingDrawing(active, id, entry);
       if (current === undefined)
         throw new Error("Drawing handle is not active.");
       const next = update(current);
       if (next.id !== id || next.kind !== kind)
         throw new Error("Drawing handles cannot change hidden identity or kind.");
       writeDrawing(active, next);
+      if (active.phase === "finalized") entry.committed = Object.freeze(next);
     },
     delete(): void {
       const active = authoringFrame();
       if (active.discovery) return;
-      if (pendingDrawing(active, id) === undefined) return;
+      if (pendingDrawing(active, id, entry) === undefined) return;
       active.overlayUpdates.set(id, null);
       if (active.overlayUpdates.size > MAX_DRAWINGS)
         throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
-      if (active.phase === "finalized") registry.delete(id);
+      if (active.phase === "finalized") entry.committed = undefined;
     },
   });
-  registry.set(id, controller);
+  entry = { controller };
+  registry.set(id, entry);
   while (registry.size > MAX_DRAWINGS) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
