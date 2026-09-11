@@ -95,20 +95,28 @@ function valuePlot(
       callsite === undefined
         ? frame.plots[index]
         : frame.plots.find((plot) => plot.key === callsite.id);
-    const metadata =
-      definition === undefined
-        ? undefined
-        : plotDeclarationMetadata.get(definition);
+    if (definition === undefined)
+      throw new Error(
+        "Plot declarations must preserve their identity, kind, key and options on every bar.",
+      );
+
+    const metadata = plotDeclarationMetadata.get(definition);
+    const keyExplicit = options.key !== undefined;
+    const titleExplicit = options.title !== undefined;
+    const preservesKey =
+      metadata === undefined
+        ? !keyExplicit || definition.outputKey === options.key
+        : metadata.keyExplicit === keyExplicit &&
+          (!metadata.keyExplicit || definition.outputKey === options.key);
+    const preservesTitle =
+      metadata === undefined
+        ? !titleExplicit || definition.label === options.title
+        : metadata.titleExplicit === titleExplicit &&
+          (!metadata.titleExplicit || definition.label === options.title);
     if (
-      definition === undefined ||
       definition.kind !== kind ||
-      (metadata !== undefined
-        ? metadata.keyExplicit !== (options.key !== undefined) ||
-          metadata.titleExplicit !== (options.title !== undefined) ||
-          (metadata.keyExplicit && definition.outputKey !== options.key) ||
-          (metadata.titleExplicit && definition.label !== options.title)
-        : (options.key !== undefined && definition.outputKey !== options.key) ||
-          (options.title !== undefined && definition.label !== options.title)) ||
+      !preservesKey ||
+      !preservesTitle ||
       definition.style !== options.style ||
       definition.direction !== options.direction
     )
