@@ -37,6 +37,35 @@ const rollbackBoxCallsite = Object.freeze({
   }),
 });
 
+const foreignBoxCallsite = Object.freeze({
+  __ercCallsite: "v2",
+  id: "erc-v2-drawing-000000000000000000000003",
+  kind: "drawing",
+  callee: "plot.box",
+  source: Object.freeze({
+    file: "drawing-handles.test.mjs",
+    line: 3,
+    column: 1,
+  }),
+});
+
+const evictionBoxCallsite = (index) =>
+  Object.freeze({
+    __ercCallsite: "v2",
+    id: `erc-v2-drawing-${(index + 16).toString(16).padStart(24, "0")}`,
+    kind: "drawing",
+    callee: "plot.box",
+    source: Object.freeze({
+      file: "drawing-handles.test.mjs",
+      line: 10 + index,
+      column: 1,
+    }),
+  });
+
+const evictionBoxCallsites = Array.from({ length: 2_001 }, (_, index) =>
+  evictionBoxCallsite(index),
+);
+
 test("finalized drawing handles persist until updated or deleted", () => {
   let box;
   const plugin = defineIndicator(
@@ -125,4 +154,109 @@ test("building drawing mutations roll back to the committed handle state", () =>
   instance.dispose();
 });
 
-// Diagnostic marker for downstream gate discovery; removed before review-ready state.
+test("drawing handles cannot mutate another indicator instance", () => {
+  let ownerHandle;
+  const plugin = defineIndicator(
+    { id: "erc.indicator.handle-owner.main", name: "Handle owner" },
+    (bar) => {
+      if (!bar.isConfirmed || bar.index !== 0) return;
+      if (bar.instrumentId === "OWNER") {
+        ownerHandle = plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: bar.close,
+            bottom: bar.close - 1,
+            color: "#008800",
+          },
+          foreignBoxCallsite,
+        );
+        return;
+      }
+      plot.box(
+        {
+          left: bar.openTimeMs,
+          right: bar.openTimeMs + 60_000,
+          top: bar.close,
+          bottom: bar.close - 1,
+          color: "#880000",
+        },
+        foreignBoxCallsite,
+      );
+      ownerHandle.set({ top: 999 });
+    },
+  );
+
+  const ownerContext = { instrumentId: "OWNER", timeframeId: "1m" };
+  const otherContext = { instrumentId: "OTHER", timeframeId: "1m" };
+  const owner = plugin.createInstance({}, ownerContext);
+  const other = plugin.createInstance({}, otherContext);
+  owner.onFinalizedBar({ ...candle(0, 20), ...ownerContext });
+  assert.throws(
+    () => other.onFinalizedBar({ ...candle(0, 50), ...otherContext }),
+    /Drawing handle is not active/u,
+  );
+  owner.dispose();
+  other.dispose();
+});
+
+test("evicted drawing handles cannot delete a replacement drawing", () => {
+  let staleHandle;
+  const plugin = defineIndicator(
+    { id: "erc.indicator.handle-eviction.main", name: "Handle eviction" },
+    (bar) => {
+      if (!bar.isConfirmed) return;
+      if (bar.index === 0) {
+        for (let index = 0; index < 2_000; index += 1) {
+          const handle = plot.box(
+            {
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: bar.close + index,
+              bottom: bar.close + index - 1,
+              color: "#008800",
+            },
+            evictionBoxCallsites[index],
+          );
+          if (index === 0) staleHandle = handle;
+        }
+        return;
+      }
+      if (bar.index === 1) {
+        plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: bar.close,
+            bottom: bar.close - 1,
+            color: "#008800",
+          },
+          evictionBoxCallsites[2_000],
+        );
+        return;
+      }
+      if (bar.index === 2) {
+        plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: bar.close,
+            bottom: bar.close - 1,
+            color: "#008800",
+          },
+          evictionBoxCallsites[0],
+        );
+        staleHandle.delete();
+      }
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  instance.onFinalizedBar(candle(1, 21));
+  assert.throws(
+    () => instance.onFinalizedBar(candle(2, 22)),
+    /Drawing handle is not active/u,
+  );
+  instance.dispose();
+});
