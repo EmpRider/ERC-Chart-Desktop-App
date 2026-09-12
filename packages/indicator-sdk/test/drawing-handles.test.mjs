@@ -303,7 +303,9 @@ test("evicted drawing handles cannot delete a replacement drawing", () => {
 
   const instance = plugin.createInstance({}, context);
   instance.onFinalizedBar(candle(0, 20));
-  const staleId = instance.snapshot().overlays.find((overlay) => overlay.top === 20)?.id;
+  const staleId = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.top === 20)?.id;
   assert.equal(typeof staleId, "string");
 
   instance.onFinalizedBar(candle(1, 21));
