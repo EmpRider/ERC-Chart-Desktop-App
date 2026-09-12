@@ -8,16 +8,22 @@ import type { IndicatorOverlay } from "../index.js";
 import type { CompilerCallsite } from "./callsite.js";
 
 const MAX_DRAWINGS = 2_000;
+const devDrawingUsageError =
+  "Uncompiled drawing calls must run in the same order on every bar; compile indicator packages before using conditional drawing calls.";
 
 interface FrameDrawingUsage {
   devBoxOccurrence: number;
   devSegmentOccurrence: number;
+  readonly devBoxSources: string[];
+  readonly devSegmentSources: string[];
   readonly occurrences: Map<string, number>;
 }
 
 interface ExpectedDevDrawingUsage {
   boxCount?: number;
   segmentCount?: number;
+  boxSources?: readonly string[];
+  segmentSources?: readonly string[];
 }
 
 interface DrawingRegistryEntry {
@@ -48,12 +54,18 @@ const drawingRegistries = new WeakMap<
 >();
 const drawingIdCache = new WeakMap<KernelSlot[], Map<string, string[]>>();
 
+function invalidDevDrawingUsage(): Error {
+  return new Error(devDrawingUsageError);
+}
+
 function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
   let usage = frameDrawingUsage.get(frame);
   if (usage === undefined) {
     usage = {
       devBoxOccurrence: 0,
       devSegmentOccurrence: 0,
+      devBoxSources: [],
+      devSegmentSources: [],
       occurrences: new Map(),
     };
     frameDrawingUsage.set(frame, usage);
@@ -61,21 +73,29 @@ function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
   return usage;
 }
 
-function validateDevDrawingCount(
+function validateDevDrawingUsage(
   expected: ExpectedDevDrawingUsage,
-  key: "boxCount" | "segmentCount",
-  actual: number,
+  countKey: "boxCount" | "segmentCount",
+  sourcesKey: "boxSources" | "segmentSources",
+  actualSources: readonly string[],
 ): void {
-  const baseline = expected[key];
-  if (baseline === undefined) {
-    expected[key] = Math.max(1, actual);
+  const actual = actualSources.length;
+  const baseline = expected[countKey];
+  if (baseline === undefined) expected[countKey] = Math.max(1, actual);
+  else if (!(baseline <= 1 && actual <= 1) && baseline !== actual)
+    throw invalidDevDrawingUsage();
+
+  if (actual === 0) return;
+  const baselineSources = expected[sourcesKey];
+  if (baselineSources === undefined) {
+    expected[sourcesKey] = Object.freeze([...actualSources]);
     return;
   }
-  if (baseline <= 1 && actual <= 1) return;
-  if (baseline !== actual)
-    throw new Error(
-      "Uncompiled drawing calls must run in the same order on every bar; compile indicator packages before using conditional drawing calls.",
-    );
+  if (
+    baselineSources.length !== actualSources.length ||
+    baselineSources.some((source, index) => source !== actualSources[index])
+  )
+    throw invalidDevDrawingUsage();
 }
 
 function rollbackBuildingDrawingEntries(frame: AuthoringFrame): void {
@@ -99,8 +119,18 @@ export function validateDrawingUsage(frame: AuthoringFrame): void {
     expectedDevDrawingUsage.set(frame.kernels, expected);
   }
   const usage = drawingUsage(frame);
-  validateDevDrawingCount(expected, "boxCount", usage.devBoxOccurrence);
-  validateDevDrawingCount(expected, "segmentCount", usage.devSegmentOccurrence);
+  validateDevDrawingUsage(
+    expected,
+    "boxCount",
+    "boxSources",
+    usage.devBoxSources,
+  );
+  validateDevDrawingUsage(
+    expected,
+    "segmentCount",
+    "segmentSources",
+    usage.devSegmentSources,
+  );
 }
 
 function drawingRegistry(
@@ -140,19 +170,29 @@ function cachedDrawingId(
 function nextDrawingId(
   frame: AuthoringFrame,
   callee: "plot.box" | "plot.segment",
-  callsite?: CompilerCallsite,
+  callsite: CompilerCallsite | undefined,
+  developmentSource: string | undefined,
 ): string {
   const usage = drawingUsage(frame);
   if (callsite === undefined) {
-    const occurrence =
-      callee === "plot.box"
-        ? usage.devBoxOccurrence++
-        : usage.devSegmentOccurrence++;
+    if (developmentSource === undefined) throw invalidDevDrawingUsage();
+    if (callee === "plot.box") {
+      const occurrence = usage.devBoxOccurrence++;
+      usage.devBoxSources[occurrence] = developmentSource;
+      return cachedDrawingId(frame.kernels, `dev:${callee}`, occurrence);
+    }
+    const occurrence = usage.devSegmentOccurrence++;
+    usage.devSegmentSources[occurrence] = developmentSource;
     return cachedDrawingId(frame.kernels, `dev:${callee}`, occurrence);
   }
   const occurrence = usage.occurrences.get(callsite.id) ?? 0;
   usage.occurrences.set(callsite.id, occurrence + 1);
   return cachedDrawingId(frame.kernels, callsite.id, occurrence);
+}
+
+function developmentDrawingSource(stack: string | undefined): string | undefined {
+  const source = stack?.split("\n")[3]?.trim();
+  return source === undefined || source.length === 0 ? undefined : source;
 }
 
 function pendingDrawing(
@@ -166,11 +206,15 @@ function pendingDrawing(
   return entry.committed;
 }
 
+function assertDrawingChangeCapacity(frame: AuthoringFrame, id: string): void {
+  if (!frame.overlayUpdates.has(id) && frame.overlayUpdates.size >= MAX_DRAWINGS)
+    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
+}
+
 function writeDrawing(frame: AuthoringFrame, value: IndicatorOverlay): void {
   if (frame.discovery) return;
+  assertDrawingChangeCapacity(frame, value.id);
   frame.overlayUpdates.set(value.id, Object.freeze(value));
-  if (frame.overlayUpdates.size > MAX_DRAWINGS)
-    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
 }
 
 function assertHandleOwner(
@@ -187,6 +231,31 @@ function assertHandleOwner(
     throw new Error("Drawing handle is not active.");
 }
 
+function registerDrawingEntry(
+  frame: AuthoringFrame,
+  registry: Map<string, DrawingRegistryEntry>,
+  id: string,
+  entry: DrawingRegistryEntry,
+): void {
+  registry.set(id, entry);
+  if (frame.phase === "building" && !frame.discovery) {
+    let entries = buildingDrawingEntries.get(frame);
+    if (entries === undefined) {
+      entries = new Map();
+      buildingDrawingEntries.set(frame, entries);
+    }
+    entries.set(id, entry);
+    return;
+  }
+  while (registry.size > MAX_DRAWINGS) {
+    const oldest = registry.keys().next().value;
+    if (oldest === undefined) break;
+    const evicted = registry.get(oldest);
+    if (evicted !== undefined) delete evicted.committed;
+    registry.delete(oldest);
+  }
+}
+
 export function drawingController(
   kind: IndicatorOverlay["kind"],
   callee: "plot.box" | "plot.segment",
@@ -194,7 +263,9 @@ export function drawingController(
 ): DrawingController {
   const frame = authoringFrame();
   const ownerKernels = frame.kernels;
-  const id = nextDrawingId(frame, callee, callsite);
+  const developmentSource =
+    callsite === undefined ? developmentDrawingSource(new Error().stack) : undefined;
+  const id = nextDrawingId(frame, callee, callsite, developmentSource);
   const registry = drawingRegistry(ownerKernels);
   const existing = registry.get(id);
   if (existing !== undefined) {
@@ -205,11 +276,14 @@ export function drawingController(
     return existing.controller;
   }
 
+  let registered = false;
   const controller: DrawingController = Object.freeze({
     id,
     kind,
     write(value: IndicatorOverlay): void {
       const active = authoringFrame();
+      if (active.kernels !== ownerKernels)
+        throw new Error("Drawing handle is not active.");
       if (value.id !== id || value.kind !== kind)
         throw new Error(
           "Drawing handles cannot change hidden identity or kind.",
@@ -217,6 +291,10 @@ export function drawingController(
       const current = pendingDrawing(active, id, entry);
       if (current !== undefined && sameDrawing(current, value)) return;
       writeDrawing(active, value);
+      if (!registered) {
+        registerDrawingEntry(active, registry, id, entry);
+        registered = true;
+      }
       if (active.phase === "finalized" && !active.discovery)
         entry.committed = Object.freeze(value);
     },
@@ -241,31 +319,11 @@ export function drawingController(
       assertHandleOwner(active, ownerKernels, registry, id, controller);
       if (active.discovery) return;
       if (pendingDrawing(active, id, entry) === undefined) return;
+      assertDrawingChangeCapacity(active, id);
       active.overlayUpdates.set(id, null);
-      if (active.overlayUpdates.size > MAX_DRAWINGS)
-        throw new RangeError(
-          "At most 2,000 drawing changes are allowed per bar.",
-        );
       if (active.phase === "finalized") delete entry.committed;
     },
   });
   const entry: DrawingRegistryEntry = { controller };
-  registry.set(id, entry);
-  if (frame.phase === "building" && !frame.discovery) {
-    let entries = buildingDrawingEntries.get(frame);
-    if (entries === undefined) {
-      entries = new Map();
-      buildingDrawingEntries.set(frame, entries);
-    }
-    entries.set(id, entry);
-    return controller;
-  }
-  while (registry.size > MAX_DRAWINGS) {
-    const oldest = registry.keys().next().value;
-    if (oldest === undefined) break;
-    const evicted = registry.get(oldest);
-    if (evicted !== undefined) delete evicted.committed;
-    registry.delete(oldest);
-  }
   return controller;
 }
