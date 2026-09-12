@@ -363,7 +363,9 @@ function box(value: BoxDrawing, hiddenCallsite?: unknown): BoxHandle {
       controller.update((current) => {
         if (current.kind !== "box")
           throw new Error("Drawing handle kind changed unexpectedly.");
-        const borderColor = patch.borderColor ?? current.borderColor;
+        const borderColor = Object.hasOwn(patch, "borderColor")
+          ? patch.borderColor
+          : current.borderColor;
         const next: BoxDrawing = {
           left: patch.left ?? current.startTimeMs,
           right: patch.right ?? current.endTimeMs,
