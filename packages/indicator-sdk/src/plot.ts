@@ -38,8 +38,8 @@ export interface SegmentDrawing {
 }
 
 export interface DrawingHandle<T> {
-  set(patch: Partial<T>): void;
-  delete(): void;
+  readonly set: (patch: Partial<T>) => void;
+  readonly delete: () => void;
 }
 
 export type BoxHandle = DrawingHandle<BoxDrawing>;

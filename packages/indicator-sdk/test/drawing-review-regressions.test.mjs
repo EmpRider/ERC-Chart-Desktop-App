@@ -237,11 +237,13 @@ test("uncompiled drawing callsite switches fail closed", () => {
   const instance = plugin.createInstance({}, context);
   instance.onFinalizedBar(candle(0, 20));
   assert.equal(instance.snapshot().overlays.length, 1);
+  const overlaysBeforeRejectedBar = instance.snapshot().overlays;
 
   assert.throws(
     () => instance.onFinalizedBar(candle(1, 21)),
     /Uncompiled drawing calls must run in the same order on every bar/u,
   );
+  assert.deepEqual(instance.snapshot().overlays, overlaysBeforeRejectedBar);
   instance.dispose();
 });
 

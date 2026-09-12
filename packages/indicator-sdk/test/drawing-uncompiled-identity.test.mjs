@@ -44,11 +44,13 @@ test("uncompiled conditional same-kind drawings fail closed instead of aliasing"
   const firstSnapshot = instance.snapshot();
   assert.equal(firstSnapshot.overlays.length, 2);
   assert.notEqual(firstSnapshot.overlays[0].id, firstSnapshot.overlays[1].id);
+  const overlaysBeforeRejectedBar = instance.snapshot().overlays;
 
   assert.throws(
     () => instance.onFinalizedBar(candle(1, 21)),
     /Uncompiled drawing calls must run in the same order on every bar/u,
   );
+  assert.deepEqual(instance.snapshot().overlays, overlaysBeforeRejectedBar);
   instance.dispose();
 });
 
@@ -81,10 +83,12 @@ test("uncompiled same-kind drawing usage rejects one-to-two occurrence growth", 
   const instance = plugin.createInstance({}, context);
   instance.onFinalizedBar(candle(0, 20));
   assert.equal(instance.snapshot().overlays.length, 1);
+  const overlaysBeforeRejectedBar = instance.snapshot().overlays;
 
   assert.throws(
     () => instance.onFinalizedBar(candle(1, 21)),
     /Uncompiled drawing calls must run in the same order on every bar/u,
   );
+  assert.deepEqual(instance.snapshot().overlays, overlaysBeforeRejectedBar);
   instance.dispose();
 });

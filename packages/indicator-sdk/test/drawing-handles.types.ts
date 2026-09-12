@@ -10,6 +10,11 @@ export const box = plot.box({
 box.set({ right: 1_700_000_120_000, top: 102 });
 box.delete();
 
+// @ts-expect-error drawing handle methods are readonly
+box.set = () => undefined;
+// @ts-expect-error drawing handle methods are readonly
+box.delete = () => undefined;
+
 export const segment = plot.segment({
   left: 1_700_000_000_000,
   right: 1_700_000_060_000,
