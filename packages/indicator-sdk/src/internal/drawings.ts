@@ -82,11 +82,7 @@ export function validateDrawingUsage(frame: AuthoringFrame): void {
   }
   const usage = drawingUsage(frame);
   validateDevDrawingCount(expected, "boxCount", usage.devBoxOccurrence);
-  validateDevDrawingCount(
-    expected,
-    "segmentCount",
-    usage.devSegmentOccurrence,
-  );
+  validateDevDrawingCount(expected, "segmentCount", usage.devSegmentOccurrence);
 }
 
 function drawingRegistry(
