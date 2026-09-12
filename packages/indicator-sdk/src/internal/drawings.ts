@@ -190,7 +190,9 @@ function nextDrawingId(
   return cachedDrawingId(frame.kernels, callsite.id, occurrence);
 }
 
-function developmentDrawingSource(stack: string | undefined): string | undefined {
+function developmentDrawingSource(
+  stack: string | undefined,
+): string | undefined {
   const source = stack?.split("\n")[3]?.trim();
   return source === undefined || source.length === 0 ? undefined : source;
 }
@@ -207,7 +209,10 @@ function pendingDrawing(
 }
 
 function assertDrawingChangeCapacity(frame: AuthoringFrame, id: string): void {
-  if (!frame.overlayUpdates.has(id) && frame.overlayUpdates.size >= MAX_DRAWINGS)
+  if (
+    !frame.overlayUpdates.has(id) &&
+    frame.overlayUpdates.size >= MAX_DRAWINGS
+  )
     throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
 }
 
@@ -264,7 +269,9 @@ export function drawingController(
   const frame = authoringFrame();
   const ownerKernels = frame.kernels;
   const developmentSource =
-    callsite === undefined ? developmentDrawingSource(new Error().stack) : undefined;
+    callsite === undefined
+      ? developmentDrawingSource(new Error().stack)
+      : undefined;
   const id = nextDrawingId(frame, callee, callsite, developmentSource);
   const registry = drawingRegistry(ownerKernels);
   const existing = registry.get(id);
