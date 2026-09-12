@@ -304,8 +304,6 @@ export function drawingController(
     kind,
     write(value: IndicatorOverlay): void {
       const active = authoringFrame();
-      if (active.kernels !== ownerKernels)
-        throw new Error("Drawing handle is not active.");
       if (value.id !== id || value.kind !== kind)
         throw new Error(
           "Drawing handles cannot change hidden identity or kind.",
