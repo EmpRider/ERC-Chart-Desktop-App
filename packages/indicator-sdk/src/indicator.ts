@@ -24,6 +24,7 @@ import type {
   RuntimeIndicatorInstance,
   SignalCandidate,
 } from "./index.js";
+import { validateDrawingUsage } from "./internal/drawings.js";
 import { compilerPlotDefinitions } from "./plot.js";
 import type { SeriesNumber } from "./series.js";
 
@@ -231,6 +232,7 @@ export function defineIndicator(
         };
         try {
           run(frame, finalizedCount);
+          validateDrawingUsage(frame);
           if (
             frame.kernelIndex !== discovery.kernelIndex ||
             frame.inputIndex !== inputs.length ||
