@@ -13,13 +13,27 @@ const drawings = Array.from({ length: drawingCount }, (_, index) => ({
   bottom: index,
   color: "#008800",
 }));
+// Production indicator packages always receive compiler-injected hidden callsite
+// metadata. Keep this hot-path fixture on that production identity path rather
+// than the deliberately diagnostic uncompiled-development fallback.
+const drawingCallsite = Object.freeze({
+  __ercCallsite: "v2",
+  id: "erc-v2-drawing-000000000000000000000001",
+  kind: "drawing",
+  callee: "plot.box",
+  source: Object.freeze({
+    file: "tools/indicator-drawings-performance.mjs",
+    line: 1,
+    column: 1,
+  }),
+});
 const plugin = defineIndicator(
   {
     id: "erc.indicator.drawings-performance.main",
     name: "Drawing performance",
   },
   () => {
-    for (const drawing of drawings) plot.box(drawing);
+    for (const drawing of drawings) plot.box(drawing, drawingCallsite);
   },
 );
 const candle = (index) => ({
