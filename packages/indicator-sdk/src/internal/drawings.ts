@@ -33,6 +33,7 @@ const drawingRegistries = new WeakMap<
   KernelSlot[],
   Map<string, DrawingRegistryEntry>
 >();
+const drawingIdCache = new WeakMap<KernelSlot[], Map<string, string[]>>();
 
 function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
   let usage = frameDrawingUsage.get(frame);
@@ -58,6 +59,29 @@ function drawingRegistry(
   return registry;
 }
 
+function cachedDrawingId(
+  kernels: KernelSlot[],
+  sourceIdentity: string,
+  occurrence: number,
+): string {
+  let bySource = drawingIdCache.get(kernels);
+  if (bySource === undefined) {
+    bySource = new Map();
+    drawingIdCache.set(kernels, bySource);
+  }
+  let ids = bySource.get(sourceIdentity);
+  if (ids === undefined) {
+    ids = [];
+    bySource.set(sourceIdentity, ids);
+  }
+  let id = ids[occurrence];
+  if (id === undefined) {
+    id = `${sourceIdentity}:${occurrence}`;
+    ids[occurrence] = id;
+  }
+  return id;
+}
+
 function nextDrawingId(
   frame: AuthoringFrame,
   callee: "plot.box" | "plot.segment",
@@ -69,11 +93,11 @@ function nextDrawingId(
       callee === "plot.box"
         ? usage.devBoxOccurrence++
         : usage.devSegmentOccurrence++;
-    return `dev:${callee}:${occurrence}`;
+    return cachedDrawingId(frame.kernels, `dev:${callee}`, occurrence);
   }
   const occurrence = usage.occurrences.get(callsite.id) ?? 0;
   usage.occurrences.set(callsite.id, occurrence + 1);
-  return `${callsite.id}:${occurrence}`;
+  return cachedDrawingId(frame.kernels, callsite.id, occurrence);
 }
 
 function pendingDrawing(
