@@ -129,6 +129,82 @@ test("invalid initial drawing keeps the oldest handle", () => {
   instance.dispose();
 });
 
+test("invalid drawing values do not consume uncompiled identities", () => {
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.invalid-drawing-identity.main",
+      name: "Invalid drawing identity",
+    },
+    (bar) => {
+      if (!bar.isConfirmed) return;
+      if (bar.index === 0) {
+        assert.throws(
+          () =>
+            plot.box({
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: Number.NaN,
+              bottom: bar.close,
+              color: "#880000",
+            }),
+          /Drawing top must be finite/u,
+        );
+        assert.throws(
+          () =>
+            plot.segment({
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              startValue: bar.close,
+              endValue: bar.close + 1,
+              color: "#880000",
+              width: 0,
+              style: "solid",
+            }),
+          /Drawing width must be greater than 0 and at most 20/u,
+        );
+      }
+      plot.box({
+        left: bar.openTimeMs,
+        right: bar.openTimeMs + 60_000,
+        top: bar.close + 1,
+        bottom: bar.close,
+        color: "#008800",
+      });
+      plot.segment({
+        left: bar.openTimeMs,
+        right: bar.openTimeMs + 60_000,
+        startValue: bar.close,
+        endValue: bar.close + 1,
+        color: "#008800",
+        width: 1,
+        style: "solid",
+      });
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  const first = instance.snapshot().overlays;
+  const boxId = first.find((overlay) => overlay.kind === "box")?.id;
+  const segmentId = first.find((overlay) => overlay.kind === "line-segment")?.id;
+  assert.equal(first.length, 2);
+
+  assert.doesNotThrow(() => instance.onFinalizedBar(candle(1, 21)));
+  const second = instance.snapshot().overlays;
+  assert.equal(second.length, 2);
+  assert.equal(second.find((overlay) => overlay.kind === "box")?.id, boxId);
+  assert.equal(
+    second.find((overlay) => overlay.kind === "line-segment")?.id,
+    segmentId,
+  );
+  assert.equal(second.find((overlay) => overlay.kind === "box")?.top, 22);
+  assert.equal(
+    second.find((overlay) => overlay.kind === "line-segment")?.endValue,
+    22,
+  );
+  instance.dispose();
+});
+
 test("uncompiled drawing callsite switches fail closed", () => {
   const plugin = defineIndicator(
     {
