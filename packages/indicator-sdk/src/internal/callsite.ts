@@ -24,6 +24,7 @@ export interface CompilerCallsite {
 }
 
 const callsiteSuffix = /^[0-9a-f]{24}$/u;
+const validatedFrozenCallsites = new WeakMap<object, CompilerCallsite>();
 
 function compiledIndicatorPackage(): boolean {
   return (
@@ -50,6 +51,14 @@ export function readCompilerCallsite(
         `Missing compiler call-site identity for ${callee}; rebuild the indicator package with the SDK v2 authoring compiler.`,
       );
     return undefined;
+  }
+  if (value !== null && typeof value === "object") {
+    const cached = validatedFrozenCallsites.get(value);
+    if (cached !== undefined) {
+      if (cached.kind !== kind || cached.callee !== callee)
+        throw invalidCallsite(callee);
+      return cached;
+    }
   }
   if (
     value === null ||
@@ -81,5 +90,7 @@ export function readCompilerCallsite(
     source.column < 1
   )
     throw invalidCallsite(callee);
-  return candidate as CompilerCallsite;
+  const validated = candidate as CompilerCallsite;
+  if (Object.isFrozen(value)) validatedFrozenCallsites.set(value, validated);
+  return validated;
 }
