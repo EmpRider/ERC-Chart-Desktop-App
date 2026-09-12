@@ -119,14 +119,29 @@ function writeDrawing(frame: AuthoringFrame, value: IndicatorOverlay): void {
     throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
 }
 
+function assertHandleOwner(
+  active: AuthoringFrame,
+  ownerKernels: KernelSlot[],
+  registry: Map<string, DrawingRegistryEntry>,
+  id: string,
+  controller: DrawingController,
+): void {
+  if (
+    active.kernels !== ownerKernels ||
+    registry.get(id)?.controller !== controller
+  )
+    throw new Error("Drawing handle is not active.");
+}
+
 export function drawingController(
   kind: IndicatorOverlay["kind"],
   callee: "plot.box" | "plot.segment",
   callsite?: CompilerCallsite,
 ): DrawingController {
   const frame = authoringFrame();
+  const ownerKernels = frame.kernels;
   const id = nextDrawingId(frame, callee, callsite);
-  const registry = drawingRegistry(frame.kernels);
+  const registry = drawingRegistry(ownerKernels);
   const existing = registry.get(id);
   if (existing !== undefined) {
     if (existing.controller.kind !== kind)
@@ -158,6 +173,7 @@ export function drawingController(
     },
     update(update: (current: IndicatorOverlay) => IndicatorOverlay): void {
       const active = authoringFrame();
+      assertHandleOwner(active, ownerKernels, registry, id, controller);
       if (active.discovery) return;
       const current = pendingDrawing(active, id, entry);
       if (current === undefined)
@@ -173,6 +189,7 @@ export function drawingController(
     },
     delete(): void {
       const active = authoringFrame();
+      assertHandleOwner(active, ownerKernels, registry, id, controller);
       if (active.discovery) return;
       if (pendingDrawing(active, id, entry) === undefined) return;
       active.overlayUpdates.set(id, null);
