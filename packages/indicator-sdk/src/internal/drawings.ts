@@ -34,6 +34,10 @@ export interface DrawingController {
 }
 
 const frameDrawingUsage = new WeakMap<AuthoringFrame, FrameDrawingUsage>();
+const buildingDrawingEntries = new WeakMap<
+  AuthoringFrame,
+  Map<string, DrawingRegistryEntry>
+>();
 const expectedDevDrawingUsage = new WeakMap<
   KernelSlot[],
   ExpectedDevDrawingUsage
@@ -73,7 +77,20 @@ function validateDevDrawingCount(
     );
 }
 
+function rollbackBuildingDrawingEntries(frame: AuthoringFrame): void {
+  const entries = buildingDrawingEntries.get(frame);
+  if (entries === undefined) return;
+  const registry = drawingRegistries.get(frame.kernels);
+  if (registry !== undefined) {
+    for (const [id, entry] of entries) {
+      if (registry.get(id) === entry) registry.delete(id);
+    }
+  }
+  buildingDrawingEntries.delete(frame);
+}
+
 export function validateDrawingUsage(frame: AuthoringFrame): void {
+  if (frame.phase === "building") rollbackBuildingDrawingEntries(frame);
   if (frame.discovery) return;
   let expected = expectedDevDrawingUsage.get(frame.kernels);
   if (expected === undefined) {
@@ -233,6 +250,15 @@ export function drawingController(
   });
   const entry: DrawingRegistryEntry = { controller };
   registry.set(id, entry);
+  if (frame.phase === "building" && !frame.discovery) {
+    let entries = buildingDrawingEntries.get(frame);
+    if (entries === undefined) {
+      entries = new Map();
+      buildingDrawingEntries.set(frame, entries);
+    }
+    entries.set(id, entry);
+    return controller;
+  }
   while (registry.size > MAX_DRAWINGS) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
