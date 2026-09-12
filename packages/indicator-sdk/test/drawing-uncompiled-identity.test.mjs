@@ -51,3 +51,40 @@ test("uncompiled conditional same-kind drawings fail closed instead of aliasing"
   );
   instance.dispose();
 });
+
+test("uncompiled same-kind drawing usage rejects one-to-two occurrence growth", () => {
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.uncompiled-drawing-growth.main",
+      name: "Uncompiled drawing growth",
+    },
+    (bar) => {
+      if (bar.index > 0) {
+        plot.box({
+          left: bar.openTimeMs,
+          right: bar.openTimeMs + 60_000,
+          top: bar.close + 10,
+          bottom: bar.close + 9,
+          color: "#008800",
+        });
+      }
+      plot.box({
+        left: bar.openTimeMs,
+        right: bar.openTimeMs + 60_000,
+        top: bar.close,
+        bottom: bar.close - 1,
+        color: "#880000",
+      });
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  assert.equal(instance.snapshot().overlays.length, 1);
+
+  assert.throws(
+    () => instance.onFinalizedBar(candle(1, 21)),
+    /Uncompiled drawing calls must run in the same order on every bar/u,
+  );
+  instance.dispose();
+});
