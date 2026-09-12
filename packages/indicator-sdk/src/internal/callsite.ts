@@ -83,8 +83,10 @@ export function readCompilerCallsite(
     typeof source !== "object" ||
     typeof sourceFile !== "string" ||
     sourceFile.length === 0 ||
+    typeof sourceLine !== "number" ||
     !Number.isSafeInteger(sourceLine) ||
     sourceLine < 1 ||
+    typeof sourceColumn !== "number" ||
     !Number.isSafeInteger(sourceColumn) ||
     sourceColumn < 1
   )
