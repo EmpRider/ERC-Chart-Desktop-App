@@ -47,7 +47,7 @@
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "eslint": "10.9.1",
-    "globals": "17.11.1",
+    "globals": "17.11.0",
     "linkedom": "0.18.13",
     "prettier": "3.9.6",
     "typescript": "npm:@typescript/typescript6@6.0.2",
