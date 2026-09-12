@@ -356,6 +356,10 @@ function segmentOverlay(
 
 function box(value: BoxDrawing, hiddenCallsite?: unknown): BoxHandle {
   const callsite = readCompilerCallsite(hiddenCallsite, "drawing", "plot.box");
+  assertDrawingTime("Drawing left", value.left);
+  assertDrawingTime("Drawing right", value.right);
+  assertDrawingNumber("Drawing top", value.top);
+  assertDrawingNumber("Drawing bottom", value.bottom);
   const controller = drawingController("box", "plot.box", callsite);
   controller.write(boxOverlay(controller.id, value));
   return Object.freeze({
@@ -392,6 +396,11 @@ function segment(
     "drawing",
     "plot.segment",
   );
+  assertDrawingTime("Drawing left", value.left);
+  assertDrawingTime("Drawing right", value.right);
+  assertDrawingNumber("Drawing startValue", value.startValue);
+  assertDrawingNumber("Drawing endValue", value.endValue);
+  assertSegmentWidth(value.width);
   const controller = drawingController(
     "line-segment",
     "plot.segment",
