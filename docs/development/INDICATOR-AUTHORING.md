@@ -133,6 +133,14 @@ a replacement update starts from the last finalized drawing state. Deletion is
 explicit through the handle, and the SDK evicts the oldest retained drawings when
 the documented 2,000-drawing cap is reached.
 
+Conditional drawing identity relies on compiler-injected call-site metadata in
+built indicator packages. Direct, uncompiled `defineIndicator` execution uses a
+positional development fallback instead; its `plot.box` and `plot.segment` calls
+must keep the same per-kind order and count on every bar. If that positional
+shape changes, the SDK fails closed rather than allowing one source call to reuse
+another drawing's hidden identity. Build/package authored indicators before using
+conditional drawing calls.
+
 ## Execution and correctness
 
 The SDK evaluates the callback once with a synthetic candle and default inputs
@@ -160,12 +168,14 @@ and rounded to the declared step. Indicator authors should not write a separate
 same explicit input `key` when a setting continues to represent the same concept.
 
 Callbacks must be synchronous and free of external side effects. Use `series`
-instead of module-global mutable state. Drawing calls may be conditional: omitted
-finalized drawings keep their last committed geometry, building-bar changes roll
-back on replacement, and a later execution of the same hidden call-site identity
-revisits the same drawing. Use the returned handle to update or delete a drawing;
-do not maintain persistence IDs or reconciliation scope keys. Signals are emitted
-only on confirmed bars, and their persistence identity is compiler/runtime-owned.
+instead of module-global mutable state. In compiled indicator packages, drawing
+calls may be conditional: omitted finalized drawings keep their last committed
+geometry, building-bar changes roll back on replacement, and a later execution
+of the same compiler-owned call-site identity revisits the same drawing. Direct,
+uncompiled callbacks must keep their positional drawing calls stable as described
+above. Use the returned handle to update or delete a drawing; do not maintain
+persistence IDs or reconciliation scope keys. Signals are emitted only on
+confirmed bars, and their persistence identity is compiler/runtime-owned.
 
 The SDK bounds instances to 100,000 points, 128 input/value-plot declarations,
 256 TA/recurrence calls, 4,096 retained structured-series collection items,
