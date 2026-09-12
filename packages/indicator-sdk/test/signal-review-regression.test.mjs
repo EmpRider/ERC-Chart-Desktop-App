@@ -31,7 +31,7 @@ test("rejected signals do not consume fallback persistence identity", () => {
   try {
     instance.onHistory([candle(0), candle(1)]);
     assert.equal(instance.snapshot().signals.length, 1);
-    assert.equal(instance.snapshot().signals[0].key, "signal_0");
+    assert.equal(instance.snapshot().signals[0].id, "signal_0:0");
   } finally {
     instance.dispose();
   }
