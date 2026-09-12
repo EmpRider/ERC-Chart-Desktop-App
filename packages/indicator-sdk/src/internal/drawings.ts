@@ -16,6 +16,8 @@ interface FrameDrawingUsage {
   devSegmentOccurrence: number;
   readonly devBoxSources: string[];
   readonly devSegmentSources: string[];
+  lastCompilerCallsiteId?: string;
+  lastCompilerOccurrence: number;
   readonly occurrences: Map<string, number>;
 }
 
@@ -66,6 +68,7 @@ function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
       devSegmentOccurrence: 0,
       devBoxSources: [],
       devSegmentSources: [],
+      lastCompilerOccurrence: 0,
       occurrences: new Map(),
     };
     frameDrawingUsage.set(frame, usage);
@@ -185,8 +188,20 @@ function nextDrawingId(
     usage.devSegmentSources[occurrence] = developmentSource;
     return cachedDrawingId(frame.kernels, `dev:${callee}`, occurrence);
   }
-  const occurrence = usage.occurrences.get(callsite.id) ?? 0;
-  usage.occurrences.set(callsite.id, occurrence + 1);
+
+  let occurrence: number;
+  if (usage.lastCompilerCallsiteId === callsite.id) {
+    occurrence = usage.lastCompilerOccurrence++;
+  } else {
+    if (usage.lastCompilerCallsiteId !== undefined)
+      usage.occurrences.set(
+        usage.lastCompilerCallsiteId,
+        usage.lastCompilerOccurrence,
+      );
+    occurrence = usage.occurrences.get(callsite.id) ?? 0;
+    usage.lastCompilerCallsiteId = callsite.id;
+    usage.lastCompilerOccurrence = occurrence + 1;
+  }
   return cachedDrawingId(frame.kernels, callsite.id, occurrence);
 }
 
