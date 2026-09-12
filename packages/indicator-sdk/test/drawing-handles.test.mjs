@@ -260,3 +260,61 @@ test("evicted drawing handles cannot delete a replacement drawing", () => {
   );
   instance.dispose();
 });
+
+test("building-only drawing allocation does not evict committed handles", () => {
+  let oldestHandle;
+  let oldestId;
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.handle-building-eviction.main",
+      name: "Building eviction rollback",
+    },
+    (bar) => {
+      if (bar.isConfirmed && bar.index === 0) {
+        for (let index = 0; index < 2_000; index += 1) {
+          const handle = plot.box(
+            {
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: bar.close + index,
+              bottom: bar.close + index - 1,
+              color: "#008800",
+            },
+            evictionBoxCallsites[index],
+          );
+          if (index === 0) oldestHandle = handle;
+        }
+        return;
+      }
+      if (!bar.isConfirmed && bar.index === 1) {
+        plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: bar.close,
+            bottom: bar.close - 1,
+            color: "#880000",
+          },
+          evictionBoxCallsites[2_000],
+        );
+        return;
+      }
+      if (bar.isConfirmed && bar.index === 1) oldestHandle.set({ top: 777 });
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  assert.equal(instance.snapshot().overlays.length, 2_000);
+  oldestId = instance.snapshot().overlays[0].id;
+
+  instance.onBuildingBar(candle(1, 21));
+  assert.equal(instance.snapshot().overlays.length, 2_000);
+
+  instance.onFinalizedBar(candle(1, 21));
+  const restored = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.id === oldestId);
+  assert.equal(restored?.top, 777);
+  instance.dispose();
+});
