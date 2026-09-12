@@ -186,7 +186,9 @@ test("invalid drawing values do not consume uncompiled identities", () => {
   instance.onFinalizedBar(candle(0, 20));
   const first = instance.snapshot().overlays;
   const boxId = first.find((overlay) => overlay.kind === "box")?.id;
-  const segmentId = first.find((overlay) => overlay.kind === "line-segment")?.id;
+  const segmentId = first.find(
+    (overlay) => overlay.kind === "line-segment",
+  )?.id;
   assert.equal(first.length, 2);
 
   assert.doesNotThrow(() => instance.onFinalizedBar(candle(1, 21)));
