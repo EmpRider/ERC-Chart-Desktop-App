@@ -16,8 +16,8 @@ interface FrameDrawingUsage {
 }
 
 interface ExpectedDevDrawingUsage {
-  readonly boxCount: number;
-  readonly segmentCount: number;
+  boxCount?: number;
+  segmentCount?: number;
 }
 
 interface DrawingRegistryEntry {
@@ -57,24 +57,36 @@ function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
   return usage;
 }
 
-export function validateDrawingUsage(frame: AuthoringFrame): void {
-  if (frame.discovery) return;
-  const usage = drawingUsage(frame);
-  const expected = expectedDevDrawingUsage.get(frame.kernels);
-  if (expected === undefined) {
-    expectedDevDrawingUsage.set(frame.kernels, {
-      boxCount: usage.devBoxOccurrence,
-      segmentCount: usage.devSegmentOccurrence,
-    });
+function validateDevDrawingCount(
+  expected: ExpectedDevDrawingUsage,
+  key: "boxCount" | "segmentCount",
+  actual: number,
+): void {
+  const baseline = expected[key];
+  if (baseline === undefined) {
+    if (actual > 1) expected[key] = actual;
     return;
   }
-  if (
-    expected.boxCount !== usage.devBoxOccurrence ||
-    expected.segmentCount !== usage.devSegmentOccurrence
-  )
+  if (baseline !== actual)
     throw new Error(
       "Uncompiled drawing calls must run in the same order on every bar; compile indicator packages before using conditional drawing calls.",
     );
+}
+
+export function validateDrawingUsage(frame: AuthoringFrame): void {
+  if (frame.discovery) return;
+  let expected = expectedDevDrawingUsage.get(frame.kernels);
+  if (expected === undefined) {
+    expected = {};
+    expectedDevDrawingUsage.set(frame.kernels, expected);
+  }
+  const usage = drawingUsage(frame);
+  validateDevDrawingCount(expected, "boxCount", usage.devBoxOccurrence);
+  validateDevDrawingCount(
+    expected,
+    "segmentCount",
+    usage.devSegmentOccurrence,
+  );
 }
 
 function drawingRegistry(
