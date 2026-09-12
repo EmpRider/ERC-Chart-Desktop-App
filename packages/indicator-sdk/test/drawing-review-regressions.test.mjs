@@ -166,3 +166,72 @@ test("uncompiled drawing callsite switches fail closed", () => {
   );
   instance.dispose();
 });
+
+test("recreated drawings refresh registry retention order", () => {
+  let firstHandle;
+  let recreatedHandle;
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.handle-recreate-retention.main",
+      name: "Handle recreation retention",
+    },
+    (bar) => {
+      if (!bar.isConfirmed) return;
+      if (bar.index === 0) {
+        for (let index = 0; index < 2_000; index += 1) {
+          const handle = drawBox(bar, index);
+          if (index === 0) firstHandle = handle;
+        }
+        return;
+      }
+      if (bar.index === 1) {
+        firstHandle.delete();
+        return;
+      }
+      if (bar.index === 2) {
+        recreatedHandle = drawBox(bar, 0, "#004488");
+        return;
+      }
+      if (bar.index === 3) {
+        drawBox(bar, 2_000, "#880000");
+        return;
+      }
+      if (bar.index === 4) recreatedHandle.set({ top: 777 });
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  const firstId = instance.snapshot().overlays[0].id;
+  const secondId = instance.snapshot().overlays[1].id;
+
+  instance.onFinalizedBar(candle(1, 21));
+  assert.equal(
+    instance.snapshot().overlays.some((overlay) => overlay.id === firstId),
+    false,
+  );
+
+  instance.onFinalizedBar(candle(2, 22));
+  assert.equal(
+    instance.snapshot().overlays.some((overlay) => overlay.id === firstId),
+    true,
+  );
+
+  instance.onFinalizedBar(candle(3, 23));
+  assert.equal(instance.snapshot().overlays.length, 2_000);
+  assert.equal(
+    instance.snapshot().overlays.some((overlay) => overlay.id === firstId),
+    true,
+  );
+  assert.equal(
+    instance.snapshot().overlays.some((overlay) => overlay.id === secondId),
+    false,
+  );
+
+  assert.doesNotThrow(() => instance.onFinalizedBar(candle(4, 24)));
+  assert.equal(
+    instance.snapshot().overlays.find((overlay) => overlay.id === firstId)?.top,
+    777,
+  );
+  instance.dispose();
+});
