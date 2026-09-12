@@ -15,6 +15,11 @@ interface FrameDrawingUsage {
   readonly occurrences: Map<string, number>;
 }
 
+interface ExpectedDevDrawingUsage {
+  readonly boxCount: number;
+  readonly segmentCount: number;
+}
+
 interface DrawingRegistryEntry {
   committed?: IndicatorOverlay;
   readonly controller: DrawingController;
@@ -29,6 +34,10 @@ export interface DrawingController {
 }
 
 const frameDrawingUsage = new WeakMap<AuthoringFrame, FrameDrawingUsage>();
+const expectedDevDrawingUsage = new WeakMap<
+  KernelSlot[],
+  ExpectedDevDrawingUsage
+>();
 const drawingRegistries = new WeakMap<
   KernelSlot[],
   Map<string, DrawingRegistryEntry>
@@ -46,6 +55,26 @@ function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
     frameDrawingUsage.set(frame, usage);
   }
   return usage;
+}
+
+export function validateDrawingUsage(frame: AuthoringFrame): void {
+  if (frame.discovery) return;
+  const usage = drawingUsage(frame);
+  const expected = expectedDevDrawingUsage.get(frame.kernels);
+  if (expected === undefined) {
+    expectedDevDrawingUsage.set(frame.kernels, {
+      boxCount: usage.devBoxOccurrence,
+      segmentCount: usage.devSegmentOccurrence,
+    });
+    return;
+  }
+  if (
+    expected.boxCount !== usage.devBoxOccurrence ||
+    expected.segmentCount !== usage.devSegmentOccurrence
+  )
+    throw new Error(
+      "Uncompiled drawing calls must run in the same order on every bar; compile indicator packages before using conditional drawing calls.",
+    );
 }
 
 function drawingRegistry(
