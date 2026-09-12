@@ -25,7 +25,7 @@ export function signal(
 ): void {
   const frame = authoringFrame();
   const callsite = readCompilerCallsite(hiddenCallsite, "signal", "signal");
-  const index = frame.signalIndex++;
+  const index = frame.signalIndex;
   if (index >= 128)
     throw new RangeError("At most 128 signal conditions are allowed per bar.");
   if ("id" in options)
@@ -49,6 +49,7 @@ export function signal(
       );
     identities.add(callsite.id);
   }
+  frame.signalIndex = index + 1;
   if (condition && !frame.discovery && frame.phase === "finalized")
     frame.signals.push({
       key: callsite?.id ?? `signal_${index}`,
