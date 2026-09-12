@@ -68,8 +68,14 @@ test("caught drawing overflow stays atomic", () => {
   instance.onFinalizedBar(candle(0, 20));
   const overlays = instance.snapshot().overlays;
   assert.equal(overlays.length, 2_000);
-  assert.equal(overlays.some((overlay) => overlay.bottom === -777), true);
-  assert.equal(overlays.some((overlay) => overlay.top === 777), true);
+  assert.equal(
+    overlays.some((overlay) => overlay.bottom === -777),
+    true,
+  );
+  assert.equal(
+    overlays.some((overlay) => overlay.top === 777),
+    true,
+  );
   instance.dispose();
 });
 
