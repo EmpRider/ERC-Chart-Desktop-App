@@ -49,6 +49,18 @@ const foreignBoxCallsite = Object.freeze({
   }),
 });
 
+const borderBoxCallsite = Object.freeze({
+  __ercCallsite: "v2",
+  id: "erc-v2-drawing-000000000000000000000004",
+  kind: "drawing",
+  callee: "plot.box",
+  source: Object.freeze({
+    file: "drawing-handles.test.mjs",
+    line: 4,
+    column: 1,
+  }),
+});
+
 const evictionBoxCallsite = (index) =>
   Object.freeze({
     __ercCallsite: "v2",
@@ -114,6 +126,41 @@ test("finalized drawing handles persist until updated or deleted", () => {
 
   instance.onFinalizedBar(candle(2, 22));
   assert.equal(instance.snapshot().overlays.length, 0);
+  instance.dispose();
+});
+
+test("box handles can explicitly clear a border color", () => {
+  let box;
+  const plugin = defineIndicator(
+    { id: "erc.indicator.handle-border.main", name: "Handle border" },
+    (bar) => {
+      if (!bar.isConfirmed) return;
+      if (bar.index === 0) {
+        box = plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: bar.close,
+            bottom: bar.close - 1,
+            color: "#008800",
+            borderColor: "#ffffff",
+          },
+          borderBoxCallsite,
+        );
+      }
+      if (bar.index === 1) box.set({ borderColor: undefined });
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  assert.equal(instance.snapshot().overlays[0].borderColor, "#ffffff");
+
+  instance.onFinalizedBar(candle(1, 21));
+  const overlay = instance.snapshot().overlays[0];
+  assert.equal(overlay.color, "#008800");
+  assert.equal(overlay.borderColor, undefined);
+  assert.equal(Object.hasOwn(overlay, "borderColor"), false);
   instance.dispose();
 });
 
@@ -192,10 +239,12 @@ test("drawing handles cannot mutate another indicator instance", () => {
   const owner = plugin.createInstance({}, ownerContext);
   const other = plugin.createInstance({}, otherContext);
   owner.onFinalizedBar({ ...candle(0, 20), ...ownerContext });
+  const ownerBefore = owner.snapshot().overlays[0];
   assert.throws(
     () => other.onFinalizedBar({ ...candle(0, 50), ...otherContext }),
     /Drawing handle is not active/u,
   );
+  assert.deepEqual(owner.snapshot().overlays[0], ownerBefore);
   owner.dispose();
   other.dispose();
 });
@@ -246,17 +295,32 @@ test("evicted drawing handles cannot delete a replacement drawing", () => {
           },
           evictionBoxCallsites[0],
         );
-        staleHandle.delete();
+        return;
       }
+      if (bar.index === 3) staleHandle.delete();
     },
   );
 
   const instance = plugin.createInstance({}, context);
   instance.onFinalizedBar(candle(0, 20));
+  const staleId = instance.snapshot().overlays.find((overlay) => overlay.top === 20)?.id;
+  assert.equal(typeof staleId, "string");
+
   instance.onFinalizedBar(candle(1, 21));
+  instance.onFinalizedBar(candle(2, 22));
+  const replacementBefore = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.id === staleId);
+  assert.equal(replacementBefore?.startTimeMs, 120_000);
+  assert.equal(replacementBefore?.top, 22);
+
   assert.throws(
-    () => instance.onFinalizedBar(candle(2, 22)),
+    () => instance.onFinalizedBar(candle(3, 23)),
     /Drawing handle is not active/u,
+  );
+  assert.deepEqual(
+    instance.snapshot().overlays.find((overlay) => overlay.id === staleId),
+    replacementBefore,
   );
   instance.dispose();
 });
