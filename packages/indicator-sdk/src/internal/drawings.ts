@@ -68,9 +68,10 @@ function validateDevDrawingCount(
 ): void {
   const baseline = expected[key];
   if (baseline === undefined) {
-    if (actual > 1) expected[key] = actual;
+    expected[key] = Math.max(1, actual);
     return;
   }
+  if (baseline <= 1 && actual <= 1) return;
   if (baseline !== actual)
     throw new Error(
       "Uncompiled drawing calls must run in the same order on every bar; compile indicator packages before using conditional drawing calls.",
