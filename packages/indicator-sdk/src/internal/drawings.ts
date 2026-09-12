@@ -310,10 +310,18 @@ export function drawingController(
         );
       const current = pendingDrawing(active, id, entry);
       if (current !== undefined && sameDrawing(current, value)) return;
+      const reactivating =
+        registered &&
+        active.phase === "finalized" &&
+        !active.discovery &&
+        entry.committed === undefined;
       writeDrawing(active, value);
       if (!registered) {
         registerDrawingEntry(active, registry, id, entry);
         registered = true;
+      } else if (reactivating) {
+        registry.delete(id);
+        registerDrawingEntry(active, registry, id, entry);
       }
       if (active.phase === "finalized" && !active.discovery)
         entry.committed = Object.freeze(value);
