@@ -1,15 +1,17 @@
 import {
-  appendSeries,
   defineIndicator,
+  history,
   input,
-  laggedValue,
+  location,
   movingAverageTypes,
   plot,
   priceSources,
   priceValue,
   series,
+  shape,
   signal,
   ta,
+  textSize,
   type DmiPoint,
   type IndicatorBar,
   type IndicatorPluginModule,
@@ -45,11 +47,14 @@ type BandMergeMode = (typeof bandMergeModes)[number];
 type Direction = -1 | 0 | 1;
 type SignalSide = "buy" | "sell";
 
+function historicalOrCurrent(value: number, current: number): number {
+  return Number.isFinite(value) ? value : current;
+}
+
 interface RopeState {
   readonly previousRope: number;
   readonly rope: number;
   readonly directionInput: number;
-  readonly sources: readonly number[];
 }
 
 interface RopeDirectionState {
@@ -64,7 +69,6 @@ interface UtState {
   readonly previousClose: number;
   readonly stop: number;
   readonly position: Direction;
-  readonly sources: readonly number[];
 }
 
 interface PocBar {
@@ -157,7 +161,6 @@ const emptyRopeState: RopeState = {
   previousRope: Number.NaN,
   rope: Number.NaN,
   directionInput: Number.NaN,
-  sources: [],
 };
 const emptyRopeDirectionState: RopeDirectionState = {
   bandAtr: Number.NaN,
@@ -170,7 +173,6 @@ const emptyUtState: UtState = {
   previousClose: Number.NaN,
   stop: Number.NaN,
   position: 0,
-  sources: [],
 };
 const emptyPocState: PocState = {
   bars: [],
@@ -193,14 +195,12 @@ const emptySignalState: SignalState = {
 function readInputs() {
   return {
     ropePeriod: input.int(14, {
-      key: "ropePeriod",
       title: "ATR period",
       group: "ATR Rope",
       min: 1,
       max: 500,
     }),
     ropeMultiplier: input.float(1.5, {
-      key: "ropeMultiplier",
       title: "Sensitivity multiplier",
       group: "ATR Rope",
       min: 0.1,
@@ -208,32 +208,27 @@ function readInputs() {
       step: 0.1,
     }),
     ropeSource: input.string("close", {
-      key: "ropeSource",
       title: "Price source",
       group: "ATR Rope",
       options: priceSources,
     }),
     ropeSensitivityMode: input.string("original", {
-      key: "ropeSensitivityMode",
       title: "Sensitivity mode",
       group: "ATR Rope",
       options: ropeModes,
     }),
     ropeDirectionMaType: input.string("sma", {
-      key: "ropeDirectionMaType",
       title: "Direction MA",
       group: "ATR Rope Direction",
       options: movingAverageTypes,
     }),
     ropeDirectionLookback: input.int(2, {
-      key: "ropeDirectionLookback",
       title: "Direction lookback",
       group: "ATR Rope Direction",
       min: 1,
       max: 20,
     }),
     ropeDirectionThreshold: input.float(0.05, {
-      key: "ropeDirectionThreshold",
       title: "Direction threshold",
       group: "ATR Rope Direction",
       min: 0,
@@ -241,7 +236,6 @@ function readInputs() {
       step: 0.01,
     }),
     utbotKeyValue: input.float(1, {
-      key: "utbotKeyValue",
       title: "ATR multiplier",
       group: "UT Bot",
       min: 0.1,
@@ -249,99 +243,84 @@ function readInputs() {
       step: 0.1,
     }),
     utbotAtrPeriod: input.int(10, {
-      key: "utbotAtrPeriod",
       title: "ATR period",
       group: "UT Bot",
       min: 1,
       max: 500,
     }),
     utbotSource: input.string("close", {
-      key: "utbotSource",
       title: "Price source",
       group: "UT Bot",
       options: priceSources,
     }),
     utbotMode: input.string("original", {
-      key: "utbotMode",
       title: "Mode",
       group: "UT Bot",
       options: utModes,
     }),
     signalIssueMode: input.string("original", {
-      key: "signalIssueMode",
       title: "Signal mode",
       group: "Signals",
       options: signalModes,
     }),
     mgStepCount: input.int(0, {
-      key: "mgStepCount",
       title: "MG follow steps",
       group: "Signals",
       min: 0,
       max: 20,
     }),
     buySignalColor: input.color("#089981", {
-      key: "buySignalColor",
       title: "Buy color",
       group: "Signals",
       effect: "presentation",
     }),
     sellSignalColor: input.color("#F23645", {
-      key: "sellSignalColor",
       title: "Sell color",
       group: "Signals",
       effect: "presentation",
     }),
     adxPocSource: input.string("close", {
-      key: "adxPocSource",
       title: "Price source",
       group: "ADX POC",
       options: priceSources,
     }),
     profilePeriod: input.int(30, {
-      key: "profilePeriod",
       title: "Profile period",
       group: "ADX POC",
       min: 5,
       max: 500,
     }),
     fastPocPeriod: input.int(10, {
-      key: "fastPocPeriod",
       title: "Fast POC period",
       group: "ADX POC",
       min: 3,
       max: 100,
     }),
     rowCount: input.int(24, {
-      key: "rowCount",
       title: "Price rows",
       group: "ADX POC",
       min: 10,
       max: 100,
     }),
     dmiLength: input.int(14, {
-      key: "dmiLength",
       title: "ADX / DI length",
       group: "ADX POC",
       min: 1,
       max: 500,
     }),
     minEarlyBars: input.int(5, {
-      key: "minEarlyBars",
       title: "Minimum early bars",
       group: "ADX POC",
       min: 2,
       max: 100,
     }),
     projectionBars: input.int(5, {
-      key: "projectionBars",
       title: "Projection bars",
       group: "ADX POC Migration",
       min: 1,
       max: 50,
     }),
     bodyWeight: input.float(0.7, {
-      key: "bodyWeight",
       title: "Body weight",
       group: "ADX POC",
       min: 0,
@@ -349,7 +328,6 @@ function readInputs() {
       step: 0.05,
     }),
     migrationStrength: input.float(1.1, {
-      key: "migrationStrength",
       title: "Migration strength",
       group: "ADX POC Migration",
       min: 1,
@@ -357,14 +335,12 @@ function readInputs() {
       step: 0.05,
     }),
     migrationConfirmBars: input.int(1, {
-      key: "migrationConfirmBars",
       title: "Migration confirmations",
       group: "ADX POC Migration",
       min: 1,
       max: 5,
     }),
     migrationCenterSmoothing: input.float(0.1, {
-      key: "migrationCenterSmoothing",
       title: "Center smoothing",
       group: "ADX POC Migration",
       min: 0,
@@ -372,28 +348,24 @@ function readInputs() {
       step: 0.05,
     }),
     activeHistoricalPocCount: input.int(1, {
-      key: "activeHistoricalPocCount",
       title: "Active historical POCs",
       group: "ADX POC Zones",
       min: 0,
       max: 20,
     }),
     minZoneBarsToRender: input.int(3, {
-      key: "minZoneBarsToRender",
       title: "Minimum zone bars",
       group: "ADX POC Zones",
       min: 1,
       max: 20,
     }),
     minZoneHitsToRender: input.int(2, {
-      key: "minZoneHitsToRender",
       title: "Minimum zone hits",
       group: "ADX POC Zones",
       min: 1,
       max: 20,
     }),
     maxStoredZones: input.int(300, {
-      key: "maxStoredZones",
       title: "Maximum stored zones",
       group: "ADX POC Zones",
       min: 20,
@@ -401,7 +373,6 @@ function readInputs() {
       step: 10,
     }),
     pocBandHalfRows: input.float(1.5, {
-      key: "pocBandHalfRows",
       title: "Band half rows",
       group: "ADX POC Band",
       min: 0.1,
@@ -409,13 +380,11 @@ function readInputs() {
       step: 0.1,
     }),
     bandMergeMode: input.string("Inside Band", {
-      key: "bandMergeMode",
       title: "Band merge mode",
       group: "ADX POC Band",
       options: bandMergeModes,
     }),
     maxBandExpansionRows: input.float(2, {
-      key: "maxBandExpansionRows",
       title: "Maximum band expansion",
       group: "ADX POC Band",
       min: 0.5,
@@ -423,38 +392,32 @@ function readInputs() {
       step: 0.25,
     }),
     pocBandSignalSuppressLine: input.string("off", {
-      key: "pocBandSignalSuppressLine",
       title: "Signal suppression",
       group: "ADX POC Suppression",
       options: suppressionModes,
     }),
     drawMode: input.string("Line + Band", {
-      key: "drawMode",
       title: "POC draw mode",
       group: "ADX POC Style",
       options: drawModes,
       effect: "presentation",
     }),
     currentColor: input.color("rgba(255, 255, 0, 1)", {
-      key: "currentColor",
       title: "Current POC",
       group: "ADX POC Style",
       effect: "presentation",
     }),
     historicalColor: input.color("rgba(255, 213, 79, 0.75)", {
-      key: "historicalColor",
       title: "Historical POC",
       group: "ADX POC Style",
       effect: "presentation",
     }),
     frozenColor: input.color("rgba(255, 255, 0, 0.35)", {
-      key: "frozenColor",
       title: "Frozen POC",
       group: "ADX POC Style",
       effect: "presentation",
     }),
     bandOpacity: input.float(0.18, {
-      key: "bandOpacity",
       title: "Band opacity",
       group: "ADX POC Style",
       min: 0,
@@ -463,7 +426,6 @@ function readInputs() {
       effect: "presentation",
     }),
     lineOpacity: input.float(0.95, {
-      key: "lineOpacity",
       title: "Line opacity",
       group: "ADX POC Style",
       min: 0,
@@ -472,7 +434,6 @@ function readInputs() {
       effect: "presentation",
     }),
     lineWidth: input.int(2, {
-      key: "lineWidth",
       title: "Line width",
       group: "ADX POC Style",
       min: 1,
@@ -480,25 +441,21 @@ function readInputs() {
       effect: "presentation",
     }),
     ropeUpColor: input.color("#3daa45", {
-      key: "ropeUpColor",
       title: "Rope up color",
       group: "Display",
       effect: "presentation",
     }),
     ropeDownColor: input.color("#ff033e", {
-      key: "ropeDownColor",
       title: "Rope down color",
       group: "Display",
       effect: "presentation",
     }),
     ropeFlatColor: input.color("#004d92", {
-      key: "ropeFlatColor",
       title: "Rope flat color",
       group: "Display",
       effect: "presentation",
     }),
     ropeWidth: input.int(3, {
-      key: "ropeWidth",
       title: "Rope width",
       group: "Display",
       min: 1,
@@ -506,25 +463,21 @@ function readInputs() {
       effect: "presentation",
     }),
     showTrailingStop: input.bool(true, {
-      key: "showTrailingStop",
       title: "Show trailing stop",
       group: "Display",
       effect: "presentation",
     }),
     utbotTrailingStopColor: input.color("#787B86", {
-      key: "utbotTrailingStopColor",
       title: "UT neutral color",
       group: "Display",
       effect: "presentation",
     }),
     utbotUpTrendColor: input.color("#089981", {
-      key: "utbotUpTrendColor",
       title: "UT up color",
       group: "Display",
       effect: "presentation",
     }),
     utbotDownTrendColor: input.color("#F23645", {
-      key: "utbotDownTrendColor",
       title: "UT down color",
       group: "Display",
       effect: "presentation",
@@ -538,6 +491,7 @@ function stepRope(
   previous: Readonly<RopeState>,
   current: number,
   currentAtr: number,
+  laggedSource: number,
   params: Params,
 ): RopeState {
   const lag = Math.floor((params.ropePeriod - 1) / 2);
@@ -547,12 +501,11 @@ function stepRope(
   const directionInput = Number.isFinite(previous.previousRope)
     ? previous.previousRope
     : current;
-  const sources = appendSeries(previous.sources, current, Math.max(6, lag + 1));
   if (!Number.isFinite(current)) {
-    return { previousRope, rope: previousRope, directionInput, sources };
+    return { previousRope, rope: previousRope, directionInput };
   }
   if (!Number.isFinite(currentAtr)) {
-    return { previousRope: current, rope: current, directionInput, sources };
+    return { previousRope: current, rope: current, directionInput };
   }
 
   const threshold = Math.max(0, currentAtr * params.ropeMultiplier);
@@ -572,7 +525,7 @@ function stepRope(
         absMove > threshold * 0.5 ? (absMove - threshold * 0.5) * sign : 0;
       break;
     case "momentum": {
-      const old = laggedValue(previous.sources, current, 3);
+      const old = laggedSource;
       const momentum = Math.abs(current - old);
       const denominator = threshold * 3;
       const normalized =
@@ -591,7 +544,7 @@ function stepRope(
           : (absMove - threshold * 0.7) * sign + move * 0.075;
       break;
     case "adaptive": {
-      const old = laggedValue(previous.sources, current, 5);
+      const old = laggedSource;
       const change = Math.abs(current - old);
       const denominator = threshold * 5;
       const normalized =
@@ -603,7 +556,7 @@ function stepRope(
       break;
     }
     case "zerolag": {
-      const lagged = laggedValue(previous.sources, current, lag);
+      const lagged = laggedSource;
       const zeroLag = lag === 0 ? current : current + (current - lagged);
       const lagMove = zeroLag - previousRope;
       const magnitude = Math.abs(lagMove);
@@ -615,7 +568,7 @@ function stepRope(
     }
   }
   const rope = previousRope + (Number.isFinite(amount) ? amount : 0);
-  return { previousRope: rope, rope, directionInput, sources };
+  return { previousRope: rope, rope, directionInput };
 }
 
 function stepRopeDirection(
@@ -653,13 +606,13 @@ function stepUtBot(
   raw: number,
   currentAtr: number,
   index: number,
+  laggedSource: number,
   params: Params,
 ): UtState {
   const lag = Math.floor((params.utbotAtrPeriod - 1) / 2);
-  const lagged = laggedValue(previous.sources, raw, lag);
+  const lagged = laggedSource;
   const current =
     params.utbotMode === "0lag" && lag > 0 ? raw + (raw - lagged) : raw;
-  const sources = appendSeries(previous.sources, raw, lag + 1);
   if (!Number.isFinite(current) || !Number.isFinite(currentAtr)) {
     return {
       ...previous,
@@ -667,7 +620,6 @@ function stepUtBot(
         ? current
         : previous.previousClose,
       stop: Number.NaN,
-      sources,
     };
   }
 
@@ -702,7 +654,6 @@ function stepUtBot(
     previousClose: current,
     stop,
     position,
-    sources,
   };
 }
 
@@ -1045,11 +996,36 @@ function zoneIsRenderable(
   );
 }
 
-function drawZones(
+interface ZoneBoxDrawing {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly color: string;
+}
+
+interface ZoneSegmentDrawing {
+  readonly left: number;
+  readonly right: number;
+  readonly startValue: number;
+  readonly endValue: number;
+  readonly color: string;
+  readonly width: number;
+  readonly style: "solid" | "dashed" | "dotted";
+}
+
+interface ZoneDrawings {
+  readonly boxes: readonly ZoneBoxDrawing[];
+  readonly segments: readonly ZoneSegmentDrawing[];
+}
+
+function collectZoneDrawings(
   zones: readonly PocZone[],
   params: Params,
   bar: IndicatorBar,
-): void {
+): ZoneDrawings {
+  const boxes: ZoneBoxDrawing[] = [];
+  const segments: ZoneSegmentDrawing[] = [];
   for (const zone of zones) {
     for (const segment of zone.segments) {
       if (!zoneIsRenderable(zone, segment, params)) continue;
@@ -1057,7 +1033,7 @@ function drawZones(
         segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
       const color = zoneColor(zone, params);
       if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
-        plot.box({
+        boxes.push({
           left: segment.startTimeMs,
           right: endTimeMs,
           top: segment.bandHigh,
@@ -1066,7 +1042,7 @@ function drawZones(
         });
       }
       if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
-        plot.segment({
+        segments.push({
           left: segment.startTimeMs,
           right: endTimeMs,
           startValue: segment.center,
@@ -1082,6 +1058,30 @@ function drawZones(
         });
       }
     }
+  }
+  return { boxes, segments };
+}
+
+function syncZoneDrawings(previous: ZoneDrawings, current: ZoneDrawings): void {
+  const boxCount = Math.max(previous.boxes.length, current.boxes.length);
+  for (let index = 0; index < boxCount; index += 1) {
+    const currentDrawing = current.boxes[index];
+    const drawing = currentDrawing ?? previous.boxes[index];
+    if (drawing === undefined) continue;
+    const handle = plot.box(drawing);
+    if (currentDrawing === undefined) handle.delete();
+  }
+
+  const segmentCount = Math.max(
+    previous.segments.length,
+    current.segments.length,
+  );
+  for (let index = 0; index < segmentCount; index += 1) {
+    const currentDrawing = current.segments[index];
+    const drawing = currentDrawing ?? previous.segments[index];
+    if (drawing === undefined) continue;
+    const handle = plot.segment(drawing);
+    if (currentDrawing === undefined) handle.delete();
   }
 }
 
@@ -1454,11 +1454,19 @@ function zoneColor(zone: PocZone, params: Params): string {
   return zone.activeRank === 0 ? params.currentColor : params.historicalColor;
 }
 
-function renderZones(state: PocState, bar: IndicatorBar, params: Params): void {
+function renderZones(
+  previous: Readonly<PocState>,
+  state: PocState,
+  bar: IndicatorBar,
+  params: Params,
+): void {
   const skipHistoricalIntermediate =
     bar.isHistory && bar.isConfirmed && !bar.isHistoryFinalizedTail;
   if (skipHistoricalIntermediate) return;
-  drawZones(state.zones, params, bar);
+  syncZoneDrawings(
+    collectZoneDrawings(previous.zones, params, bar),
+    collectZoneDrawings(state.zones, params, bar),
+  );
 }
 
 const indicator: IndicatorPluginModule = defineIndicator(
@@ -1474,8 +1482,21 @@ const indicator: IndicatorPluginModule = defineIndicator(
 
     const ropeSource = priceValue(bar, params.ropeSource);
     const ropeAtr = ta.atr(params.ropePeriod);
+    const ropeLag = Math.floor((params.ropePeriod - 1) / 2);
+    const ropeHistoryOffset =
+      params.ropeSensitivityMode === "momentum"
+        ? 3
+        : params.ropeSensitivityMode === "adaptive"
+          ? 5
+          : params.ropeSensitivityMode === "zerolag"
+            ? ropeLag
+            : 0;
+    const ropeLaggedSource = historicalOrCurrent(
+      history(ropeSource, ropeHistoryOffset),
+      ropeSource,
+    );
     const ropeState = series(emptyRopeState, (previous) =>
-      stepRope(previous, ropeSource, ropeAtr, params),
+      stepRope(previous, ropeSource, ropeAtr, ropeLaggedSource, params),
     );
     const directionBase = ta.movingAverage(
       ropeState.directionInput,
@@ -1494,14 +1515,24 @@ const indicator: IndicatorPluginModule = defineIndicator(
 
     const utSource = priceValue(bar, params.utbotSource);
     const utAtr = ta.atr(params.utbotAtrPeriod);
+    const utLag =
+      params.utbotMode === "0lag"
+        ? Math.floor((params.utbotAtrPeriod - 1) / 2)
+        : 0;
+    const utLaggedSource = historicalOrCurrent(
+      history(utSource, utLag),
+      utSource,
+    );
     const ut = series(emptyUtState, (previous) =>
-      stepUtBot(previous, utSource, utAtr, bar.index, params),
+      stepUtBot(previous, utSource, utAtr, bar.index, utLaggedSource, params),
     );
 
     const dmi = ta.dmi(params.dmiLength);
-    const poc = series(emptyPocState, (previous) =>
-      stepPoc(previous, bar, dmi, params),
-    );
+    let previousPoc: Readonly<PocState> = emptyPocState;
+    const poc = series(emptyPocState, (previous) => {
+      previousPoc = previous;
+      return stepPoc(previous, bar, dmi, params);
+    });
     const unified: Direction =
       ropeDirection.direction === ut.position ? ropeDirection.direction : 0;
     const blocked = signalBlocked(
@@ -1515,12 +1546,6 @@ const indicator: IndicatorPluginModule = defineIndicator(
     const signalState = series(emptySignalState, (previous) =>
       stepSignals(previous, bar, unified, blocked, params),
     );
-    const markerAtr = ta.atr(
-      Math.max(params.ropePeriod, params.utbotAtrPeriod),
-    );
-    const padding = Number.isFinite(markerAtr)
-      ? Math.max(markerAtr, Number.EPSILON) * 0.35
-      : Math.max(Math.abs(bar.close) * 1e-5, Number.EPSILON);
     const ropeColor =
       ropeDirection.direction > 0
         ? params.ropeUpColor
@@ -1535,40 +1560,42 @@ const indicator: IndicatorPluginModule = defineIndicator(
           : params.utbotTrailingStopColor;
 
     plot.line(ropeState.rope, {
-      key: "rope",
       title: "ATR Rope",
       color: ropeColor,
       width: params.ropeWidth,
     });
     plot.line(ropeDirection.upper, {
-      key: "directionUpper",
       title: "Direction Upper",
       color: "#3daa45",
     });
     plot.line(ropeDirection.lower, {
-      key: "directionLower",
       title: "Direction Lower",
       color: "#ff033e",
     });
     plot.line(params.showTrailingStop ? ut.stop : null, {
-      key: "utStop",
       title: "UT Stop",
       color: utColor,
       width: 2,
     });
-    plot.shape(signalState.buy ? bar.low - padding : null, {
-      key: "buyMarker",
+    plot.shape(signalState.buy, {
       title: "Buy",
-      direction: "up",
+      shape: shape.labelUp,
+      location: location.belowBar,
+      text: "BUY",
+      textColor: "#ffffff",
+      textSize: textSize.small,
       color: params.buySignalColor,
     });
-    plot.shape(signalState.sell ? bar.high + padding : null, {
-      key: "sellMarker",
+    plot.shape(signalState.sell, {
       title: "Sell",
-      direction: "down",
+      shape: shape.labelDown,
+      location: location.aboveBar,
+      text: "SELL",
+      textColor: "#ffffff",
+      textSize: textSize.small,
       color: params.sellSignalColor,
     });
-    renderZones(poc, bar, params);
+    renderZones(previousPoc, poc, bar, params);
     signal(signalState.buy, "long");
     signal(signalState.sell, "short");
   },
