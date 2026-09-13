@@ -29,7 +29,7 @@ jobs:
         run: npm ci --audit=false
       - name: Build compiled maintained-indicator baseline
         run: npm run build:atr-rope-utbot-indicator
-      - name: Capture labeled semantic digests
+      - name: Capture trading semantic digests
         run: |
           node --input-type=module <<'NODE'
           import { createHash } from 'node:crypto';
@@ -81,23 +81,25 @@ jobs:
           }
 
           const source = candles();
-          const labels = ['ATR Rope', 'Direction Upper', 'Direction Lower', 'UT Stop', 'Buy', 'Sell'];
-          const plotKey = (label) => {
-            const plot = indicator.definition.plots.find((value) => value.label === label);
-            if (!plot) throw new Error(`Missing plot label ${label}`);
-            return plot.outputKey ?? plot.key;
-          };
-          const keys = Object.fromEntries(labels.map((label) => [label, plotKey(label)]));
+          const coreLabels = ['ATR Rope', 'Direction Upper', 'Direction Lower', 'UT Stop'];
+          const keys = Object.fromEntries(
+            coreLabels.map((label) => {
+              const plot = indicator.definition.plots.find((value) => value.label === label);
+              if (!plot) throw new Error(`Missing plot label ${label}`);
+              return [label, plot.outputKey ?? plot.key];
+            }),
+          );
           const round = (value) =>
             typeof value === 'number' && Number.isFinite(value) ? Number(value.toFixed(8)) : value;
           const normalizeOverlay = ({ id: _id, ...overlay }) =>
             Object.fromEntries(Object.entries(overlay).map(([key, value]) => [key, round(value)]));
           const normalizePoint = (point) => ({
             openTimeMs: point.openTimeMs,
-            values: Object.fromEntries(labels.map((label) => [label, round(point.values[keys[label]] ?? null)])),
+            values: Object.fromEntries(
+              coreLabels.map((label) => [label, round(point.values[keys[label]] ?? null)]),
+            ),
           });
-          const digest = (value) =>
-            createHash('sha256').update(JSON.stringify(value)).digest('hex');
+          const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
           const cases = [
             ['original', {}],
@@ -157,17 +159,15 @@ jobs:
               fixture[name] = {
                 digest: digest(normalized),
                 signalCount: normalized.signals.length,
-                signals: normalized.signals,
                 overlayCount: normalized.overlays.length,
-                tail: normalized.points.slice(-4),
-                overlayTail: normalized.overlays.slice(-2),
+                firstSignal: normalized.signals[0] ?? null,
+                lastSignal: normalized.signals.at(-1) ?? null,
+                lastPoint: normalized.points.at(-1),
               };
             } finally {
               instance.dispose();
             }
           }
 
-          console.log('ECDD224_SEMANTIC_DIGEST_START');
-          console.log(JSON.stringify(fixture, null, 2));
-          console.log('ECDD224_SEMANTIC_DIGEST_END');
+          console.log('ECDD224_TRADING_DIGEST ' + JSON.stringify(fixture));
           NODE
