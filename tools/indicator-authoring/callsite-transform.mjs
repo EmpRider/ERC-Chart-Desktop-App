@@ -354,10 +354,7 @@ function signalVariableInitializerForReference(identifier) {
       for (const statement of statements) {
         if (!ts.isVariableStatement(statement)) continue;
         for (const declaration of statement.declarationList.declarations) {
-          if (
-            ts.isIdentifier(declaration.name) &&
-            declaration.name.text === requestedName
-          )
+          if (signalBindingNameContains(declaration.name, requestedName))
             return declaration.initializer;
         }
       }
@@ -368,6 +365,18 @@ function signalVariableInitializerForReference(identifier) {
     current = current.parent;
   }
   return undefined;
+}
+
+function signalBindingNameContains(name, requestedName) {
+  if (ts.isIdentifier(name)) return name.text === requestedName;
+  for (const element of name.elements) {
+    if (
+      !ts.isOmittedExpression(element) &&
+      signalBindingNameContains(element.name, requestedName)
+    )
+      return true;
+  }
+  return false;
 }
 
 function signalVariableDeclarationForReference(identifier) {
@@ -385,10 +394,7 @@ function signalVariableDeclarationForReference(identifier) {
       for (const statement of statements) {
         if (!ts.isVariableStatement(statement)) continue;
         for (const declaration of statement.declarationList.declarations) {
-          if (
-            ts.isIdentifier(declaration.name) &&
-            declaration.name.text === requestedName
-          )
+          if (signalBindingNameContains(declaration.name, requestedName))
             return declaration;
         }
       }
@@ -474,9 +480,64 @@ function signalConditionUsesContainerReference(identifier) {
   );
 }
 
-function signalAliasIdentifier(expression) {
-  const value = unwrapSignalCallable(expression);
+function signalAliasRootIdentifier(expression) {
+  let value = unwrapSignalCallable(expression);
+  while (
+    ts.isPropertyAccessExpression(value) || ts.isElementAccessExpression(value)
+  )
+    value = unwrapSignalCallable(value.expression);
   return ts.isIdentifier(value) ? value : undefined;
+}
+
+function signalAssignmentTargetIdentifiers(target, identifiers = []) {
+  const value = unwrapSignalCallable(target);
+  if (ts.isIdentifier(value)) {
+    identifiers.push(value);
+    return identifiers;
+  }
+  if (ts.isArrayLiteralExpression(value)) {
+    for (const element of value.elements) {
+      if (ts.isOmittedExpression(element)) continue;
+      signalAssignmentTargetIdentifiers(
+        ts.isSpreadElement(element) ? element.expression : element,
+        identifiers,
+      );
+    }
+    return identifiers;
+  }
+  if (ts.isObjectLiteralExpression(value)) {
+    for (const property of value.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        identifiers.push(property.name);
+        continue;
+      }
+      if (ts.isPropertyAssignment(property)) {
+        signalAssignmentTargetIdentifiers(property.initializer, identifiers);
+        continue;
+      }
+      if (ts.isSpreadAssignment(property))
+        signalAssignmentTargetIdentifiers(property.expression, identifiers);
+    }
+  }
+  return identifiers;
+}
+
+function signalExpressionReferencesAlias(expression, aliases) {
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (
+      ts.isIdentifier(node) &&
+      signalIdentifierIsValueReference(node) &&
+      aliases.has(signalVariableDeclarationForReference(node))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  return found;
 }
 
 function signalHelperParameterMayMutate(
@@ -499,7 +560,7 @@ function signalHelperParameterMayMutate(
       ts.isIdentifier(node.name) &&
       node.initializer !== undefined
     ) {
-      const source = signalAliasIdentifier(node.initializer);
+      const source = signalAliasRootIdentifier(node.initializer);
       if (source !== undefined && aliases.has(source.text))
         aliases.add(node.name.text);
     }
@@ -645,10 +706,9 @@ function signalVariableIsReassignedBeforeReference(identifier) {
     if (
       trackContainerAliases &&
       ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
       node.initializer !== undefined
     ) {
-      const source = signalAliasIdentifier(node.initializer);
+      const source = signalAliasRootIdentifier(node.initializer);
       if (
         source !== undefined &&
         aliases.has(signalVariableDeclarationForReference(source))
@@ -658,17 +718,18 @@ function signalVariableIsReassignedBeforeReference(identifier) {
     if (
       trackContainerAliases &&
       ts.isBinaryExpression(node) &&
-      ts.isAssignmentOperator(node.operatorToken.kind) &&
-      ts.isIdentifier(node.left)
+      ts.isAssignmentOperator(node.operatorToken.kind)
     ) {
-      const source = signalAliasIdentifier(node.right);
-      const targetDeclaration = signalVariableDeclarationForReference(node.left);
-      if (
+      const source = signalAliasRootIdentifier(node.right);
+      const sourceIsAlias =
         source !== undefined &&
-        targetDeclaration !== undefined &&
-        aliases.has(signalVariableDeclarationForReference(source))
-      )
-        aliases.add(targetDeclaration);
+        aliases.has(signalVariableDeclarationForReference(source));
+      if (sourceIsAlias || signalExpressionReferencesAlias(node.right, aliases)) {
+        for (const target of signalAssignmentTargetIdentifiers(node.left)) {
+          const targetDeclaration = signalVariableDeclarationForReference(target);
+          if (targetDeclaration !== undefined) aliases.add(targetDeclaration);
+        }
+      }
     }
     if (
       ts.isIdentifier(node) &&

@@ -399,6 +399,75 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
 });
 
+test("signal dependency tracing fails closed for nested condition-object aliases", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { nested: { buy: false } };
+  const alias = state.nested;
+  alias.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.nested.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for destructured condition-object aliases", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { nested: { buy: false } };
+  const { nested } = state;
+  nested.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.nested.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for destructuring assignment aliases", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { nested: { buy: false } };
+  let alias;
+  ({ nested: alias } = state);
+  alias.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.nested.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing follows destructured variable initializers", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: ta.ema(close, 14) > close };
+  const { buy } = state;
+  signal(buy, "long");
+});
+`);
+
+  const taCallsite = result.callsites.find((value) => value.kind === "ta");
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(taCallsite);
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [taCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
 test("signal dependency tracing fails closed when a condition object is passed to a mutating call", async () => {
   await assert.rejects(
     () =>
