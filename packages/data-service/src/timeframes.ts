@@ -96,7 +96,7 @@ export function resolveTimeframePlan(
 
 function isDeclaredDerivedTimeframe(
   capabilities: ProviderCapabilities,
-  timeframeId: string,
+  timeframeId: ProviderTimeframeCapability["id"],
 ): boolean {
   if (!capabilities.derivedTimeframes) return false;
   return (
