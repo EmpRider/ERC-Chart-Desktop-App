@@ -7,8 +7,8 @@ that design requires an independent author or independent approval, and where
 manual CodeRabbit review capacity is applied by pull-request level.
 
 All branch, application gate, performance, version, installer, release,
-release-failure, and no-bypass rules remain unchanged. The original version and
-release policy remains unchanged.
+release-failure, and no-bypass rules remain unchanged.
+The original version and release policy remains unchanged.
 
 ## Context
 
