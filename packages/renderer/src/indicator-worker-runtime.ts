@@ -106,10 +106,19 @@ export function createBrowserIndicatorRuntime(
   const sourceInstanceEpoch = (instanceId: string): number =>
     sourceInstanceEpochs.get(instanceId) ?? 0;
 
+  const assertSourceInstanceEpoch = (
+    instanceId: string,
+    expectedEpoch: number,
+  ): void => {
+    if (sourceInstanceEpoch(instanceId) !== expectedEpoch)
+      throw new Error("Indicator source acquisition was superseded.");
+  };
+
   const reconcileSources = async (
     request: BrowserIndicatorSyncRequest,
     expectedEpoch: number,
   ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
+    assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
     if (
       sourceEngine === undefined ||
       request.providerProfileId === undefined ||
@@ -119,6 +128,7 @@ export function createBrowserIndicatorRuntime(
       sourceLeases.delete(request.instanceId);
       if (current !== undefined)
         for (const source of current.values()) await source.release();
+      assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
       return undefined;
     }
     const timeframeIds = [
@@ -150,6 +160,7 @@ export function createBrowserIndicatorRuntime(
             candleType: "standard",
           }));
         next.set(identity, lease);
+        assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
       }
     } catch (error) {
       for (const [identity, lease] of next) {
@@ -158,17 +169,14 @@ export function createBrowserIndicatorRuntime(
       }
       throw error;
     }
-    if (sourceInstanceEpoch(request.instanceId) !== expectedEpoch) {
-      for (const [identity, lease] of next) {
-        if (!current.has(identity))
-          await lease.release().catch(() => undefined);
-      }
-      throw new Error("Indicator source acquisition was superseded.");
-    }
+    assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
     sourceLeases.set(request.instanceId, next);
     for (const [identity, lease] of current) {
-      if (!next.has(identity)) await lease.release();
+      if (!next.has(identity)) {
+        await lease.release();
+      }
     }
+    assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
     return new Map(
       [...next.values()].map((lease) => [lease.key.timeframeId, lease]),
     );
@@ -176,9 +184,9 @@ export function createBrowserIndicatorRuntime(
 
   const sourcesFor = (
     request: BrowserIndicatorSyncRequest,
+    expectedEpoch: number,
   ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
     const previous = sourceAcquisitionChains.get(request.instanceId);
-    const expectedEpoch = sourceInstanceEpoch(request.instanceId);
     const operation = (previous ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => reconcileSources(request, expectedEpoch));
@@ -231,7 +239,9 @@ export function createBrowserIndicatorRuntime(
           dataRevision: request.dataRevision,
           configGeneration: request.configGeneration,
         });
-      const sources = await sourcesFor(request);
+      const expectedSourceEpoch = sourceInstanceEpoch(request.instanceId);
+      const sources = await sourcesFor(request, expectedSourceEpoch);
+      assertSourceInstanceEpoch(request.instanceId, expectedSourceEpoch);
       let result;
       if (sources !== undefined) {
         const snapshots = new Map(

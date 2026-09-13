@@ -655,11 +655,16 @@ test("disposeInstance fences a pending provider source acquisition and releases 
   const historyGate = new Promise((resolve) => {
     releaseHistory = resolve;
   });
+  let signalHistoryStarted;
+  const historyStarted = new Promise((resolve) => {
+    signalHistoryStarted = resolve;
+  });
   let unsubscribes = 0;
   let workerPosts = 0;
   const runtime = createBrowserIndicatorRuntime({
     sourceDataService: {
       async requestHistory() {
+        signalHistoryStarted();
         await historyGate;
         return [candle];
       },
@@ -704,7 +709,7 @@ test("disposeInstance fences a pending provider source acquisition and releases 
       data: { kind: "rebuild", candles: [candle] },
       rebuildCandles: () => [candle],
     });
-    await Promise.resolve();
+    await historyStarted;
     runtime.disposeInstance("disposed-source-instance");
     releaseHistory();
     await assert.rejects(pending, /source acquisition was superseded/);
@@ -713,6 +718,201 @@ test("disposeInstance fences a pending provider source acquisition and releases 
     assert.equal(workerPosts, 0);
   } finally {
     releaseHistory?.();
+    runtime.dispose();
+  }
+});
+
+test("disposeInstance rejects provider source work that was queued before disposal", async () => {
+  let releaseHistory;
+  const historyGate = new Promise((resolve) => {
+    releaseHistory = resolve;
+  });
+  let signalHistoryStarted;
+  const historyStarted = new Promise((resolve) => {
+    signalHistoryStarted = resolve;
+  });
+  let historyCalls = 0;
+  let unsubscribes = 0;
+  let workerPosts = 0;
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory() {
+        historyCalls += 1;
+        signalHistoryStarted();
+        await historyGate;
+        return [candle];
+      },
+      async subscribe() {
+        return {
+          async unsubscribe() {
+            unsubscribes += 1;
+          },
+        };
+      },
+    },
+    workerFactory() {
+      return {
+        postMessage() {
+          workerPosts += 1;
+        },
+        terminate() {
+          return undefined;
+        },
+        set onmessage(listener) {
+          void listener;
+        },
+        set onerror(listener) {
+          void listener;
+        },
+      };
+    },
+  });
+  const request = (dataRevision) => ({
+    instanceId: "queued-dispose-instance",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+    pluginId: "erc.indicator.fixture",
+    definitionId: "erc.indicator.fixture.main",
+    parameters: {},
+    dataRevision,
+    configGeneration: 1,
+    providerProfileId: "profile-1",
+    instrumentId: candle.instrumentId,
+    timeframeId: candle.timeframeId,
+    data: { kind: "rebuild", candles: [candle] },
+    rebuildCandles: () => [candle],
+  });
+  try {
+    const first = runtime.sync(request(1));
+    const second = runtime.sync(request(2));
+    await historyStarted;
+    runtime.disposeInstance("queued-dispose-instance");
+    releaseHistory();
+    const results = await Promise.allSettled([first, second]);
+    assert.deepEqual(
+      results.map(({ status }) => status),
+      ["rejected", "rejected"],
+    );
+    for (const result of results) {
+      if (result.status === "rejected")
+        assert.match(
+          result.reason.message,
+          /source acquisition was superseded/,
+        );
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(historyCalls, 1);
+    assert.equal(unsubscribes, 1);
+    assert.equal(workerPosts, 0);
+  } finally {
+    releaseHistory?.();
+    runtime.dispose();
+  }
+});
+
+test("disposeInstance fences worker dispatch while obsolete source release is pending", async () => {
+  let releaseOldSource;
+  const oldSourceGate = new Promise((resolve) => {
+    releaseOldSource = resolve;
+  });
+  let signalOldRelease;
+  const oldReleaseStarted = new Promise((resolve) => {
+    signalOldRelease = resolve;
+  });
+  const unsubscribes = new Map();
+  let workerSyncPosts = 0;
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory(_profileId, request) {
+        return [{ ...candle, timeframeId: request.timeframeId }];
+      },
+      async subscribe(_profileId, request) {
+        return {
+          async unsubscribe() {
+            unsubscribes.set(
+              request.timeframeId,
+              (unsubscribes.get(request.timeframeId) ?? 0) + 1,
+            );
+            if (request.timeframeId === "1m") {
+              signalOldRelease();
+              await oldSourceGate;
+            }
+          },
+        };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          if (message.type !== "sync") return;
+          workerSyncPosts += 1;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+  const request = (timeframeId, dataRevision, sourceTimeframeIds = []) => {
+    const sourceCandle = { ...candle, timeframeId };
+    return {
+      instanceId: "release-dispose-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      parameters: {},
+      dataRevision,
+      configGeneration: 1,
+      providerProfileId: "profile-1",
+      instrumentId: candle.instrumentId,
+      timeframeId,
+      sourceTimeframeIds,
+      data: { kind: "rebuild", candles: [sourceCandle] },
+      rebuildCandles: () => [sourceCandle],
+    };
+  };
+  try {
+    await runtime.sync(request("1m", 1, ["5m", "15m"]));
+    assert.equal(workerSyncPosts, 1);
+
+    const pending = runtime.sync(request("1h", 2));
+    await oldReleaseStarted;
+    runtime.disposeInstance("release-dispose-instance");
+    releaseOldSource();
+
+    await assert.rejects(pending, /source acquisition was superseded/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(workerSyncPosts, 1);
+    assert.equal(unsubscribes.get("1m"), 1);
+    assert.equal(unsubscribes.get("5m"), 1);
+    assert.equal(unsubscribes.get("15m"), 1);
+    assert.equal(unsubscribes.get("1h"), 1);
+  } finally {
+    releaseOldSource?.();
     runtime.dispose();
   }
 });
