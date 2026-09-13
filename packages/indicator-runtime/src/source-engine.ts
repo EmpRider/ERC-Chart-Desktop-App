@@ -58,6 +58,14 @@ export interface IndicatorSourceEngine {
   readonly dispose: () => Promise<void>;
 }
 
+interface SharedSource {
+  readonly key: IndicatorSourceKey;
+  readonly snapshot: IndicatorSourceSnapshot;
+  readonly subscription: IndicatorSourceSubscription;
+  references: number;
+  closed: boolean;
+}
+
 const maximumIndicatorSourceBars = 100_000;
 
 function requireIdentifier(value: string, label: string): string {
@@ -88,62 +96,107 @@ function normalizeKey(key: IndicatorSourceKey): IndicatorSourceKey {
   });
 }
 
+function sourceIdentity(key: IndicatorSourceKey): string {
+  return JSON.stringify([
+    key.providerProfileId,
+    key.instrumentId,
+    key.timeframeId,
+    key.candleType,
+  ]);
+}
+
 export function createIndicatorSourceEngine(
   dataService: IndicatorSourceDataService,
 ): IndicatorSourceEngine {
-  const subscriptions = new Set<IndicatorSourceSubscription>();
+  const sources = new Map<string, Promise<SharedSource>>();
   let disposed = false;
+
+  const closeSource = async (source: SharedSource): Promise<void> => {
+    if (source.closed) return;
+    source.closed = true;
+    await source.subscription.unsubscribe();
+  };
+
+  const createSource = async (key: IndicatorSourceKey): Promise<SharedSource> => {
+    const candles = Object.freeze([
+      ...(await dataService.requestHistory(key.providerProfileId, {
+        instrumentId: key.instrumentId,
+        timeframeId: key.timeframeId,
+        limit: maximumIndicatorSourceBars,
+      })),
+    ]);
+    const subscription = await dataService.subscribe(
+      key.providerProfileId,
+      {
+        instrumentId: key.instrumentId,
+        timeframeId: key.timeframeId,
+      },
+      {
+        onCandles: () => undefined,
+        onTicks: () => undefined,
+        onError: () => undefined,
+      },
+    );
+    return {
+      key,
+      snapshot: Object.freeze({ key, candles }),
+      subscription,
+      references: 0,
+      closed: false,
+    };
+  };
+
+  const sourceFor = (key: IndicatorSourceKey): Promise<SharedSource> => {
+    const identity = sourceIdentity(key);
+    const existing = sources.get(identity);
+    if (existing !== undefined) return existing;
+    const pending = createSource(key);
+    sources.set(identity, pending);
+    void pending.catch(() => {
+      if (sources.get(identity) === pending) sources.delete(identity);
+    });
+    return pending;
+  };
 
   return {
     acquire: async (keyValue): Promise<IndicatorSourceLease> => {
       if (disposed) throw new Error("Indicator source engine is disposed.");
       const key = normalizeKey(keyValue);
-      const candles = Object.freeze([
-        ...(await dataService.requestHistory(key.providerProfileId, {
-          instrumentId: key.instrumentId,
-          timeframeId: key.timeframeId,
-          limit: maximumIndicatorSourceBars,
-        })),
-      ]);
-      const subscription = await dataService.subscribe(
-        key.providerProfileId,
-        {
-          instrumentId: key.instrumentId,
-          timeframeId: key.timeframeId,
-        },
-        {
-          onCandles: () => undefined,
-          onTicks: () => undefined,
-          onError: () => undefined,
-        },
-      );
-      if (disposed) {
-        await subscription.unsubscribe();
+      const identity = sourceIdentity(key);
+      const pending = sourceFor(key);
+      const source = await pending;
+      if (disposed || source.closed) {
+        if (sources.get(identity) === pending) sources.delete(identity);
+        await closeSource(source);
         throw new Error("Indicator source engine is disposed.");
       }
-      subscriptions.add(subscription);
+      source.references += 1;
       let released = false;
-      const snapshot = Object.freeze({ key, candles });
       return Object.freeze({
-        key,
-        snapshot: () => snapshot,
+        key: source.key,
+        snapshot: () => source.snapshot,
         release: async (): Promise<void> => {
           if (released) return;
           released = true;
-          subscriptions.delete(subscription);
-          await subscription.unsubscribe();
+          source.references = Math.max(0, source.references - 1);
+          if (source.references !== 0 || source.closed) return;
+          if (sources.get(identity) === pending) sources.delete(identity);
+          await closeSource(source);
         },
       });
     },
     dispose: async (): Promise<void> => {
       if (disposed) return;
       disposed = true;
-      const active = [...subscriptions];
-      subscriptions.clear();
-      const results = await Promise.allSettled(
-        active.map((subscription) => subscription.unsubscribe()),
+      const pendingSources = [...new Set(sources.values())];
+      sources.clear();
+      const loaded = await Promise.allSettled(pendingSources);
+      const cleanup = await Promise.allSettled(
+        loaded.flatMap((result) =>
+          result.status === "fulfilled" ? [closeSource(result.value)] : [],
+        ),
       );
-      if (results.some(({ status }) => status === "rejected")) {
+      if (cleanup.some(({ status }) => status === "rejected")) {
         throw new Error("Indicator source cleanup failed.");
       }
     },
