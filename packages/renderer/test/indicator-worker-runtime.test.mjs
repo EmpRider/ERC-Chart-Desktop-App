@@ -650,6 +650,73 @@ test("concurrent source acquisition for one instance retains only one releasable
   }
 });
 
+test("disposeInstance fences a pending provider source acquisition and releases its late lease", async () => {
+  let releaseHistory;
+  const historyGate = new Promise((resolve) => {
+    releaseHistory = resolve;
+  });
+  let unsubscribes = 0;
+  let workerPosts = 0;
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory() {
+        await historyGate;
+        return [candle];
+      },
+      async subscribe() {
+        return {
+          async unsubscribe() {
+            unsubscribes += 1;
+          },
+        };
+      },
+    },
+    workerFactory() {
+      return {
+        postMessage() {
+          workerPosts += 1;
+        },
+        terminate() {
+          return undefined;
+        },
+        set onmessage(listener) {
+          void listener;
+        },
+        set onerror(listener) {
+          void listener;
+        },
+      };
+    },
+  });
+  try {
+    const pending = runtime.sync({
+      instanceId: "disposed-source-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      parameters: {},
+      dataRevision: 1,
+      configGeneration: 1,
+      providerProfileId: "profile-1",
+      instrumentId: candle.instrumentId,
+      timeframeId: candle.timeframeId,
+      data: { kind: "rebuild", candles: [candle] },
+      rebuildCandles: () => [candle],
+    });
+    await Promise.resolve();
+    runtime.disposeInstance("disposed-source-instance");
+    releaseHistory();
+    await assert.rejects(pending, /source acquisition was superseded/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(unsubscribes, 1);
+    assert.equal(workerPosts, 0);
+  } finally {
+    releaseHistory?.();
+    runtime.dispose();
+  }
+});
+
 test("renderer provider bridge adapts history and live events for indicator sources", async () => {
   const historyRequests = [];
   const liveRequests = [];

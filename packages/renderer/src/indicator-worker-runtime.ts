@@ -100,10 +100,15 @@ export function createBrowserIndicatorRuntime(
       : createIndicatorSourceEngine(options.sourceDataService);
   const sourceLeases = new Map<string, Map<string, IndicatorSourceLease>>();
   const sourceAcquisitionChains = new Map<string, Promise<void>>();
+  const sourceInstanceEpochs = new Map<string, number>();
   const sourceVersions = new Map<string, string>();
+
+  const sourceInstanceEpoch = (instanceId: string): number =>
+    sourceInstanceEpochs.get(instanceId) ?? 0;
 
   const reconcileSources = async (
     request: BrowserIndicatorSyncRequest,
+    expectedEpoch: number,
   ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
     if (
       sourceEngine === undefined ||
@@ -153,6 +158,13 @@ export function createBrowserIndicatorRuntime(
       }
       throw error;
     }
+    if (sourceInstanceEpoch(request.instanceId) !== expectedEpoch) {
+      for (const [identity, lease] of next) {
+        if (!current.has(identity))
+          await lease.release().catch(() => undefined);
+      }
+      throw new Error("Indicator source acquisition was superseded.");
+    }
     sourceLeases.set(request.instanceId, next);
     for (const [identity, lease] of current) {
       if (!next.has(identity)) await lease.release();
@@ -166,9 +178,10 @@ export function createBrowserIndicatorRuntime(
     request: BrowserIndicatorSyncRequest,
   ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
     const previous = sourceAcquisitionChains.get(request.instanceId);
+    const expectedEpoch = sourceInstanceEpoch(request.instanceId);
     const operation = (previous ?? Promise.resolve())
       .catch(() => undefined)
-      .then(() => reconcileSources(request));
+      .then(() => reconcileSources(request, expectedEpoch));
     const settled = operation.then(
       () => undefined,
       () => undefined,
@@ -317,6 +330,7 @@ export function createBrowserIndicatorRuntime(
     },
     disposeInstance: (instanceId): void => {
       supervisor.disposeInstance(instanceId);
+      sourceInstanceEpochs.set(instanceId, sourceInstanceEpoch(instanceId) + 1);
       sourceVersions.delete(instanceId);
       const sources = sourceLeases.get(instanceId);
       sourceLeases.delete(instanceId);
@@ -327,6 +341,7 @@ export function createBrowserIndicatorRuntime(
     dispose: (): void => {
       supervisor.dispose();
       sourceLeases.clear();
+      sourceInstanceEpochs.clear();
       sourceVersions.clear();
       sourceAcquisitionChains.clear();
       void sourceEngine?.dispose().catch(() => undefined);
