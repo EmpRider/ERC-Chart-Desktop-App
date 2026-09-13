@@ -54,6 +54,8 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 
 **ECDD-142 sequencing update (2026-09-14):** ECDD-142 completed the provider-driven timeframe resolver, shared Indicator Source Engine, whole-indicator/per-TA timeframe controls, finalized no-lookahead alignment, source-revision rebuild behavior, resource cleanup, and renderer MTF integration via PR #143 / squash merge `6b1d888006d39c7c7ad75e2347072def6e90f9dd`. Detailed Tasks 9-11 are therefore complete. Phase 16 remains open for the architecture work that ECDD-142 intentionally did not claim: candle transformation/Heikin-Ashi source semantics, the remaining source-confirmation/signal/replay acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final global acceptance pass.
 
+**ECDD-232 sequencing update (2026-09-14):** ECDD-232 completed the candle-transform registry and Heikin Ashi source semantics via PR #145 / squash merge `198cd4c64a763841e4d42a8aed510655ec308436`. The shipped path applies candle transformation after target-timeframe construction, keeps standard/Heikin-Ashi source identities distinct, carries synthetic provenance into the worker boundary, and preserves recursive HA state across provisional replacement and the bounded 100,000-bar source window. Detailed Task 12 is therefore complete. Task 13 source-confirmed/no-lookahead signal semantics are the next SDK-v2 implementation task; Phase 16 remains open for that signal/replay acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final global acceptance pass.
+
 ---
 
 ## Planned File Structure
@@ -727,6 +729,8 @@ git commit -m "feat(indicators): add dynamic multi-timeframe authoring"
 
 ### Task 12: Build candle transformation registry and Heikin Ashi
 
+**Status:** Complete via ECDD-232 / PR #145 / squash merge `198cd4c64a763841e4d42a8aed510655ec308436`.
+
 **Files:**
 
 - Create: `packages/indicator-runtime/src/candle-transform.ts`
@@ -743,7 +747,7 @@ const mode = input.candleType(candle.standard, "Candle Type");
 indicator.candleType(mode);
 ```
 
-- [ ] **Step 1: Add failing historical HA fixture test**
+- [x] **Step 1: Add failing historical HA fixture test**
 
 Use explicit expected values for the standard formula:
 
@@ -756,21 +760,21 @@ HA low   = min(low, HA open, HA close)
 
 Define and test the initial HA open seed explicitly.
 
-- [ ] **Step 2: Add failing building-update rollback test**
+- [x] **Step 2: Add failing building-update rollback test**
 
 Repeated updates to the same raw candle must always derive from the previous finalized HA candle, not the prior provisional HA output.
 
-- [ ] **Step 3: Add processing-order test**
+- [x] **Step 3: Add processing-order test**
 
 `1h + Heikin Ashi` must equal `aggregate standard to 1h -> transform to HA`, not `transform lower TF -> aggregate HA`.
 
-- [ ] **Step 4: Implement transform registry and HA transformer**
+- [x] **Step 4: Implement transform registry and HA transformer**
 
-- [ ] **Step 5: Attach synthetic provenance to source metadata**
+- [x] **Step 5: Attach synthetic provenance to source metadata**
 
-- [ ] **Step 6: Run runtime/source tests**
+- [x] **Step 6: Run runtime/source tests**
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/indicator-runtime/src packages/indicator-runtime/test packages/indicator-sdk/src
@@ -1195,6 +1199,16 @@ Append dated entries here as phases complete. Keep old entries; do not rewrite h
 - Exact-head Delivery #34775569867 passed governance, the pinned-toolchain Linux application suite, Electron smokes, build, performance, audit, version checks, and aggregate delivery; Semgrep and CodeRabbit also passed. Windows was intentionally skipped by the task-to-epic policy.
 - Focused renderer source lifecycle tests passed 12/12; the full unit suite passed 581 tests with 2 expected Windows symlink skips; integration passed 152/152; the provider-MTF, renderer alignment, and four-chart authored-indicator performance gates remained within their budgets.
 - Detailed Tasks 9-11 are complete. Global Phase 16 remains open for Task 12 candle transformation/Heikin-Ashi semantics, the remaining Task 13 signal/source-confirmation and replay acceptance, ECDD-143/ECDD-149 cross-indicator dependency validation, and the final end-to-end verification gate.
+
+### 2026-09-14 — ECDD-232 Heikin Ashi source semantics completed
+
+- ECDD-232 was squash-merged into `epic/ECDD-135-sdk-v2-optimization` as `198cd4c64a763841e4d42a8aed510655ec308436` via PR #145.
+- The shipped source engine now supports `standard` and `heikin-ashi` source identities, applies Heikin Ashi only after the target timeframe has been constructed, and exposes `input.candleType(...)` plus `indicator.candleType(...)` with compiler-owned input identity.
+- Historical HA fixtures, repeated building-candle replacement, provider-derived timeframe ordering, source sharing/isolation, renderer acquisition, and synthetic provenance are covered by runtime/SDK/renderer/package tests.
+- Maintainer review found a bounded-window recursive-state defect before merge: advancing beyond the 100,000-bar source limit could reseed the first retained HA candle. A RED regression reproduced the retained HA open changing from `100.5` to `101.5`; fix commit `736be25097776ed096c5ab5367ba801617c87d1d` carries the dropped finalized HA state as the transform seed, and the regression is now green.
+- Exact-head Delivery run `34780230350` passed governance, the pinned-toolchain Linux application suite, Electron smokes, build, performance, audit, version checks, and aggregate delivery; Semgrep and CodeRabbit also passed. Windows was intentionally skipped by the task-to-epic policy.
+- Final local verification passed 592 unit tests with 2 expected Windows capability skips, 154 integration tests, all focused Task 12 tests, the performance suite, audit with zero vulnerabilities, and version checks.
+- Detailed Task 12 is complete. Task 13 source-confirmation/no-lookahead signal semantics remain next; global Phase 16 also remains open for later dependency-DAG and end-to-end acceptance.
 
 ---
 

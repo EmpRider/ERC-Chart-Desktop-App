@@ -423,7 +423,7 @@ declarations, 256 TA/recurrence calls, 4,096 structured-series collection items,
 2,000 retained drawings, and 10,000 retained signals. Signal calls themselves are
 also limited per bar. Treat those as platform safety limits, not storage targets.
 
-## Multi-timeframe and provider-aware sources
+## Multi-timeframe, provider-aware, and synthetic candle sources
 
 ECDD-142 supplies the operational provider-aware MTF path. Timeframe choices are
 resolved by the host from the active provider's effective native/derived
@@ -453,6 +453,23 @@ capabilities change, the requested preference is preserved while the active
 source falls back safely to the chart timeframe. Do not add author-side provider
 aggregation, resampling, fallback, or source-subscription code.
 
+Use a host-managed candle-type input when the whole indicator should calculate
+from a synthetic candle representation:
+
+```ts
+const candleMode = input.candleType(candle.standard, "Candle Type");
+indicator.candleType(candleMode);
+```
+
+The available v2 candle types are `candle.standard` and `candle.heikinAshi`.
+For Heikin Ashi, ERC Chart first constructs the requested provider timeframe as
+standard OHLC candles and only then applies the Heikin Ashi transform. Repeated
+building-bar updates always derive from the last finalized HA state instead of
+compounding provisional output. The runtime also retains synthetic-source
+provenance internally so downstream host logic can distinguish an HA close from
+the market's traded close. Indicator authors should not implement their own HA
+state, resampling, rollback, or source subscription.
+
 ## Rewriting an older indicator to v2
 
 Rewrite the indicator from its trading/math semantics rather than preserving old
@@ -471,6 +488,7 @@ framework plumbing.
 | Author-side persisted-settings migration/validation | Declare `input.*`; host normalization owns stale/invalid settings                                                 |
 | `isHistory` / `isHistoryFinalizedTail` branches     | Remove replay plumbing; use v2 history/state/signal lifecycle                                                     |
 | Custom provider/timeframe aggregation               | Use `input.timeframe`, `indicator.timeframe`, or a `ta.*` timeframe override; the host owns acquisition/alignment |
+| Author-managed Heikin Ashi state/rollback           | Use `input.candleType` + `indicator.candleType`; the host owns transform order, recursive state, and provenance   |
 
 A rewrite is successful when the remaining state and branches exist because the
 indicator mathematics require them, not because ERC Chart's runtime requires
