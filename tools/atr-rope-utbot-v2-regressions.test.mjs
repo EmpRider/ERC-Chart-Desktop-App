@@ -205,7 +205,9 @@ function definitionIdentity(indicator) {
 
 async function importBuiltIndicator(packageRoot, tag) {
   const entry = path.join(packageRoot, "dist", "index.js");
-  const module = await import(`${pathToFileURL(entry).href}?${tag}=${Date.now()}`);
+  const module = await import(
+    `${pathToFileURL(entry).href}?${tag}=${Date.now()}`
+  );
   assert.ok(module.default?.definition);
   return module.default;
 }
@@ -213,11 +215,20 @@ async function importBuiltIndicator(packageRoot, tag) {
 function reorderUnrelatedTopLevelDeclarations(source) {
   const ropeStart = source.indexOf("const ropeModes = [");
   const ropeEndMarker = "] as const;";
-  const ropeEnd = source.indexOf(ropeEndMarker, ropeStart) + ropeEndMarker.length;
-  const utStart = source.indexOf('const utModes = ["original", "0lag"] as const;');
+  const ropeEnd =
+    source.indexOf(ropeEndMarker, ropeStart) + ropeEndMarker.length;
+  const utStart = source.indexOf(
+    'const utModes = ["original", "0lag"] as const;',
+  );
   const utEnd = source.indexOf(";", utStart) + 1;
-  assert.ok(ropeStart >= 0 && ropeEnd > ropeStart, "Missing ropeModes declaration");
-  assert.ok(utStart > ropeEnd && utEnd > utStart, "Missing utModes declaration");
+  assert.ok(
+    ropeStart >= 0 && ropeEnd > ropeStart,
+    "Missing ropeModes declaration",
+  );
+  assert.ok(
+    utStart > ropeEnd && utEnd > utStart,
+    "Missing utModes declaration",
+  );
   return (
     source.slice(0, ropeStart) +
     source.slice(utStart, utEnd) +
@@ -234,7 +245,10 @@ test("approved ATR Rope + UT Bot semantics survive provisional replacement and f
       root: repoRoot,
       outputRoot: path.join(root, "package"),
     });
-    const indicator = await importBuiltIndicator(built.packageRoot, "lifecycle");
+    const indicator = await importBuiltIndicator(
+      built.packageRoot,
+      "lifecycle",
+    );
     const sequence = candles(181);
     const approvedHistory = sequence.slice(0, -1);
     const prior = approvedHistory.slice(0, -1);
@@ -296,14 +310,21 @@ test("approved ATR Rope + UT Bot semantics survive provisional replacement and f
 });
 
 test("unrelated authoring source reorder preserves hidden identities and approved semantics", async () => {
-  const outputRoot = await mkdtemp(path.join(os.tmpdir(), "erc-ecdd228-reorder-"));
-  const authoringRoot = await mkdtemp(path.join(repoRoot, ".ecdd228-authoring-"));
+  const outputRoot = await mkdtemp(
+    path.join(os.tmpdir(), "erc-ecdd228-reorder-"),
+  );
+  const authoringRoot = await mkdtemp(
+    path.join(repoRoot, ".ecdd228-authoring-"),
+  );
   try {
     const originalBuild = await buildAtrRopeUtBotIndicatorPackage({
       root: repoRoot,
       outputRoot: path.join(outputRoot, "original"),
     });
-    const original = await importBuiltIndicator(originalBuild.packageRoot, "original");
+    const original = await importBuiltIndicator(
+      originalBuild.packageRoot,
+      "original",
+    );
 
     const source = await readFile(sourcePath, "utf8");
     const reordered = reorderUnrelatedTopLevelDeclarations(source);
@@ -311,10 +332,17 @@ test("unrelated authoring source reorder preserves hidden identities and approve
     await mkdir(variantSourceDirectory, { recursive: true });
     await writeFile(
       path.join(authoringRoot, "package.json"),
-      JSON.stringify({ name: "ecdd228-authoring-fixture", private: true, type: "module" }),
+      JSON.stringify({
+        name: "ecdd228-authoring-fixture",
+        private: true,
+        type: "module",
+      }),
       "utf8",
     );
-    const variantSource = path.join(variantSourceDirectory, "atr-rope-utbot.ts");
+    const variantSource = path.join(
+      variantSourceDirectory,
+      "atr-rope-utbot.ts",
+    );
     await writeFile(variantSource, reordered, "utf8");
 
     const reorderedBuild = await buildIndicatorPackage({
