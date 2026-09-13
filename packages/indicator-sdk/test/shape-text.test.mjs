@@ -43,7 +43,7 @@ function shapeDefinition(overrides = {}) {
   };
 }
 
-test("plot.shape carries v2 text metadata and resolves boolean locations across history and building updates", () => {
+test("plot.shape carries v2 text metadata across history, building replacement, and finalization", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.shape-text.main", name: "Shape text" },
     () => {
@@ -84,6 +84,12 @@ test("plot.shape carries v2 text metadata and resolves boolean locations across 
   const replacement = candle(1, { low: 5 });
   instance.onBuildingBar(replacement);
   assert.equal(instance.snapshot().points.at(-1).values.plot_0, 5);
+
+  instance.onFinalizedBar(replacement);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [7, 5],
+  );
   instance.dispose();
 });
 
