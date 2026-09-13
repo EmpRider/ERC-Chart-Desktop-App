@@ -50,9 +50,11 @@ void signalOptions;
 
 // History replay/finalization bookkeeping is SDK-owned in v2.
 // @ts-expect-error author callbacks do not inspect runtime history replay mode
-indicatorBar.isHistory;
+const historyReplay = indicatorBar.isHistory;
 // @ts-expect-error author callbacks do not inspect runtime history tail bookkeeping
-indicatorBar.isHistoryFinalizedTail;
+const historyFinalizedTail = indicatorBar.isHistoryFinalizedTail;
+void historyReplay;
+void historyFinalizedTail;
 
 const inputOptions: InputOptions = { title: "Length" };
 const plotOptions: PlotOptions = { title: "Average" };
