@@ -235,18 +235,18 @@ export default defineIndicator(
 
 SDK v2 exposes scalar, per-bar TA calls:
 
-| API | Use |
-| --- | --- |
-| `ta.sma(length)` / `ta.sma(value, length)` | Simple moving average |
-| `ta.ema(length)` / `ta.ema(value, length)` | Exponential moving average |
-| `ta.rsi(length)` / `ta.rsi(value, length)` | RSI |
-| `ta.atr(length)` | ATR from the current candle |
-| `ta.dmi(length)` | DMI/ADX point |
-| `ta.highest(length)` / `ta.highest(value, length)` | Rolling high |
-| `ta.lowest(length)` / `ta.lowest(value, length)` | Rolling low |
-| `ta.crossover(left, right)` | Upward crossing condition |
-| `ta.crossunder(left, right)` | Downward crossing condition |
-| `ta.movingAverage(value, type, length)` | Moving-average catalogue |
+| API                                                | Use                         |
+| -------------------------------------------------- | --------------------------- |
+| `ta.sma(length)` / `ta.sma(value, length)`         | Simple moving average       |
+| `ta.ema(length)` / `ta.ema(value, length)`         | Exponential moving average  |
+| `ta.rsi(length)` / `ta.rsi(value, length)`         | RSI                         |
+| `ta.atr(length)`                                   | ATR from the current candle |
+| `ta.dmi(length)`                                   | DMI/ADX point               |
+| `ta.highest(length)` / `ta.highest(value, length)` | Rolling high                |
+| `ta.lowest(length)` / `ta.lowest(value, length)`   | Rolling low                 |
+| `ta.crossover(left, right)`                        | Upward crossing condition   |
+| `ta.crossunder(left, right)`                       | Downward crossing condition |
+| `ta.movingAverage(value, type, length)`            | Moving-average catalogue    |
 
 When a one-argument source form exists, it uses the documented default price
 source (`close` for SMA/EMA/RSI and the natural high/low source for extrema).
@@ -445,19 +445,19 @@ the source/timeframe supplied by the host context.
 Rewrite the indicator from its trading/math semantics rather than preserving old
 framework plumbing.
 
-| Older concern | SDK v2 rewrite |
-| --- | --- |
-| Explicit input/plot/signal persistence key | Remove it; identity is compiler/SDK-owned |
-| Kernel/plot/input index or call-order counter | Remove it; call-site identity is hidden |
-| `appendSeries()` / `laggedValue()` source history | Use `close[n]`, `source.at(n)`, or `history(source, n)` |
-| Genuine recurrence/domain state | Keep the mathematics in `series()` |
-| Array-oriented TA compatibility call | Rewrite as scalar per-bar `ta.*` |
-| Conditional call workaround to preserve order | Write the natural condition on the compiled v2 call site |
-| Drawing ID/scope/reconciliation array | Use `plot.box()` / `plot.segment()` handles and `delete()` |
-| Manual signal ID/dedup/finalized-tail logic | Use `signal(condition, direction, options?)` |
+| Older concern                                       | SDK v2 rewrite                                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------- |
+| Explicit input/plot/signal persistence key          | Remove it; identity is compiler/SDK-owned                         |
+| Kernel/plot/input index or call-order counter       | Remove it; call-site identity is hidden                           |
+| `appendSeries()` / `laggedValue()` source history   | Use `close[n]`, `source.at(n)`, or `history(source, n)`           |
+| Genuine recurrence/domain state                     | Keep the mathematics in `series()`                                |
+| Array-oriented TA compatibility call                | Rewrite as scalar per-bar `ta.*`                                  |
+| Conditional call workaround to preserve order       | Write the natural condition on the compiled v2 call site          |
+| Drawing ID/scope/reconciliation array               | Use `plot.box()` / `plot.segment()` handles and `delete()`        |
+| Manual signal ID/dedup/finalized-tail logic         | Use `signal(condition, direction, options?)`                      |
 | Author-side persisted-settings migration/validation | Declare `input.*`; host normalization owns stale/invalid settings |
-| `isHistory` / `isHistoryFinalizedTail` branches | Remove replay plumbing; use v2 history/state/signal lifecycle |
-| Custom provider/timeframe aggregation | Do not emulate it; provider-aware MTF is owned by ECDD-142 |
+| `isHistory` / `isHistoryFinalizedTail` branches     | Remove replay plumbing; use v2 history/state/signal lifecycle     |
+| Custom provider/timeframe aggregation               | Do not emulate it; provider-aware MTF is owned by ECDD-142        |
 
 A rewrite is successful when the remaining state and branches exist because the
 indicator mathematics require them, not because ERC Chart's runtime requires
