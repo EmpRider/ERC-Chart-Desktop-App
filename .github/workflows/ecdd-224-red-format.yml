@@ -1,0 +1,39 @@
+name: ECDD-224 RED fixture formatter
+
+on:
+  push:
+    branches:
+      - tmp/ECDD-224-red-format
+    paths:
+      - .github/workflows/ecdd-224-red-format.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: task/ECDD-224-rewrite-atr-rope-utbot
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.1
+          package-manager-cache: false
+          check-latest: false
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Install dependencies
+        run: npm ci --audit=false
+      - name: Format migration fixtures
+        run: npx prettier --write packages/indicator-examples/test/atr-rope-utbot.test.mjs tools/atr-rope-utbot-v2-migration.test.mjs
+      - name: Commit formatted fixtures
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/indicator-examples/test/atr-rope-utbot.test.mjs tools/atr-rope-utbot-v2-migration.test.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m "test(ECDD-224): format migration fixtures"
+          git push origin HEAD:task/ECDD-224-rewrite-atr-rope-utbot
