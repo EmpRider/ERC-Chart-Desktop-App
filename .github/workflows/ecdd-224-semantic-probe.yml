@@ -27,12 +27,12 @@ jobs:
         run: npm install --global npm@12.0.2
       - name: Install dependencies
         run: npm ci --audit=false
-      - name: Build current maintained indicator baseline
-        run: npm run build
+      - name: Build compiled maintained-indicator baseline
+        run: npm run build:atr-rope-utbot-indicator
       - name: Capture semantic fixture
         run: |
           node --input-type=module <<'NODE'
-          import { atrRopeUtBotIndicator as indicator } from './packages/indicator-examples/dist/index.js';
+          import indicator from './out/indicator-plugins/atr-rope-utbot/dist/index.js';
 
           const defaults = (overrides = {}) => ({
             ...Object.fromEntries(indicator.definition.inputs.map((input) => [input.key, input.defaultValue])),
