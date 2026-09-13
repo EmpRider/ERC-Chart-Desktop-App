@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           echo '=== ROOT SDK IMPORTS ==='
-          rg -n --glob '!node_modules/**' --glob '!dist/**' 'from ["'"']@erc-chart/indicator-sdk["'"']|import\(["'"']@erc-chart/indicator-sdk["'"']\)' apps packages tools || true
+          rg -n --glob '!node_modules/**' --glob '!dist/**' '@erc-chart/indicator-sdk' apps packages tools || true
           echo '=== CANDIDATE V1 / INTERNAL SYMBOL USAGE ==='
           rg -n --glob '!node_modules/**' --glob '!dist/**' '\b(appendSeries|laggedValue|series|candlesWithPriceSource|priceSeries|priceValue|inputOptions|maxSeriesCollectionItems|priceSources|IndicatorSnapshot|IndicatorPluginModule|RuntimeIndicatorInstance|IndicatorInstanceContext|IndicatorInstance|IndicatorResultPoint|IndicatorOverlay|SignalCandidate|normalizeIndicatorInputValue|normalizeIndicatorParameters|createAtrKernel|createDmiKernel|createRsiKernel|createHighestKernel|createLowestKernel|createCrossoverKernel|createCrossunderKernel|createMovingAverageKernel)\b' apps packages tools || true
           echo '=== MAINTAINED EXAMPLE IMPORTS ==='
