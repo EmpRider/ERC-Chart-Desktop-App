@@ -5,10 +5,12 @@ import { semanticCallsiteKey, stableCallsiteId } from "./identity.mjs";
 const sdkModule = "@erc-chart/indicator-sdk";
 const sdkRoots = new Set([
   "defineIndicator",
+  "history",
   "indicator",
   "input",
   "location",
   "plot",
+  "priceValue",
   "series",
   "shape",
   "signal",
@@ -59,6 +61,87 @@ const statefulTaMethods = new Set([
   "sma",
 ]);
 const drawingMethods = new Set(["box", "drawings", "remove", "segment"]);
+const signalSafeBuiltinCallRoots = new Set([
+  "Array",
+  "Boolean",
+  "Math",
+  "Number",
+  "Object",
+  "String",
+]);
+const signalSafeSdkFunctionRoots = new Set(["history", "priceValue"]);
+const signalSafeArrayMethods = new Set([
+  "at",
+  "concat",
+  "entries",
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flat",
+  "flatMap",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "keys",
+  "lastIndexOf",
+  "map",
+  "pop",
+  "push",
+  "reduce",
+  "reduceRight",
+  "reverse",
+  "shift",
+  "slice",
+  "some",
+  "sort",
+  "splice",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "unshift",
+  "values",
+  "with",
+]);
+const signalArrayReturningMethods = new Set([
+  "concat",
+  "filter",
+  "flat",
+  "flatMap",
+  "map",
+  "reverse",
+  "slice",
+  "sort",
+  "splice",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "with",
+]);
+const signalArrayElementPreservingMethods = new Set([
+  "filter",
+  "reverse",
+  "slice",
+  "sort",
+  "splice",
+  "toReversed",
+  "toSorted",
+]);
+const signalArrayElementCallbackMethods = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "forEach",
+  "map",
+  "some",
+]);
 const scalarPlotKinds = new Map([
   ["line", "line"],
   ["hline", "hline"],
@@ -280,6 +363,25 @@ function signalIndicatorSeriesSources(identifier, bindings) {
   return [];
 }
 
+function signalIdentifierIsValueReference(identifier) {
+  const parent = identifier.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === identifier)
+    return false;
+  if (ts.isQualifiedName(parent) && parent.right === identifier) return false;
+  if (ts.isShorthandPropertyAssignment(parent) && parent.name === identifier)
+    return true;
+  if (ts.isDeclarationName(identifier) || ts.isPartOfTypeNode(identifier))
+    return false;
+  if (
+    (ts.isLabeledStatement(parent) ||
+      ts.isBreakStatement(parent) ||
+      ts.isContinueStatement(parent)) &&
+    parent.label === identifier
+  )
+    return false;
+  return true;
+}
+
 function localFunctionForReference(identifier) {
   const requestedName = identifier.text;
   let current = identifier.parent;
@@ -323,25 +425,587 @@ function localFunctionForReference(identifier) {
   return undefined;
 }
 
-function helperContainsTaCall(functionLike, callsiteByNode, resolving = new Set()) {
-  if (resolving.has(functionLike)) return false;
+function unwrapSignalCallable(expression) {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  )
+    current = current.expression;
+  return current;
+}
+
+function propertyNameText(name) {
+  if (
+    ts.isIdentifier(name) ||
+    ts.isStringLiteral(name) ||
+    ts.isNumericLiteral(name)
+  )
+    return name.text;
+  return undefined;
+}
+
+function functionLikeObjectMember(objectLiteral, memberName) {
+  for (const property of objectLiteral.properties) {
+    if (propertyNameText(property.name) !== memberName) continue;
+    if (ts.isMethodDeclaration(property)) return property;
+    if (
+      ts.isPropertyAssignment(property) &&
+      (ts.isArrowFunction(property.initializer) ||
+        ts.isFunctionExpression(property.initializer))
+    )
+      return property.initializer;
+    if (ts.isShorthandPropertyAssignment(property))
+      return localFunctionForReference(property.name);
+    return undefined;
+  }
+  return undefined;
+}
+
+function signalCallableLabel(expression) {
+  const callable = unwrapSignalCallable(expression);
+  if (ts.isIdentifier(callable)) return callable.text;
+  if (ts.isPropertyAccessExpression(callable))
+    return `${signalCallableLabel(callable.expression)}.${callable.name.text}`;
+  if (
+    ts.isElementAccessExpression(callable) &&
+    (ts.isStringLiteral(callable.argumentExpression) ||
+      ts.isNumericLiteral(callable.argumentExpression))
+  )
+    return `${signalCallableLabel(callable.expression)}[${JSON.stringify(callable.argumentExpression.text)}]`;
+  if (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable))
+    return "inline function";
+  return "callable";
+}
+
+function signalTypeIsArray(type, resolving = new Set()) {
+  let current = type;
+  while (
+    current !== undefined &&
+    ts.isTypeOperatorNode(current) &&
+    current.operator === ts.SyntaxKind.ReadonlyKeyword
+  )
+    current = current.type;
+  if (current === undefined) return false;
+  if (ts.isArrayTypeNode(current) || ts.isTupleTypeNode(current)) return true;
+  if (
+    ts.isTypeReferenceNode(current) &&
+    ts.isIdentifier(current.typeName) &&
+    (current.typeName.text === "Array" ||
+      current.typeName.text === "ReadonlyArray")
+  )
+    return true;
+  if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
+    return false;
+  const declaration = signalNamedTypeDeclaration(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (!ts.isTypeAliasDeclaration(declaration) || resolving.has(declaration))
+    return false;
+  resolving.add(declaration);
+  const result = signalTypeIsArray(declaration.type, resolving);
+  resolving.delete(declaration);
+  return result;
+}
+
+function signalNamedTypeDeclaration(sourceFile, name) {
+  for (const statement of sourceFile.statements) {
+    if (
+      (ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isClassDeclaration(statement)) &&
+      statement.name?.text === name
+    )
+      return statement;
+  }
+  return undefined;
+}
+
+function signalArrayElementType(type, resolving = new Set()) {
+  let current = type;
+  while (
+    current !== undefined &&
+    ts.isTypeOperatorNode(current) &&
+    current.operator === ts.SyntaxKind.ReadonlyKeyword
+  )
+    current = current.type;
+  if (current === undefined) return undefined;
+  if (ts.isArrayTypeNode(current)) return current.elementType;
+  if (
+    ts.isTypeReferenceNode(current) &&
+    ts.isIdentifier(current.typeName) &&
+    (current.typeName.text === "Array" ||
+      current.typeName.text === "ReadonlyArray")
+  )
+    return current.typeArguments?.[0];
+  if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
+    return undefined;
+  const declaration = signalNamedTypeDeclaration(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (!ts.isTypeAliasDeclaration(declaration) || resolving.has(declaration))
+    return undefined;
+  resolving.add(declaration);
+  const result = signalArrayElementType(declaration.type, resolving);
+  resolving.delete(declaration);
+  return result;
+}
+
+function signalPropertyTypeForType(type, propertyName, resolving = new Set()) {
+  let current = type;
+  while (
+    current !== undefined &&
+    ts.isTypeOperatorNode(current) &&
+    current.operator === ts.SyntaxKind.ReadonlyKeyword
+  )
+    current = current.type;
+  if (current === undefined) return undefined;
+  if (ts.isParenthesizedTypeNode(current))
+    return signalPropertyTypeForType(current.type, propertyName, resolving);
+  if (ts.isUnionTypeNode(current)) {
+    const nonNullish = current.types.filter(
+      (member) =>
+        member.kind !== ts.SyntaxKind.UndefinedKeyword &&
+        !(
+          ts.isLiteralTypeNode(member) &&
+          member.literal.kind === ts.SyntaxKind.NullKeyword
+        ),
+    );
+    return nonNullish.length === 1
+      ? signalPropertyTypeForType(nonNullish[0], propertyName, resolving)
+      : undefined;
+  }
+  if (ts.isTypeLiteralNode(current)) {
+    for (const member of current.members) {
+      if (
+        (ts.isPropertySignature(member) || ts.isPropertyDeclaration(member)) &&
+        member.type !== undefined &&
+        propertyNameText(member.name) === propertyName
+      )
+        return member.type;
+    }
+    return undefined;
+  }
+  if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
+    return undefined;
+  if (
+    current.typeName.text === "Readonly" &&
+    current.typeArguments?.length === 1
+  )
+    return signalPropertyTypeForType(
+      current.typeArguments[0],
+      propertyName,
+      resolving,
+    );
+  const declaration = signalNamedTypeDeclaration(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (declaration === undefined || resolving.has(declaration)) return undefined;
+  resolving.add(declaration);
+  let result;
+  if (ts.isTypeAliasDeclaration(declaration)) {
+    result = signalPropertyTypeForType(
+      declaration.type,
+      propertyName,
+      resolving,
+    );
+  } else {
+    for (const member of declaration.members) {
+      if (
+        (ts.isPropertySignature(member) || ts.isPropertyDeclaration(member)) &&
+        member.type !== undefined &&
+        propertyNameText(member.name) === propertyName
+      ) {
+        result = member.type;
+        break;
+      }
+    }
+  }
+  resolving.delete(declaration);
+  return result;
+}
+
+function signalSourceFileImportBindsName(sourceFile, name) {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const clause = statement.importClause;
+    if (clause === undefined) continue;
+    if (clause.name?.text === name) return true;
+    const named = clause.namedBindings;
+    if (named === undefined) continue;
+    if (ts.isNamespaceImport(named)) {
+      if (named.name.text === name) return true;
+      continue;
+    }
+    if (named.elements.some((element) => element.name.text === name)) return true;
+  }
+  return false;
+}
+
+function signalNameIsLexicallyBoundAt(node, name) {
+  let current = node.parent;
+  while (current !== undefined) {
+    if (scopedNames(current)?.has(name)) return true;
+    if (
+      ts.isSourceFile(current) &&
+      signalSourceFileImportBindsName(current, name)
+    )
+      return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function signalCallbackParameterType(functionLike, parameterIndex) {
+  if (parameterIndex !== 0) return undefined;
+  let callback = functionLike;
+  let parent = callback.parent;
+  while (
+    parent !== undefined &&
+    (ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)) &&
+    parent.expression === callback
+  ) {
+    callback = parent;
+    parent = parent.parent;
+  }
+  if (!ts.isCallExpression(parent) || parent.arguments[0] !== callback)
+    return undefined;
+  const callable = unwrapSignalCallable(parent.expression);
+  if (
+    !ts.isPropertyAccessExpression(callable) ||
+    !signalArrayElementCallbackMethods.has(callable.name.text)
+  )
+    return undefined;
+  return signalExpressionArrayElementType(callable.expression);
+}
+
+function signalIdentifierDeclaredType(identifier) {
+  const requestedName = identifier.text;
+  let current = identifier.parent;
+  while (current !== undefined) {
+    if (ts.isFunctionLike(current)) {
+      for (let index = 0; index < current.parameters.length; index += 1) {
+        const parameter = current.parameters[index];
+        if (
+          ts.isIdentifier(parameter.name) &&
+          parameter.name.text === requestedName
+        )
+          return (
+            parameter.type ?? signalCallbackParameterType(current, index)
+          );
+      }
+      if (scopedNames(current)?.has(requestedName)) return undefined;
+    }
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isSourceFile(current)
+    ) {
+      const statements = ts.isCaseBlock(current)
+        ? current.clauses.flatMap((clause) => [...clause.statements])
+        : current.statements;
+      for (const statement of statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.name.text === requestedName
+          )
+            return declaration.type;
+        }
+      }
+      if (scopedNames(current)?.has(requestedName)) return undefined;
+    }
+    if (
+      ts.isForOfStatement(current) &&
+      ts.isVariableDeclarationList(current.initializer)
+    ) {
+      for (const declaration of current.initializer.declarations) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          declaration.name.text === requestedName
+        )
+          return signalExpressionArrayElementType(current.expression);
+      }
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function signalExpressionDeclaredType(expression, resolving = new Set()) {
+  if (ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression))
+    return expression.type;
+  const value = unwrapSignalCallable(expression);
+  if (ts.isIdentifier(value)) {
+    const declaredType = signalIdentifierDeclaredType(value);
+    if (declaredType !== undefined) return declaredType;
+    const initializer = signalVariableInitializerForReference(value);
+    if (initializer === undefined || resolving.has(initializer)) return undefined;
+    resolving.add(initializer);
+    const result = signalExpressionDeclaredType(initializer, resolving);
+    resolving.delete(initializer);
+    return result;
+  }
+  if (ts.isCallExpression(value)) {
+    const callable = unwrapSignalCallable(value.expression);
+    let helper;
+    if (ts.isIdentifier(callable)) helper = localFunctionForReference(callable);
+    else if (
+      ts.isPropertyAccessExpression(callable) &&
+      ts.isIdentifier(callable.expression)
+    ) {
+      const initializer = signalVariableInitializerForReference(
+        callable.expression,
+      );
+      if (
+        initializer !== undefined &&
+        ts.isObjectLiteralExpression(initializer)
+      )
+        helper = functionLikeObjectMember(initializer, callable.name.text);
+    }
+    return helper?.type;
+  }
+  if (!ts.isPropertyAccessExpression(value)) return undefined;
+  const ownerType = signalExpressionDeclaredType(value.expression, resolving);
+  return ownerType === undefined
+    ? undefined
+    : signalPropertyTypeForType(ownerType, value.name.text);
+}
+
+function signalExpressionArrayElementType(expression, resolving = new Set()) {
+  const declaredType = signalExpressionDeclaredType(expression);
+  if (declaredType !== undefined) {
+    const elementType = signalArrayElementType(declaredType);
+    if (elementType !== undefined) return elementType;
+  }
+  const value = unwrapSignalCallable(expression);
+  if (ts.isIdentifier(value)) {
+    const initializer = signalVariableInitializerForReference(value);
+    if (initializer === undefined || resolving.has(initializer)) return undefined;
+    resolving.add(initializer);
+    const result = signalExpressionArrayElementType(initializer, resolving);
+    resolving.delete(initializer);
+    return result;
+  }
+  if (ts.isArrayLiteralExpression(value)) {
+    if (value.elements.length !== 1) return undefined;
+    const only = value.elements[0];
+    return ts.isSpreadElement(only)
+      ? signalExpressionArrayElementType(only.expression, resolving)
+      : undefined;
+  }
+  if (!ts.isCallExpression(value)) return undefined;
+  const callable = unwrapSignalCallable(value.expression);
+  if (
+    ts.isPropertyAccessExpression(callable) &&
+    signalArrayElementPreservingMethods.has(callable.name.text)
+  )
+    return signalExpressionArrayElementType(callable.expression, resolving);
+  return undefined;
+}
+
+function signalIdentifierHasDeclaredArrayType(identifier) {
+  const requestedName = identifier.text;
+  let current = identifier.parent;
+  while (current !== undefined) {
+    if (ts.isFunctionLike(current)) {
+      for (const parameter of current.parameters) {
+        if (
+          ts.isIdentifier(parameter.name) &&
+          parameter.name.text === requestedName
+        )
+          return signalTypeIsArray(parameter.type);
+      }
+      if (scopedNames(current)?.has(requestedName)) return false;
+    }
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isSourceFile(current)
+    ) {
+      const statements = ts.isCaseBlock(current)
+        ? current.clauses.flatMap((clause) => [...clause.statements])
+        : current.statements;
+      for (const statement of statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.name.text === requestedName
+          )
+            return signalTypeIsArray(declaration.type);
+        }
+      }
+      if (scopedNames(current)?.has(requestedName)) return false;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function signalExpressionIsProvableArray(expression, resolving = new Set()) {
+  const value = unwrapSignalCallable(expression);
+  if (ts.isArrayLiteralExpression(value)) return true;
+  if (ts.isIdentifier(value)) {
+    const initializer = signalVariableInitializerForReference(value);
+    if (initializer !== undefined && !resolving.has(initializer)) {
+      resolving.add(initializer);
+      const result = signalExpressionIsProvableArray(initializer, resolving);
+      resolving.delete(initializer);
+      if (result) return true;
+    }
+    return signalIdentifierHasDeclaredArrayType(value);
+  }
+  if (ts.isPropertyAccessExpression(value)) {
+    const declaredType = signalExpressionDeclaredType(value);
+    return declaredType !== undefined && signalTypeIsArray(declaredType);
+  }
+  if (!ts.isCallExpression(value)) return false;
+  const callable = unwrapSignalCallable(value.expression);
+  if (
+    ts.isPropertyAccessExpression(callable) &&
+    signalArrayReturningMethods.has(callable.name.text)
+  )
+    return signalExpressionIsProvableArray(callable.expression, resolving);
+  return (
+    ts.isPropertyAccessExpression(callable) &&
+    ts.isIdentifier(callable.expression) &&
+    callable.expression.text === "Array" &&
+    (callable.name.text === "from" || callable.name.text === "of")
+  );
+}
+
+function signalCallableAnalysis(expression, bindings) {
+  const callable = unwrapSignalCallable(expression);
+  if (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable))
+    return { kind: "helper", helper: callable };
+  if (ts.isIdentifier(callable)) {
+    const imported = bindings.get(callable.text);
+    if (imported !== undefined && signalSafeSdkFunctionRoots.has(imported))
+      return { kind: "safe" };
+    const helper = localFunctionForReference(callable);
+    return helper === undefined
+      ? { kind: "unresolved" }
+      : { kind: "helper", helper };
+  }
+  if (ts.isPropertyAccessExpression(callable)) {
+    const root = propertyPath(callable)?.root;
+    if (
+      root !== undefined &&
+      signalSafeBuiltinCallRoots.has(root) &&
+      !signalNameIsLexicallyBoundAt(callable, root)
+    )
+      return { kind: "safe" };
+    if (ts.isIdentifier(callable.expression)) {
+      const initializer = signalVariableInitializerForReference(
+        callable.expression,
+      );
+      if (
+        initializer !== undefined &&
+        ts.isObjectLiteralExpression(initializer)
+      ) {
+        const helper = functionLikeObjectMember(
+          initializer,
+          callable.name.text,
+        );
+        if (helper !== undefined) return { kind: "helper", helper };
+      }
+    }
+    if (
+      signalSafeArrayMethods.has(callable.name.text) &&
+      signalExpressionIsProvableArray(callable.expression)
+    )
+      return { kind: "safe" };
+    return { kind: "unresolved" };
+  }
+  if (
+    ts.isElementAccessExpression(callable) &&
+    ts.isIdentifier(callable.expression) &&
+    (ts.isStringLiteral(callable.argumentExpression) ||
+      ts.isNumericLiteral(callable.argumentExpression))
+  ) {
+    const initializer = signalVariableInitializerForReference(
+      callable.expression,
+    );
+    if (
+      initializer !== undefined &&
+      ts.isObjectLiteralExpression(initializer)
+    ) {
+      const helper = functionLikeObjectMember(
+        initializer,
+        callable.argumentExpression.text,
+      );
+      if (helper !== undefined) return { kind: "helper", helper };
+    }
+    return { kind: "unresolved" };
+  }
+  return { kind: "unresolved" };
+}
+
+function helperSignalCallRisk(
+  functionLike,
+  callsiteByNode,
+  bindings,
+  resolving = new Set(),
+) {
+  if (resolving.has(functionLike)) return undefined;
   resolving.add(functionLike);
-  let containsTa = false;
+  let risk;
   const visit = (node) => {
-    if (containsTa) return;
+    if (risk !== undefined) return;
     if (node !== functionLike && ts.isFunctionLike(node)) return;
     if (ts.isCallExpression(node)) {
-      if (callsiteByNode.get(node)?.metadata.kind === "ta") {
-        containsTa = true;
+      const metadata = callsiteByNode.get(node)?.metadata;
+      if (metadata?.kind === "ta") {
+        risk = "ta";
         return;
       }
-      if (ts.isIdentifier(node.expression)) {
-        const helper = localFunctionForReference(node.expression);
-        if (
-          helper !== undefined &&
-          helperContainsTaCall(helper, callsiteByNode, resolving)
-        ) {
-          containsTa = true;
+      if (metadata === undefined) {
+        const analysis = signalCallableAnalysis(node.expression, bindings);
+        if (analysis.kind === "helper") {
+          const nestedRisk = helperSignalCallRisk(
+            analysis.helper,
+            callsiteByNode,
+            bindings,
+            resolving,
+          );
+          if (nestedRisk !== undefined) {
+            risk = nestedRisk;
+            return;
+          }
+        }
+        if (analysis.kind === "unresolved") {
+          risk = "unresolved";
+          return;
+        }
+      }
+      for (const argument of node.arguments) {
+        const candidate = unwrapSignalCallable(argument);
+        let callback;
+        if (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate))
+          callback = candidate;
+        else if (ts.isIdentifier(candidate))
+          callback = localFunctionForReference(candidate);
+        if (callback === undefined) continue;
+        const callbackRisk = helperSignalCallRisk(
+          callback,
+          callsiteByNode,
+          bindings,
+          resolving,
+        );
+        if (callbackRisk !== undefined) {
+          risk = callbackRisk;
           return;
         }
       }
@@ -350,7 +1014,7 @@ function helperContainsTaCall(functionLike, callsiteByNode, resolving = new Set(
   };
   if (functionLike.body !== undefined) visit(functionLike.body);
   resolving.delete(functionLike);
-  return containsTa;
+  return risk;
 }
 
 function helperIsNestedInIndicatorCalculation(functionLike, bindings) {
@@ -408,6 +1072,7 @@ function signalDependencyMetadata(
 
   const visit = (node) => {
     if (ts.isIdentifier(node)) {
+      if (!signalIdentifierIsValueReference(node)) return;
       const seriesSources = signalIndicatorSeriesSources(node, bindings);
       if (seriesSources.length > 0) {
         for (const seriesSource of seriesSources) {
@@ -432,8 +1097,15 @@ function signalDependencyMetadata(
         dependencyIds.add(metadata.id);
         dependencies.push(metadata.id);
       }
-      if (metadata === undefined && ts.isIdentifier(node.expression)) {
-        const helper = localFunctionForReference(node.expression);
+      if (metadata === undefined) {
+        const analysis = signalCallableAnalysis(node.expression, bindings);
+        if (analysis.kind === "unresolved")
+          throw syntaxError(
+            sourceFile,
+            node,
+            `signal condition callable ${signalCallableLabel(node.expression)} cannot be resolved; use a statically traceable local helper or hoist runtime dependencies into the indicator calculation`,
+          );
+        const helper = analysis.kind === "helper" ? analysis.helper : undefined;
         if (
           helper !== undefined &&
           helperIsNestedInIndicatorCalculation(helper, bindings)
@@ -441,17 +1113,23 @@ function signalDependencyMetadata(
           throw syntaxError(
             sourceFile,
             node,
-            `signal condition helper ${node.expression.text} is nested in the indicator calculation; move it to module scope and pass runtime dependencies as arguments so signal dependencies remain statically traceable`,
+            `signal condition helper ${signalCallableLabel(node.expression)} is nested in the indicator calculation; move it to module scope and pass runtime dependencies as arguments so signal dependencies remain statically traceable`,
           );
-        if (
-          helper !== undefined &&
-          helperContainsTaCall(helper, callsiteByNode)
-        )
-          throw syntaxError(
-            sourceFile,
-            node,
-            `signal condition helper ${node.expression.text} executes ta.* internally; hoist TA calls into the indicator calculation and pass their results into the helper so signal dependencies remain statically traceable`,
-          );
+        if (helper !== undefined) {
+          const risk = helperSignalCallRisk(helper, callsiteByNode, bindings);
+          if (risk === "ta")
+            throw syntaxError(
+              sourceFile,
+              node,
+              `signal condition helper ${signalCallableLabel(node.expression)} executes ta.* internally; hoist TA calls into the indicator calculation and pass their results into the helper so signal dependencies remain statically traceable`,
+            );
+          if (risk === "unresolved")
+            throw syntaxError(
+              sourceFile,
+              node,
+              `signal condition helper ${signalCallableLabel(node.expression)} invokes a callable that cannot be resolved; keep signal-condition helpers statically traceable`,
+            );
+        }
       }
       for (const argument of node.arguments) visit(argument);
       return;

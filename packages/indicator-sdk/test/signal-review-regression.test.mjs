@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { defineIndicator, signal, ta } from "../dist/index.js";
+import {
+  resolveSignalDependencies,
+  sourceSignalDependency,
+} from "../dist/internal/signals.js";
 
 const context = { instrumentId: "TEST", timeframeId: "1m" };
 
@@ -61,6 +65,88 @@ const dependentSignalCallsite = Object.freeze({
     line: 102,
     column: 1,
   }),
+});
+
+test("signal callsites require compiler dependency metadata even when both lists are empty", () => {
+  const variants = [
+    Object.freeze({
+      __ercCallsite: "v2",
+      id: "erc-v2-signal-000000000000000000000110",
+      kind: "signal",
+      callee: "signal",
+      chartSeries: Object.freeze([]),
+      source: Object.freeze({
+        file: "signal-review-regression.test.mjs",
+        line: 110,
+        column: 1,
+      }),
+    }),
+    Object.freeze({
+      __ercCallsite: "v2",
+      id: "erc-v2-signal-000000000000000000000111",
+      kind: "signal",
+      callee: "signal",
+      dependencies: Object.freeze([]),
+      source: Object.freeze({
+        file: "signal-review-regression.test.mjs",
+        line: 111,
+        column: 1,
+      }),
+    }),
+  ];
+
+  for (const hiddenCallsite of variants) {
+    assert.throws(
+      () =>
+        defineIndicator(
+          {
+            id: `erc.indicator.signal-metadata.${hiddenCallsite.id}`,
+            name: "Signal metadata",
+          },
+          () => signal(true, "long", undefined, hiddenCallsite),
+        ),
+      /Invalid compiler call-site metadata for signal/u,
+    );
+  }
+});
+
+test("signal source identity distinguishes tuples that contain delimiter characters", () => {
+  const first = sourceSignalDependency("a-b", 60_000, true, {
+    activeTimeframeId: "c",
+    generation: 1,
+    revision: 1,
+  });
+  const second = sourceSignalDependency("a", 60_000, true, {
+    activeTimeframeId: "b-c",
+    generation: 2,
+    revision: 2,
+  });
+
+  assert.notEqual(first.identities[0], second.identities[0]);
+
+  const resolved = resolveSignalDependencies(
+    new Map([
+      ["erc-v2-ta-000000000000000000000120", first],
+      ["erc-v2-ta-000000000000000000000121", second],
+    ]),
+    {
+      __ercCallsite: "v2",
+      id: "erc-v2-signal-000000000000000000000122",
+      kind: "signal",
+      callee: "signal",
+      dependencies: [
+        "erc-v2-ta-000000000000000000000120",
+        "erc-v2-ta-000000000000000000000121",
+      ],
+      chartSeries: [],
+      source: {
+        file: "signal-review-regression.test.mjs",
+        line: 122,
+        column: 1,
+      },
+    },
+  );
+  assert.equal(resolved.sources.length, 2);
 });
 
 test("signals suppress true conditions while a TA dependency is still warming up", () => {
@@ -170,6 +256,37 @@ const chartSignalCallsite = Object.freeze({
     line: 103,
     column: 1,
   }),
+});
+
+const volumeSignalCallsite = Object.freeze({
+  __ercCallsite: "v2",
+  id: "erc-v2-signal-000000000000000000000104",
+  kind: "signal",
+  callee: "signal",
+  dependencies: Object.freeze([]),
+  chartSeries: Object.freeze(["volume"]),
+  source: Object.freeze({
+    file: "signal-review-regression.test.mjs",
+    line: 104,
+    column: 1,
+  }),
+});
+
+test("chart-sourced signals wait until every referenced chart series is finite", () => {
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.signal-chart-readiness.main",
+      name: "Signal chart readiness",
+    },
+    () => signal(true, "long", undefined, volumeSignalCallsite),
+  );
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([{ ...candle(0), volume: undefined }, candle(1)]);
+    assert.deepEqual(instance.snapshot().signals, []);
+  } finally {
+    instance.dispose();
+  }
 });
 
 function chartSignalPlugin() {

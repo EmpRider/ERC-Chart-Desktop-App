@@ -1,5 +1,8 @@
 import { authoringFrame, type AuthoringFrame } from "./authoring-context.js";
-import { readCompilerCallsite } from "./internal/callsite.js";
+import {
+  readCompilerCallsite,
+  type CompilerSeriesSource,
+} from "./internal/callsite.js";
 import {
   resolveSignalDependencies,
   signalAlreadyCommitted,
@@ -20,6 +23,33 @@ function signalIdentities(frame: AuthoringFrame): Set<string> {
     frameSignalIdentities.set(frame, identities);
   }
   return identities;
+}
+
+function chartSeriesValue(
+  frame: AuthoringFrame,
+  source: CompilerSeriesSource,
+): number {
+  switch (source) {
+    case "open":
+    case "high":
+    case "low":
+    case "close":
+      return frame.candle[source];
+    case "volume":
+      return frame.candle.volume ?? Number.NaN;
+    case "hl2":
+      return (frame.candle.high + frame.candle.low) / 2;
+    case "hlc3":
+      return (frame.candle.high + frame.candle.low + frame.candle.close) / 3;
+    case "ohlc4":
+      return (
+        (frame.candle.open +
+          frame.candle.high +
+          frame.candle.low +
+          frame.candle.close) /
+        4
+      );
+  }
 }
 
 /** Signals commit only when every compiler-traced dependency is ready and confirmed. */
@@ -67,12 +97,16 @@ export function signal(
   const sources = [...resolved.sources];
   let occurredAtMs = resolved.occurredAtMs;
   if ((callsite?.chartSeries?.length ?? 0) > 0) {
+    const chartSeries = callsite?.chartSeries ?? [];
     const chartDependency = sourceSignalDependency(
       frame.candle.timeframeId,
       frame.candle.openTimeMs,
-      true,
+      chartSeries.every((source) =>
+        Number.isFinite(chartSeriesValue(frame, source)),
+      ),
       frame.sourceMetadata[frame.candle.timeframeId],
     );
+    if (!chartDependency.ready) return;
     dependencyIdentities.push(...chartDependency.identities);
     for (const source of chartDependency.sources) {
       if (

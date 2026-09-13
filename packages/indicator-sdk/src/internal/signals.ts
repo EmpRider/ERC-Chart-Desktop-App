@@ -23,6 +23,29 @@ export function resetSignalState(state: SignalState): void {
   state.order.length = 0;
 }
 
+function signalSourceIdentity(
+  timeframeId: string,
+  activeTimeframeId: string,
+  openTimeMs: number,
+): string {
+  const value = JSON.stringify([timeframeId, activeTimeframeId, openTimeMs]);
+  const bytes = new TextEncoder().encode(value);
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let encoded = "";
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index] ?? 0;
+    const second = bytes[index + 1];
+    const third = bytes[index + 2];
+    encoded += alphabet[first >> 2];
+    encoded += alphabet[((first & 0x03) << 4) | ((second ?? 0) >> 4)];
+    if (second !== undefined)
+      encoded += alphabet[((second & 0x0f) << 2) | ((third ?? 0) >> 6)];
+    if (third !== undefined) encoded += alphabet[third & 0x3f];
+  }
+  return encoded;
+}
+
 export function sourceSignalDependency(
   timeframeId: string,
   openTimeMs: number | undefined,
@@ -32,7 +55,11 @@ export function sourceSignalDependency(
   if (!ready || openTimeMs === undefined)
     return { ready: false, identities: [], sources: [] };
   const activeTimeframeId = metadata?.activeTimeframeId ?? timeframeId;
-  const identity = `${timeframeId}-${activeTimeframeId}-${openTimeMs}`;
+  const identity = signalSourceIdentity(
+    timeframeId,
+    activeTimeframeId,
+    openTimeMs,
+  );
   if (metadata === undefined)
     return {
       ready: true,
@@ -86,7 +113,11 @@ export function resolveSignalDependencies(
           ? dependency.occurredAtMs
           : Math.max(occurredAtMs, dependency.occurredAtMs);
     for (const source of dependency.sources) {
-      const id = `${source.timeframeId}-${source.activeTimeframeId}-${source.openTimeMs}`;
+      const id = signalSourceIdentity(
+        source.timeframeId,
+        source.activeTimeframeId,
+        source.openTimeMs,
+      );
       if (sourceIds.has(id)) continue;
       sourceIds.add(id);
       sources.push(source);

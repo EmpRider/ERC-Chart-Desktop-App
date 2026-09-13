@@ -94,6 +94,8 @@ export function readCompilerCallsite(
     marker !== "v2" ||
     candidateKind !== kind ||
     candidateCallee !== callee ||
+    (kind === "signal" &&
+      (dependencies === undefined || chartSeries === undefined)) ||
     (seriesSource !== undefined &&
       !compilerSeriesSources.includes(seriesSource)) ||
     (dependencies !== undefined &&
