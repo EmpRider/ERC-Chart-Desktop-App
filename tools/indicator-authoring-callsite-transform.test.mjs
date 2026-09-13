@@ -305,3 +305,723 @@ plot.shape(buy, {
     ],
   );
 });
+
+test("signal callsites capture only the TA and chart-series dependencies used by the condition", async () => {
+  const result = await transform(`
+import { defineIndicator, plot, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const unrelated = ta.rsi(14);
+  const higher = ta.ema(1, "1h");
+  const buy = close > higher;
+  plot.line(unrelated);
+  signal(buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  const unrelatedCallsite = result.callsites.find(
+    (value) => value.callee === "ta.rsi",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.ok(unrelatedCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+  assert.equal(
+    signalCallsite.dependencies.includes(unrelatedCallsite.id),
+    false,
+  );
+});
+
+test("signal dependency tracing fails closed for reassigned condition variables", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  let buy = false;
+  buy = !Number.isFinite(ta.ema(close, 14));
+  signal(buy, "long");
+});
+`),
+    /signal condition variable buy is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for mutated condition object properties", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  state.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for mutated condition array elements", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = [false];
+  state[0] = !Number.isFinite(ta.ema(close, 14));
+  signal(state[0], "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for aliased condition-object mutation", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  const alias = state;
+  alias.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for nested condition-object aliases", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { nested: { buy: false } };
+  const alias = state.nested;
+  alias.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.nested.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for destructured condition-object aliases", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { nested: { buy: false } };
+  const { nested } = state;
+  nested.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.nested.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for destructuring assignment aliases", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { nested: { buy: false } };
+  let alias;
+  ({ nested: alias } = state);
+  alias.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.nested.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing follows destructured variable initializers", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: ta.ema(close, 14) > close };
+  const { buy } = state;
+  signal(buy, "long");
+});
+`);
+
+  const taCallsite = result.callsites.find((value) => value.kind === "ta");
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(taCallsite);
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [taCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing fails closed when a condition object is passed to a mutating call", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  Object.assign(state, { buy: !Number.isFinite(ta.ema(close, 14)) });
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for condition-array mutator calls", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = [false];
+  state.splice(0, 1, !Number.isFinite(ta.ema(close, 14)));
+  signal(state[0], "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing allows condition objects to be read by Object.assign", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: close > 0 };
+  const clone = Object.assign({}, state);
+  void clone;
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing allows read-only array methods before a signal", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = [close > 0];
+  const clone = state.slice();
+  void clone;
+  signal(state[0], "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing allows condition objects through read-only local helpers", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function readState(state) {
+  return state.buy;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: close > 0 };
+  void readState(state);
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing fails closed when a local helper mutates condition state", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+function updateState(state, value) {
+  state.buy = value;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  const average = ta.ema(close, 14);
+  updateState(state, !Number.isFinite(average));
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for destructuring reassignment", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  let buy = false;
+  [buy] = [!Number.isFinite(ta.ema(close, 14))];
+  signal(buy, "long");
+});
+`),
+    /signal condition variable buy is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("explicit-series higher-timeframe TA does not add a chart-candle signal dependency", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const higher = ta.ema(close, 1, "1h");
+  signal(higher > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, []);
+});
+
+test("whole-bar higher-timeframe TA keeps direct series provenance out of chart signal dependencies", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  const higher = ta.ema(bar.close, 1, "1h");
+  signal(higher > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.equal(higherCallsite.seriesSource, "close");
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, []);
+});
+
+test("bar member signal dependencies include only the accessed chart series", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  signal(bar.close > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("bar literal element signal dependencies include only the accessed chart series", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  signal(bar["close"] > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("whole-bar literal element higher-timeframe TA preserves direct series provenance", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  const higher = ta.ema(bar["close"], 1, "1h");
+  signal(higher > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.equal(higherCallsite.seriesSource, "close");
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, []);
+});
+
+test("signal dependency tracing follows state callbacks that capture outer TA and chart sources", async () => {
+  const result = await transform(`
+import { defineIndicator, series, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  const higher = ta.ema(1, "1h");
+  const state = series({ buy: false }, () => ({ buy: bar.close > higher }));
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.ok(signalCallsite.chartSeries.includes("close"));
+});
+
+test("signal dependency tracing fails closed when a helper hides TA execution", async () => {
+  for (const helper of [
+    `function buySignal(close) {
+  const average = ta.ema(close, 14);
+  return close > average;
+}`,
+    `const buySignal = (close) => {
+  const average = ta.ema(close, 14);
+  return close > average;
+};`,
+  ]) {
+    await assert.rejects(
+      () =>
+        transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+${helper}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(buySignal(close), "long");
+});
+`),
+      /signal condition helper buySignal executes ta\.\* internally; hoist TA calls into the indicator calculation/u,
+    );
+  }
+});
+
+test("signal dependency tracing fails closed for indicator-scope helper closures", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const average = ta.ema(close, 14);
+  const buySignal = () => close > average;
+  signal(buySignal(), "long");
+});
+`),
+    /signal condition helper buySignal is nested in the indicator calculation; move it to module scope/u,
+  );
+});
+
+test("signal dependency tracing ignores identifiers used only as property names", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { close: 42 };
+  signal(state.close > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, []);
+});
+
+test("signal dependency tracing fails closed for indirect helpers that hide TA execution", async () => {
+  for (const condition of [
+    "helpers.buy(close)",
+    "(() => { const average = ta.ema(close, 14); return close > average; })()",
+  ]) {
+    await assert.rejects(
+      () =>
+        transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+const helpers = {
+  buy(value) {
+    const average = ta.ema(value, 14);
+    return value > average;
+  },
+};
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(${condition}, "long");
+});
+`),
+      /signal condition helper .*(?:ta\.\* internally|nested in the indicator calculation)|signal condition callable .*statically traceable/u,
+    );
+  }
+});
+
+test("signal dependency tracing allows provable array helpers inside module signal-state helpers", async () => {
+  const result = await transform(`
+import { defineIndicator, series, signal, ta } from "@erc-chart/indicator-sdk";
+function step(previous, close, higher) {
+  const outcomes = [...previous.outcomes, close].slice(-4);
+  const prior = outcomes.find((value) => value > higher);
+  return { outcomes, buy: prior !== undefined && close > higher };
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const higher = ta.ema(1, "1h");
+  const state = series({ outcomes: [], buy: false }, (previous) =>
+    step(previous, close, higher),
+  );
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing recognizes pure SDK helpers and traces their arguments", async () => {
+  const result = await transform(`
+import { defineIndicator, history, priceValue, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  const source = priceValue(bar, "close");
+  const previous = history(source, 1);
+  signal(previous > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(signalCallsite.chartSeries.includes("close"));
+});
+
+test("signal dependency tracing allows compiler-recognized non-TA calls inside module helpers", async () => {
+  const result = await transform(`
+import { defineIndicator, input, signal } from "@erc-chart/indicator-sdk";
+function readInputs() {
+  return { threshold: input.int(10, "Threshold") };
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const params = readInputs();
+  signal(close > params.threshold, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing proves standard array methods from parameter and property types", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+interface Zone { readonly values: readonly number[] }
+function blocked(zones: readonly Zone[]) {
+  return zones.some((zone) => (zone.values.at(-1) ?? 0) > 0);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked([{ values: [close] }]), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing fails closed for unresolved named array types without crashing", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+import type { ExternalZones } from "./external-types.js";
+function blocked(zones: ExternalZones, value: number) {
+  return zones.some(() => value > 0);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked([] as unknown as ExternalZones, close), "long");
+});
+`),
+    /signal condition helper blocked invokes a callable that cannot be resolved/u,
+  );
+});
+
+test("signal dependency tracing follows explicit helper return types for array properties", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+interface Candidate { readonly values: readonly number[] }
+function makeCandidate(value: number): Candidate | undefined {
+  return value > 0 ? { values: [value] } : undefined;
+}
+function blocked(value: number) {
+  const candidate = makeCandidate(value);
+  if (candidate === undefined) return false;
+  return candidate.values.some((item) => item > 0);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked(close), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing infers for-of element types for array properties", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+interface Zone { readonly segments: readonly number[] }
+function blocked(zones: readonly Zone[]) {
+  for (const zone of zones) {
+    if ((zone.segments.at(-1) ?? 0) > 0) return true;
+  }
+  return false;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked([{ segments: [close] }]), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing preserves element types through spread and array-returning methods", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+interface Zone { readonly segments: readonly number[] }
+function blocked(zones: readonly Zone[]) {
+  const ranked = [...zones].sort(() => 0);
+  let result = false;
+  ranked.forEach((zone) => {
+    result ||= (zone.segments.at(-1) ?? 0) > 0;
+  });
+  return result;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked([{ segments: [close] }]), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing does not preserve element types through transforming array methods", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+interface Zone { readonly values: readonly number[] }
+const sneaky = {
+  values: {
+    some(value) {
+      return ta.ema(value, 14) > 0;
+    },
+  },
+};
+function blocked(zones: readonly Zone[]) {
+  const mapped = [...zones].map(() => sneaky);
+  return mapped.some((item) => item.values.some(1));
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked([{ values: [close] }]), "long");
+});
+`),
+    /signal condition helper blocked invokes a callable that cannot be resolved/u,
+  );
+});
+
+test("signal dependency tracing does not infer array receivers from unrelated same-named properties", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+interface Zone { readonly values: readonly number[] }
+const sneaky = {
+  values: {
+    some(value) {
+      return ta.ema(value, 14) > 0;
+    },
+  },
+};
+function blocked(value) {
+  return sneaky.values.some(value);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked(close), "long");
+});
+`),
+    /signal condition helper blocked invokes a callable that cannot be resolved/u,
+  );
+});
+
+test("signal dependency tracing does not trust shadowed builtin call roots", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+const Math = {
+  max(value) {
+    return ta.ema(value, 14);
+  },
+};
+function blocked(value) {
+  return Math.max(value) > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked(close), "long");
+});
+`),
+    /signal condition helper blocked executes ta\.\* internally/u,
+  );
+});

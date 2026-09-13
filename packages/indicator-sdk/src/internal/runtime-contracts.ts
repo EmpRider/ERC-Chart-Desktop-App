@@ -1,6 +1,8 @@
 import type {
   Candle,
   ContractVersion,
+  IndicatorRuntimeSignalSource,
+  IndicatorRuntimeSignalSourceProvenance,
   InstrumentId,
   Tick,
   TimeframeId,
@@ -22,6 +24,7 @@ export interface SignalCandidate {
   readonly direction: "long" | "neutral" | "short";
   readonly confidence?: number;
   readonly finalized: boolean;
+  readonly sources?: readonly IndicatorRuntimeSignalSource[];
 }
 
 export interface IndicatorSnapshot {
@@ -32,10 +35,19 @@ export interface IndicatorSnapshot {
   readonly visualRevision?: number;
 }
 
+export interface IndicatorSourceMetadata {
+  readonly activeTimeframeId: string;
+  readonly generation: number;
+  readonly revision: number;
+  readonly finalizedCount: number;
+  readonly provenance: IndicatorRuntimeSignalSourceProvenance;
+}
+
 export interface IndicatorInstanceContext {
   readonly instrumentId: InstrumentId;
   readonly timeframeId: TimeframeId;
   readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
+  readonly sourceMetadata?: Readonly<Record<string, IndicatorSourceMetadata>>;
 }
 
 export interface IndicatorInstance {

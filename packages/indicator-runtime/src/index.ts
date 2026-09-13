@@ -83,7 +83,10 @@ export interface IndicatorWorkerSourceSnapshot {
   readonly timeframeId: string;
   readonly activeTimeframeId?: string;
   readonly candles: readonly Candle[];
-  readonly provenance?: IndicatorSourceProvenance;
+  readonly provenance: IndicatorSourceProvenance;
+  readonly generation: number;
+  readonly revision: number;
+  readonly finalizedCount: number;
 }
 
 export type IndicatorWorkerDataUpdate =
