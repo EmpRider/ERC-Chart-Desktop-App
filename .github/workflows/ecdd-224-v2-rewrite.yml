@@ -1,0 +1,404 @@
+name: ECDD-224 SDK v2 rewrite
+
+on:
+  push:
+    branches:
+      - tmp/ECDD-224-v2-rewrite
+    paths:
+      - .github/workflows/ecdd-224-v2-rewrite.yml
+
+permissions:
+  contents: write
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: task/ECDD-224-rewrite-atr-rope-utbot
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.1
+          package-manager-cache: false
+          check-latest: false
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Install dependencies
+        run: npm ci --audit=false
+      - name: Rewrite maintained indicator on SDK v2
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('packages/indicator-examples/src/atr-rope-utbot.ts')
+          source = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global source
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one occurrence, got {count}: {old[:80]!r}')
+              source = source.replace(old, new, 1)
+
+          replace_once('  appendSeries,\n', '')
+          replace_once('  input,\n', '  history,\n  input,\n  location,\n')
+          replace_once('  laggedValue,\n', '')
+          replace_once('  series,\n  signal,\n', '  series,\n  shape,\n  signal,\n')
+          replace_once('  ta,\n', '  ta,\n  textSize,\n')
+
+          count = source.count('  readonly sources: readonly number[];\n')
+          if count != 2:
+              raise SystemExit(f'expected two lag-only source fields, got {count}')
+          source = source.replace('  readonly sources: readonly number[];\n', '')
+          count = source.count('  sources: [],\n')
+          if count != 2:
+              raise SystemExit(f'expected two lag-only source initializers, got {count}')
+          source = source.replace('  sources: [],\n', '')
+
+          replace_once(
+              'type SignalSide = "buy" | "sell";\n',
+              'type SignalSide = "buy" | "sell";\n\n'
+              'function historicalOrCurrent(value: number, current: number): number {\n'
+              '  return Number.isFinite(value) ? value : current;\n'
+              '}\n',
+          )
+
+          rope_match = re.search(r'function stepRope\([\s\S]*?\n}\n\nfunction stepRopeDirection', source)
+          if rope_match is None:
+              raise SystemExit('stepRope block not found')
+          rope = rope_match.group(0)
+          rope = rope.replace(
+              '  currentAtr: number,\n  params: Params,',
+              '  currentAtr: number,\n  laggedSource: number,\n  params: Params,',
+              1,
+          )
+          rope = rope.replace(
+              '  const sources = appendSeries(previous.sources, current, Math.max(6, lag + 1));\n',
+              '',
+              1,
+          )
+          rope = rope.replace(
+              'return { previousRope, rope: previousRope, directionInput, sources };',
+              'return { previousRope, rope: previousRope, directionInput };',
+              1,
+          )
+          rope = rope.replace(
+              'return { previousRope: current, rope: current, directionInput, sources };',
+              'return { previousRope: current, rope: current, directionInput };',
+              1,
+          )
+          rope = rope.replace(
+              'laggedValue(previous.sources, current, 3)', 'laggedSource', 1
+          )
+          rope = rope.replace(
+              'laggedValue(previous.sources, current, 5)', 'laggedSource', 1
+          )
+          rope = rope.replace(
+              'laggedValue(previous.sources, current, lag)', 'laggedSource', 1
+          )
+          rope = rope.replace(
+              'return { previousRope: rope, rope, directionInput, sources };',
+              'return { previousRope: rope, rope, directionInput };',
+              1,
+          )
+          if 'appendSeries' in rope or 'laggedValue' in rope or 'sources' in rope:
+              raise SystemExit('stepRope still contains lag-buffer plumbing')
+          source = source[:rope_match.start()] + rope + source[rope_match.end():]
+
+          ut_match = re.search(r'function stepUtBot\([\s\S]*?\n}\n\nfunction cloneZone', source)
+          if ut_match is None:
+              raise SystemExit('stepUtBot block not found')
+          ut = ut_match.group(0)
+          ut = ut.replace(
+              '  index: number,\n  params: Params,',
+              '  index: number,\n  laggedSource: number,\n  params: Params,',
+              1,
+          )
+          ut = ut.replace(
+              '  const lagged = laggedValue(previous.sources, raw, lag);',
+              '  const lagged = laggedSource;',
+              1,
+          )
+          ut = ut.replace(
+              '  const sources = appendSeries(previous.sources, raw, lag + 1);\n',
+              '',
+              1,
+          )
+          ut = ut.replace('      sources,\n', '', 1)
+          ut = ut.replace('    sources,\n', '', 1)
+          if 'appendSeries' in ut or 'laggedValue' in ut or 'sources' in ut:
+              raise SystemExit('stepUtBot still contains lag-buffer plumbing')
+          source = source[:ut_match.start()] + ut + source[ut_match.end():]
+
+          source, key_count = re.subn(r'(?m)^\s+key: "[^"]+",\n', '', source)
+          if key_count < 10:
+              raise SystemExit(f'expected input/plot persistence keys, removed only {key_count}')
+
+          drawing_match = re.search(r'function drawZones\([\s\S]*?\n}\n\nfunction trimZones', source)
+          if drawing_match is None:
+              raise SystemExit('drawZones block not found')
+          drawing_replacement = '''interface ZoneBoxDrawing {
+            readonly left: number;
+            readonly right: number;
+            readonly top: number;
+            readonly bottom: number;
+            readonly color: string;
+          }
+
+          interface ZoneSegmentDrawing {
+            readonly left: number;
+            readonly right: number;
+            readonly startValue: number;
+            readonly endValue: number;
+            readonly color: string;
+            readonly width: number;
+            readonly style: "solid" | "dashed" | "dotted";
+          }
+
+          interface ZoneDrawings {
+            readonly boxes: readonly ZoneBoxDrawing[];
+            readonly segments: readonly ZoneSegmentDrawing[];
+          }
+
+          function collectZoneDrawings(
+            zones: readonly PocZone[],
+            params: Params,
+            bar: IndicatorBar,
+          ): ZoneDrawings {
+            const boxes: ZoneBoxDrawing[] = [];
+            const segments: ZoneSegmentDrawing[] = [];
+            for (const zone of zones) {
+              for (const segment of zone.segments) {
+                if (!zoneIsRenderable(zone, segment, params)) continue;
+                const endTimeMs =
+                  segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
+                const color = zoneColor(zone, params);
+                if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
+                  boxes.push({
+                    left: segment.startTimeMs,
+                    right: endTimeMs,
+                    top: segment.bandHigh,
+                    bottom: segment.bandLow,
+                    color: rgbaWithAlpha(color, params.bandOpacity),
+                  });
+                }
+                if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
+                  segments.push({
+                    left: segment.startTimeMs,
+                    right: endTimeMs,
+                    startValue: segment.center,
+                    endValue: segment.center,
+                    color: rgbaWithAlpha(color, params.lineOpacity),
+                    width: params.lineWidth,
+                    style:
+                      zone.activeRank === 0 && !zone.frozen
+                        ? "solid"
+                        : zone.frozen
+                          ? "dotted"
+                          : "dashed",
+                  });
+                }
+              }
+            }
+            return { boxes, segments };
+          }
+
+          function syncZoneDrawings(
+            previous: ZoneDrawings,
+            current: ZoneDrawings,
+          ): void {
+            const boxCount = Math.max(previous.boxes.length, current.boxes.length);
+            for (let index = 0; index < boxCount; index += 1) {
+              const currentDrawing = current.boxes[index];
+              const drawing = currentDrawing ?? previous.boxes[index];
+              if (drawing === undefined) continue;
+              const handle = plot.box(drawing);
+              if (currentDrawing === undefined) handle.delete();
+            }
+
+            const segmentCount = Math.max(
+              previous.segments.length,
+              current.segments.length,
+            );
+            for (let index = 0; index < segmentCount; index += 1) {
+              const currentDrawing = current.segments[index];
+              const drawing = currentDrawing ?? previous.segments[index];
+              if (drawing === undefined) continue;
+              const handle = plot.segment(drawing);
+              if (currentDrawing === undefined) handle.delete();
+            }
+          }
+
+          function trimZones'''
+          drawing_replacement = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in drawing_replacement.splitlines()
+          )
+          source = (
+              source[:drawing_match.start()]
+              + drawing_replacement
+              + source[drawing_match.end():]
+          )
+
+          render_match = re.search(r'function renderZones\([\s\S]*?\n}\n\nconst indicator', source)
+          if render_match is None:
+              raise SystemExit('renderZones block not found')
+          render_replacement = '''function renderZones(
+            previous: Readonly<PocState>,
+            state: PocState,
+            bar: IndicatorBar,
+            params: Params,
+          ): void {
+            const skipHistoricalIntermediate =
+              bar.isHistory && bar.isConfirmed && !bar.isHistoryFinalizedTail;
+            if (skipHistoricalIntermediate) return;
+            syncZoneDrawings(
+              collectZoneDrawings(previous.zones, params, bar),
+              collectZoneDrawings(state.zones, params, bar),
+            );
+          }
+
+          const indicator'''
+          render_replacement = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in render_replacement.splitlines()
+          )
+          source = source[:render_match.start()] + render_replacement + source[render_match.end():]
+
+          replace_once(
+              '    const ropeSource = priceValue(bar, params.ropeSource);\n'
+              '    const ropeAtr = ta.atr(params.ropePeriod);\n'
+              '    const ropeState = series(emptyRopeState, (previous) =>\n'
+              '      stepRope(previous, ropeSource, ropeAtr, params),\n'
+              '    );',
+              '    const ropeSource = priceValue(bar, params.ropeSource);\n'
+              '    const ropeAtr = ta.atr(params.ropePeriod);\n'
+              '    const ropeLag = Math.floor((params.ropePeriod - 1) / 2);\n'
+              '    const ropeHistoryOffset =\n'
+              '      params.ropeSensitivityMode === "momentum"\n'
+              '        ? 3\n'
+              '        : params.ropeSensitivityMode === "adaptive"\n'
+              '          ? 5\n'
+              '          : params.ropeSensitivityMode === "zerolag"\n'
+              '            ? ropeLag\n'
+              '            : 0;\n'
+              '    const ropeLaggedSource = historicalOrCurrent(\n'
+              '      history(ropeSource, ropeHistoryOffset),\n'
+              '      ropeSource,\n'
+              '    );\n'
+              '    const ropeState = series(emptyRopeState, (previous) =>\n'
+              '      stepRope(previous, ropeSource, ropeAtr, ropeLaggedSource, params),\n'
+              '    );',
+          )
+
+          replace_once(
+              '    const utSource = priceValue(bar, params.utbotSource);\n'
+              '    const utAtr = ta.atr(params.utbotAtrPeriod);\n'
+              '    const ut = series(emptyUtState, (previous) =>\n'
+              '      stepUtBot(previous, utSource, utAtr, bar.index, params),\n'
+              '    );',
+              '    const utSource = priceValue(bar, params.utbotSource);\n'
+              '    const utAtr = ta.atr(params.utbotAtrPeriod);\n'
+              '    const utLag =\n'
+              '      params.utbotMode === "0lag"\n'
+              '        ? Math.floor((params.utbotAtrPeriod - 1) / 2)\n'
+              '        : 0;\n'
+              '    const utLaggedSource = historicalOrCurrent(\n'
+              '      history(utSource, utLag),\n'
+              '      utSource,\n'
+              '    );\n'
+              '    const ut = series(emptyUtState, (previous) =>\n'
+              '      stepUtBot(previous, utSource, utAtr, bar.index, utLaggedSource, params),\n'
+              '    );',
+          )
+
+          replace_once(
+              '    const dmi = ta.dmi(params.dmiLength);\n'
+              '    const poc = series(emptyPocState, (previous) =>\n'
+              '      stepPoc(previous, bar, dmi, params),\n'
+              '    );',
+              '    const dmi = ta.dmi(params.dmiLength);\n'
+              '    let previousPoc: Readonly<PocState> = emptyPocState;\n'
+              '    const poc = series(emptyPocState, (previous) => {\n'
+              '      previousPoc = previous;\n'
+              '      return stepPoc(previous, bar, dmi, params);\n'
+              '    });',
+          )
+
+          marker_match = re.search(
+              r'    const markerAtr = ta\.atr\([\s\S]*?\n    const ropeColor =', source
+          )
+          if marker_match is None:
+              raise SystemExit('manual marker padding block not found')
+          source = (
+              source[:marker_match.start()]
+              + '    const ropeColor ='
+              + source[marker_match.end():]
+          )
+
+          shape_match = re.search(
+              r'    plot\.shape\(signalState\.buy[\s\S]*?    \}\);\n'
+              r'    plot\.shape\(signalState\.sell[\s\S]*?    \}\);',
+              source,
+          )
+          if shape_match is None:
+              raise SystemExit('legacy signal marker block not found')
+          shape_replacement = '''    plot.shape(signalState.buy, {
+              title: "Buy",
+              shape: shape.labelUp,
+              location: location.belowBar,
+              text: "BUY",
+              textColor: "#ffffff",
+              textSize: textSize.small,
+              color: params.buySignalColor,
+            });
+            plot.shape(signalState.sell, {
+              title: "Sell",
+              shape: shape.labelDown,
+              location: location.aboveBar,
+              text: "SELL",
+              textColor: "#ffffff",
+              textSize: textSize.small,
+              color: params.sellSignalColor,
+            });'''
+          shape_replacement = '\n'.join(
+              line[8:] if line.startswith('        ') else line
+              for line in shape_replacement.splitlines()
+          )
+          source = source[:shape_match.start()] + shape_replacement + source[shape_match.end():]
+
+          replace_once('    renderZones(poc, bar, params);', '    renderZones(previousPoc, poc, bar, params);')
+
+          forbidden = ['appendSeries', 'laggedValue', 'markerAtr', 'const padding']
+          for value in forbidden:
+              if value in source:
+                  raise SystemExit(f'legacy runtime plumbing remains: {value}')
+          if re.search(r'\bkey\s*:', source):
+              raise SystemExit('manual input/plot persistence key remains')
+          for required in [
+              'history(', 'shape.labelUp', 'shape.labelDown', 'location.belowBar',
+              'location.aboveBar', 'textSize.small', 'text: "BUY"', 'text: "SELL"',
+              '.delete()',
+          ]:
+              if required not in source:
+                  raise SystemExit(f'missing v2 authoring primitive: {required}')
+
+          path.write_text(source)
+          PY
+      - name: Format maintained indicator
+        run: npx prettier --write packages/indicator-examples/src/atr-rope-utbot.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Run ECDD-224 migration tests
+        run: node --test tools/atr-rope-utbot-v2-migration.test.mjs
+      - name: Commit verified rewrite
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/indicator-examples/src/atr-rope-utbot.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "feat(ECDD-224): rewrite ATR Rope and UT Bot on SDK v2"
+          git push origin HEAD:task/ECDD-224-rewrite-atr-rope-utbot
