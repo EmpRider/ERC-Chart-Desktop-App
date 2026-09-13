@@ -29,15 +29,26 @@ jobs:
         run: npm ci --audit=false
       - name: Build compiled maintained-indicator baseline
         run: npm run build:atr-rope-utbot-indicator
-      - name: Capture semantic fixture
+      - name: Capture labeled semantic digests
         run: |
           node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
           import indicator from './out/indicator-plugins/atr-rope-utbot/dist/index.js';
 
-          const defaults = (overrides = {}) => ({
-            ...Object.fromEntries(indicator.definition.inputs.map((input) => [input.key, input.defaultValue])),
-            ...overrides,
-          });
+          const labeledParameters = (overrides = {}) => {
+            const parameters = Object.fromEntries(
+              indicator.definition.inputs.map((input) => [input.key, input.defaultValue]),
+            );
+            for (const [selector, value] of Object.entries(overrides)) {
+              const [group, label] = selector.split('::');
+              const input = indicator.definition.inputs.find(
+                (candidate) => candidate.group === group && candidate.label === label,
+              );
+              if (!input) throw new Error(`Missing input ${selector}`);
+              parameters[input.key] = value;
+            }
+            return parameters;
+          };
 
           function candles(length = 180) {
             const result = [];
@@ -70,12 +81,12 @@ jobs:
           }
 
           const source = candles();
+          const labels = ['ATR Rope', 'Direction Upper', 'Direction Lower', 'UT Stop', 'Buy', 'Sell'];
           const plotKey = (label) => {
             const plot = indicator.definition.plots.find((value) => value.label === label);
             if (!plot) throw new Error(`Missing plot label ${label}`);
             return plot.outputKey ?? plot.key;
           };
-          const labels = ['ATR Rope', 'Direction Upper', 'Direction Lower', 'UT Stop', 'Buy', 'Sell'];
           const keys = Object.fromEntries(labels.map((label) => [label, plotKey(label)]));
           const round = (value) =>
             typeof value === 'number' && Number.isFinite(value) ? Number(value.toFixed(8)) : value;
@@ -85,68 +96,78 @@ jobs:
             openTimeMs: point.openTimeMs,
             values: Object.fromEntries(labels.map((label) => [label, round(point.values[keys[label]] ?? null)])),
           });
+          const digest = (value) =>
+            createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
           const cases = [
             ['original', {}],
             ['momentum-zerolag', {
-              ropePeriod: 5,
-              ropeSensitivityMode: 'momentum',
-              ropeDirectionLookback: 4,
-              ropeDirectionThreshold: 0.03,
-              ropeDirectionMaType: 'tema',
-              utbotAtrPeriod: 4,
-              utbotMode: '0lag',
-              dmiLength: 5,
-              profilePeriod: 24,
-              fastPocPeriod: 8,
-              minEarlyBars: 5,
+              'ATR Rope::ATR period': 5,
+              'ATR Rope::Sensitivity mode': 'momentum',
+              'ATR Rope Direction::Direction lookback': 4,
+              'ATR Rope Direction::Direction threshold': 0.03,
+              'ATR Rope Direction::Direction MA': 'tema',
+              'UT Bot::ATR period': 4,
+              'UT Bot::Mode': '0lag',
+              'ADX POC::ADX / DI length': 5,
+              'ADX POC::Profile period': 24,
+              'ADX POC::Fast POC period': 8,
+              'ADX POC::Minimum early bars': 5,
             }],
             ['adaptive-suppressed', {
-              ropePeriod: 7,
-              ropeSensitivityMode: 'adaptive',
-              ropeDirectionLookback: 3,
-              ropeDirectionThreshold: 0.02,
-              utbotAtrPeriod: 5,
-              pocBandSignalSuppressLine: 'Any',
-              dmiLength: 5,
-              profilePeriod: 24,
-              fastPocPeriod: 8,
-              minEarlyBars: 5,
+              'ATR Rope::ATR period': 7,
+              'ATR Rope::Sensitivity mode': 'adaptive',
+              'ATR Rope Direction::Direction lookback': 3,
+              'ATR Rope Direction::Direction threshold': 0.02,
+              'UT Bot::ATR period': 5,
+              'ADX POC Suppression::Signal suppression': 'Any',
+              'ADX POC::ADX / DI length': 5,
+              'ADX POC::Profile period': 24,
+              'ADX POC::Fast POC period': 8,
+              'ADX POC::Minimum early bars': 5,
             }],
             ['follow-mg', {
-              ropePeriod: 4,
-              ropeDirectionLookback: 2,
-              ropeDirectionThreshold: 0,
-              utbotAtrPeriod: 3,
-              signalIssueMode: 'Win Follow + MG Follow',
-              mgStepCount: 2,
-              dmiLength: 4,
-              profilePeriod: 20,
-              fastPocPeriod: 6,
-              minEarlyBars: 4,
+              'ATR Rope::ATR period': 4,
+              'ATR Rope Direction::Direction lookback': 2,
+              'ATR Rope Direction::Direction threshold': 0,
+              'UT Bot::ATR period': 3,
+              'Signals::Signal mode': 'Win Follow + MG Follow',
+              'Signals::MG follow steps': 2,
+              'ADX POC::ADX / DI length': 4,
+              'ADX POC::Profile period': 20,
+              'ADX POC::Fast POC period': 6,
+              'ADX POC::Minimum early bars': 4,
             }],
           ];
 
           const fixture = {};
           for (const [name, overrides] of cases) {
-            const instance = indicator.createInstance(defaults(overrides), {
+            const instance = indicator.createInstance(labeledParameters(overrides), {
               instrumentId: 'fixture.instrument',
               timeframeId: '1m',
             });
             try {
               instance.onHistory(source);
               const snapshot = instance.snapshot();
+              const normalized = {
+                points: snapshot.points.map(normalizePoint),
+                signals: (snapshot.signals ?? []).map(({ direction, occurredAtMs }) => ({ direction, occurredAtMs })),
+                overlays: snapshot.overlays.map(normalizeOverlay),
+              };
               fixture[name] = {
-                tail: snapshot.points.slice(-10).map(normalizePoint),
-                signals: (snapshot.signals ?? []).slice(-12).map(({ direction, occurredAtMs }) => ({ direction, occurredAtMs })),
-                overlayCount: snapshot.overlays.length,
-                overlayTail: snapshot.overlays.slice(-8).map(normalizeOverlay),
+                digest: digest(normalized),
+                signalCount: normalized.signals.length,
+                signals: normalized.signals,
+                overlayCount: normalized.overlays.length,
+                tail: normalized.points.slice(-4),
+                overlayTail: normalized.overlays.slice(-2),
               };
             } finally {
               instance.dispose();
             }
           }
 
-          console.log('ECDD224_SEMANTIC_FIXTURE_START');
+          console.log('ECDD224_SEMANTIC_DIGEST_START');
           console.log(JSON.stringify(fixture, null, 2));
-          console.log('ECDD224_SEMANTIC_FIXTURE_END');
+          console.log('ECDD224_SEMANTIC_DIGEST_END');
           NODE
