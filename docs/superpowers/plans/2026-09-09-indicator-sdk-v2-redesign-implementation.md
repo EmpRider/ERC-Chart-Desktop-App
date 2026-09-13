@@ -52,6 +52,8 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 
 **Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 completed the v1-only public authoring/runtime export cleanup via PR #133 / squash merge `8b9fd709070bb884295813a07a6fdfa11c4efaf0`, leaving a v2-only author root while keeping required host/runtime mechanisms internal. ECDD-226 completed the final v2-only authoring guide via PR #135 / squash merge `a4ece67f7b9aa077108fd27e777b6c1b92374ae3`, with provider-aware MTF/per-TA execution explicitly retained under ECDD-142 ownership. ECDD-227 completed the final composed v2 contract fixture via PR #137 / squash merge `8bdbb38b98b1f74220966a26c170f88476e54cce`, covering hidden identity, conditional execution, history syntax parity, provisional rollback, finalized advancement, drawing reconciliation, and stable finalized signal identity through the packaged authoring path. ECDD-228 completed the ATR Rope/UT Bot migration-regression expansion via PR #139 / squash merge `cdd7db5568fb89f9415b7db526340d265aada5d0`, proving approved semantics through historical replay, provisional replacement, finalized advancement, and unrelated authoring source reorder. ECDD-229 completed the authored-indicator performance acceptance via PR #141 / squash merge `5bc8b1f23cb7a82c04c7620dbe414dc3f4c8bafe`, adding production chart-scoped/four-worker history, provisional and finalized-rollover budgets to the enforced `test:performance` path. This closes the ECDD-216 optimization performance slice. Phase 16 remains open at architecture level only for the broader provider-aware MTF/source-engine/lookahead/resource acceptance owned by ECDD-142; those ECDD-142 gates must not be marked complete from ECDD-229 evidence. The broader phase board groups source/runtime/renderer work at architecture level and does not override Jira ownership.
 
+**ECDD-142 sequencing update (2026-09-14):** ECDD-142 completed the provider-driven timeframe resolver, shared Indicator Source Engine, whole-indicator/per-TA timeframe controls, finalized no-lookahead alignment, source-revision rebuild behavior, resource cleanup, and renderer MTF integration via PR #143 / squash merge `6b1d888006d39c7c7ad75e2347072def6e90f9dd`. Detailed Tasks 9-11 are therefore complete. Phase 16 remains open for the architecture work that ECDD-142 intentionally did not claim: candle transformation/Heikin-Ashi source semantics, the remaining source-confirmation/signal/replay acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final global acceptance pass.
+
 ---
 
 ## Planned File Structure
@@ -566,6 +568,8 @@ ECDD-223 completed with RED-first coverage, exact-head Delivery #956 PASS, Semgr
 
 ### Task 9: Build the effective provider timeframe resolver
 
+**Status:** Complete via ECDD-142 / PR #143 / squash merge `6b1d888006d39c7c7ad75e2347072def6e90f9dd`.
+
 **Files:**
 
 - Modify: `packages/data-service/src/timeframes.ts`
@@ -588,25 +592,25 @@ interface EffectiveIndicatorTimeframe {
 
 The exact transport type may differ, but one resolver must drive all indicator/UI timeframe choices.
 
-- [ ] **Step 1: Add failing tests using a Binomo-like capability set with native `1m` and `5m`**
+- [x] **Step 1: Add failing tests using a Binomo-like capability set with native `1m` and `5m`**
 
 Assert only native or safely derived aligned timeframes are returned; do not assume a universal list.
 
-- [ ] **Step 2: Add failing tests for a different provider capability set**
+- [x] **Step 2: Add failing tests for a different provider capability set**
 
 Prove the resolver output changes with provider capabilities.
 
-- [ ] **Step 3: Implement effective capability resolution over existing timeframe planning/alignment rules**
+- [x] **Step 3: Implement effective capability resolution over existing timeframe planning/alignment rules**
 
-- [ ] **Step 4: Include historical/live availability in the effective result**
+- [x] **Step 4: Include historical/live availability in the effective result**
 
-- [ ] **Step 5: Add tests for unavailable requested timeframe fallback metadata**
+- [x] **Step 5: Add tests for unavailable requested timeframe fallback metadata**
 
 Keep requested preference distinct from active resolved timeframe.
 
-- [ ] **Step 6: Run data-service/provider/runtime focused tests**
+- [x] **Step 6: Run data-service/provider/runtime focused tests**
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/data-service/src/timeframes.ts packages/provider-sdk/src/index.ts packages/indicator-runtime/src/source-capabilities.ts packages/data-service/test packages/indicator-runtime/test
@@ -616,6 +620,8 @@ git commit -m "feat(indicators): resolve provider-driven timeframes"
 ---
 
 ### Task 10: Build the Indicator Source Engine
+
+**Status:** Complete for standard/provider-backed sources via ECDD-142 / PR #143. Synthetic candle transforms remain Task 12 rather than being folded into this completion claim.
 
 **Files:**
 
@@ -639,31 +645,31 @@ interface IndicatorSourceKey {
 }
 ```
 
-- [ ] **Step 1: Add failing test: chart `15m`, indicator requests provider-supported `1m`**
+- [x] **Step 1: Add failing test: chart `15m`, indicator requests provider-supported `1m`**
 
 Assert the engine acquires a separate 1m source; it must never fabricate 1m candles from 15m chart candles.
 
-- [ ] **Step 2: Add failing test: chart `1m`, indicator requests derived `3m`**
+- [x] **Step 2: Add failing test: chart `1m`, indicator requests derived `3m`**
 
 Assert the data service/source engine uses the valid lower source and aggregation plan.
 
-- [ ] **Step 3: Add failing source-sharing test**
+- [x] **Step 3: Add failing source-sharing test**
 
 Two indicators requesting the same provider/instrument/timeframe/candle type should share upstream source work while retaining separate calculation state.
 
-- [ ] **Step 4: Implement source acquisition, reference counting, revision tracking, and deterministic release**
+- [x] **Step 4: Implement source acquisition, reference counting, revision tracking, and deterministic release**
 
-- [ ] **Step 5: Add multi-source dependency support per indicator**
+- [x] **Step 5: Add multi-source dependency support per indicator**
 
 The same indicator must be able to use active timeframe plus `ta.ema(..., "1h")`.
 
-- [ ] **Step 6: Add provider-switch invalidation tests**
+- [x] **Step 6: Add provider-switch invalidation tests**
 
 A source must re-resolve capabilities and rebuild without stale provider data.
 
-- [ ] **Step 7: Run focused runtime/data integration tests**
+- [x] **Step 7: Run focused runtime/data integration tests**
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add packages/indicator-runtime/src packages/renderer/src/indicator-worker-runtime.ts packages/indicator-runtime/test
@@ -673,6 +679,8 @@ git commit -m "feat(indicators): add provider-aware source engine"
 ---
 
 ### Task 11: Add indicator-level and TA-level timeframe controls
+
+**Status:** Complete via ECDD-142 / PR #143 / squash merge `6b1d888006d39c7c7ad75e2347072def6e90f9dd`.
 
 **Files:**
 
@@ -692,23 +700,23 @@ const local = ta.ema(9);
 const htf = ta.ema(200, "1h");
 ```
 
-- [ ] **Step 1: Add failing tests for indicator-wide timeframe selection**
+- [x] **Step 1: Add failing tests for indicator-wide timeframe selection**
 
-- [ ] **Step 2: Add failing tests for per-TA timeframe override**
+- [x] **Step 2: Add failing tests for per-TA timeframe override**
 
-- [ ] **Step 3: Populate timeframe input options dynamically from effective provider capabilities**
+- [x] **Step 3: Populate timeframe input options dynamically from effective provider capabilities**
 
 Do not store a universal option array in installed plugin metadata.
 
-- [ ] **Step 4: Implement source resolution and alignment for MTF outputs**
+- [x] **Step 4: Implement source resolution and alignment for MTF outputs**
 
-- [ ] **Step 5: Add saved-unavailable-timeframe fallback test**
+- [x] **Step 5: Add saved-unavailable-timeframe fallback test**
 
 Active source falls back safely while requested preference remains available for UX/possible restoration.
 
-- [ ] **Step 6: Run SDK/runtime/renderer focused tests**
+- [x] **Step 6: Run SDK/runtime/renderer focused tests**
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/indicator-sdk/src packages/indicator-runtime/src packages/renderer/src packages/contracts/src/indicator-management.ts
@@ -1178,6 +1186,15 @@ Append dated entries here as phases complete. Keep old entries; do not rewrite h
 - Delivery #1047 measured 100,000 aggregate history bars across four workers in about 14.25 seconds, 1,000 provisional updates in about 327 ms total, and the four-chart finalized rollover sweep in about 5.16 ms, all inside the documented CI budgets.
 - No production SDK/runtime source was changed by ECDD-229; the task closes regression acceptance around the existing production orchestration path.
 - Post-task reassessment confirms the ECDD-216 optimization performance slice is complete and still aligned with the v2 design. Provider-aware MTF acquisition, per-TA timeframe execution, source sharing, lookahead matrices, and provider/source resource acceptance remain ECDD-142-owned work and therefore keep the global Phase 16 acceptance board open.
+
+### 2026-09-14 — ECDD-142 provider-driven MTF completed
+
+- ECDD-142 was squash-merged into `epic/ECDD-135-sdk-v2-optimization` as `6b1d888006d39c7c7ad75e2347072def6e90f9dd` via PR #143.
+- The shipped path now resolves indicator timeframes from active provider capabilities, shares provider-backed sources, supports whole-indicator and per-TA timeframe selection, keeps requested fallback preferences distinct from active sources, and aligns finalized higher-timeframe values without lookahead.
+- The final review added an instance-epoch fence around queued/pending source reconciliation and worker dispatch, including deterministic cleanup when disposal occurs while obsolete source leases are still releasing.
+- Exact-head Delivery #34775569867 passed governance, the pinned-toolchain Linux application suite, Electron smokes, build, performance, audit, version checks, and aggregate delivery; Semgrep and CodeRabbit also passed. Windows was intentionally skipped by the task-to-epic policy.
+- Focused renderer source lifecycle tests passed 12/12; the full unit suite passed 581 tests with 2 expected Windows symlink skips; integration passed 152/152; the provider-MTF, renderer alignment, and four-chart authored-indicator performance gates remained within their budgets.
+- Detailed Tasks 9-11 are complete. Global Phase 16 remains open for Task 12 candle transformation/Heikin-Ashi semantics, the remaining Task 13 signal/source-confirmation and replay acceptance, ECDD-143/ECDD-149 cross-indicator dependency validation, and the final end-to-end verification gate.
 
 ---
 
