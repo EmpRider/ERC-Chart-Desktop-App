@@ -1,28 +1,44 @@
-export const shape = Object.freeze({
+export const shape: Readonly<{
+  circle: "circle";
+  triangleUp: "triangle-up";
+  triangleDown: "triangle-down";
+  labelUp: "label-up";
+  labelDown: "label-down";
+}> = Object.freeze({
   circle: "circle",
   triangleUp: "triangle-up",
   triangleDown: "triangle-down",
   labelUp: "label-up",
   labelDown: "label-down",
-} as const);
+});
 
 export type ShapeKind = (typeof shape)[keyof typeof shape];
 
-export const location = Object.freeze({
+export const location: Readonly<{
+  aboveBar: "above-bar";
+  belowBar: "below-bar";
+  absolute: "absolute";
+}> = Object.freeze({
   aboveBar: "above-bar",
   belowBar: "below-bar",
   absolute: "absolute",
-} as const);
+});
 
 export type ShapeLocation = (typeof location)[keyof typeof location];
 
-export const textSize = Object.freeze({
+export const textSize: Readonly<{
+  tiny: "tiny";
+  small: "small";
+  normal: "normal";
+  large: "large";
+  xlarge: "xlarge";
+}> = Object.freeze({
   tiny: "tiny",
   small: "small",
   normal: "normal",
   large: "large",
   xlarge: "xlarge",
-} as const);
+});
 
 export type TextSize = (typeof textSize)[keyof typeof textSize];
 
