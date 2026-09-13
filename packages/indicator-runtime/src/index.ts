@@ -456,3 +456,17 @@ export function createIndicatorWorkerSupervisor(
     },
   };
 }
+
+export { createIndicatorSourceEngine } from "./source-engine.js";
+export type {
+  IndicatorCandleType,
+  IndicatorSourceDataService,
+  IndicatorSourceEngine,
+  IndicatorSourceHistoryRequest,
+  IndicatorSourceKey,
+  IndicatorSourceLease,
+  IndicatorSourceLiveRequest,
+  IndicatorSourceLiveSink,
+  IndicatorSourceSnapshot,
+  IndicatorSourceSubscription,
+} from "./source-engine.js";
