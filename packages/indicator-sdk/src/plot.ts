@@ -1,4 +1,12 @@
 import { authoringFrame, type AuthoringFrame } from "./authoring-context.js";
+import {
+  isShapeKind,
+  isShapeLocation,
+  isTextSize,
+  type ShapeKind,
+  type ShapeLocation,
+  type TextSize,
+} from "./constants.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
 import { drawingController } from "./internal/drawings.js";
 import type {
@@ -16,6 +24,11 @@ export interface PlotOptions {
 }
 export interface ShapeOptions extends PlotOptions {
   readonly direction?: "up" | "down";
+  readonly shape?: ShapeKind;
+  readonly location?: ShapeLocation;
+  readonly text?: string;
+  readonly textColor?: string;
+  readonly textSize?: TextSize;
 }
 
 export interface BoxDrawing {
@@ -59,6 +72,11 @@ interface CompilerPlotDeclaration {
   readonly width?: number;
   readonly style?: "solid" | "dashed" | "dotted";
   readonly direction?: "up" | "down";
+  readonly shape?: ShapeKind;
+  readonly location?: ShapeLocation;
+  readonly text?: string;
+  readonly textColor?: string;
+  readonly textSize?: TextSize;
 }
 
 declare const __ERC_INDICATOR_PLOT_DECLARATIONS__:
@@ -103,6 +121,23 @@ function plotKeysCollide(
   );
 }
 
+function shapeDefinitionFields(
+  options: ShapeOptions,
+): Partial<IndicatorPlotDefinition> {
+  return {
+    ...(options.direction === undefined
+      ? {}
+      : { direction: options.direction }),
+    ...(options.shape === undefined ? {} : { shape: options.shape }),
+    ...(options.location === undefined ? {} : { location: options.location }),
+    ...(options.text === undefined ? {} : { text: options.text }),
+    ...(options.textColor === undefined
+      ? {}
+      : { textColor: options.textColor }),
+    ...(options.textSize === undefined ? {} : { textSize: options.textSize }),
+  };
+}
+
 export function compilerPlotDefinitions(): IndicatorPlotDefinition[] {
   const declarations =
     typeof __ERC_INDICATOR_PLOT_DECLARATIONS__ === "undefined"
@@ -123,6 +158,17 @@ export function compilerPlotDefinitions(): IndicatorPlotDefinition[] {
       ...(declaration.direction === undefined
         ? {}
         : { direction: declaration.direction }),
+      ...(declaration.shape === undefined ? {} : { shape: declaration.shape }),
+      ...(declaration.location === undefined
+        ? {}
+        : { location: declaration.location }),
+      ...(declaration.text === undefined ? {} : { text: declaration.text }),
+      ...(declaration.textColor === undefined
+        ? {}
+        : { textColor: declaration.textColor }),
+      ...(declaration.textSize === undefined
+        ? {}
+        : { textSize: declaration.textSize }),
     };
     if (definitions.some((value) => plotKeysCollide(value, definition)))
       throw new Error("Plot keys must be unique.");
@@ -154,7 +200,12 @@ function preservesPlotDeclaration(
     preservesKey &&
     preservesTitle &&
     definition.style === options.style &&
-    definition.direction === options.direction
+    definition.direction === options.direction &&
+    definition.shape === options.shape &&
+    definition.location === options.location &&
+    definition.text === options.text &&
+    definition.textColor === options.textColor &&
+    definition.textSize === options.textSize
   );
 }
 
@@ -173,9 +224,7 @@ function discoveryCompilerDefinition(
     ...(options.color === undefined ? {} : { color: options.color }),
     ...(options.width === undefined ? {} : { width: options.width }),
     ...(options.style === undefined ? {} : { style: options.style }),
-    ...(options.direction === undefined
-      ? {}
-      : { direction: options.direction }),
+    ...shapeDefinitionFields(options),
   };
   if (
     frame.plots.some(
@@ -189,6 +238,42 @@ function discoveryCompilerDefinition(
     titleExplicit: options.title !== undefined,
   });
   return next;
+}
+
+function assertShapeOptions(
+  kind: IndicatorPlotDefinition["kind"],
+  options: ShapeOptions,
+): void {
+  const hasShapeMetadata =
+    options.shape !== undefined ||
+    options.location !== undefined ||
+    options.text !== undefined ||
+    options.textColor !== undefined ||
+    options.textSize !== undefined;
+  if (kind !== "shape") {
+    if (hasShapeMetadata)
+      throw new TypeError("Shape metadata is only valid for plot.shape().");
+    return;
+  }
+  if (options.shape !== undefined && !isShapeKind(options.shape))
+    throw new TypeError("Shape marker type is invalid.");
+  if (options.location !== undefined && !isShapeLocation(options.location))
+    throw new TypeError("Shape location is invalid.");
+  if (
+    options.text !== undefined &&
+    (typeof options.text !== "string" || options.text.length > 256)
+  )
+    throw new RangeError("Shape text must contain at most 256 characters.");
+  if (
+    options.textColor !== undefined &&
+    (typeof options.textColor !== "string" ||
+      options.textColor.length === 0 ||
+      options.textColor.length > 128 ||
+      options.textColor.trim() !== options.textColor)
+  )
+    throw new TypeError("Shape text color must be a non-empty bounded string.");
+  if (options.textSize !== undefined && !isTextSize(options.textSize))
+    throw new TypeError("Shape text size is invalid.");
 }
 
 function valuePlot(
@@ -238,6 +323,7 @@ function valuePlot(
       options.width > 20)
   )
     throw new RangeError("Plot width must be greater than 0 and at most 20.");
+  assertShapeOptions(kind, options);
 
   let resolvedOutputKey: string;
   if (callsite === undefined && frame.discovery) {
@@ -250,9 +336,7 @@ function valuePlot(
       ...(options.color === undefined ? {} : { color: options.color }),
       ...(options.width === undefined ? {} : { width: options.width }),
       ...(options.style === undefined ? {} : { style: options.style }),
-      ...(options.direction === undefined
-        ? {}
-        : { direction: options.direction }),
+      ...shapeDefinitionFields(options),
     };
     if (frame.plots.some((plot) => plotKeysCollide(plot, definition)))
       throw new Error("Plot keys must be unique.");
@@ -295,6 +379,69 @@ function valuePlot(
     frame.point.colors[resolvedOutputKey] = options.color;
   if (options.width !== undefined)
     frame.point.sizes[resolvedOutputKey] = options.width;
+}
+
+function normalizeShapeOptions(
+  value: boolean | number | null,
+  options: ShapeOptions,
+): ShapeOptions {
+  if (typeof value !== "boolean") return options;
+  const resolvedShape =
+    options.shape ??
+    (options.direction === "down"
+      ? "triangle-down"
+      : options.direction === "up"
+        ? "triangle-up"
+        : "circle");
+  const resolvedLocation =
+    options.location ??
+    (resolvedShape === "triangle-down" || resolvedShape === "label-down"
+      ? "above-bar"
+      : "below-bar");
+  return { ...options, shape: resolvedShape, location: resolvedLocation };
+}
+
+function resolveShapeValue(
+  frame: AuthoringFrame,
+  value: boolean | number | null,
+  options: ShapeOptions,
+): number | null {
+  if (typeof value !== "boolean") return value;
+  if (!value) return null;
+  if (options.location === "above-bar") return frame.candle.high;
+  if (options.location === "below-bar") return frame.candle.low;
+  return null;
+}
+
+function shapePlot(
+  value: boolean | number | null,
+  optionsOrText?: ShapeOptions | string,
+  textOrCallsite?: string | unknown,
+  hiddenCallsite?: unknown,
+): void {
+  let options: ShapeOptions;
+  let callsite: unknown;
+  if (typeof optionsOrText === "string") {
+    if (typeof textOrCallsite === "string") {
+      options = { shape: optionsOrText as ShapeKind, text: textOrCallsite };
+      callsite = hiddenCallsite;
+    } else {
+      options = { text: optionsOrText };
+      callsite = hiddenCallsite ?? textOrCallsite;
+    }
+  } else {
+    options = optionsOrText ?? {};
+    callsite = hiddenCallsite ?? textOrCallsite;
+  }
+  const normalized = normalizeShapeOptions(value, options);
+  const frame = authoringFrame();
+  valuePlot(
+    "shape",
+    "plot.shape",
+    resolveShapeValue(frame, value, normalized),
+    normalized,
+    callsite,
+  );
 }
 
 function assertDrawingTime(name: string, value: number): void {
@@ -429,12 +576,18 @@ function segment(
   });
 }
 
+export interface ShapePlot {
+  (value: boolean | number | null, options?: ShapeOptions): void;
+  (value: boolean | number | null, text: string): void;
+  (value: boolean | number | null, shape: ShapeKind, text: string): void;
+}
+
 /** Values are scalars. Drawing persistence and identity are SDK-owned. */
 export interface PlotApi {
   readonly line: (value: number | null, options?: PlotOptions) => void;
   readonly hline: (value: number | null, options?: PlotOptions) => void;
   readonly histogram: (value: number | null, options?: PlotOptions) => void;
-  readonly shape: (value: number | null, options?: ShapeOptions) => void;
+  readonly shape: ShapePlot;
   readonly box: (value: BoxDrawing) => BoxHandle;
   readonly segment: (value: SegmentDrawing) => SegmentHandle;
 }
@@ -456,11 +609,7 @@ export const plot: PlotApi = Object.freeze({
     hiddenCallsite?: unknown,
   ): void =>
     valuePlot("histogram", "plot.histogram", value, options, hiddenCallsite),
-  shape: (
-    value: number | null,
-    options?: ShapeOptions,
-    hiddenCallsite?: unknown,
-  ): void => valuePlot("shape", "plot.shape", value, options, hiddenCallsite),
+  shape: shapePlot,
   box,
   segment,
 });

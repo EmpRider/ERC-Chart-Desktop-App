@@ -6,7 +6,37 @@ import {
 } from "./identity.mjs";
 
 const sdkModule = "@erc-chart/indicator-sdk";
-const sdkRoots = new Set(["input", "plot", "series", "signal", "ta"]);
+const sdkRoots = new Set([
+  "input",
+  "location",
+  "plot",
+  "series",
+  "shape",
+  "signal",
+  "ta",
+  "textSize",
+]);
+const sdkConstantValues = Object.freeze({
+  shape: Object.freeze({
+    circle: "circle",
+    triangleUp: "triangle-up",
+    triangleDown: "triangle-down",
+    labelUp: "label-up",
+    labelDown: "label-down",
+  }),
+  location: Object.freeze({
+    aboveBar: "above-bar",
+    belowBar: "below-bar",
+    absolute: "absolute",
+  }),
+  textSize: Object.freeze({
+    tiny: "tiny",
+    small: "small",
+    normal: "normal",
+    large: "large",
+    xlarge: "xlarge",
+  }),
+});
 const statefulTaMethods = new Set([
   "atr",
   "crossover",
@@ -26,11 +56,22 @@ const scalarPlotKinds = new Map([
   ["histogram", "histogram"],
   ["shape", "shape"],
 ]);
-const staticPlotDeclarationOptions = new Set([
+const literalStringPlotDeclarationOptions = new Set([
   "key",
   "title",
   "style",
   "direction",
+  "text",
+  "textColor",
+]);
+const sdkConstantPlotDeclarationOptions = new Set([
+  "shape",
+  "location",
+  "textSize",
+]);
+const staticPlotDeclarationOptions = new Set([
+  ...literalStringPlotDeclarationOptions,
+  ...sdkConstantPlotDeclarationOptions,
 ]);
 
 function withoutNames(map, names) {
@@ -117,7 +158,7 @@ function classifyCall(node, bindings) {
       authorArity:
         method === "box" || method === "segment" || method === "remove"
           ? 1
-          : method === "fill"
+          : method === "fill" || method === "shape"
             ? 3
             : 2,
     };
@@ -213,7 +254,7 @@ function staticPropertyName(name) {
   return undefined;
 }
 
-function staticPrimitive(node) {
+function staticLiteralPrimitive(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
     return node.text;
   if (ts.isNumericLiteral(node)) return Number(node.text);
@@ -226,7 +267,34 @@ function staticPrimitive(node) {
   return undefined;
 }
 
-function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
+function staticPrimitive(node, bindings) {
+  const literal = staticLiteralPrimitive(node);
+  if (literal !== undefined) return literal;
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression)
+  ) {
+    const imported = bindings.get(node.expression.text);
+    const values =
+      imported === undefined ? undefined : sdkConstantValues[imported];
+    return values?.[node.name.text];
+  }
+  return undefined;
+}
+
+function staticStringArgument(sourceFile, node, bindings, message) {
+  const value = staticPrimitive(node, bindings);
+  if (typeof value !== "string") throw syntaxError(sourceFile, node, message);
+  return value;
+}
+
+function compilerPlotDeclaration(
+  node,
+  classified,
+  metadata,
+  sourceFile,
+  bindings,
+) {
   if (classified.kind !== "plot") return undefined;
   const method = classified.callee.slice("plot.".length);
   const kind = scalarPlotKinds.get(method);
@@ -239,6 +307,27 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
   };
   const options = node.arguments[1];
   if (options === undefined) return Object.freeze(declaration);
+  if (method === "shape" && !ts.isObjectLiteralExpression(options)) {
+    const second = staticStringArgument(
+      sourceFile,
+      options,
+      bindings,
+      "plot.shape text/marker overloads must use SDK constants or static string literals so declaration metadata can be compiled.",
+    );
+    const text = node.arguments[2];
+    if (text === undefined) {
+      declaration.text = second;
+    } else {
+      declaration.shape = second;
+      declaration.text = staticStringArgument(
+        sourceFile,
+        text,
+        bindings,
+        "plot.shape marker text must use a static string literal so declaration metadata can be compiled.",
+      );
+    }
+    return Object.freeze(declaration);
+  }
   if (!ts.isObjectLiteralExpression(options))
     throw syntaxError(
       sourceFile,
@@ -296,10 +385,18 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
       name !== "color" &&
       name !== "width" &&
       name !== "style" &&
-      name !== "direction"
+      name !== "direction" &&
+      name !== "shape" &&
+      name !== "location" &&
+      name !== "text" &&
+      name !== "textColor" &&
+      name !== "textSize"
     )
       continue;
-    const value = staticPrimitive(property.initializer);
+    const acceptsSdkConstant = sdkConstantPlotDeclarationOptions.has(name);
+    const value = acceptsSdkConstant
+      ? staticPrimitive(property.initializer, bindings)
+      : staticLiteralPrimitive(property.initializer);
     if (
       staticPlotDeclarationOptions.has(name) &&
       typeof value !== "string"
@@ -307,7 +404,9 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
       throw syntaxError(
         sourceFile,
         property.initializer,
-        `Plot declaration option "${name}" must use a static string literal.`,
+        acceptsSdkConstant
+          ? `Plot declaration option "${name}" must use an SDK constant or static string literal.`
+          : `Plot declaration option "${name}" must use a static string literal.`,
       );
     if (value !== undefined) declaration[name] = value;
   }
@@ -330,8 +429,14 @@ function uniqueTokenPrefix(sourceText) {
 function callsiteDeclaration(factory, name, metadata) {
   const source = factory.createObjectLiteralExpression(
     [
-      factory.createPropertyAssignment("file", factory.createStringLiteral(metadata.source.file)),
-      factory.createPropertyAssignment("line", factory.createNumericLiteral(metadata.source.line)),
+      factory.createPropertyAssignment(
+        "file",
+        factory.createStringLiteral(metadata.source.file),
+      ),
+      factory.createPropertyAssignment(
+        "line",
+        factory.createNumericLiteral(metadata.source.line),
+      ),
       factory.createPropertyAssignment(
         "column",
         factory.createNumericLiteral(metadata.source.column),
@@ -341,10 +446,19 @@ function callsiteDeclaration(factory, name, metadata) {
   );
   const value = factory.createObjectLiteralExpression(
     [
-      factory.createPropertyAssignment("__ercCallsite", factory.createStringLiteral("v2")),
+      factory.createPropertyAssignment(
+        "__ercCallsite",
+        factory.createStringLiteral("v2"),
+      ),
       factory.createPropertyAssignment("id", factory.createStringLiteral(metadata.id)),
-      factory.createPropertyAssignment("kind", factory.createStringLiteral(metadata.kind)),
-      factory.createPropertyAssignment("callee", factory.createStringLiteral(metadata.callee)),
+      factory.createPropertyAssignment(
+        "kind",
+        factory.createStringLiteral(metadata.kind),
+      ),
+      factory.createPropertyAssignment(
+        "callee",
+        factory.createStringLiteral(metadata.callee),
+      ),
       factory.createPropertyAssignment("source", source),
     ],
     false,
@@ -451,6 +565,7 @@ export function transformIndicatorCallsites(
           classified,
           metadata,
           sourceFile,
+          bindings,
         );
         if (plotDeclaration !== undefined)
           plotDeclarations.push(plotDeclaration);

@@ -64,6 +64,13 @@ export type InstalledIndicatorPlotKind =
   | "box"
   | "text";
 
+export type InstalledIndicatorShapeKind =
+  "circle" | "triangle-up" | "triangle-down" | "label-up" | "label-down";
+export type InstalledIndicatorShapeLocation =
+  "above-bar" | "below-bar" | "absolute";
+export type InstalledIndicatorTextSize =
+  "tiny" | "small" | "normal" | "large" | "xlarge";
+
 export interface InstalledIndicatorPlotDefinition {
   readonly key: string;
   readonly kind: InstalledIndicatorPlotKind;
@@ -73,6 +80,11 @@ export interface InstalledIndicatorPlotDefinition {
   readonly width?: number;
   readonly style?: "solid" | "dashed" | "dotted";
   readonly direction?: "up" | "down";
+  readonly shape?: InstalledIndicatorShapeKind;
+  readonly location?: InstalledIndicatorShapeLocation;
+  readonly text?: string;
+  readonly textColor?: string;
+  readonly textSize?: InstalledIndicatorTextSize;
 }
 
 export interface InstalledIndicatorDefinition {
@@ -186,6 +198,10 @@ function isBoundedText(value: unknown, maximum = 256): value is string {
   );
 }
 
+function isOptionalShapeText(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 256;
+}
+
 function isIdentifier(value: unknown): value is string {
   return isBoundedText(value, 256) && /^[A-Za-z0-9._:-]+$/u.test(value);
 }
@@ -282,12 +298,37 @@ const plotKinds = new Set<InstalledIndicatorPlotKind>([
   "box",
   "text",
 ]);
+const shapeKinds = new Set<InstalledIndicatorShapeKind>([
+  "circle",
+  "triangle-up",
+  "triangle-down",
+  "label-up",
+  "label-down",
+]);
+const shapeLocations = new Set<InstalledIndicatorShapeLocation>([
+  "above-bar",
+  "below-bar",
+  "absolute",
+]);
+const textSizes = new Set<InstalledIndicatorTextSize>([
+  "tiny",
+  "small",
+  "normal",
+  "large",
+  "xlarge",
+]);
 
 function isPlotDefinition(
   value: unknown,
 ): value is InstalledIndicatorPlotDefinition {
+  if (!isRecord(value)) return false;
+  const hasShapeMetadata =
+    value.shape !== undefined ||
+    value.location !== undefined ||
+    value.text !== undefined ||
+    value.textColor !== undefined ||
+    value.textSize !== undefined;
   return (
-    isRecord(value) &&
     isIdentifier(value.key) &&
     typeof value.kind === "string" &&
     plotKinds.has(value.kind as InstalledIndicatorPlotKind) &&
@@ -302,7 +343,21 @@ function isPlotDefinition(
       value.style === "dotted") &&
     (value.direction === undefined ||
       value.direction === "up" ||
-      value.direction === "down")
+      value.direction === "down") &&
+    (value.shape === undefined ||
+      (typeof value.shape === "string" &&
+        shapeKinds.has(value.shape as InstalledIndicatorShapeKind))) &&
+    (value.location === undefined ||
+      (typeof value.location === "string" &&
+        shapeLocations.has(
+          value.location as InstalledIndicatorShapeLocation,
+        ))) &&
+    (value.text === undefined || isOptionalShapeText(value.text)) &&
+    (value.textColor === undefined || isBoundedText(value.textColor, 128)) &&
+    (value.textSize === undefined ||
+      (typeof value.textSize === "string" &&
+        textSizes.has(value.textSize as InstalledIndicatorTextSize))) &&
+    (value.kind === "shape" || !hasShapeMetadata)
   );
 }
 

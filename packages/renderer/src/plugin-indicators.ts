@@ -20,6 +20,11 @@ import type {
   KLineData,
 } from "klinecharts";
 import type { BrowserIndicatorSyncRequest } from "./indicator-worker-runtime.js";
+import {
+  indicatorShapeBaseline,
+  indicatorShapeText,
+  indicatorShapeTextSize,
+} from "./indicator-shape-style.js";
 
 export type PluginIndicatorSync = (
   request: BrowserIndicatorSyncRequest,
@@ -319,17 +324,23 @@ function figuresForDefinition(
       }): Record<string, unknown> => {
         const dynamicColor = data.current?.[colorFieldKey(key)];
         const dynamicSize = data.current?.[sizeFieldKey(key)];
+        const semanticTextSize =
+          plot.kind === "shape" ? indicatorShapeTextSize(plot) : undefined;
         return {
-          ...(typeof dynamicColor === "string"
-            ? { color: dynamicColor }
-            : plot.color === undefined
-              ? {}
-              : { color: plot.color }),
-          ...(typeof dynamicSize === "number"
-            ? { size: dynamicSize }
-            : plot.width === undefined
-              ? {}
-              : { size: plot.width }),
+          ...(plot.kind === "shape" && plot.textColor !== undefined
+            ? { color: plot.textColor }
+            : typeof dynamicColor === "string"
+              ? { color: dynamicColor }
+              : plot.color === undefined
+                ? {}
+                : { color: plot.color }),
+          ...(semanticTextSize !== undefined
+            ? { size: semanticTextSize }
+            : typeof dynamicSize === "number"
+              ? { size: dynamicSize }
+              : plot.width === undefined
+                ? {}
+                : { size: plot.width }),
           ...(plot.kind === "line"
             ? { lineCap: "round", lineJoin: "round" }
             : {}),
@@ -338,12 +349,20 @@ function figuresForDefinition(
       },
     };
     if (plot.kind === "shape" || plot.kind === "text") {
+      const baseline =
+        plot.kind === "shape" ? indicatorShapeBaseline(plot) : undefined;
       return [
         {
           ...common,
           type: "text",
           attrs: (): Record<string, unknown> => ({
-            text: plot.direction === "down" ? "▼" : "▲",
+            text:
+              plot.kind === "shape"
+                ? indicatorShapeText(plot)
+                : plot.direction === "down"
+                  ? "▼"
+                  : "▲",
+            ...(baseline === undefined ? {} : { baseline }),
           }),
         },
       ];

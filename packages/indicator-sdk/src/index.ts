@@ -8,6 +8,7 @@ import {
   type Tick,
   type TimeframeId,
 } from "@erc-chart/contracts";
+import type { ShapeKind, ShapeLocation, TextSize } from "./constants.js";
 
 export {
   hostApiVersion as indicatorHostApiVersion,
@@ -83,6 +84,11 @@ export interface IndicatorPlotDefinition {
   readonly width?: number;
   readonly style?: "solid" | "dashed" | "dotted";
   readonly direction?: "up" | "down";
+  readonly shape?: ShapeKind;
+  readonly location?: ShapeLocation;
+  readonly text?: string;
+  readonly textColor?: string;
+  readonly textSize?: TextSize;
 }
 
 export type IndicatorPlacement = "overlay" | "pane";
@@ -233,6 +239,14 @@ export {
   type PlotOptions,
   type ShapeOptions,
 } from "./plot.js";
+export {
+  location,
+  shape,
+  textSize,
+  type ShapeKind,
+  type ShapeLocation,
+  type TextSize,
+} from "./constants.js";
 export {
   input,
   normalizeIndicatorInputValue,
