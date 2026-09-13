@@ -10,7 +10,6 @@ import {
   type IndicatorOptions,
 } from "./indicator.js";
 import { input as runtimeInput } from "./input.js";
-import type { IndicatorPluginModule } from "./internal/runtime-contracts.js";
 import {
   plot as runtimePlot,
   type BoxDrawing,
@@ -19,10 +18,7 @@ import {
   type SegmentHandle,
 } from "./plot.js";
 import { ta as runtimeTa } from "./ta.js";
-import type {
-  DmiPoint,
-  MovingAverageType,
-} from "./ta.js";
+import type { DmiPoint, MovingAverageType } from "./ta.js";
 import type { ShapeKind, ShapeLocation, TextSize } from "./constants.js";
 
 export {
@@ -121,6 +117,11 @@ export interface IndicatorDefinition {
   readonly requiresLiveTicks: boolean;
 }
 
+/** Author-facing result of defineIndicator(). Runtime lifecycle ports remain host-private. */
+export interface IndicatorModule {
+  readonly definition: IndicatorDefinition;
+}
+
 export interface IndicatorResultPoint {
   readonly openTimeMs: number;
   readonly values: Readonly<Record<string, number | null>>;
@@ -194,10 +195,10 @@ export type { IndicatorOptions } from "./indicator.js";
 export const defineIndicator: (
   options: IndicatorOptions,
   calculate: IndicatorCalculation,
-) => IndicatorPluginModule = runtimeDefineIndicator as (
+) => IndicatorModule = runtimeDefineIndicator as (
   options: IndicatorOptions,
   calculate: IndicatorCalculation,
-) => IndicatorPluginModule;
+) => IndicatorModule;
 
 export interface InputOptions {
   readonly title?: string;
