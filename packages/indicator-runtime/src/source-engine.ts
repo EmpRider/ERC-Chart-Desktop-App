@@ -117,7 +117,9 @@ export function createIndicatorSourceEngine(
     await source.subscription.unsubscribe();
   };
 
-  const createSource = async (key: IndicatorSourceKey): Promise<SharedSource> => {
+  const createSource = async (
+    key: IndicatorSourceKey,
+  ): Promise<SharedSource> => {
     const candles = Object.freeze([
       ...(await dataService.requestHistory(key.providerProfileId, {
         instrumentId: key.instrumentId,
