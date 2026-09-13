@@ -43,16 +43,13 @@ try {
   });
   const entry = path.join(built.packageRoot, "dist", "index.js");
   const module = await import(
-    `${pathToFileURL(entry).href}?performance=${Date.now()}`,
+    `${pathToFileURL(entry).href}?performance=${Date.now()}`
   );
   const indicator = module.default;
   assert.ok(indicator?.definition && indicator.createInstance);
 
   const parameters = Object.fromEntries(
-    indicator.definition.inputs.map((input) => [
-      input.key,
-      input.defaultValue,
-    ]),
+    indicator.definition.inputs.map((input) => [input.key, input.defaultValue]),
   );
   for (let chartIndex = 0; chartIndex < chartCount; chartIndex += 1) {
     charts.push({
