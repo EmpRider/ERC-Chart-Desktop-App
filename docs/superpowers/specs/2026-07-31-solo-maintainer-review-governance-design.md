@@ -78,9 +78,8 @@ is requested.
 ### Manual Reviewer Evidence
 
 GitHub rulesets do not receive a stable pass/fail context from Qodo or Code Review
-AI under the observed integration. Their comments are manual, non-blocking
-evidence. This design does not claim that Qodo or Code Review AI blocks a GitHub
-merge.
+AI under the observed integration. Their comments are manual, non-blocking evidence.
+This design does not claim that Qodo or Code Review AI blocks a GitHub merge.
 
 Task-to-epic uses maintainer code review as the required operational review on the
 stable exact head. A separate comprehensive CodeRabbit review is best-effort at
