@@ -50,7 +50,7 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [x] Phase 15 — Remove v1-only authoring/runtime surface
 - [ ] Phase 16 — Full correctness/performance/documentation acceptance
 
-**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 completed the v1-only public authoring/runtime export cleanup via PR #133 / squash merge `8b9fd709070bb884295813a07a6fdfa11c4efaf0`, leaving a v2-only author root while keeping required host/runtime mechanisms internal. ECDD-226 (final v2 authoring documentation) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
+**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 completed the v1-only public authoring/runtime export cleanup via PR #133 / squash merge `8b9fd709070bb884295813a07a6fdfa11c4efaf0`, leaving a v2-only author root while keeping required host/runtime mechanisms internal. ECDD-226 completed the final v2-only authoring guide via PR #135 / squash merge `a4ece67f7b9aa077108fd27e777b6c1b92374ae3`, with provider-aware MTF/per-TA execution explicitly retained under ECDD-142 ownership. ECDD-227 (final v2 contract fixtures) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
 
 ---
 
@@ -1084,7 +1084,7 @@ git commit -m "test(indicators): add SDK v2 acceptance coverage"
 
 - Documentation teaches v2 only.
 
-- [ ] **Step 1: Write a 5-minute beginner tutorial**
+- [x] **Step 1: Write a 5-minute beginner tutorial**
 
 Start with:
 
@@ -1094,27 +1094,27 @@ const average = ta.ema(length);
 plot.line(average);
 ```
 
-Then add crossover signals, marker text, timeframe input, and Heikin Ashi.
+Then add crossover signals and marker text. Document timeframe and Heikin Ashi as part of the target SDK v2 architecture, while making clear that provider-aware operational timeframe/per-TA execution and source acquisition are delivered by ECDD-142 rather than ECDD-216.
 
-- [ ] **Step 2: Document equivalent overloads without forcing one coding style**
+- [x] **Step 2: Document equivalent overloads without forcing one coding style**
 
 Show `close[1]`, `history(close, 1)`, and `close.at(1)` as equivalent.
 
-- [ ] **Step 3: Document platform guarantees**
+- [x] **Step 3: Document platform guarantees**
 
 Explain in plain language that ERC Chart handles lookahead safety, building-bar rollback, history, IDs, provider timeframe availability, and optimization.
 
-- [ ] **Step 4: Document provider-dependent timeframe behavior**
+- [x] **Step 4: Document provider-dependent timeframe behavior**
 
 Never imply that every provider supports every timeframe.
 
-- [ ] **Step 5: Add advanced maintainer section separate from beginner authoring**
+- [x] **Step 5: Add advanced maintainer section separate from beginner authoring**
 
 Compiler identities, worker revisions, and source-engine internals belong here, not in the beginner flow.
 
-- [ ] **Step 6: Run markdown/format checks**
+- [x] **Step 6: Run markdown/format checks**
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add docs packages/indicator-examples
