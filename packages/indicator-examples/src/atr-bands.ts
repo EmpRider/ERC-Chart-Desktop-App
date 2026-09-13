@@ -4,10 +4,10 @@ import {
   plot,
   signal,
   ta,
-  type IndicatorPluginModule,
+  type IndicatorModule,
 } from "@erc-chart/indicator-sdk";
 
-const indicator: IndicatorPluginModule = defineIndicator(
+const indicator: IndicatorModule = defineIndicator(
   {
     id: "erc.indicator.atr-bands.main",
     name: "ATR Bands",

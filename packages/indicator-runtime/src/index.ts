@@ -11,7 +11,7 @@ import type {
 import {
   normalizeIndicatorParameters as normalizeSdkIndicatorParameters,
   type IndicatorInputDefinition,
-} from "@erc-chart/indicator-sdk";
+} from "@erc-chart/indicator-sdk/internal";
 
 export function normalizeIndicatorParameters(
   definition: InstalledIndicatorDefinition,

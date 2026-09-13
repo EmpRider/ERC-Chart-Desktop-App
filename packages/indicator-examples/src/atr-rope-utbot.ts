@@ -14,7 +14,7 @@ import {
   textSize,
   type DmiPoint,
   type IndicatorBar,
-  type IndicatorPluginModule,
+  type IndicatorModule,
 } from "@erc-chart/indicator-sdk";
 
 const ropeModes = [
@@ -657,13 +657,6 @@ function stepUtBot(
   };
 }
 
-function cloneZone(zone: PocZone): PocZone {
-  return {
-    ...zone,
-    segments: [...zone.segments],
-  };
-}
-
 function projectedPocCandidate(
   bars: readonly PocBar[],
   params: Params,
@@ -1115,13 +1108,9 @@ function stepPoc(
   const bars = [...previous.bars, pocBar].filter(
     (item) => item.index >= bar.index - params.profilePeriod + 1,
   );
-  // Retained history is replayed once from a fresh series kernel, so its prior
-  // POC state will never be revisited. Reuse those zone objects during replay
-  // instead of copying an ever-growing segment history on every candle. Live
-  // finalized updates still use copy-on-write state for building-bar rollback.
-  let zones = bar.isHistory
-    ? [...previous.zones]
-    : previous.zones.map(cloneZone);
+  // series() supplies an isolated candidate state for every update and only
+  // commits finalized values, so author code does not need replay-mode flags.
+  let zones = [...previous.zones];
   advanceSegmentEnds(zones, bar);
   let current = previous.currentZoneId
     ? zones.find((zone) => zone.id === previous.currentZoneId)
@@ -1227,15 +1216,6 @@ function stepPoc(
   }
 
   zones = trimZones(zones, params);
-  if (bar.isHistory && !bar.isHistoryFinalizedTail) {
-    return {
-      bars,
-      zones,
-      ...(current === undefined ? {} : { currentZoneId: current.id }),
-      previousScores,
-      ...(pendingMigration === undefined ? {} : { pendingMigration }),
-    };
-  }
   return {
     bars,
     zones,
@@ -1460,16 +1440,13 @@ function renderZones(
   bar: IndicatorBar,
   params: Params,
 ): void {
-  const skipHistoricalIntermediate =
-    bar.isHistory && bar.isConfirmed && !bar.isHistoryFinalizedTail;
-  if (skipHistoricalIntermediate) return;
   syncZoneDrawings(
     collectZoneDrawings(previous.zones, params, bar),
     collectZoneDrawings(state.zones, params, bar),
   );
 }
 
-const indicator: IndicatorPluginModule = defineIndicator(
+const indicator: IndicatorModule = defineIndicator(
   {
     id: "erc.indicator.atr-rope-utbot.unified",
     name: "ATR Rope + UT Bot Unified",
@@ -1601,8 +1578,4 @@ const indicator: IndicatorPluginModule = defineIndicator(
   },
 );
 
-export const definition: IndicatorPluginModule["definition"] =
-  indicator.definition;
-export const createInstance: IndicatorPluginModule["createInstance"] =
-  indicator.createInstance;
 export default indicator;

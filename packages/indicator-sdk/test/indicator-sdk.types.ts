@@ -1,4 +1,3 @@
-import type { InstrumentId, TimeframeId } from "@erc-chart/contracts";
 import {
   indicatorSdkVersion,
   defineIndicator,
@@ -11,8 +10,6 @@ import {
   textSize,
   type IndicatorDefinition,
   type IndicatorInputDefinition,
-  type IndicatorInstance,
-  type SignalCandidate,
 } from "../src/index.js";
 import type { IndicatorBar as CanonicalIndicatorBar } from "../src/indicator.js";
 import type { SeriesNumber } from "../src/series.js";
@@ -99,22 +96,3 @@ export const definition = {
   plots: [{ key: "value", kind: "line" }],
   requiresLiveTicks: true,
 } satisfies IndicatorDefinition;
-
-export const instance: IndicatorInstance = {
-  onHistory: () => undefined,
-  onBuildingBar: () => undefined,
-  onFinalizedBar: () => undefined,
-  onTick: () => undefined,
-  dispose: () => undefined,
-};
-
-export const signalCandidate: SignalCandidate = {
-  signalContractVersion: indicatorSdkVersion,
-  id: "candidate-1",
-  indicatorId: definition.id,
-  instrumentId: "fixture-instrument" as InstrumentId,
-  timeframeId: "fixture-timeframe" as TimeframeId,
-  occurredAtMs: 1_700_000_000_000,
-  direction: "long",
-  finalized: false,
-};

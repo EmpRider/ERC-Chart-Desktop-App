@@ -14,7 +14,7 @@ import {
   type IndicatorInputValue,
   type IndicatorPluginModule,
   type RuntimeIndicatorInstance,
-} from "@erc-chart/indicator-sdk";
+} from "@erc-chart/indicator-sdk/internal";
 import type {
   IndicatorWorkerDisposeMessage,
   IndicatorWorkerFailureMessage,
