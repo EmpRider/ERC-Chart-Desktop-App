@@ -4,8 +4,11 @@ import {
   defineIndicator,
   history,
   input,
+  location,
   plot,
+  shape,
   ta,
+  textSize,
   type IndicatorDefinition,
   type IndicatorInputDefinition,
   type IndicatorInstance,
@@ -51,6 +54,16 @@ export const authored = defineIndicator(
       { title: "Band", color: "#00ff00" },
     );
     plot.histogram(rsi);
+    plot.shape(value > 0, {
+      shape: shape.labelUp,
+      location: location.belowBar,
+      text: "BUY",
+      textColor: "#ffffff",
+      textSize: textSize.small,
+      color: "#00ff00",
+    });
+    plot.shape(value > 0, "BUY");
+    plot.shape(value > 0, shape.labelUp, "BUY");
     // @ts-expect-error the authoring plot API accepts scalars, never historical arrays
     plot.line([value]);
     // @ts-expect-error implicit foreign timeframe acquisition is not implemented
