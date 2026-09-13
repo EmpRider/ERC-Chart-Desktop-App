@@ -3,16 +3,53 @@ import test from "node:test";
 
 import { atrRopeUtBotIndicator } from "../dist/index.js";
 
+const inputSelectors = Object.freeze({
+  ropePeriod: ["ATR Rope", "ATR period"],
+  ropeSensitivityMode: ["ATR Rope", "Sensitivity mode"],
+  ropeDirectionMaType: ["ATR Rope Direction", "Direction MA"],
+  ropeDirectionLookback: ["ATR Rope Direction", "Direction lookback"],
+  ropeDirectionThreshold: ["ATR Rope Direction", "Direction threshold"],
+  utbotAtrPeriod: ["UT Bot", "ATR period"],
+  utbotMode: ["UT Bot", "Mode"],
+  profilePeriod: ["ADX POC", "Profile period"],
+  fastPocPeriod: ["ADX POC", "Fast POC period"],
+  dmiLength: ["ADX POC", "ADX / DI length"],
+  minEarlyBars: ["ADX POC", "Minimum early bars"],
+  showTrailingStop: ["Display", "Show trailing stop"],
+  adxPocSource: ["ADX POC", "Price source"],
+  bodyWeight: ["ADX POC", "Body weight"],
+});
+
 function defaults(overrides = {}) {
-  return {
-    ...Object.fromEntries(
-      atrRopeUtBotIndicator.definition.inputs.map((input) => [
-        input.key,
-        input.defaultValue,
-      ]),
-    ),
-    ...overrides,
-  };
+  const parameters = Object.fromEntries(
+    atrRopeUtBotIndicator.definition.inputs.map((input) => [
+      input.key,
+      input.defaultValue,
+    ]),
+  );
+  for (const [name, value] of Object.entries(overrides)) {
+    const selector = inputSelectors[name];
+    const input =
+      selector === undefined
+        ? atrRopeUtBotIndicator.definition.inputs.find(
+            (candidate) => candidate.key === name,
+          )
+        : atrRopeUtBotIndicator.definition.inputs.find(
+            (candidate) =>
+              candidate.group === selector[0] && candidate.label === selector[1],
+          );
+    assert.ok(input, `Missing input fixture ${name}`);
+    parameters[input.key] = value;
+  }
+  return parameters;
+}
+
+function plotOutputKey(label) {
+  const definition = atrRopeUtBotIndicator.definition.plots.find(
+    (plot) => plot.label === label,
+  );
+  assert.ok(definition, `Missing plot fixture ${label}`);
+  return definition.outputKey ?? definition.key;
 }
 
 function candles() {
@@ -150,30 +187,32 @@ test("keeps rope and trailing-stop series continuous while their colors change",
   try {
     instance.onHistory(candles());
     const snapshot = instance.snapshot();
+    const ropeKey = plotOutputKey("ATR Rope");
+    const stopKey = plotOutputKey("UT Stop");
 
     const firstRope = snapshot.points.findIndex(
-      (point) => point.values.rope !== null,
+      (point) => point.values[ropeKey] !== null,
     );
     const firstStop = snapshot.points.findIndex(
-      (point) => point.values.utStop !== null,
+      (point) => point.values[stopKey] !== null,
     );
     assert.ok(firstRope >= 0);
     assert.ok(firstStop >= 0);
     assert.ok(
       snapshot.points
         .slice(firstRope)
-        .every((point) => Number.isFinite(point.values.rope)),
+        .every((point) => Number.isFinite(point.values[ropeKey])),
     );
     assert.ok(
       snapshot.points
         .slice(firstStop)
-        .every((point) => Number.isFinite(point.values.utStop)),
+        .every((point) => Number.isFinite(point.values[stopKey])),
     );
 
     const ropeColors = new Set(
       snapshot.points
         .slice(firstRope)
-        .map((point) => point.colors?.rope)
+        .map((point) => point.colors?.[ropeKey])
         .filter(Boolean),
     );
     assert.ok(ropeColors.size >= 2);
