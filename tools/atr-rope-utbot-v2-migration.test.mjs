@@ -96,10 +96,13 @@ function outputKeys(indicator) {
 
 function semanticDigest(indicator, overrides) {
   const keys = outputKeys(indicator);
-  const instance = indicator.createInstance(labeledParameters(indicator, overrides), {
-    instrumentId: "fixture.instrument",
-    timeframeId: "1m",
-  });
+  const instance = indicator.createInstance(
+    labeledParameters(indicator, overrides),
+    {
+      instrumentId: "fixture.instrument",
+      timeframeId: "1m",
+    },
+  );
   try {
     instance.onHistory(candles());
     const snapshot = instance.snapshot();

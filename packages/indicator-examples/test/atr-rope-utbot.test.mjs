@@ -36,7 +36,8 @@ function defaults(overrides = {}) {
           )
         : atrRopeUtBotIndicator.definition.inputs.find(
             (candidate) =>
-              candidate.group === selector[0] && candidate.label === selector[1],
+              candidate.group === selector[0] &&
+              candidate.label === selector[1],
           );
     assert.ok(input, `Missing input fixture ${name}`);
     parameters[input.key] = value;
