@@ -121,13 +121,19 @@ function plotKeysCollide(
   );
 }
 
-function shapeDefinitionFields(options: ShapeOptions): Partial<IndicatorPlotDefinition> {
+function shapeDefinitionFields(
+  options: ShapeOptions,
+): Partial<IndicatorPlotDefinition> {
   return {
-    ...(options.direction === undefined ? {} : { direction: options.direction }),
+    ...(options.direction === undefined
+      ? {}
+      : { direction: options.direction }),
     ...(options.shape === undefined ? {} : { shape: options.shape }),
     ...(options.location === undefined ? {} : { location: options.location }),
     ...(options.text === undefined ? {} : { text: options.text }),
-    ...(options.textColor === undefined ? {} : { textColor: options.textColor }),
+    ...(options.textColor === undefined
+      ? {}
+      : { textColor: options.textColor }),
     ...(options.textSize === undefined ? {} : { textSize: options.textSize }),
   };
 }
@@ -234,7 +240,10 @@ function discoveryCompilerDefinition(
   return next;
 }
 
-function assertShapeOptions(kind: IndicatorPlotDefinition["kind"], options: ShapeOptions): void {
+function assertShapeOptions(
+  kind: IndicatorPlotDefinition["kind"],
+  options: ShapeOptions,
+): void {
   const hasShapeMetadata =
     options.shape !== undefined ||
     options.location !== undefined ||

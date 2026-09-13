@@ -65,21 +65,11 @@ export type InstalledIndicatorPlotKind =
   | "text";
 
 export type InstalledIndicatorShapeKind =
-  | "circle"
-  | "triangle-up"
-  | "triangle-down"
-  | "label-up"
-  | "label-down";
+  "circle" | "triangle-up" | "triangle-down" | "label-up" | "label-down";
 export type InstalledIndicatorShapeLocation =
-  | "above-bar"
-  | "below-bar"
-  | "absolute";
+  "above-bar" | "below-bar" | "absolute";
 export type InstalledIndicatorTextSize =
-  | "tiny"
-  | "small"
-  | "normal"
-  | "large"
-  | "xlarge";
+  "tiny" | "small" | "normal" | "large" | "xlarge";
 
 export interface InstalledIndicatorPlotDefinition {
   readonly key: string;
@@ -359,7 +349,9 @@ function isPlotDefinition(
         shapeKinds.has(value.shape as InstalledIndicatorShapeKind))) &&
     (value.location === undefined ||
       (typeof value.location === "string" &&
-        shapeLocations.has(value.location as InstalledIndicatorShapeLocation))) &&
+        shapeLocations.has(
+          value.location as InstalledIndicatorShapeLocation,
+        ))) &&
     (value.text === undefined || isOptionalShapeText(value.text)) &&
     (value.textColor === undefined || isBoundedText(value.textColor, 128)) &&
     (value.textSize === undefined ||

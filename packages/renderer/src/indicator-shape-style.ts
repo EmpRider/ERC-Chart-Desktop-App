@@ -29,5 +29,7 @@ export function indicatorShapeBaseline(
 export function indicatorShapeTextSize(
   plot: InstalledIndicatorPlotDefinition,
 ): number | undefined {
-  return plot.textSize === undefined ? undefined : textSizePixels[plot.textSize];
+  return plot.textSize === undefined
+    ? undefined
+    : textSizePixels[plot.textSize];
 }

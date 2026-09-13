@@ -266,7 +266,13 @@ plot.shape(buy, {
   );
   assert.deepEqual(
     result.plotDeclarations.map(
-      ({ shape: marker, location: placement, text, textColor, textSize: size }) => ({
+      ({
+        shape: marker,
+        location: placement,
+        text,
+        textColor,
+        textSize: size,
+      }) => ({
         shape: marker,
         location: placement,
         text,
