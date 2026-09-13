@@ -277,3 +277,118 @@ test("live source revisions replace provisional candles without accepting stale 
   await source.release();
   await engine.dispose();
 });
+
+test("one indicator can hold chart and higher-timeframe sources without cross-contamination", async () => {
+  const historyRequests = [];
+  const subscriptions = [];
+  const dataService = {
+    async requestHistory(providerProfileId, request) {
+      historyRequests.push({ providerProfileId, request });
+      return [
+        candle(
+          request.timeframeId,
+          0,
+          request.timeframeId === "15m" ? 115 : 160,
+        ),
+      ];
+    },
+    async subscribe(providerProfileId, request) {
+      subscriptions.push({ providerProfileId, request });
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+
+  const chartSource = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "15m",
+    candleType: "standard",
+  });
+  const higherSource = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1h",
+    candleType: "standard",
+  });
+
+  assert.deepEqual(
+    historyRequests.map(({ providerProfileId, request }) => ({
+      providerProfileId,
+      timeframeId: request.timeframeId,
+    })),
+    [
+      { providerProfileId: "profile-a", timeframeId: "15m" },
+      { providerProfileId: "profile-a", timeframeId: "1h" },
+    ],
+  );
+  assert.deepEqual(
+    subscriptions.map(({ providerProfileId, request }) => ({
+      providerProfileId,
+      timeframeId: request.timeframeId,
+    })),
+    [
+      { providerProfileId: "profile-a", timeframeId: "15m" },
+      { providerProfileId: "profile-a", timeframeId: "1h" },
+    ],
+  );
+  assert.equal(chartSource.snapshot().candles[0].close, 115);
+  assert.equal(higherSource.snapshot().candles[0].close, 160);
+
+  await chartSource.release();
+  await higherSource.release();
+  await engine.dispose();
+});
+
+test("provider switches reacquire the source without retaining stale provider data", async () => {
+  const historyProviders = [];
+  const subscriptionProviders = [];
+  const unsubscribedProviders = [];
+  const dataService = {
+    async requestHistory(providerProfileId, request) {
+      historyProviders.push(providerProfileId);
+      return [
+        candle(
+          request.timeframeId,
+          0,
+          providerProfileId === "profile-a" ? 101 : 202,
+        ),
+      ];
+    },
+    async subscribe(providerProfileId) {
+      subscriptionProviders.push(providerProfileId);
+      return {
+        async unsubscribe() {
+          unsubscribedProviders.push(providerProfileId);
+        },
+      };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+
+  const first = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "standard",
+  });
+  assert.equal(first.snapshot().candles[0].close, 101);
+  await first.release();
+
+  const switched = await engine.acquire({
+    providerProfileId: "profile-b",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "standard",
+  });
+
+  assert.deepEqual(historyProviders, ["profile-a", "profile-b"]);
+  assert.deepEqual(subscriptionProviders, ["profile-a", "profile-b"]);
+  assert.deepEqual(unsubscribedProviders, ["profile-a"]);
+  assert.equal(switched.snapshot().key.providerProfileId, "profile-b");
+  assert.equal(switched.snapshot().candles[0].close, 202);
+
+  await switched.release();
+  assert.deepEqual(unsubscribedProviders, ["profile-a", "profile-b"]);
+  await engine.dispose();
+});
