@@ -236,3 +236,52 @@ sdk.plot.line(1);
     /namespace SDK authoring access is unsupported.*named imports/u,
   );
 });
+
+test("preserves hidden callsite slots and static metadata for plot.shape overloads", async () => {
+  const result = await transform(`
+import { plot } from "@erc-chart/indicator-sdk";
+const buy = true;
+plot.shape(buy, "BUY");
+plot.shape(buy, "label-up", "SELL");
+plot.shape(buy, {
+  shape: "label-up",
+  location: "below-bar",
+  text: "ENTRY",
+  textColor: "#ffffff",
+  textSize: "small"
+});
+`);
+
+  assert.match(
+    result.code,
+    /plot\.shape\(buy, "BUY", undefined, __ercCallsite_\d+\)/u,
+  );
+  assert.match(
+    result.code,
+    /plot\.shape\(buy, "label-up", "SELL", __ercCallsite_\d+\)/u,
+  );
+  assert.match(
+    result.code,
+    /plot\.shape\(buy, \{[\s\S]*?textSize: "small"[\s\S]*?\}, undefined, __ercCallsite_\d+\)/u,
+  );
+  assert.deepEqual(
+    result.plotDeclarations.map(({ shape, location, text, textColor, textSize }) => ({
+      shape,
+      location,
+      text,
+      textColor,
+      textSize,
+    })),
+    [
+      { shape: undefined, location: undefined, text: "BUY", textColor: undefined, textSize: undefined },
+      { shape: "label-up", location: undefined, text: "SELL", textColor: undefined, textSize: undefined },
+      {
+        shape: "label-up",
+        location: "below-bar",
+        text: "ENTRY",
+        textColor: "#ffffff",
+        textSize: "small",
+      },
+    ],
+  );
+});
