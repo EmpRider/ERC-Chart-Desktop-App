@@ -8,6 +8,7 @@ import type {
   IndicatorInputOption,
   IndicatorInputValue,
 } from "./index.js";
+import { candle, type CandleTypeSelection } from "./constants.js";
 
 export interface InputOptions {
   readonly key?: string;
@@ -350,6 +351,43 @@ function timeframeInput(
   return value;
 }
 
+function candleTypeInput(
+  defaultValue: CandleTypeSelection,
+  titleOrOptions: string | InputOptions = {},
+  hiddenCallsite?: unknown,
+): CandleTypeSelection {
+  const options =
+    typeof titleOrOptions === "string"
+      ? { title: titleOrOptions }
+      : titleOrOptions;
+  if (defaultValue !== candle.standard && defaultValue !== candle.heikinAshi)
+    throw new RangeError("Candle type input default is invalid.");
+  const callsite = readCompilerCallsite(
+    hiddenCallsite,
+    "input",
+    "input.candleType",
+  );
+  const definition: IndicatorInputDefinition = {
+    ...metadata(options, callsite),
+    type: "string",
+    defaultValue,
+    editor: "candle-type",
+    options: [
+      { value: candle.standard, label: "Standard" },
+      { value: candle.heikinAshi, label: "Heikin Ashi" },
+    ],
+  };
+  const value = readInput(
+    definition,
+    callsite,
+    hasExplicitLabel(options),
+  ) as CandleTypeSelection;
+  const frame = authoringFrame();
+  if (frame.discovery)
+    frame.candleTypeInputs.push({ key: definition.key, value });
+  return value;
+}
+
 export interface InputApi {
   readonly float: (
     defaultValue: number,
@@ -369,6 +407,10 @@ export interface InputApi {
     defaultValue: string,
     titleOrOptions?: string | InputOptions,
   ) => string;
+  readonly candleType: (
+    defaultValue: CandleTypeSelection,
+    titleOrOptions?: string | InputOptions,
+  ) => CandleTypeSelection;
 }
 
 export const input: InputApi = Object.freeze({
@@ -432,4 +474,5 @@ export const input: InputApi = Object.freeze({
     ) as string;
   },
   timeframe: timeframeInput,
+  candleType: candleTypeInput,
 });

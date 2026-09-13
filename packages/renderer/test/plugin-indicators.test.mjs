@@ -72,6 +72,7 @@ test("unavailable saved timeframe keeps its preference while source resolution f
       requestedTimeframeId: "3m",
       activeTimeframeId: "1m",
       usedFallback: true,
+      candleType: "standard",
       taTimeframeIds: ["1h"],
       taSources: [
         {
@@ -94,6 +95,47 @@ test("unavailable saved timeframe keeps its preference while source resolution f
     value: "3m",
     label: "3m (Unavailable)",
   });
+});
+
+test("candle type source planning resolves the selected authored input", () => {
+  const definition = {
+    ...timeframeDefinition,
+    inputs: [
+      ...timeframeDefinition.inputs,
+      {
+        key: "input_candle",
+        label: "Candle Type",
+        type: "string",
+        defaultValue: "standard",
+        editor: "candle-type",
+        options: [
+          { value: "standard", label: "Standard" },
+          { value: "heikin-ashi", label: "Heikin Ashi" },
+        ],
+      },
+    ],
+    source: {
+      ...timeframeDefinition.source,
+      candleType: {
+        requestedCandleType: "standard",
+        inputKey: "input_candle",
+      },
+    },
+  };
+  const indicator = {
+    instanceId: "candle-instance",
+    pluginId: "erc.indicator.test",
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { input_timeframe: "chart", input_candle: "heikin-ashi" },
+    inputs: { source: { kind: "candles" } },
+  };
+
+  const plan = resolvePluginIndicatorSourcePlan(indicator, definition, "1m", [
+    "1m",
+    "1h",
+  ]);
+  assert.equal(plan.candleType, "heikin-ashi");
 });
 
 test("unavailable per-TA timeframe preserves its logical ID while resolving to chart data", () => {
@@ -198,6 +240,7 @@ test("reconciliation sends the resolved indicator timeframe and per-TA sources t
   );
 
   assert.equal(requests[0].timeframeId, "5m");
+  assert.equal(requests[0].candleType, "standard");
   assert.deepEqual(requests[0].sourceTimeframeIds, ["1h"]);
   assert.equal(requests[0].parameters.input_timeframe, "5m");
   assert.equal(requests[0].data.candles[0].timeframeId, "1m");

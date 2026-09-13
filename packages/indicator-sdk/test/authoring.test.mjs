@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  candle as candleType,
   defineIndicator,
   indicator,
   input,
@@ -114,6 +115,36 @@ test("timeframe authoring declares dynamic host metadata without static provider
       inputKey: "input_0",
     },
     taTimeframeIds: ["1h"],
+  });
+  assert.equal(isInstalledIndicatorDefinition(plugin.definition), true);
+});
+
+test("candle type authoring declares a dynamic source selection with stable input identity", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.candle-type.main", name: "Candle type" },
+    () => {
+      const selected = input.candleType(candleType.heikinAshi, "Candle Type");
+      indicator.candleType(selected, "input_0");
+      plot.line(1);
+    },
+  );
+
+  assert.deepEqual(plugin.definition.inputs, [
+    {
+      key: "input_0",
+      label: "Candle Type",
+      type: "string",
+      defaultValue: "heikin-ashi",
+      editor: "candle-type",
+      options: [
+        { value: "standard", label: "Standard" },
+        { value: "heikin-ashi", label: "Heikin Ashi" },
+      ],
+    },
+  ]);
+  assert.deepEqual(plugin.definition.source?.candleType, {
+    requestedCandleType: "heikin-ashi",
+    inputKey: "input_0",
   });
   assert.equal(isInstalledIndicatorDefinition(plugin.definition), true);
 });

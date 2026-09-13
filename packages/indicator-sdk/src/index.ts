@@ -66,7 +66,7 @@ export type IndicatorInputDefinition = IndicatorInputMetadata &
         readonly type: "string";
         readonly defaultValue: string;
         readonly options?: readonly IndicatorInputOption[];
-        readonly editor?: "text" | "color" | "timeframe";
+        readonly editor?: "text" | "color" | "timeframe" | "candle-type";
       }
   );
 
@@ -121,6 +121,10 @@ export interface IndicatorDefinition {
 export interface IndicatorSourceDefinition {
   readonly timeframe?: {
     readonly requestedTimeframeId: string;
+    readonly inputKey?: string;
+  };
+  readonly candleType?: {
+    readonly requestedCandleType: "standard" | "heikin-ashi";
     readonly inputKey?: string;
   };
   readonly taTimeframeIds: readonly string[];
@@ -255,6 +259,10 @@ export interface InputApi {
     defaultValue: string,
     titleOrOptions?: string | InputOptions,
   ) => string;
+  readonly candleType: (
+    defaultValue: import("./constants.js").CandleTypeSelection,
+    titleOrOptions?: string | InputOptions,
+  ) => import("./constants.js").CandleTypeSelection;
 }
 export const input: InputApi = runtimeInput as InputApi;
 
@@ -294,11 +302,13 @@ export type {
 export const plot: PlotApi = runtimePlot as PlotApi;
 
 export {
+  candle,
   location,
   shape,
   textSize,
   timeframe,
   type ShapeKind,
+  type CandleTypeSelection,
   type ShapeLocation,
   type TextSize,
   type TimeframeSelection,

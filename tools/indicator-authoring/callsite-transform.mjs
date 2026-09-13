@@ -217,6 +217,17 @@ function timeframeInputCallForExpression(expression, callsiteByNode) {
   return timeframeInputCallForExpression(initializer, callsiteByNode);
 }
 
+function candleTypeInputCallForExpression(expression, callsiteByNode) {
+  if (ts.isCallExpression(expression)) {
+    const metadata = callsiteByNode.get(expression)?.metadata;
+    return metadata?.callee === "input.candleType" ? expression : undefined;
+  }
+  if (!ts.isIdentifier(expression)) return undefined;
+  const initializer = variableInitializerForReference(expression);
+  if (initializer === undefined) return undefined;
+  return candleTypeInputCallForExpression(initializer, callsiteByNode);
+}
+
 function classifyCall(node, bindings) {
   if (ts.isIdentifier(node.expression)) {
     const imported = bindings.get(node.expression.text);
@@ -603,6 +614,7 @@ export function transformIndicatorCallsites(
   const callsites = [];
   const plotDeclarations = [];
   const indicatorTimeframeCalls = [];
+  const indicatorCandleTypeCalls = [];
 
   const collect = (node, bindings, namespaceLike) => {
     if (ts.isCallExpression(node)) {
@@ -627,6 +639,13 @@ export function transformIndicatorCallsites(
         node.expression.name.text === "timeframe"
       )
         indicatorTimeframeCalls.push(node);
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        bindings.get(node.expression.expression.text) === "indicator" &&
+        node.expression.name.text === "candleType"
+      )
+        indicatorCandleTypeCalls.push(node);
       if (classified !== undefined) {
         const parts = {
           sourceFileId: sourceFileId.replaceAll("\\", "/"),
@@ -705,6 +724,16 @@ export function transformIndicatorCallsites(
     if (metadata?.callee === "input.timeframe")
       timeframeInputKeyByCall.set(call, metadata.id);
   }
+  const candleTypeInputKeyByCall = new Map();
+  for (const call of indicatorCandleTypeCalls) {
+    const argument = call.arguments[0];
+    if (argument === undefined) continue;
+    const inputCall = candleTypeInputCallForExpression(argument, callsiteByNode);
+    const metadata =
+      inputCall === undefined ? undefined : callsiteByNode.get(inputCall)?.metadata;
+    if (metadata?.callee === "input.candleType")
+      candleTypeInputKeyByCall.set(call, metadata.id);
+  }
   if (callsites.length === 0)
     return {
       code: sourceText,
@@ -720,6 +749,20 @@ export function transformIndicatorCallsites(
   const transformer = (context) => {
     const { factory } = context;
     const visit = (node) => {
+      const candleTypeInputKey = candleTypeInputKeyByCall.get(node);
+      if (candleTypeInputKey !== undefined && ts.isCallExpression(node)) {
+        const expression = ts.visitNode(node.expression, visit);
+        const transformedArguments = node.arguments.map((argument) =>
+          ts.visitNode(argument, visit),
+        );
+        transformedArguments.push(factory.createStringLiteral(candleTypeInputKey));
+        return factory.updateCallExpression(
+          node,
+          expression,
+          node.typeArguments,
+          transformedArguments,
+        );
+      }
       const timeframeInputKey = timeframeInputKeyByCall.get(node);
       if (timeframeInputKey !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);

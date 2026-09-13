@@ -1,6 +1,15 @@
 import type { Candle, ProviderSeriesChange } from "@erc-chart/contracts";
+import {
+  sourceProvenanceForCandleType,
+  transformIndicatorCandles,
+  type IndicatorCandleType,
+  type IndicatorSourceProvenance,
+} from "./candle-transform.js";
 
-export type IndicatorCandleType = "standard" | "heikin-ashi";
+export type {
+  IndicatorCandleType,
+  IndicatorSourceProvenance,
+} from "./candle-transform.js";
 
 export interface IndicatorSourceKey {
   readonly providerProfileId: string;
@@ -48,6 +57,7 @@ export interface IndicatorSourceDataService {
 export interface IndicatorSourceSnapshot {
   readonly key: IndicatorSourceKey;
   readonly candles: readonly Candle[];
+  readonly provenance: IndicatorSourceProvenance;
   readonly generation: number;
   readonly revision: number;
 }
@@ -65,6 +75,7 @@ export interface IndicatorSourceEngine {
 
 interface SharedSource {
   readonly key: IndicatorSourceKey;
+  rawCandles: readonly Candle[];
   snapshot: IndicatorSourceSnapshot;
   subscription: IndicatorSourceSubscription | undefined;
   references: number;
@@ -87,7 +98,7 @@ function requireIdentifier(value: string, label: string): string {
 
 function normalizeKey(key: IndicatorSourceKey): IndicatorSourceKey {
   const candleType = key.candleType;
-  if (candleType !== "standard") {
+  if (candleType !== "standard" && candleType !== "heikin-ashi") {
     throw new RangeError("Indicator candle transform is not available.");
   }
   return Object.freeze({
@@ -178,11 +189,14 @@ export function createIndicatorSourceEngine(
         "Indicator source history does not match its source key.",
       );
     }
+    const rawHistory = boundedCandles(history);
     const source: SharedSource = {
       key,
+      rawCandles: rawHistory,
       snapshot: Object.freeze({
         key,
-        candles: boundedCandles(history),
+        candles: transformIndicatorCandles(key.candleType, rawHistory),
+        provenance: sourceProvenanceForCandleType(key.candleType),
         generation: 0,
         revision: 0,
       }),
@@ -205,13 +219,18 @@ export function createIndicatorSourceEngine(
           ) {
             return;
           }
-          const nextCandles =
+          const nextRawCandles =
             series.kind === "rebuild"
               ? boundedCandles(candles)
-              : mergeIncrementalCandles(source.snapshot.candles, candles);
+              : mergeIncrementalCandles(source.rawCandles, candles);
+          source.rawCandles = nextRawCandles;
           source.snapshot = Object.freeze({
             key: source.key,
-            candles: nextCandles,
+            candles: transformIndicatorCandles(
+              source.key.candleType,
+              nextRawCandles,
+            ),
+            provenance: sourceProvenanceForCandleType(source.key.candleType),
             generation: series.generation,
             revision: series.revision,
           });

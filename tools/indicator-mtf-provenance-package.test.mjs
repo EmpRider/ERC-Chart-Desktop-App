@@ -72,6 +72,48 @@ export default defineIndicator(
   });
 });
 
+test("compiled indicator candle type keeps the selected input identity when defaults match", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { candle, defineIndicator, indicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.candle-input-identity.main", name: "Candle input identity" },
+  () => {
+    const selected = input.candleType(candle.heikinAshi, { title: "Selected" });
+    input.candleType(candle.heikinAshi, { title: "Unrelated" });
+    indicator.candleType(selected);
+    plot.line(1, { key: "value" });
+  },
+);`,
+    "erc.indicator.candle-input-identity",
+  );
+
+  const [selected] = plugin.definition.inputs;
+  assert.equal(plugin.definition.source.candleType.inputKey, selected.key);
+  assert.deepEqual(plugin.definition.source.candleType, {
+    requestedCandleType: "heikin-ashi",
+    inputKey: selected.key,
+  });
+});
+
+test("compiled static indicator candle type does not bind an equal-valued input", async () => {
+  const { default: plugin } = await packagedPlugin(
+    `import { candle, defineIndicator, indicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.static-candle.main", name: "Static candle" },
+  () => {
+    input.candleType(candle.heikinAshi, { title: "Unrelated" });
+    indicator.candleType(candle.heikinAshi);
+    plot.line(1, { key: "value" });
+  },
+);`,
+    "erc.indicator.static-candle",
+  );
+
+  assert.deepEqual(plugin.definition.source.candleType, {
+    requestedCandleType: "heikin-ashi",
+  });
+});
+
 function baseCandles() {
   return Array.from({ length: 5 }, (_, index) => ({
     instrumentId: "TEST",

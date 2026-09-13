@@ -27,8 +27,14 @@ export interface AuthoringFrame {
     readonly key: string;
     readonly value: string;
   }[];
+  readonly candleTypeInputs: {
+    readonly key: string;
+    readonly value: "standard" | "heikin-ashi";
+  }[];
   indicatorTimeframeId?: string;
   indicatorTimeframeInputKey?: string;
+  indicatorCandleType?: "standard" | "heikin-ashi";
+  indicatorCandleTypeInputKey?: string;
   readonly taTimeframeIds: Set<string>;
   readonly parameters: Readonly<Record<string, IndicatorInputValue>>;
   readonly plots: IndicatorPlotDefinition[];

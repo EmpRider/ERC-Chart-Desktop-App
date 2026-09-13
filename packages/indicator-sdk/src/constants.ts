@@ -50,6 +50,16 @@ export const timeframe: Readonly<{
 
 export type TimeframeSelection = string;
 
+export const candle: Readonly<{
+  standard: "standard";
+  heikinAshi: "heikin-ashi";
+}> = Object.freeze({
+  standard: "standard",
+  heikinAshi: "heikin-ashi",
+});
+
+export type CandleTypeSelection = (typeof candle)[keyof typeof candle];
+
 const shapeKinds = new Set<string>(Object.values(shape));
 const shapeLocations = new Set<string>(Object.values(location));
 const textSizes = new Set<string>(Object.values(textSize));

@@ -44,7 +44,7 @@ export type InstalledIndicatorInputDefinition = InstalledIndicatorInputBase &
         readonly type: "string";
         readonly defaultValue: string;
         readonly options?: readonly InstalledIndicatorInputOption[];
-        readonly editor?: "text" | "color" | "timeframe";
+        readonly editor?: "text" | "color" | "timeframe" | "candle-type";
       }
   );
 
@@ -102,6 +102,10 @@ export interface InstalledIndicatorDefinition {
 export interface InstalledIndicatorSourceDefinition {
   readonly timeframe?: {
     readonly requestedTimeframeId: string;
+    readonly inputKey?: string;
+  };
+  readonly candleType?: {
+    readonly requestedCandleType: "standard" | "heikin-ashi";
     readonly inputKey?: string;
   };
   readonly taTimeframeIds: readonly string[];
@@ -282,7 +286,8 @@ function isInputDefinition(
       (value.editor === undefined ||
         value.editor === "text" ||
         value.editor === "color" ||
-        value.editor === "timeframe")
+        value.editor === "timeframe" ||
+        value.editor === "candle-type")
     );
   }
   return false;
@@ -387,6 +392,10 @@ export function isInstalledIndicatorDefinition(
           input.editor === "timeframe" &&
           isInputDefinition(input),
       ).length === 1);
+  const candleType =
+    isRecord(source) && isRecord(source.candleType)
+      ? source.candleType
+      : undefined;
   const sourceValid =
     source === undefined ||
     (isRecord(source) &&
@@ -394,6 +403,20 @@ export function isInstalledIndicatorDefinition(
         (isRecord(source.timeframe) &&
           isBoundedText(source.timeframe.requestedTimeframeId, 64) &&
           timeframeInputKeyValid(source.timeframe.inputKey))) &&
+      (source.candleType === undefined ||
+        (candleType !== undefined &&
+          (candleType.requestedCandleType === "standard" ||
+            candleType.requestedCandleType === "heikin-ashi") &&
+          (candleType.inputKey === undefined ||
+            (isIdentifier(candleType.inputKey) &&
+              inputs.filter(
+                (input) =>
+                  isRecord(input) &&
+                  input.key === candleType.inputKey &&
+                  input.type === "string" &&
+                  input.editor === "candle-type" &&
+                  isInputDefinition(input),
+              ).length === 1)))) &&
       Array.isArray(source.taTimeframeIds) &&
       source.taTimeframeIds.length <= 64 &&
       source.taTimeframeIds.every((item) => isBoundedText(item, 64)));

@@ -10,6 +10,7 @@ import type {
   InstalledIndicatorDefinition,
   InstalledIndicatorInputDefinition,
 } from "@erc-chart/contracts";
+import type { IndicatorSourceProvenance } from "./source-engine.js";
 
 function stepDecimals(step: number): number {
   const text = `${step}`.toLowerCase();
@@ -71,6 +72,7 @@ export interface IndicatorWorkerExecutionRequest {
   readonly instrumentId: string;
   readonly timeframeId: string;
   readonly parameters: IndicatorParameterValues;
+  readonly sourceProvenance?: IndicatorSourceProvenance;
   readonly sources?: readonly IndicatorWorkerSourceSnapshot[];
   readonly data: IndicatorWorkerDataUpdate;
   readonly dataRevision: number;
@@ -81,6 +83,7 @@ export interface IndicatorWorkerSourceSnapshot {
   readonly timeframeId: string;
   readonly activeTimeframeId?: string;
   readonly candles: readonly Candle[];
+  readonly provenance?: IndicatorSourceProvenance;
 }
 
 export type IndicatorWorkerDataUpdate =
@@ -467,6 +470,7 @@ export function createIndicatorWorkerSupervisor(
 export { createIndicatorSourceEngine } from "./source-engine.js";
 export type {
   IndicatorCandleType,
+  IndicatorSourceProvenance,
   IndicatorSourceDataService,
   IndicatorSourceEngine,
   IndicatorSourceHistoryRequest,

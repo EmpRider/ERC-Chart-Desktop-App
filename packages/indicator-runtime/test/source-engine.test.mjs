@@ -17,6 +17,19 @@ function candle(timeframeId, openTimeMs, close) {
   });
 }
 
+function ohlc(timeframeId, openTimeMs, open, high, low, close) {
+  return Object.freeze({
+    instrumentId: "EURUSD",
+    timeframeId,
+    openTimeMs,
+    open,
+    high,
+    low,
+    close,
+    volume: 1,
+  });
+}
+
 test("indicator source acquisition uses the requested provider timeframe instead of chart candles", async () => {
   const historyRequests = [];
   const subscriptions = [];
@@ -253,6 +266,195 @@ test("derived indicator source delegates acquisition to the provider data planne
   assert.equal(subscriptions[0].unsubscribeCount, 1);
   await engine.dispose();
   await dataService.shutdown();
+});
+
+test("Heikin Ashi source transforms explicit historical OHLC and records synthetic provenance", async () => {
+  const dataService = {
+    async requestHistory() {
+      return [ohlc("1m", 0, 10, 14, 8, 12), ohlc("1m", 60_000, 12, 16, 10, 14)];
+    },
+    async subscribe() {
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const source = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "heikin-ashi",
+  });
+
+  assert.deepEqual(source.snapshot().candles, [
+    ohlc("1m", 0, 11, 14, 8, 11),
+    ohlc("1m", 60_000, 11, 16, 10, 13),
+  ]);
+  assert.deepEqual(source.snapshot().provenance, {
+    kind: "synthetic",
+    candleType: "heikin-ashi",
+  });
+
+  await source.release();
+  await engine.dispose();
+});
+
+test("Heikin Ashi repeated building revisions derive from the previous finalized candle", async () => {
+  let liveSink;
+  const dataService = {
+    async requestHistory() {
+      return [ohlc("1m", 0, 10, 14, 8, 12)];
+    },
+    async subscribe(_providerProfileId, _request, sink) {
+      liveSink = sink;
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const source = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "heikin-ashi",
+  });
+
+  liveSink.onCandles([ohlc("1m", 60_000, 12, 16, 10, 14)], {
+    generation: 1,
+    revision: 1,
+    previousRevision: 0,
+    kind: "incremental",
+  });
+  assert.deepEqual(
+    source.snapshot().candles.at(-1),
+    ohlc("1m", 60_000, 11, 16, 10, 13),
+  );
+
+  liveSink.onCandles([ohlc("1m", 60_000, 12, 18, 9, 16)], {
+    generation: 1,
+    revision: 2,
+    previousRevision: 1,
+    kind: "incremental",
+  });
+  assert.deepEqual(
+    source.snapshot().candles.at(-1),
+    ohlc("1m", 60_000, 11, 18, 9, 13.75),
+  );
+
+  await source.release();
+  await engine.dispose();
+});
+
+test("derived timeframe candles are aggregated before Heikin Ashi transformation", async () => {
+  const upstream = {
+    async getCapabilities() {
+      return {
+        instruments: true,
+        nativeTimeframes: ["1m"],
+        liveData: true,
+        derivedTimeframes: true,
+        derivedTimeframeIds: ["3m"],
+        timeframes: [
+          {
+            id: "1m",
+            seconds: 60,
+            historical: true,
+            live: true,
+            native: true,
+            alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+          },
+          {
+            id: "3m",
+            seconds: 180,
+            historical: true,
+            live: true,
+            native: false,
+            derivedFromTimeframeId: "1m",
+            alignment: { mode: "epoch", originMs: 0, timeZone: "UTC" },
+          },
+        ],
+      };
+    },
+    async getInstruments() {
+      return [{ id: "EURUSD", symbol: "EURUSD", name: "EUR / USD" }];
+    },
+    async requestHistory() {
+      return [0, 1, 2, 3, 4, 5].map((index) =>
+        ohlc(
+          "1m",
+          index * 60_000,
+          10 + index,
+          12 + index,
+          9 + index,
+          11 + index,
+        ),
+      );
+    },
+    async subscribe() {
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const dataService = createProviderDataService(upstream, {
+    now: () => 390_000,
+  });
+  const engine = createIndicatorSourceEngine(dataService);
+  const source = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "3m",
+    candleType: "heikin-ashi",
+  });
+
+  assert.deepEqual(
+    source.snapshot().candles.map(({ openTimeMs, open, high, low, close }) => ({
+      openTimeMs,
+      open,
+      high,
+      low,
+      close,
+    })),
+    [
+      { openTimeMs: 0, open: 11.5, high: 14, low: 9, close: 11.5 },
+      { openTimeMs: 180_000, open: 11.5, high: 17, low: 11.5, close: 14.5 },
+    ],
+  );
+
+  await source.release();
+  await engine.dispose();
+  await dataService.shutdown();
+});
+
+test("standard and Heikin Ashi sources stay distinct while equal HA leases share acquisition", async () => {
+  let historyCount = 0;
+  let subscriptionCount = 0;
+  const dataService = {
+    async requestHistory() {
+      historyCount += 1;
+      return [ohlc("1m", 0, 10, 14, 8, 12)];
+    },
+    async subscribe() {
+      subscriptionCount += 1;
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const base = {
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+  };
+  const standard = await engine.acquire({ ...base, candleType: "standard" });
+  const firstHa = await engine.acquire({ ...base, candleType: "heikin-ashi" });
+  const secondHa = await engine.acquire({ ...base, candleType: "heikin-ashi" });
+
+  assert.equal(historyCount, 2);
+  assert.equal(subscriptionCount, 2);
+  assert.equal(standard.snapshot().candles[0].open, 10);
+  assert.equal(firstHa.snapshot().candles[0].open, 11);
+  assert.deepEqual(firstHa.snapshot(), secondHa.snapshot());
+
+  await standard.release();
+  await firstHa.release();
+  await secondHa.release();
+  await engine.dispose();
 });
 
 test("live source revisions replace provisional candles without accepting stale updates", async () => {
