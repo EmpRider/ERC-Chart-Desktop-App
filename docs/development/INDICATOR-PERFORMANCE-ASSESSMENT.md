@@ -112,15 +112,15 @@ The enforced workload and budgets are:
 Delivery #1038 on Ubuntu 24.04 / Node 26.8.1 measured the final clean candidate
 as follows:
 
-| ECDD-229 workload                                  | Observed time | CI budget |
-| -------------------------------------------------- | ------------: | --------: |
-| Four-chart history, 100,000 bars aggregate         |     12.640 s |      60 s |
-| Slowest single-chart 25,000-bar history            |      3.244 s |      60 s |
-| 1,000 provisional authored-indicator updates       |     85.83 ms |       5 s |
-| Slowest four-chart provisional sweep               |      0.80 ms |    100 ms |
-| Slowest individual provisional update              |      0.50 ms |    100 ms |
-| Four-chart finalized sweep                         |      0.86 ms |       1 s |
-| Slowest individual finalized update                |      0.40 ms |    100 ms |
+| ECDD-229 workload                            | Observed time | CI budget |
+| -------------------------------------------- | ------------: | --------: |
+| Four-chart history, 100,000 bars aggregate   |      12.640 s |      60 s |
+| Slowest single-chart 25,000-bar history      |       3.244 s |      60 s |
+| 1,000 provisional authored-indicator updates |      85.83 ms |       5 s |
+| Slowest four-chart provisional sweep         |       0.80 ms |    100 ms |
+| Slowest individual provisional update        |       0.50 ms |    100 ms |
+| Four-chart finalized sweep                   |       0.86 ms |       1 s |
+| Slowest individual finalized update          |       0.40 ms |    100 ms |
 
 The same CI run kept the existing authored/runtime gates green: the maintained
 ATR Rope + UT Bot 100,000-bar history completed in about 10.09 seconds, its
