@@ -32,7 +32,14 @@ async function renderFigure(plotDefinition, runtimePoint) {
     placement: "overlay",
     inputs: [],
     outputs: [{ key: "marker", label: "Marker" }],
-    plots: [{ key: "marker", outputKey: "marker", kind: "shape", ...plotDefinition }],
+    plots: [
+      {
+        key: "marker",
+        outputKey: "marker",
+        kind: "shape",
+        ...plotDefinition,
+      },
+    ],
     requiresLiveTicks: false,
   };
   const summary = {
@@ -93,11 +100,16 @@ test("maps configured shape text, text color, semantic size, and below-bar basel
     { values: { marker: 9 }, colors: {}, sizes: {} },
   );
 
-  assert.deepEqual(figure.attrs({ data: { prev: null, current: row, next: null } }), {
-    text: "BUY",
-    baseline: "top",
+  assert.deepEqual(
+    figure.attrs({ data: { prev: null, current: row, next: null } }),
+    {
+      text: "BUY",
+      baseline: "top",
+    },
+  );
+  const styles = figure.styles({
+    data: { prev: null, current: row, next: null },
   });
-  const styles = figure.styles({ data: { prev: null, current: row, next: null } });
   assert.equal(styles.color, "#ffffff");
   assert.equal(styles.size, 10);
 });
@@ -112,8 +124,13 @@ test("preserves non-text shape glyph behavior and runtime color/size", async () 
     },
   );
 
-  assert.equal(figure.attrs({ data: { prev: null, current: row, next: null } }).text, "▼");
-  const styles = figure.styles({ data: { prev: null, current: row, next: null } });
+  assert.equal(
+    figure.attrs({ data: { prev: null, current: row, next: null } }).text,
+    "▼",
+  );
+  const styles = figure.styles({
+    data: { prev: null, current: row, next: null },
+  });
   assert.equal(styles.color, "#abcdef");
   assert.equal(styles.size, 4);
 });
