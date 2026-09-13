@@ -278,9 +278,8 @@ test("provisional drawings roll back and finalized drawings persist without auth
       plot.line(close, { color: close > 15 ? "#00ff00" : "#ff0000" });
       if (close > 15)
         plot.box({
-          id: "zone",
-          startTimeMs: openTimeMs,
-          endTimeMs: openTimeMs + 60_000,
+          left: openTimeMs,
+          right: openTimeMs + 60_000,
           top: close,
           bottom: close - 1,
           color: "#008800",
@@ -316,37 +315,40 @@ test("plot discovery rejects duplicate output keys", () => {
   );
 });
 
-test("plot.drawings reconciles direct plot.box calls without author-owned drawing arrays", () => {
+test("direct drawing calls reuse hidden identity across building replacements", () => {
   const plugin = defineIndicator(
-    { id: "erc.indicator.scoped-draw.main", name: "Scoped draw" },
+    { id: "erc.indicator.direct-draw.main", name: "Direct draw" },
     ({ close, openTimeMs }) => {
-      plot.drawings("zones", () => {
-        if (close <= 15) return;
-        plot.box({
-          id: "zone",
-          startTimeMs: 0,
-          endTimeMs: openTimeMs + 60_000,
-          top: close,
-          bottom: close - 1,
-          color: "#008800",
-        });
+      if (close <= 15) return;
+      plot.box({
+        left: 0,
+        right: openTimeMs + 60_000,
+        top: close,
+        bottom: close - 1,
+        color: "#008800",
       });
     },
   );
   const instance = plugin.createInstance({}, context);
   instance.onHistory([candle(0, 20), candle(1, 20)]);
   assert.equal(instance.snapshot().overlays.length, 1);
-  assert.equal(instance.snapshot().overlays[0].top, 20);
+  const id = instance.snapshot().overlays[0].id;
 
-  instance.onBuildingBar(candle(1, 10));
-  assert.equal(instance.snapshot().overlays.length, 0);
   instance.onBuildingBar(candle(1, 22));
   assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].id, id);
   assert.equal(instance.snapshot().overlays[0].top, 22);
 
-  instance.onFinalizedBar(candle(1, 22));
+  instance.onBuildingBar(candle(1, 24));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].id, id);
+  assert.equal(instance.snapshot().overlays[0].top, 24);
+
+  instance.onFinalizedBar(candle(1, 24));
   instance.onBuildingBar(candle(2, 10));
-  assert.equal(instance.snapshot().overlays.length, 0);
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].id, id);
+  assert.equal(instance.snapshot().overlays[0].top, 24);
   instance.dispose();
 });
 

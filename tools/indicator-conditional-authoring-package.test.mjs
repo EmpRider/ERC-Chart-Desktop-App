@@ -291,40 +291,34 @@ export default defineIndicator(
   }
 });
 
-test("conditional drawing scopes preserve committed geometry while omitted and reconcile on return", async () => {
+test("conditional drawing handles preserve committed geometry while omitted and update on return", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 
-function optionalDrawings(value, openTimeMs) {
-  plot.drawings("optional", () => {
-    plot.box({
-      id: "optional-zone",
-      startTimeMs: openTimeMs,
-      endTimeMs: openTimeMs + 60_000,
-      top: value,
-      bottom: value - 1,
-      color: "#008800",
-    });
+function optionalDrawing(value, openTimeMs) {
+  plot.box({
+    left: openTimeMs,
+    right: openTimeMs + 60_000,
+    top: value,
+    bottom: value - 1,
+    color: "#008800",
   });
 }
-function alwaysDrawings(value, openTimeMs) {
-  plot.drawings("always", () => {
-    plot.box({
-      id: "always-zone",
-      startTimeMs: openTimeMs,
-      endTimeMs: openTimeMs + 60_000,
-      top: value * 10,
-      bottom: value * 10 - 1,
-      color: "#880000",
-    });
+function alwaysDrawing(value, openTimeMs) {
+  plot.box({
+    left: openTimeMs,
+    right: openTimeMs + 60_000,
+    top: value * 10,
+    bottom: value * 10 - 1,
+    color: "#880000",
   });
 }
 
 export default defineIndicator(
   { id: "erc.indicator.conditional-drawings.main", name: "Conditional drawings" },
   ({ close, openTimeMs }) => {
-    if (close < 15) optionalDrawings(close, openTimeMs);
-    alwaysDrawings(close, openTimeMs);
+    if (close < 15) optionalDrawing(close, openTimeMs);
+    alwaysDrawing(close, openTimeMs);
   },
 );
 `,
@@ -332,32 +326,47 @@ export default defineIndicator(
   );
 
   const instance = plugin.createInstance({}, context);
-  const overlay = (id) =>
-    instance.snapshot().overlays.find((value) => value.id === id);
+  const overlay = (color) =>
+    instance.snapshot().overlays.find((value) => value.color === color);
   try {
     instance.onHistory([candle(0, 10), candle(1, 20)]);
-    assert.equal(overlay("optional-zone")?.top, 10);
-    assert.equal(overlay("always-zone")?.top, 200);
+    const optionalId = overlay("#008800")?.id;
+    const alwaysId = overlay("#880000")?.id;
+    assert.ok(optionalId);
+    assert.ok(alwaysId);
+    assert.notEqual(optionalId, alwaysId);
+    assert.equal(overlay("#008800")?.top, 10);
+    assert.equal(overlay("#880000")?.top, 200);
 
     instance.onFinalizedBar(candle(1, 20));
-    assert.equal(overlay("optional-zone")?.top, 10);
-    assert.equal(overlay("always-zone")?.top, 200);
+    assert.equal(overlay("#008800")?.id, optionalId);
+    assert.equal(overlay("#880000")?.id, alwaysId);
+    assert.equal(overlay("#008800")?.top, 10);
+    assert.equal(overlay("#880000")?.top, 200);
 
     instance.onBuildingBar(candle(2, 11));
-    assert.equal(overlay("optional-zone")?.top, 11);
-    assert.equal(overlay("always-zone")?.top, 110);
+    assert.equal(overlay("#008800")?.id, optionalId);
+    assert.equal(overlay("#880000")?.id, alwaysId);
+    assert.equal(overlay("#008800")?.top, 11);
+    assert.equal(overlay("#880000")?.top, 110);
 
     instance.onBuildingBar(candle(2, 20));
-    assert.equal(overlay("optional-zone")?.top, 10);
-    assert.equal(overlay("always-zone")?.top, 200);
+    assert.equal(overlay("#008800")?.id, optionalId);
+    assert.equal(overlay("#880000")?.id, alwaysId);
+    assert.equal(overlay("#008800")?.top, 10);
+    assert.equal(overlay("#880000")?.top, 200);
 
     instance.onFinalizedBar(candle(2, 11));
-    assert.equal(overlay("optional-zone")?.top, 11);
-    assert.equal(overlay("always-zone")?.top, 110);
+    assert.equal(overlay("#008800")?.id, optionalId);
+    assert.equal(overlay("#880000")?.id, alwaysId);
+    assert.equal(overlay("#008800")?.top, 11);
+    assert.equal(overlay("#880000")?.top, 110);
 
     instance.onBuildingBar(candle(3, 20));
-    assert.equal(overlay("optional-zone")?.top, 11);
-    assert.equal(overlay("always-zone")?.top, 200);
+    assert.equal(overlay("#008800")?.id, optionalId);
+    assert.equal(overlay("#880000")?.id, alwaysId);
+    assert.equal(overlay("#008800")?.top, 11);
+    assert.equal(overlay("#880000")?.top, 200);
   } finally {
     instance.dispose();
   }

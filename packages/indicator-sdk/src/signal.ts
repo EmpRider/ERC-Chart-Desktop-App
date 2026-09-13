@@ -2,7 +2,6 @@ import { authoringFrame, type AuthoringFrame } from "./authoring-context.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
 
 export interface SignalOptions {
-  readonly id?: string;
   readonly confidence?: number;
 }
 
@@ -26,9 +25,11 @@ export function signal(
 ): void {
   const frame = authoringFrame();
   const callsite = readCompilerCallsite(hiddenCallsite, "signal", "signal");
-  const index = frame.signalIndex++;
+  const index = frame.signalIndex;
   if (index >= 128)
     throw new RangeError("At most 128 signal conditions are allowed per bar.");
+  if ("id" in options)
+    throw new TypeError("Signal persistence identity is owned by the SDK.");
   if (
     options.confidence !== undefined &&
     (!Number.isFinite(options.confidence) ||
@@ -48,9 +49,10 @@ export function signal(
       );
     identities.add(callsite.id);
   }
+  frame.signalIndex = index + 1;
   if (condition && !frame.discovery && frame.phase === "finalized")
     frame.signals.push({
-      key: options.id ?? callsite?.id ?? `signal_${index}`,
+      key: callsite?.id ?? `signal_${index}`,
       direction,
       ...(options.confidence === undefined
         ? {}

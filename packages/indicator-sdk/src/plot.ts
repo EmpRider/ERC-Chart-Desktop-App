@@ -1,14 +1,9 @@
-import { sameDrawing } from "./drawing-equality.js";
-import {
-  authoringFrame,
-  useKernel,
-  type AuthoringFrame,
-} from "./authoring-context.js";
+import { authoringFrame, type AuthoringFrame } from "./authoring-context.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
+import { drawingController } from "./internal/drawings.js";
 import type {
   IndicatorBox,
   IndicatorLineSegment,
-  IndicatorOverlay,
   IndicatorPlotDefinition,
 } from "./index.js";
 
@@ -22,6 +17,33 @@ export interface PlotOptions {
 export interface ShapeOptions extends PlotOptions {
   readonly direction?: "up" | "down";
 }
+
+export interface BoxDrawing {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly color: string;
+  readonly borderColor?: string;
+}
+
+export interface SegmentDrawing {
+  readonly left: number;
+  readonly right: number;
+  readonly startValue: number;
+  readonly endValue: number;
+  readonly color: string;
+  readonly width: number;
+  readonly style: "solid" | "dashed" | "dotted";
+}
+
+export interface DrawingHandle<T> {
+  readonly set: (patch: Partial<T>) => void;
+  readonly delete: () => void;
+}
+
+export type BoxHandle = DrawingHandle<BoxDrawing>;
+export type SegmentHandle = DrawingHandle<SegmentDrawing>;
 
 type ValuePlotCallee =
   "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
@@ -42,10 +64,6 @@ interface CompilerPlotDeclaration {
 declare const __ERC_INDICATOR_PLOT_DECLARATIONS__:
   readonly CompilerPlotDeclaration[] | undefined;
 
-interface DrawingScopeState {
-  committed: Map<string, IndicatorOverlay>;
-}
-
 interface PlotDeclarationMetadata {
   readonly keyExplicit: boolean;
   readonly titleExplicit: boolean;
@@ -56,8 +74,6 @@ interface FramePlotUsage {
   readonly identities: Set<string>;
 }
 
-let activeDrawingCollector: Map<string, IndicatorOverlay> | undefined;
-let activeCommittedDrawings: Map<string, IndicatorOverlay> | undefined;
 const plotDeclarationMetadata = new WeakMap<
   IndicatorPlotDefinition,
   PlotDeclarationMetadata
@@ -281,87 +297,148 @@ function valuePlot(
     frame.point.sizes[resolvedOutputKey] = options.width;
 }
 
-function overlay(value: IndicatorBox | IndicatorLineSegment): void {
-  const frame = authoringFrame();
-  if (frame.discovery) return;
-  if (!value.id || value.id.length > 256)
-    throw new RangeError("Drawings require a bounded stable id.");
-  if (activeDrawingCollector !== undefined) {
-    const previous = activeCommittedDrawings?.get(value.id);
-    activeDrawingCollector.set(
-      value.id,
-      previous !== undefined && sameDrawing(previous, value)
-        ? previous
-        : Object.freeze(value),
-    );
-    if (activeDrawingCollector.size > 2_000)
-      throw new RangeError(
-        "At most 2,000 drawings are allowed in one drawing scope.",
-      );
-    return;
-  }
-  frame.overlayUpdates.set(value.id, Object.freeze(value));
-  if (frame.overlayUpdates.size > 2_000)
-    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
+function assertDrawingTime(name: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new RangeError(`${name} must be a non-negative integer timestamp.`);
 }
 
-function drawingScope(
-  key: string,
-  render: (() => void) | null,
+function assertDrawingNumber(name: string, value: number): void {
+  if (!Number.isFinite(value)) throw new RangeError(`${name} must be finite.`);
+}
+
+function assertSegmentWidth(width: number): void {
+  if (!Number.isFinite(width) || width <= 0 || width > 20)
+    throw new RangeError(
+      "Drawing width must be greater than 0 and at most 20.",
+    );
+}
+
+function boxOverlay(id: string, value: BoxDrawing): IndicatorBox {
+  assertDrawingTime("Drawing left", value.left);
+  assertDrawingTime("Drawing right", value.right);
+  assertDrawingNumber("Drawing top", value.top);
+  assertDrawingNumber("Drawing bottom", value.bottom);
+  return {
+    id,
+    kind: "box",
+    startTimeMs: value.left,
+    endTimeMs: value.right,
+    top: value.top,
+    bottom: value.bottom,
+    color: value.color,
+    ...(value.borderColor === undefined
+      ? {}
+      : { borderColor: value.borderColor }),
+  };
+}
+
+function segmentOverlay(
+  id: string,
+  value: SegmentDrawing,
+): IndicatorLineSegment {
+  assertDrawingTime("Drawing left", value.left);
+  assertDrawingTime("Drawing right", value.right);
+  assertDrawingNumber("Drawing startValue", value.startValue);
+  assertDrawingNumber("Drawing endValue", value.endValue);
+  assertSegmentWidth(value.width);
+  return {
+    id,
+    kind: "line-segment",
+    startTimeMs: value.left,
+    endTimeMs: value.right,
+    startValue: value.startValue,
+    endValue: value.endValue,
+    color: value.color,
+    width: value.width,
+    style: value.style,
+  };
+}
+
+function box(value: BoxDrawing, hiddenCallsite?: unknown): BoxHandle {
+  const callsite = readCompilerCallsite(hiddenCallsite, "drawing", "plot.box");
+  assertDrawingTime("Drawing left", value.left);
+  assertDrawingTime("Drawing right", value.right);
+  assertDrawingNumber("Drawing top", value.top);
+  assertDrawingNumber("Drawing bottom", value.bottom);
+  const controller = drawingController("box", "plot.box", callsite);
+  controller.write(boxOverlay(controller.id, value));
+  return Object.freeze({
+    set(patch: Partial<BoxDrawing>): void {
+      controller.update((current) => {
+        if (current.kind !== "box")
+          throw new Error("Drawing handle kind changed unexpectedly.");
+        const borderColor = Object.hasOwn(patch, "borderColor")
+          ? patch.borderColor
+          : current.borderColor;
+        const next: BoxDrawing = {
+          left: patch.left ?? current.startTimeMs,
+          right: patch.right ?? current.endTimeMs,
+          top: patch.top ?? current.top,
+          bottom: patch.bottom ?? current.bottom,
+          color: patch.color ?? current.color,
+          ...(borderColor === undefined ? {} : { borderColor }),
+        };
+        return boxOverlay(controller.id, next);
+      });
+    },
+    delete(): void {
+      controller.delete();
+    },
+  });
+}
+
+function segment(
+  value: SegmentDrawing,
   hiddenCallsite?: unknown,
-): void {
-  if (!key || key.length > 128)
-    throw new RangeError("Drawing scopes require a bounded stable key.");
-  const frame = authoringFrame();
+): SegmentHandle {
   const callsite = readCompilerCallsite(
     hiddenCallsite,
     "drawing",
-    "plot.drawings",
+    "plot.segment",
   );
-  const state = useKernel<DrawingScopeState>(
-    `plot-drawings:${key}`,
-    () => ({
-      committed: new Map<string, IndicatorOverlay>(),
-    }),
+  assertDrawingTime("Drawing left", value.left);
+  assertDrawingTime("Drawing right", value.right);
+  assertDrawingNumber("Drawing startValue", value.startValue);
+  assertDrawingNumber("Drawing endValue", value.endValue);
+  assertSegmentWidth(value.width);
+  const controller = drawingController(
+    "line-segment",
+    "plot.segment",
     callsite,
   );
-  if (frame.discovery || render === null) return;
-  if (activeDrawingCollector !== undefined)
-    throw new Error("Drawing scopes cannot be nested.");
-
-  const next = new Map<string, IndicatorOverlay>();
-  activeDrawingCollector = next;
-  activeCommittedDrawings = state.committed;
-  try {
-    render();
-  } finally {
-    activeDrawingCollector = undefined;
-    activeCommittedDrawings = undefined;
-  }
-
-  for (const [id, drawing] of next) {
-    const previous = state.committed.get(id);
-    if (previous !== drawing) frame.overlayUpdates.set(id, drawing);
-  }
-  for (const id of state.committed.keys()) {
-    if (!next.has(id)) frame.overlayUpdates.set(id, null);
-  }
-  if (frame.overlayUpdates.size > 2_000)
-    throw new RangeError("At most 2,000 drawing changes are allowed per bar.");
-  if (frame.phase === "finalized") state.committed = next;
+  controller.write(segmentOverlay(controller.id, value));
+  return Object.freeze({
+    set(patch: Partial<SegmentDrawing>): void {
+      controller.update((current) => {
+        if (current.kind !== "line-segment")
+          throw new Error("Drawing handle kind changed unexpectedly.");
+        return segmentOverlay(controller.id, {
+          left: patch.left ?? current.startTimeMs,
+          right: patch.right ?? current.endTimeMs,
+          startValue: patch.startValue ?? current.startValue,
+          endValue: patch.endValue ?? current.endValue,
+          color: patch.color ?? current.color,
+          width: patch.width ?? current.width,
+          style: patch.style ?? current.style,
+        });
+      });
+    },
+    delete(): void {
+      controller.delete();
+    },
+  });
 }
 
-/** Values are scalars. The SDK owns plot definitions and timestamp-aligned output arrays. */
+/** Values are scalars. Drawing persistence and identity are SDK-owned. */
 export interface PlotApi {
   readonly line: (value: number | null, options?: PlotOptions) => void;
   readonly hline: (value: number | null, options?: PlotOptions) => void;
   readonly histogram: (value: number | null, options?: PlotOptions) => void;
   readonly shape: (value: number | null, options?: ShapeOptions) => void;
-  readonly box: (value: Omit<IndicatorBox, "kind">) => void;
-  readonly segment: (value: Omit<IndicatorLineSegment, "kind">) => void;
-  readonly remove: (id: string) => void;
-  readonly drawings: (key: string, render: (() => void) | null) => void;
+  readonly box: (value: BoxDrawing) => BoxHandle;
+  readonly segment: (value: SegmentDrawing) => SegmentHandle;
 }
+
 export const plot: PlotApi = Object.freeze({
   line: (
     value: number | null,
@@ -384,23 +461,6 @@ export const plot: PlotApi = Object.freeze({
     options?: ShapeOptions,
     hiddenCallsite?: unknown,
   ): void => valuePlot("shape", "plot.shape", value, options, hiddenCallsite),
-  box: (value: Omit<IndicatorBox, "kind">): void =>
-    overlay({ ...value, kind: "box" }),
-  segment: (value: Omit<IndicatorLineSegment, "kind">): void =>
-    overlay({ ...value, kind: "line-segment" }),
-  remove: (id: string): void => {
-    const frame = authoringFrame();
-    if (!id || id.length > 256)
-      throw new RangeError("Drawings require a bounded stable id.");
-    if (activeDrawingCollector !== undefined) {
-      activeDrawingCollector.delete(id);
-      return;
-    }
-    frame.overlayUpdates.set(id, null);
-    if (frame.overlayUpdates.size > 2_000)
-      throw new RangeError(
-        "At most 2,000 drawing changes are allowed per bar.",
-      );
-  },
-  drawings: drawingScope,
+  box,
+  segment,
 });

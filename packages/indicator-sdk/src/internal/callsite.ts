@@ -24,6 +24,7 @@ export interface CompilerCallsite {
 }
 
 const callsiteSuffix = /^[0-9a-f]{24}$/u;
+const validatedFrozenCallsites = new WeakMap<object, CompilerCallsite>();
 
 function compiledIndicatorPackage(): boolean {
   return (
@@ -51,35 +52,56 @@ export function readCompilerCallsite(
       );
     return undefined;
   }
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    !("__ercCallsite" in value) ||
-    !("id" in value) ||
-    !("kind" in value) ||
-    !("callee" in value) ||
-    !("source" in value)
-  )
+  if (value !== null && typeof value === "object") {
+    const cached = validatedFrozenCallsites.get(value);
+    if (cached !== undefined) {
+      if (cached.kind !== kind || cached.callee !== callee)
+        throw invalidCallsite(callee);
+      return cached;
+    }
+  }
+  if (value === null || typeof value !== "object")
     throw invalidCallsite(callee);
   const candidate = value as Partial<CompilerCallsite>;
+  const marker = candidate.__ercCallsite;
+  const id = candidate.id;
+  const candidateKind = candidate.kind;
+  const candidateCallee = candidate.callee;
   const source = candidate.source;
+  const sourceFile = source?.file;
+  const sourceLine = source?.line;
+  const sourceColumn = source?.column;
   const prefix = `erc-v2-${kind}-`;
   if (
-    candidate.__ercCallsite !== "v2" ||
-    candidate.kind !== kind ||
-    candidate.callee !== callee ||
-    typeof candidate.id !== "string" ||
-    !candidate.id.startsWith(prefix) ||
-    !callsiteSuffix.test(candidate.id.slice(prefix.length)) ||
+    marker !== "v2" ||
+    candidateKind !== kind ||
+    candidateCallee !== callee ||
+    typeof id !== "string" ||
+    !id.startsWith(prefix) ||
+    !callsiteSuffix.test(id.slice(prefix.length)) ||
     source === null ||
     typeof source !== "object" ||
-    typeof source.file !== "string" ||
-    source.file.length === 0 ||
-    !Number.isSafeInteger(source.line) ||
-    source.line < 1 ||
-    !Number.isSafeInteger(source.column) ||
-    source.column < 1
+    typeof sourceFile !== "string" ||
+    sourceFile.length === 0 ||
+    typeof sourceLine !== "number" ||
+    !Number.isSafeInteger(sourceLine) ||
+    sourceLine < 1 ||
+    typeof sourceColumn !== "number" ||
+    !Number.isSafeInteger(sourceColumn) ||
+    sourceColumn < 1
   )
     throw invalidCallsite(callee);
-  return candidate as CompilerCallsite;
+  const validated: CompilerCallsite = Object.freeze({
+    __ercCallsite: "v2",
+    id,
+    kind,
+    callee,
+    source: Object.freeze({
+      file: sourceFile,
+      line: sourceLine,
+      column: sourceColumn,
+    }),
+  });
+  if (Object.isFrozen(value)) validatedFrozenCallsites.set(value, validated);
+  return validated;
 }

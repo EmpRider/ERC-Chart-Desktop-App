@@ -169,18 +169,14 @@ export default defineIndicator(
   );
 });
 
-test("drawing scope state survives reordering", async () => {
+test("drawing identity survives reordering", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 function fast(value, openTimeMs) {
-  plot.drawings("shared", () => {
-    plot.box({ id: "fast-zone", startTimeMs: openTimeMs, endTimeMs: openTimeMs + 60_000, top: value, bottom: value - 1, color: "#008800" });
-  });
+  plot.box({ left: openTimeMs, right: openTimeMs + 60_000, top: value, bottom: value - 1, color: "#008800" });
 }
 function slow(value, openTimeMs) {
-  plot.drawings("shared", () => {
-    plot.box({ id: "slow-zone", startTimeMs: openTimeMs, endTimeMs: openTimeMs + 60_000, top: value * 10, bottom: value * 10 - 1, color: "#880000" });
-  });
+  plot.box({ left: openTimeMs, right: openTimeMs + 60_000, top: value * 10, bottom: value * 10 - 1, color: "#880000" });
 }
 export default defineIndicator(
   { id: "erc.indicator.drawing-identity.main", name: "Drawing identity" },
@@ -195,17 +191,28 @@ export default defineIndicator(
 
   const instance = plugin.createInstance({}, context);
   try {
-    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
-    const overlays = instance.snapshot().overlays;
-    assert.equal(overlays.length, 2);
-    assert.equal(
-      overlays.find((overlay) => overlay.id === "fast-zone")?.top,
-      10,
+    instance.onHistory([candle(0, 10), candle(1, 10)]);
+    let overlays = instance.snapshot().overlays;
+    const fast = overlays.find((overlay) => overlay.color === "#008800");
+    const slow = overlays.find((overlay) => overlay.color === "#880000");
+    assert.ok(fast);
+    assert.ok(slow);
+    assert.notEqual(fast.id, slow.id);
+    assert.equal(fast.top, 10);
+    assert.equal(slow.top, 100);
+
+    instance.onBuildingBar(candle(1, 20));
+    overlays = instance.snapshot().overlays;
+    const reorderedFast = overlays.find(
+      (overlay) => overlay.color === "#008800",
     );
-    assert.equal(
-      overlays.find((overlay) => overlay.id === "slow-zone")?.top,
-      100,
+    const reorderedSlow = overlays.find(
+      (overlay) => overlay.color === "#880000",
     );
+    assert.equal(reorderedFast?.id, fast.id);
+    assert.equal(reorderedSlow?.id, slow.id);
+    assert.equal(reorderedFast?.top, 20);
+    assert.equal(reorderedSlow?.top, 200);
   } finally {
     instance.dispose();
   }
