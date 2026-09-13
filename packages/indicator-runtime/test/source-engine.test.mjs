@@ -77,3 +77,45 @@ test("indicator source acquisition uses the requested provider timeframe instead
   assert.equal(unsubscribeCount, 1);
   await engine.dispose();
 });
+
+test("equal indicator sources share one provider acquisition until the final lease releases", async () => {
+  let historyCount = 0;
+  let subscriptionCount = 0;
+  let unsubscribeCount = 0;
+  const dataService = {
+    async requestHistory(_providerProfileId, request) {
+      historyCount += 1;
+      return [candle(request.timeframeId, 0, 102)];
+    },
+    async subscribe() {
+      subscriptionCount += 1;
+      return {
+        async unsubscribe() {
+          unsubscribeCount += 1;
+        },
+      };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const key = {
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "standard",
+  };
+
+  const first = await engine.acquire(key);
+  const second = await engine.acquire(key);
+
+  assert.equal(historyCount, 1);
+  assert.equal(subscriptionCount, 1);
+  assert.deepEqual(first.snapshot(), second.snapshot());
+
+  await first.release();
+  assert.equal(unsubscribeCount, 0);
+  await second.release();
+  assert.equal(unsubscribeCount, 1);
+  await second.release();
+  assert.equal(unsubscribeCount, 1);
+  await engine.dispose();
+});
