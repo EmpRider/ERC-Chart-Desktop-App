@@ -369,7 +369,13 @@ between `0` and `1`.
 
 The signal engine emits committed events only for finalized bars. Provisional
 building-bar conditions do not become committed events, and identity/deduplication
-is SDK/compiler-owned. Do not add signal IDs or manual finalized-tail checks.
+is SDK/compiler-owned. When a condition depends on TA or a higher-timeframe
+source, the runtime waits until every compiler-traced dependency is ready and the
+actual source candle is confirmed; closing a lower-timeframe chart candle does not
+prematurely confirm a higher-timeframe signal. Runtime signal provenance carries
+the confirmed source candle identity/revision internally, and a corrected-history
+rebuild replaces downstream signal results. Do not add signal IDs, source-revision
+bookkeeping, or manual finalized-tail checks.
 
 ## Conditional execution
 
