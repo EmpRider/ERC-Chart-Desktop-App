@@ -10,17 +10,15 @@ export interface SignalDependency {
 }
 
 export interface SignalState {
-  readonly committed: Set<string>;
-  readonly order: string[];
+  readonly latestEventBySignal: Map<string, string>;
 }
 
 export function createSignalState(): SignalState {
-  return { committed: new Set(), order: [] };
+  return { latestEventBySignal: new Map() };
 }
 
 export function resetSignalState(state: SignalState): void {
-  state.committed.clear();
-  state.order.length = 0;
+  state.latestEventBySignal.clear();
 }
 
 function signalSourceIdentity(
@@ -143,22 +141,16 @@ export function signalEventKey(
 
 export function signalAlreadyCommitted(
   state: SignalState,
+  signalKey: string,
   eventKey: string,
 ): boolean {
-  return state.committed.has(eventKey);
+  return state.latestEventBySignal.get(signalKey) === eventKey;
 }
 
 export function commitSignalEvents(
   state: SignalState,
-  eventKeys: readonly string[],
+  events: readonly { readonly key: string; readonly eventKey: string }[],
 ): void {
-  for (const eventKey of eventKeys) {
-    if (state.committed.has(eventKey)) continue;
-    state.committed.add(eventKey);
-    state.order.push(eventKey);
-  }
-  while (state.order.length > 10_000) {
-    const oldest = state.order.shift();
-    if (oldest !== undefined) state.committed.delete(oldest);
-  }
+  for (const { key, eventKey } of events)
+    state.latestEventBySignal.set(key, eventKey);
 }

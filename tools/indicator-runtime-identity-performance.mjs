@@ -131,6 +131,7 @@ function slowState(value, openTimeMs) {
 export default defineIndicator(
   { id: "erc.indicator.runtime-identity-performance.main", name: "Runtime identity performance" },
   ({ close, openTimeMs }) => {
+    const signalAverage = ta.ema(close, 5);
     let fast;
     let slow;
     if (Math.floor(close * 10) % 2 === 0) {
@@ -140,7 +141,13 @@ export default defineIndicator(
       slow = slowState(close, openTimeMs);
       fast = fastState(close);
     }
-    signal(Number.isFinite(close) && close > 0, "long");
+    signal(
+      Number.isFinite(close) &&
+        close > 0 &&
+        Number.isFinite(signalAverage) &&
+        signalAverage > 0,
+      "long",
+    );
     plot.histogram(fast.count, { key: "fast-count", title: "Fast Count" });
     plot.histogram(slow.count, { key: "slow-count", title: "Slow Count" });
   },

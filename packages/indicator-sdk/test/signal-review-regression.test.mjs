@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { defineIndicator, signal, ta } from "../dist/index.js";
 import {
+  commitSignalEvents,
+  createSignalState,
   resolveSignalDependencies,
+  signalAlreadyCommitted,
   sourceSignalDependency,
 } from "../dist/internal/signals.js";
 
@@ -147,6 +150,25 @@ test("signal source identity distinguishes tuples that contain delimiter charact
     },
   );
   assert.equal(resolved.sources.length, 2);
+});
+
+test("signal commitments survive more than 10,000 unrelated signal events", () => {
+  const state = createSignalState();
+  const target = {
+    key: "erc-v2-signal-target",
+    eventKey: "erc-v2-signal-target:source-0",
+  };
+  commitSignalEvents(state, [target]);
+
+  for (let index = 0; index < 10_001; index += 1) {
+    const key = `erc-v2-signal-noise-${index % 127}`;
+    commitSignalEvents(state, [{ key, eventKey: `${key}:source-${index}` }]);
+  }
+
+  assert.equal(
+    signalAlreadyCommitted(state, target.key, target.eventKey),
+    true,
+  );
 });
 
 test("signals suppress true conditions while a TA dependency is still warming up", () => {

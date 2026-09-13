@@ -937,7 +937,11 @@ function signalTypeIsArray(type, resolving = new Set()) {
     current.getSourceFile(),
     current.typeName.text,
   );
-  if (!ts.isTypeAliasDeclaration(declaration) || resolving.has(declaration))
+  if (
+    declaration === undefined ||
+    !ts.isTypeAliasDeclaration(declaration) ||
+    resolving.has(declaration)
+  )
     return false;
   resolving.add(declaration);
   const result = signalTypeIsArray(declaration.type, resolving);
@@ -981,7 +985,11 @@ function signalArrayElementType(type, resolving = new Set()) {
     current.getSourceFile(),
     current.typeName.text,
   );
-  if (!ts.isTypeAliasDeclaration(declaration) || resolving.has(declaration))
+  if (
+    declaration === undefined ||
+    !ts.isTypeAliasDeclaration(declaration) ||
+    resolving.has(declaration)
+  )
     return undefined;
   resolving.add(declaration);
   const result = signalArrayElementType(declaration.type, resolving);

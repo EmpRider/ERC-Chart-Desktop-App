@@ -869,6 +869,23 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   assert.deepEqual(signalCallsite.chartSeries, ["close"]);
 });
 
+test("signal dependency tracing fails closed for unresolved named array types without crashing", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+import type { ExternalZones } from "./external-types.js";
+function blocked(zones: ExternalZones, value: number) {
+  return zones.some(() => value > 0);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked([] as unknown as ExternalZones, close), "long");
+});
+`),
+    /signal condition helper blocked invokes a callable that cannot be resolved/u,
+  );
+});
+
 test("signal dependency tracing follows explicit helper return types for array properties", async () => {
   const result = await transform(`
 import { defineIndicator, signal } from "@erc-chart/indicator-sdk";

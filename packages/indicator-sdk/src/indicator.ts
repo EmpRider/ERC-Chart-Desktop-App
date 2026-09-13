@@ -350,10 +350,7 @@ export function defineIndicator(
           if (overlays !== previousOverlays || emitted.length > 0)
             visualRevision += 1;
           if (phase === "finalized") {
-            commitSignalEvents(
-              signalState,
-              frame.signals.map((value) => value.eventKey),
-            );
+            commitSignalEvents(signalState, frame.signals);
             signals.push(...emitted);
             if (signals.length > 10_000)
               signals.splice(0, signals.length - 10_000);

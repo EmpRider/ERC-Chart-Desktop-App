@@ -127,7 +127,7 @@ export function signal(
     [...new Set(dependencyIdentities)],
     frame.candle.openTimeMs,
   );
-  if (signalAlreadyCommitted(frame.signalState, eventKey)) return;
+  if (signalAlreadyCommitted(frame.signalState, key, eventKey)) return;
   frame.signals.push({
     key,
     eventKey,
