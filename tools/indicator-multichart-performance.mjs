@@ -66,8 +66,8 @@ try {
     `One authored chart exceeded the ${historyBudgetMs} ms history budget: ${maximumHistoryMs}`,
   );
 
-  const stablePointArrays = charts.map(({ instance }) =>
-    instance.snapshot().points,
+  const stablePointArrays = charts.map(
+    ({ instance }) => instance.snapshot().points,
   );
   for (let warmup = 0; warmup < 20; warmup += 1) {
     for (const { chartIndex, instance } of charts) {
@@ -100,10 +100,7 @@ try {
         performance.now() - updateStarted,
       );
     }
-    maximumSweepMs = Math.max(
-      maximumSweepMs,
-      performance.now() - sweepStarted,
-    );
+    maximumSweepMs = Math.max(maximumSweepMs, performance.now() - sweepStarted);
   }
   const buildingElapsedMs = performance.now() - buildingStarted;
   assert.ok(
