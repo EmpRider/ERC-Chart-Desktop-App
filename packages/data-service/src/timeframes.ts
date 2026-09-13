@@ -10,6 +10,21 @@ export interface TimeframePlan {
   readonly source: ProviderTimeframeCapability;
 }
 
+export interface EffectiveIndicatorTimeframe {
+  readonly id: string;
+  readonly seconds: number;
+  readonly native: boolean;
+  readonly historical: boolean;
+  readonly live: boolean;
+  readonly sourceTimeframeId: string;
+}
+
+export interface EffectiveIndicatorTimeframeResolution {
+  readonly requestedTimeframeId: string;
+  readonly active: EffectiveIndicatorTimeframe;
+  readonly usedFallback: boolean;
+}
+
 export function parseTimeframeSeconds(timeframeId: string): number | undefined {
   const match = /^(\d+)(s|m|h|d)$/u.exec(timeframeId);
   if (match === null) return undefined;
@@ -71,11 +86,90 @@ export function resolveTimeframePlan(
     !source.native ||
     target.seconds % source.seconds !== 0 ||
     target.alignment.mode !== source.alignment.mode ||
-    target.alignment.originMs !== source.alignment.originMs
+    target.alignment.originMs !== source.alignment.originMs ||
+    target.alignment.timeZone !== source.alignment.timeZone
   ) {
     throw new RangeError("Provider-derived timeframe declaration is invalid.");
   }
   return Object.freeze({ target, source });
+}
+
+function isDeclaredDerivedTimeframe(
+  capabilities: ProviderCapabilities,
+  timeframeId: string,
+): boolean {
+  if (!capabilities.derivedTimeframes) return false;
+  return (
+    capabilities.derivedTimeframeIds === undefined ||
+    capabilities.derivedTimeframeIds.includes(timeframeId)
+  );
+}
+
+function effectiveTimeframeFromPlan(
+  plan: TimeframePlan,
+): EffectiveIndicatorTimeframe {
+  const historical = plan.target.historical && plan.source.historical;
+  const live = plan.target.live && plan.source.live;
+  return Object.freeze({
+    id: plan.target.id,
+    seconds: plan.target.seconds,
+    native: plan.target.native,
+    historical,
+    live,
+    sourceTimeframeId: plan.source.id,
+  });
+}
+
+export function effectiveIndicatorTimeframes(
+  capabilities: ProviderCapabilities,
+): readonly EffectiveIndicatorTimeframe[] {
+  const nativeIds = new Set(capabilities.nativeTimeframes);
+  const effective: EffectiveIndicatorTimeframe[] = [];
+  for (const timeframe of timeframeCapabilities(capabilities)) {
+    if (timeframe.native) {
+      if (!nativeIds.has(timeframe.id)) continue;
+    } else if (!isDeclaredDerivedTimeframe(capabilities, timeframe.id)) {
+      continue;
+    }
+
+    try {
+      const plan = resolveTimeframePlan(capabilities, timeframe.id);
+      if (!nativeIds.has(plan.source.id)) continue;
+      effective.push(effectiveTimeframeFromPlan(plan));
+    } catch (error) {
+      if (error instanceof RangeError) continue;
+      throw error;
+    }
+  }
+  return Object.freeze(effective);
+}
+
+export function resolveEffectiveIndicatorTimeframe(
+  capabilities: ProviderCapabilities,
+  requestedTimeframeId: string,
+  fallbackTimeframeId: string,
+): EffectiveIndicatorTimeframeResolution {
+  const effective = effectiveIndicatorTimeframes(capabilities);
+  const requested = effective.find(({ id }) => id === requestedTimeframeId);
+  if (requested !== undefined) {
+    return Object.freeze({
+      requestedTimeframeId,
+      active: requested,
+      usedFallback: false,
+    });
+  }
+
+  const fallback = effective.find(({ id }) => id === fallbackTimeframeId);
+  if (fallback === undefined) {
+    throw new RangeError(
+      `Requested timeframe ${requestedTimeframeId} is unavailable and fallback ${fallbackTimeframeId} is unavailable.`,
+    );
+  }
+  return Object.freeze({
+    requestedTimeframeId,
+    active: fallback,
+    usedFallback: true,
+  });
 }
 
 export function alignedOpenTime(
