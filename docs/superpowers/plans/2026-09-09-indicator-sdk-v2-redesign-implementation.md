@@ -56,6 +56,8 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 
 **ECDD-232 sequencing update (2026-09-14):** ECDD-232 completed the candle-transform registry and Heikin Ashi source semantics via PR #145 / squash merge `198cd4c64a763841e4d42a8aed510655ec308436`. The shipped path applies candle transformation after target-timeframe construction, keeps standard/Heikin-Ashi source identities distinct, carries synthetic provenance into the worker boundary, and preserves recursive HA state across provisional replacement and the bounded 100,000-bar source window. Detailed Task 12 is therefore complete. Task 13 source-confirmed/no-lookahead signal semantics are the next SDK-v2 implementation task; Phase 16 remains open for that signal/replay acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final global acceptance pass.
 
+**ECDD-233 sequencing update (2026-09-14):** ECDD-233 completed source-confirmed/no-lookahead signal semantics via PR #147 / squash merge `eb4b9b78b47d79f72c354abc436b78eed42ab374`. The shipped path traces chart/TA dependencies at compile time, suppresses unready/provisional events, keys finalized signal identity to confirmed source candles, carries source revision/synthetic provenance internally, preserves replay/live equivalence, and invalidates corrected-history downstream signals. Detailed Task 13 is therefore complete. Detailed Task 14 is next, but it must build on rather than duplicate the provenance fields already required by Task 13: its remaining scope is the broader validated worker/runtime v2 transport/delta contract, stale generation/revision rejection, and bounded output acceptance. Phase 16 remains open for that contract work, later renderer/global acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final end-to-end pass.
+
 ---
 
 ## Planned File Structure
@@ -785,6 +787,8 @@ git commit -m "feat(indicators): add Heikin Ashi source transforms"
 
 ### Task 13: Rebuild signal semantics around source confirmation and no-lookahead
 
+**Status:** Complete via ECDD-233 / PR #147 / squash merge `eb4b9b78b47d79f72c354abc436b78eed42ab374`.
+
 **Files:**
 
 - Rewrite: `packages/indicator-sdk/src/signal.ts`
@@ -803,33 +807,33 @@ signal(sell, signal.short);
 
 Internal event identity/provenance is host-owned.
 
-- [ ] **Step 1: Add failing warm-up test**
+- [x] **Step 1: Add failing warm-up test**
 
 A crossover whose TA inputs are unavailable must not emit a signal.
 
-- [ ] **Step 2: Add failing repeated-building-update test**
+- [x] **Step 2: Add failing repeated-building-update test**
 
 Provisional condition changes must not create duplicate finalized events.
 
-- [ ] **Step 3: Add failing higher-timeframe confirmation test**
+- [x] **Step 3: Add failing higher-timeframe confirmation test**
 
 With chart `5m` and signal source `1h`, closing a 5m candle must not finalize the 1h signal.
 
-- [ ] **Step 4: Add failing replay-vs-live equivalence test**
+- [x] **Step 4: Add failing replay-vs-live equivalence test**
 
 Finalized signal sequence must match between full history replay and incremental bar updates.
 
-- [ ] **Step 5: Implement hidden signal identity, committed/provisional signal state, source confirmation, and deduplication**
+- [x] **Step 5: Implement hidden signal identity, committed/provisional signal state, source confirmation, and deduplication**
 
-- [ ] **Step 6: Attach source revision and synthetic provenance to runtime events**
+- [x] **Step 6: Attach source revision and synthetic provenance to runtime events**
 
-- [ ] **Step 7: Add corrected-history invalidation test**
+- [x] **Step 7: Add corrected-history invalidation test**
 
 Rebuild must remove/replace downstream signals affected by corrected source candles.
 
-- [ ] **Step 8: Run focused signal/runtime tests**
+- [x] **Step 8: Run focused signal/runtime tests**
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add packages/indicator-sdk/src/signal.ts packages/indicator-sdk/src/internal/signals.ts packages/indicator-runtime/src packages/contracts/src/indicator-management.ts packages/indicator-sdk/test packages/indicator-runtime/test
@@ -839,6 +843,8 @@ git commit -m "feat(indicators): enforce safe signal semantics"
 ---
 
 ### Task 14: Evolve worker/runtime contracts for v2 provenance and deltas
+
+**Reassessment after Task 13:** Source generation/revision and market/synthetic provenance fields already cross the worker boundary because Task 13 needs them for signal correctness. Do not recreate that model. Task 14 should complete and lock the broader plain-data worker contract: validation fixtures, stale source/config generation rejection, incremental delta correctness, and bounded result/output behavior.
 
 **Files:**
 
@@ -1209,6 +1215,16 @@ Append dated entries here as phases complete. Keep old entries; do not rewrite h
 - Exact-head Delivery run `34780230350` passed governance, the pinned-toolchain Linux application suite, Electron smokes, build, performance, audit, version checks, and aggregate delivery; Semgrep and CodeRabbit also passed. Windows was intentionally skipped by the task-to-epic policy.
 - Final local verification passed 592 unit tests with 2 expected Windows capability skips, 154 integration tests, all focused Task 12 tests, the performance suite, audit with zero vulnerabilities, and version checks.
 - Detailed Task 12 is complete. Task 13 source-confirmation/no-lookahead signal semantics remain next; global Phase 16 also remains open for later dependency-DAG and end-to-end acceptance.
+
+### 2026-09-14 — ECDD-233 source-confirmed signal semantics completed
+
+- ECDD-233 was squash-merged into `epic/ECDD-135-sdk-v2-optimization` as `eb4b9b78b47d79f72c354abc436b78eed42ab374` via PR #147; the final implementation head was `38e974d943d5a06cfc0f89351ee6366b73fe4719`.
+- Signals now commit only when compiler-traced chart/TA dependencies are ready and their actual source candles are confirmed. A lower-timeframe chart close cannot prematurely finalize a higher-timeframe signal; source revision and market/synthetic provenance remain host-owned runtime metadata.
+- Warm-up suppression, repeated-building deduplication, higher-timeframe confirmation, replay/live equivalence, corrected-history invalidation, chart-series readiness, source-identity collision resistance, and more-than-10,000 unrelated-event commitment retention are covered by focused regressions.
+- Final review fixed three concrete gaps before merge: committed events are retained per signal callsite instead of a global FIFO, unresolved named array types fail closed instead of crashing the authoring transform, and the runtime identity benchmark again exercises a TA-dependent signal path.
+- Exact-head Delivery run `34789465694` passed governance, the pinned-toolchain Linux application suite, Electron smokes, build, performance, audit, version checks, and aggregate delivery; Semgrep and the required CodeRabbit status also passed. Windows was intentionally skipped by the task-to-epic policy. All review conversations were resolved; a fresh manual CodeRabbit rerun was skipped after the exact-head capacity check reported a 37-minute rate limit, as allowed for task-to-epic work.
+- Final local verification passed 604 unit tests with 2 expected Windows symlink capability skips, 191/191 integration tests, all focused signal/compiler regressions, the complete performance suite, maintained ATR Rope/UT Bot package build, audit with zero vulnerabilities, version checks, and `git diff --check`.
+- Detailed Task 13 is complete. Task 14 worker/runtime contract evolution is next; it should reuse Task 13's provenance model and close the remaining transport validation/delta/stale-generation/bounded-output acceptance rather than duplicate signal semantics. Global Phase 16 remains open for that work, later renderer/global acceptance, dependency-DAG validation, and final end-to-end verification.
 
 ---
 
