@@ -213,3 +213,67 @@ test("derived indicator source delegates acquisition to the provider data planne
   await engine.dispose();
   await dataService.shutdown();
 });
+
+test("live source revisions replace provisional candles without accepting stale updates", async () => {
+  let liveSink;
+  const dataService = {
+    async requestHistory() {
+      return [candle("1m", 0, 100)];
+    },
+    async subscribe(_providerProfileId, _request, sink) {
+      liveSink = sink;
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const source = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "standard",
+  });
+
+  assert.equal(source.snapshot().generation, 0);
+  assert.equal(source.snapshot().revision, 0);
+
+  liveSink.onCandles([candle("1m", 60_000, 103)], {
+    generation: 1,
+    revision: 1,
+    previousRevision: 0,
+    kind: "incremental",
+  });
+  assert.equal(source.snapshot().generation, 1);
+  assert.equal(source.snapshot().revision, 1);
+  assert.deepEqual(
+    source.snapshot().candles.map(({ openTimeMs, close }) => ({
+      openTimeMs,
+      close,
+    })),
+    [
+      { openTimeMs: 0, close: 100 },
+      { openTimeMs: 60_000, close: 103 },
+    ],
+  );
+
+  liveSink.onCandles([candle("1m", 60_000, 104)], {
+    generation: 1,
+    revision: 2,
+    previousRevision: 1,
+    kind: "incremental",
+  });
+  assert.equal(source.snapshot().revision, 2);
+  assert.equal(source.snapshot().candles.length, 2);
+  assert.equal(source.snapshot().candles.at(-1).close, 104);
+
+  liveSink.onCandles([candle("1m", 60_000, 999)], {
+    generation: 1,
+    revision: 1,
+    previousRevision: 0,
+    kind: "incremental",
+  });
+  assert.equal(source.snapshot().revision, 2);
+  assert.equal(source.snapshot().candles.at(-1).close, 104);
+
+  await source.release();
+  await engine.dispose();
+});
