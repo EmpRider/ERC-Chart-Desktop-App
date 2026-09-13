@@ -42,6 +42,14 @@ export const textSize: Readonly<{
 
 export type TextSize = (typeof textSize)[keyof typeof textSize];
 
+export const timeframe: Readonly<{
+  chart: "chart";
+}> = Object.freeze({
+  chart: "chart",
+});
+
+export type TimeframeSelection = string;
+
 const shapeKinds = new Set<string>(Object.values(shape));
 const shapeLocations = new Set<string>(Object.values(location));
 const textSizes = new Set<string>(Object.values(textSize));

@@ -142,7 +142,7 @@ test("production shell delivers canonical corrections and coalesced revisions to
               contents:
                 path === "chart"
                   ? "export const getSupportedIndicators = () => []; export const init = () => globalThis.__seriesFixture.chart; export const dispose = () => {}; export const registerIndicator = value => globalThis.__seriesFixture.registerIndicator(value);"
-                  : "export const createBrowserIndicatorRuntime = () => globalThis.__seriesFixture.runtime;",
+                  : "export const createRendererIndicatorSourceDataService = bridge => bridge; export const createBrowserIndicatorRuntime = () => globalThis.__seriesFixture.runtime;",
             }),
           );
         },

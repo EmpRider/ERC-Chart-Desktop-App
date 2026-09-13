@@ -2,12 +2,14 @@ import {
   indicatorSdkVersion,
   defineIndicator,
   history,
+  indicator,
   input,
   location,
   plot,
   shape,
   ta,
   textSize,
+  timeframe,
   type IndicatorDefinition,
   type IndicatorInputDefinition,
 } from "../src/index.js";
@@ -24,7 +26,14 @@ export const authored = defineIndicator(
   { id: "fixture.authored", name: "Authored" },
   ({ close, volume }) => {
     const length: number = input.int(14, { title: "Length" });
+    const selectedTimeframe: string = input.timeframe(
+      timeframe.chart,
+      "Timeframe",
+    );
+    indicator.timeframe(selectedTimeframe);
     const value: number = ta.ema(close, length);
+    const higherTimeframeValue: number = ta.ema(200, "1h");
+    const explicitHigherTimeframeValue: number = ta.ema(close, 21, "1h");
     const atr: number = ta.atr(length);
     const rsi: number = ta.rsi(length);
     // Raw TypeScript applies noUncheckedIndexedAccess before the package
@@ -45,6 +54,8 @@ export const authored = defineIndicator(
         previousByAt +
         previousByFunction +
         previousDerived +
+        higherTimeframeValue +
+        explicitHigherTimeframeValue +
         currentVolume +
         previousVolumeByAt +
         previousVolumeByFunction,
@@ -63,8 +74,6 @@ export const authored = defineIndicator(
     plot.shape(value > 0, shape.labelUp, "BUY");
     // @ts-expect-error the authoring plot API accepts scalars, never historical arrays
     plot.line([value]);
-    // @ts-expect-error implicit foreign timeframe acquisition is not implemented
-    ta.ema(14, "1h");
   },
 );
 

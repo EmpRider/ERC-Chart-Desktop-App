@@ -71,9 +71,16 @@ export interface IndicatorWorkerExecutionRequest {
   readonly instrumentId: string;
   readonly timeframeId: string;
   readonly parameters: IndicatorParameterValues;
+  readonly sources?: readonly IndicatorWorkerSourceSnapshot[];
   readonly data: IndicatorWorkerDataUpdate;
   readonly dataRevision: number;
   readonly configGeneration: number;
+}
+
+export interface IndicatorWorkerSourceSnapshot {
+  readonly timeframeId: string;
+  readonly activeTimeframeId?: string;
+  readonly candles: readonly Candle[];
 }
 
 export type IndicatorWorkerDataUpdate =
@@ -456,3 +463,17 @@ export function createIndicatorWorkerSupervisor(
     },
   };
 }
+
+export { createIndicatorSourceEngine } from "./source-engine.js";
+export type {
+  IndicatorCandleType,
+  IndicatorSourceDataService,
+  IndicatorSourceEngine,
+  IndicatorSourceHistoryRequest,
+  IndicatorSourceKey,
+  IndicatorSourceLease,
+  IndicatorSourceLiveRequest,
+  IndicatorSourceLiveSink,
+  IndicatorSourceSnapshot,
+  IndicatorSourceSubscription,
+} from "./source-engine.js";

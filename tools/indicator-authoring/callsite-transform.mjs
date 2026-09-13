@@ -7,6 +7,8 @@ import {
 
 const sdkModule = "@erc-chart/indicator-sdk";
 const sdkRoots = new Set([
+  "defineIndicator",
+  "indicator",
   "input",
   "location",
   "plot",
@@ -15,6 +17,16 @@ const sdkRoots = new Set([
   "signal",
   "ta",
   "textSize",
+]);
+const builtInSeriesNames = new Set([
+  "open",
+  "high",
+  "low",
+  "close",
+  "volume",
+  "hl2",
+  "hlc3",
+  "ohlc4",
 ]);
 const sdkConstantValues = Object.freeze({
   shape: Object.freeze({
@@ -125,6 +137,84 @@ function propertyPath(expression) {
     current = current.expression;
   }
   return ts.isIdentifier(current) ? { root: current.text, parts } : undefined;
+}
+
+function directIndicatorSeriesSource(expression, bindings) {
+  if (!ts.isIdentifier(expression)) return undefined;
+  const requestedName = expression.text;
+  let current = expression.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (ts.isFunctionLike(current)) {
+      const parent = current.parent;
+      if (
+        !(
+          (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) &&
+          ts.isCallExpression(parent) &&
+          parent.arguments[1] === current &&
+          ts.isIdentifier(parent.expression) &&
+          bindings.get(parent.expression.text) === "defineIndicator"
+        )
+      )
+        return undefined;
+      const parameter = current.parameters[0];
+      if (parameter === undefined || !ts.isObjectBindingPattern(parameter.name))
+        return undefined;
+      for (const element of parameter.name.elements) {
+        if (!ts.isIdentifier(element.name) || element.name.text !== requestedName)
+          continue;
+        const sourceName =
+          element.propertyName === undefined
+            ? element.name.text
+            : ts.isIdentifier(element.propertyName)
+              ? element.propertyName.text
+              : undefined;
+        return sourceName !== undefined && builtInSeriesNames.has(sourceName)
+          ? sourceName
+          : undefined;
+      }
+      return undefined;
+    }
+    const names = scopedNames(current);
+    if (names?.has(requestedName)) return undefined;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function variableInitializerForReference(identifier) {
+  const requestedName = identifier.text;
+  let current = identifier.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (ts.isBlock(current) || ts.isCaseBlock(current)) {
+      const statements = ts.isCaseBlock(current)
+        ? current.clauses.flatMap((clause) => [...clause.statements])
+        : current.statements;
+      for (const statement of statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.name.text === requestedName
+          )
+            return declaration.initializer;
+        }
+      }
+    }
+    if (ts.isFunctionLike(current)) return undefined;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function timeframeInputCallForExpression(expression, callsiteByNode) {
+  if (ts.isCallExpression(expression)) {
+    const metadata = callsiteByNode.get(expression)?.metadata;
+    return metadata?.callee === "input.timeframe" ? expression : undefined;
+  }
+  if (!ts.isIdentifier(expression)) return undefined;
+  const initializer = variableInitializerForReference(expression);
+  if (initializer === undefined) return undefined;
+  return timeframeInputCallForExpression(initializer, callsiteByNode);
 }
 
 function classifyCall(node, bindings) {
@@ -459,6 +549,14 @@ function callsiteDeclaration(factory, name, metadata) {
         "callee",
         factory.createStringLiteral(metadata.callee),
       ),
+      ...(metadata.seriesSource === undefined
+        ? []
+        : [
+            factory.createPropertyAssignment(
+              "seriesSource",
+              factory.createStringLiteral(metadata.seriesSource),
+            ),
+          ]),
       factory.createPropertyAssignment("source", source),
     ],
     false,
@@ -504,6 +602,7 @@ export function transformIndicatorCallsites(
   const callsById = new Map();
   const callsites = [];
   const plotDeclarations = [];
+  const indicatorTimeframeCalls = [];
 
   const collect = (node, bindings, namespaceLike) => {
     if (ts.isCallExpression(node)) {
@@ -521,6 +620,13 @@ export function transformIndicatorCallsites(
         );
       }
       const classified = classifyCall(node, bindings);
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        bindings.get(node.expression.expression.text) === "indicator" &&
+        node.expression.name.text === "timeframe"
+      )
+        indicatorTimeframeCalls.push(node);
       if (classified !== undefined) {
         const parts = {
           sourceFileId: sourceFileId.replaceAll("\\", "/"),
@@ -551,6 +657,14 @@ export function transformIndicatorCallsites(
           id,
           kind: classified.kind,
           callee: classified.callee,
+          ...(classified.kind !== "ta" || node.arguments[0] === undefined
+            ? {}
+            : {
+                seriesSource: directIndicatorSeriesSource(
+                  node.arguments[0],
+                  bindings,
+                ),
+              }),
           source: sourceLocation(node, sourceFile, sourceFileId),
         });
         callsiteByNode.set(node, {
@@ -581,6 +695,16 @@ export function transformIndicatorCallsites(
   };
 
   collect(sourceFile, rootBindings.named, rootBindings.namespaceLike);
+  const timeframeInputKeyByCall = new Map();
+  for (const call of indicatorTimeframeCalls) {
+    const argument = call.arguments[0];
+    if (argument === undefined) continue;
+    const inputCall = timeframeInputCallForExpression(argument, callsiteByNode);
+    const metadata =
+      inputCall === undefined ? undefined : callsiteByNode.get(inputCall)?.metadata;
+    if (metadata?.callee === "input.timeframe")
+      timeframeInputKeyByCall.set(call, metadata.id);
+  }
   if (callsites.length === 0)
     return {
       code: sourceText,
@@ -596,6 +720,20 @@ export function transformIndicatorCallsites(
   const transformer = (context) => {
     const { factory } = context;
     const visit = (node) => {
+      const timeframeInputKey = timeframeInputKeyByCall.get(node);
+      if (timeframeInputKey !== undefined && ts.isCallExpression(node)) {
+        const expression = ts.visitNode(node.expression, visit);
+        const transformedArguments = node.arguments.map((argument) =>
+          ts.visitNode(argument, visit),
+        );
+        transformedArguments.push(factory.createStringLiteral(timeframeInputKey));
+        return factory.updateCallExpression(
+          node,
+          expression,
+          node.typeArguments,
+          transformedArguments,
+        );
+      }
       const callsite = callsiteByNode.get(node);
       if (callsite !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);

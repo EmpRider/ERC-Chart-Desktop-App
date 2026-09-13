@@ -48,6 +48,18 @@ export interface PluginIndicatorSettingsField {
   readonly editor?: "text" | "color" | "timeframe";
 }
 
+export interface PluginIndicatorSourcePlan {
+  readonly requestedTimeframeId: string;
+  readonly activeTimeframeId: string;
+  readonly usedFallback: boolean;
+  readonly taTimeframeIds: readonly string[];
+  readonly taSources: readonly {
+    readonly requestedTimeframeId: string;
+    readonly activeTimeframeId: string;
+    readonly usedFallback: boolean;
+  }[];
+}
+
 type PluginIndicatorFigureData = Record<string, number | null | string>;
 
 function colorFieldKey(outputKey: string): string {
@@ -63,7 +75,13 @@ interface RuntimeContext {
   summary: InstalledIndicatorSummary;
   providerProfileId: string;
   instrumentId: string;
+  chartTimeframeId: string;
   timeframeId: string;
+  sourceTimeframeIds: readonly string[];
+  sourceTimeframes: readonly {
+    readonly requestedTimeframeId: string;
+    readonly activeTimeframeId: string;
+  }[];
   sync: PluginIndicatorSync;
   rows?: PluginIndicatorFigureData[];
   overlays: readonly IndicatorRuntimeOverlay[];
@@ -121,7 +139,7 @@ function fullSnapshotData(
   kind: "snapshot" | "rebuild",
 ) {
   const candles = dataList.map((data) =>
-    toCandle(data, context.instrumentId, context.timeframeId),
+    toCandle(data, context.instrumentId, context.chartTimeframeId),
   );
   context.lastCandleCount = candles.length;
   context.lastBuilding = candles.at(-1);
@@ -147,7 +165,7 @@ function incrementalDataUpdate(
     const current = toCandle(
       currentData,
       context.instrumentId,
-      context.timeframeId,
+      context.chartTimeframeId,
     );
     if (!sameCandleIdentity(previousBuilding, current))
       return fullSnapshotData(dataList, context, "rebuild");
@@ -168,12 +186,12 @@ function incrementalDataUpdate(
     const finalized = toCandle(
       finalizedData,
       context.instrumentId,
-      context.timeframeId,
+      context.chartTimeframeId,
     );
     const building = toCandle(
       buildingData,
       context.instrumentId,
-      context.timeframeId,
+      context.chartTimeframeId,
     );
     if (
       !sameCandleIdentity(previousBuilding, finalized) ||
@@ -194,6 +212,11 @@ function calculationKey(
   providerProfileId: string,
   instrumentId: string,
   timeframeId: string,
+  sourceTimeframes: readonly {
+    readonly requestedTimeframeId: string;
+    readonly activeTimeframeId: string;
+  }[] = [],
+  chartTimeframeId = timeframeId,
 ): string {
   return JSON.stringify({
     pluginId: indicator.pluginId,
@@ -202,6 +225,8 @@ function calculationKey(
     providerProfileId,
     instrumentId,
     timeframeId,
+    chartTimeframeId,
+    sourceTimeframes,
     parameters: normalizePluginIndicatorParameters(
       indicator,
       summary.definition,
@@ -245,8 +270,84 @@ export function createPluginWorkspaceIndicator(
 
 export function pluginIndicatorSettingsFields(
   definition: InstalledIndicatorDefinition,
+  availableTimeframeIds?: readonly string[],
+  chartTimeframeId?: string,
+  parameters: Readonly<Record<string, unknown>> = {},
 ): readonly PluginIndicatorSettingsField[] {
-  return definition.inputs.map((input) => ({ ...input }));
+  return definition.inputs.map((input) => {
+    if (
+      input.type !== "string" ||
+      input.editor !== "timeframe" ||
+      availableTimeframeIds === undefined ||
+      chartTimeframeId === undefined
+    ) {
+      return { ...input };
+    }
+    const options = [
+      { value: "chart", label: `Chart (${chartTimeframeId})` },
+      ...availableTimeframeIds
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .map((value) => ({ value, label: value })),
+    ];
+    const requested = parameters[input.key];
+    if (
+      typeof requested === "string" &&
+      requested !== "chart" &&
+      !options.some(({ value }) => value === requested)
+    ) {
+      options.push({ value: requested, label: `${requested} (Unavailable)` });
+    }
+    return { ...input, options };
+  });
+}
+
+export function resolvePluginIndicatorSourcePlan(
+  indicator: WorkspaceIndicator,
+  definition: InstalledIndicatorDefinition,
+  chartTimeframeId: string,
+  availableTimeframeIds: readonly string[],
+): PluginIndicatorSourcePlan {
+  const available = new Set(availableTimeframeIds);
+  const declaration = definition.source?.timeframe;
+  const configured =
+    declaration?.inputKey === undefined
+      ? declaration?.requestedTimeframeId
+      : indicator.parameters[declaration.inputKey];
+  const requestedTimeframeId =
+    typeof configured === "string" && configured.length > 0
+      ? configured
+      : (declaration?.requestedTimeframeId ?? "chart");
+  const requestedActiveTimeframeId =
+    requestedTimeframeId === "chart" ? chartTimeframeId : requestedTimeframeId;
+  const activeTimeframeId = available.has(requestedActiveTimeframeId)
+    ? requestedActiveTimeframeId
+    : chartTimeframeId;
+  const taSources = (definition.source?.taTimeframeIds ?? []).map(
+    (requestedTaTimeframeId) => {
+      const requestedActiveTimeframeId =
+        requestedTaTimeframeId === "chart"
+          ? chartTimeframeId
+          : requestedTaTimeframeId;
+      const activeTaTimeframeId = available.has(requestedActiveTimeframeId)
+        ? requestedActiveTimeframeId
+        : chartTimeframeId;
+      return Object.freeze({
+        requestedTimeframeId: requestedTaTimeframeId,
+        activeTimeframeId: activeTaTimeframeId,
+        usedFallback: activeTaTimeframeId !== requestedActiveTimeframeId,
+      });
+    },
+  );
+  const taTimeframeIds = [
+    ...new Set(taSources.map(({ activeTimeframeId }) => activeTimeframeId)),
+  ];
+  return Object.freeze({
+    requestedTimeframeId,
+    activeTimeframeId,
+    usedFallback: activeTimeframeId !== requestedActiveTimeframeId,
+    taTimeframeIds: Object.freeze(taTimeframeIds),
+    taSources: Object.freeze(taSources),
+  });
 }
 
 export function updatePluginIndicatorParameters(
@@ -453,14 +554,65 @@ function rowForPoint(point: IndicatorRuntimePoint): PluginIndicatorFigureData {
   };
 }
 
-function rowsForSnapshot(
+export function alignPluginIndicatorSnapshotRows(
   dataList: readonly KLineData[],
   snapshot: IndicatorRuntimeSnapshot,
+  sourceTimeframeId?: string,
+  chartTimeframeId?: string,
 ): PluginIndicatorFigureData[] {
+  const sourceDuration =
+    sourceTimeframeId === undefined
+      ? undefined
+      : timeframeDurationMs(sourceTimeframeId);
+  const chartDuration =
+    chartTimeframeId === undefined
+      ? undefined
+      : timeframeDurationMs(chartTimeframeId);
+  if (
+    sourceDuration !== undefined &&
+    chartDuration !== undefined &&
+    sourceTimeframeId !== chartTimeframeId
+  ) {
+    const points = [...snapshot.points].sort(
+      (left, right) => left.openTimeMs - right.openTimeMs,
+    );
+    let pointIndex = 0;
+    let latest: PluginIndicatorFigureData | undefined;
+    return dataList.map((data) => {
+      const chartCloseTimeMs = data.timestamp + chartDuration;
+      while (pointIndex < points.length) {
+        const point = points[pointIndex];
+        if (
+          point === undefined ||
+          point.openTimeMs + sourceDuration > chartCloseTimeMs
+        )
+          break;
+        latest = rowForPoint(point);
+        pointIndex += 1;
+      }
+      return latest ?? {};
+    });
+  }
   const points = new Map(
     snapshot.points.map((point) => [point.openTimeMs, rowForPoint(point)]),
   );
   return dataList.map((data) => points.get(data.timestamp) ?? {});
+}
+
+function timeframeDurationMs(timeframeId: string): number | undefined {
+  const match = /^(\d+)(s|m|h|d)$/u.exec(timeframeId);
+  if (match === null) return undefined;
+  const amount = Number(match[1]);
+  const multiplier =
+    match[2] === "s"
+      ? 1_000
+      : match[2] === "m"
+        ? 60_000
+        : match[2] === "h"
+          ? 3_600_000
+          : 86_400_000;
+  const result = amount * multiplier;
+  return Number.isSafeInteger(result) && result > 0 ? result : undefined;
 }
 
 function applyWorkerResult(
@@ -471,7 +623,12 @@ function applyWorkerResult(
   candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
-    context.rows = rowsForSnapshot(dataList, result.snapshot);
+    context.rows = alignPluginIndicatorSnapshotRows(
+      dataList,
+      result.snapshot,
+      context.timeframeId,
+      context.chartTimeframeId,
+    );
     const first = dataList[0]?.timestamp;
     if (first !== undefined) rowStartTimes.set(context.rows, first);
     context.overlays = result.snapshot.overlays;
@@ -578,6 +735,7 @@ export function reconcilePluginIndicators(
   timeframeId: string,
   previousManagedRuntimeIds: ReadonlySet<string> = new Set(),
   providerProfileId = "",
+  availableTimeframeIds: readonly string[] = [timeframeId],
 ): PluginIndicatorReconciliation {
   const summaries = new Map(
     installed.map((summary) => [
@@ -616,11 +774,19 @@ export function reconcilePluginIndicators(
   for (const { indicator, summary, runtimeId } of desired) {
     const name = registrationName(summary);
     const previousContext = contexts.get(runtimeId);
+    const sourcePlan = resolvePluginIndicatorSourcePlan(
+      indicator,
+      summary.definition,
+      timeframeId,
+      availableTimeframeIds,
+    );
     const nextCalculationKey = calculationKey(
       indicator,
       summary,
       providerProfileId,
       instrumentId,
+      sourcePlan.activeTimeframeId,
+      sourcePlan.taSources,
       timeframeId,
     );
     const previousCalculationKey =
@@ -632,6 +798,8 @@ export function reconcilePluginIndicators(
             previousContext.providerProfileId,
             previousContext.instrumentId,
             previousContext.timeframeId,
+            previousContext.sourceTimeframes,
+            previousContext.chartTimeframeId,
           );
     const sameConfiguration = previousCalculationKey === nextCalculationKey;
     const nextContext: RuntimeContext = {
@@ -639,7 +807,15 @@ export function reconcilePluginIndicators(
       summary,
       providerProfileId,
       instrumentId,
-      timeframeId,
+      chartTimeframeId: timeframeId,
+      timeframeId: sourcePlan.activeTimeframeId,
+      sourceTimeframeIds: sourcePlan.taTimeframeIds,
+      sourceTimeframes: sourcePlan.taSources.map(
+        ({ requestedTimeframeId, activeTimeframeId }) => ({
+          requestedTimeframeId,
+          activeTimeframeId,
+        }),
+      ),
       sync: sync as PluginIndicatorSync,
       overlays:
         sameConfiguration && previousContext !== undefined
@@ -775,8 +951,11 @@ export function reconcilePluginIndicators(
                   runtimeEntryUrl: context.summary.runtimeEntryUrl,
                   pluginId: context.indicator.pluginId,
                   definitionId: context.indicator.definitionId,
+                  providerProfileId: context.providerProfileId,
                   instrumentId: context.instrumentId,
                   timeframeId: context.timeframeId,
+                  sourceTimeframeIds: context.sourceTimeframeIds,
+                  sourceTimeframes: context.sourceTimeframes,
                   parameters: normalizePluginIndicatorParameters(
                     context.indicator,
                     context.summary.definition,
@@ -784,7 +963,11 @@ export function reconcilePluginIndicators(
                   data,
                   rebuildCandles: () =>
                     snapshotTimeline().map((item) =>
-                      toCandle(item, context.instrumentId, context.timeframeId),
+                      toCandle(
+                        item,
+                        context.instrumentId,
+                        context.chartTimeframeId,
+                      ),
                     ),
                   dataRevision: context.dataRevision,
                   configGeneration: context.configGeneration,

@@ -1,7 +1,17 @@
-import type { IndicatorRuntimeSyncRequest } from "@erc-chart/contracts";
+import type {
+  Candle,
+  IndicatorRuntimeSyncRequest,
+  ProviderHistoryLoadRequest,
+  ProviderLiveEvent,
+  ProviderLiveRequest,
+} from "@erc-chart/contracts";
 import {
+  createIndicatorSourceEngine,
   createIndicatorWorkerSupervisor,
   IndicatorWorkerRuntimeError,
+  type IndicatorSourceDataService,
+  type IndicatorSourceLease,
+  type IndicatorSourceSnapshot,
   type IndicatorWorkerSupervisor,
   type IndicatorWorkerDataUpdate,
   type IndicatorWorkerResultUpdate,
@@ -13,10 +23,30 @@ export interface BrowserIndicatorSyncRequest extends Omit<
   "candles"
 > {
   readonly runtimeEntryUrl: string;
+  readonly providerProfileId?: string;
+  readonly sourceTimeframeIds?: readonly string[];
+  readonly sourceTimeframes?: readonly {
+    readonly requestedTimeframeId: string;
+    readonly activeTimeframeId: string;
+  }[];
   readonly data: IndicatorWorkerDataUpdate;
   readonly rebuildCandles: () => readonly IndicatorRuntimeSyncRequest["candles"][number][];
   readonly dataRevision: number;
   readonly configGeneration: number;
+}
+
+export interface BrowserIndicatorRuntimeOptions extends IndicatorWorkerSupervisorOptions {
+  readonly sourceDataService?: IndicatorSourceDataService;
+}
+
+export interface RendererIndicatorSourceBridge {
+  readonly requestProviderHistory: (
+    request: ProviderHistoryLoadRequest,
+  ) => Promise<readonly Candle[]>;
+  readonly subscribeProviderData: (
+    request: ProviderLiveRequest,
+    listener: (event: ProviderLiveEvent) => void,
+  ) => Promise<() => Promise<void>>;
 }
 
 export interface BrowserIndicatorRuntime {
@@ -27,14 +57,175 @@ export interface BrowserIndicatorRuntime {
   readonly dispose: () => void;
 }
 
+export function createRendererIndicatorSourceDataService(
+  bridge: RendererIndicatorSourceBridge,
+): IndicatorSourceDataService {
+  const dataService: IndicatorSourceDataService = {
+    requestHistory: (providerProfileId, request) =>
+      bridge.requestProviderHistory({
+        profileId: providerProfileId,
+        instrumentId: request.instrumentId,
+        timeframeId: request.timeframeId,
+        limit: request.limit,
+      }),
+    subscribe: async (providerProfileId, request, sink) => {
+      const unsubscribe = await bridge.subscribeProviderData(
+        {
+          profileId: providerProfileId,
+          instrumentId: request.instrumentId,
+          timeframeId: request.timeframeId,
+        },
+        (event) => {
+          if (event.type === "candles") {
+            sink.onCandles(event.candles, event.series);
+            return;
+          }
+          sink.onError(event.code);
+        },
+      );
+      return Object.freeze({ unsubscribe });
+    },
+  };
+  return Object.freeze(dataService);
+}
+
 export function createBrowserIndicatorRuntime(
-  options: IndicatorWorkerSupervisorOptions = {},
+  options: BrowserIndicatorRuntimeOptions = {},
 ): BrowserIndicatorRuntime {
   const supervisor: IndicatorWorkerSupervisor =
     createIndicatorWorkerSupervisor(options);
+  const sourceEngine =
+    options.sourceDataService === undefined
+      ? undefined
+      : createIndicatorSourceEngine(options.sourceDataService);
+  const sourceLeases = new Map<string, Map<string, IndicatorSourceLease>>();
+  const sourceAcquisitionChains = new Map<string, Promise<void>>();
+  const sourceInstanceEpochs = new Map<string, number>();
+  const sourceVersions = new Map<string, string>();
+
+  const sourceInstanceEpoch = (instanceId: string): number =>
+    sourceInstanceEpochs.get(instanceId) ?? 0;
+
+  const assertSourceInstanceEpoch = (
+    instanceId: string,
+    expectedEpoch: number,
+  ): void => {
+    if (sourceInstanceEpoch(instanceId) !== expectedEpoch)
+      throw new Error("Indicator source acquisition was superseded.");
+  };
+
+  const reconcileSources = async (
+    request: BrowserIndicatorSyncRequest,
+    expectedEpoch: number,
+  ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
+    assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
+    if (
+      sourceEngine === undefined ||
+      request.providerProfileId === undefined ||
+      request.providerProfileId.length === 0
+    ) {
+      const current = sourceLeases.get(request.instanceId);
+      sourceLeases.delete(request.instanceId);
+      if (current !== undefined)
+        for (const source of current.values()) await source.release();
+      assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
+      return undefined;
+    }
+    const timeframeIds = [
+      ...new Set([
+        request.timeframeId,
+        ...(request.sourceTimeframeIds ?? []),
+        ...(request.sourceTimeframes ?? []).map(
+          ({ activeTimeframeId }) => activeTimeframeId,
+        ),
+      ]),
+    ];
+    const current = sourceLeases.get(request.instanceId) ?? new Map();
+    const next = new Map<string, IndicatorSourceLease>();
+    try {
+      for (const timeframeId of timeframeIds) {
+        const identity = JSON.stringify([
+          request.providerProfileId,
+          request.instrumentId,
+          timeframeId,
+          "standard",
+        ]);
+        const existing = current.get(identity);
+        const lease =
+          existing ??
+          (await sourceEngine.acquire({
+            providerProfileId: request.providerProfileId,
+            instrumentId: request.instrumentId,
+            timeframeId,
+            candleType: "standard",
+          }));
+        next.set(identity, lease);
+        assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
+      }
+    } catch (error) {
+      for (const [identity, lease] of next) {
+        if (!current.has(identity))
+          await lease.release().catch(() => undefined);
+      }
+      throw error;
+    }
+    assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
+    sourceLeases.set(request.instanceId, next);
+    for (const [identity, lease] of current) {
+      if (!next.has(identity)) {
+        await lease.release();
+      }
+    }
+    assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
+    return new Map(
+      [...next.values()].map((lease) => [lease.key.timeframeId, lease]),
+    );
+  };
+
+  const sourcesFor = (
+    request: BrowserIndicatorSyncRequest,
+    expectedEpoch: number,
+  ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
+    const previous = sourceAcquisitionChains.get(request.instanceId);
+    const operation = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => reconcileSources(request, expectedEpoch));
+    const settled = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    sourceAcquisitionChains.set(request.instanceId, settled);
+    return operation.finally(() => {
+      if (sourceAcquisitionChains.get(request.instanceId) === settled)
+        sourceAcquisitionChains.delete(request.instanceId);
+    });
+  };
+
+  const sourceVersion = (
+    snapshots: ReadonlyMap<string, IndicatorSourceSnapshot>,
+  ): string =>
+    JSON.stringify(
+      [...snapshots.values()].map((snapshot) => {
+        return [
+          snapshot.key.providerProfileId,
+          snapshot.key.instrumentId,
+          snapshot.key.timeframeId,
+          snapshot.key.candleType,
+          snapshot.generation,
+          snapshot.revision,
+        ];
+      }),
+    );
+
   return {
     sync: async (request): Promise<IndicatorWorkerResultUpdate> => {
-      const execute = (data: IndicatorWorkerDataUpdate) =>
+      const execute = (
+        data: IndicatorWorkerDataUpdate,
+        sources: readonly {
+          readonly timeframeId: string;
+          readonly candles: readonly Candle[];
+        }[] = [],
+      ) =>
         supervisor.sync({
           instanceId: request.instanceId,
           runtimeEntryUrl: request.runtimeEntryUrl,
@@ -43,24 +234,100 @@ export function createBrowserIndicatorRuntime(
           instrumentId: request.instrumentId,
           timeframeId: request.timeframeId,
           parameters: request.parameters,
+          ...(sources.length === 0 ? {} : { sources }),
           data,
           dataRevision: request.dataRevision,
           configGeneration: request.configGeneration,
         });
+      const expectedSourceEpoch = sourceInstanceEpoch(request.instanceId);
+      const sources = await sourcesFor(request, expectedSourceEpoch);
+      assertSourceInstanceEpoch(request.instanceId, expectedSourceEpoch);
       let result;
-      try {
-        result = await execute(request.data);
-      } catch (error) {
+      if (sources !== undefined) {
+        const snapshots = new Map(
+          [...sources].map(([timeframeId, lease]) => [
+            timeframeId,
+            lease.snapshot(),
+          ]),
+        );
+        const baseSnapshot = snapshots.get(request.timeframeId);
+        if (baseSnapshot === undefined)
+          throw new Error("Indicator base source was not acquired.");
+        const sourceMappings =
+          request.sourceTimeframes ??
+          (request.sourceTimeframeIds ?? []).map((timeframeId) => ({
+            requestedTimeframeId: timeframeId,
+            activeTimeframeId: timeframeId,
+          }));
+        const auxiliarySources = sourceMappings.map(
+          ({ requestedTimeframeId, activeTimeframeId }) => {
+            const snapshot = snapshots.get(activeTimeframeId);
+            if (snapshot === undefined)
+              throw new Error("Indicator auxiliary source was not acquired.");
+            return {
+              timeframeId: requestedTimeframeId,
+              ...(activeTimeframeId === requestedTimeframeId
+                ? {}
+                : { activeTimeframeId }),
+              candles: snapshot.candles,
+            };
+          },
+        );
+        const version = sourceVersion(snapshots);
+        const previousVersion = sourceVersions.get(request.instanceId);
+        const dataUsesBaseTimeframe =
+          request.data.kind === "building"
+            ? request.data.candle.timeframeId === request.timeframeId
+            : request.data.kind === "rollover"
+              ? request.data.finalized.timeframeId === request.timeframeId &&
+                request.data.building.timeframeId === request.timeframeId
+              : false;
+        const rebuild = () =>
+          execute(
+            {
+              kind: "rebuild",
+              candles: baseSnapshot.candles,
+            },
+            auxiliarySources,
+          );
         if (
-          !(error instanceof IndicatorWorkerRuntimeError) ||
-          error.code !== "INDICATOR_WORKER_SNAPSHOT_REQUIRED"
+          previousVersion !== version ||
+          !dataUsesBaseTimeframe ||
+          request.data.kind === "snapshot" ||
+          request.data.kind === "rebuild"
         ) {
-          throw error;
+          result = await rebuild();
+          sourceVersions.set(request.instanceId, version);
+        } else {
+          try {
+            result = await execute(request.data, auxiliarySources);
+          } catch (error) {
+            if (
+              !(error instanceof IndicatorWorkerRuntimeError) ||
+              error.code !== "INDICATOR_WORKER_SNAPSHOT_REQUIRED"
+            ) {
+              throw error;
+            }
+            result = await rebuild();
+            sourceVersions.set(request.instanceId, version);
+          }
         }
-        result = await execute({
-          kind: "rebuild",
-          candles: request.rebuildCandles(),
-        });
+      } else {
+        sourceVersions.delete(request.instanceId);
+        try {
+          result = await execute(request.data);
+        } catch (error) {
+          if (
+            !(error instanceof IndicatorWorkerRuntimeError) ||
+            error.code !== "INDICATOR_WORKER_SNAPSHOT_REQUIRED"
+          ) {
+            throw error;
+          }
+          result = await execute({
+            kind: "rebuild",
+            candles: request.rebuildCandles(),
+          });
+        }
       }
       if (
         result.instanceId !== request.instanceId ||
@@ -71,8 +338,23 @@ export function createBrowserIndicatorRuntime(
       }
       return result.result;
     },
-    disposeInstance: (instanceId): void =>
-      supervisor.disposeInstance(instanceId),
-    dispose: (): void => supervisor.dispose(),
+    disposeInstance: (instanceId): void => {
+      supervisor.disposeInstance(instanceId);
+      sourceInstanceEpochs.set(instanceId, sourceInstanceEpoch(instanceId) + 1);
+      sourceVersions.delete(instanceId);
+      const sources = sourceLeases.get(instanceId);
+      sourceLeases.delete(instanceId);
+      if (sources !== undefined)
+        for (const source of sources.values())
+          void source.release().catch(() => undefined);
+    },
+    dispose: (): void => {
+      supervisor.dispose();
+      sourceLeases.clear();
+      sourceInstanceEpochs.clear();
+      sourceVersions.clear();
+      sourceAcquisitionChains.clear();
+      void sourceEngine?.dispose().catch(() => undefined);
+    },
   };
 }

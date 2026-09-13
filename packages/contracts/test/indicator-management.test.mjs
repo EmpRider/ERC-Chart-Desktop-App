@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isInstalledIndicatorSummary } from "../dist/index.js";
+import {
+  isInstalledIndicatorDefinition,
+  isInstalledIndicatorSummary,
+} from "../dist/index.js";
 
 const definition = {
   id: "erc.indicator.test.line",
@@ -51,4 +54,50 @@ test("accepts only canonical erc-plugin runtime entry URLs for the installed plu
   ]) {
     assert.equal(isInstalledIndicatorSummary(summary(invalid)), false, invalid);
   }
+});
+
+test("indicator timeframe input keys must reference declared timeframe inputs", () => {
+  const timeframeInput = {
+    key: "input_timeframe",
+    label: "Timeframe",
+    type: "string",
+    defaultValue: "chart",
+    editor: "timeframe",
+  };
+  const withSource = (inputs, inputKey) => ({
+    ...definition,
+    inputs,
+    source: {
+      timeframe: {
+        requestedTimeframeId: "chart",
+        inputKey,
+      },
+      taTimeframeIds: [],
+    },
+  });
+
+  assert.equal(
+    isInstalledIndicatorDefinition(
+      withSource([timeframeInput], timeframeInput.key),
+    ),
+    true,
+  );
+  assert.equal(
+    isInstalledIndicatorDefinition(withSource([timeframeInput], "missing")),
+    false,
+  );
+  assert.equal(
+    isInstalledIndicatorDefinition(
+      withSource(
+        [
+          {
+            ...timeframeInput,
+            editor: "text",
+          },
+        ],
+        timeframeInput.key,
+      ),
+    ),
+    false,
+  );
 });
