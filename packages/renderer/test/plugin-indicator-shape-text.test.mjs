@@ -118,6 +118,40 @@ test("maps configured shape text, text color, semantic size, and below-bar basel
   assert.equal(styles.size, 10);
 });
 
+test("maps every semantic shape text size to renderer-owned pixels", async () => {
+  for (const [textSize, expected] of [
+    ["tiny", 8],
+    ["small", 10],
+    ["normal", 12],
+    ["large", 14],
+    ["xlarge", 18],
+  ]) {
+    const { figure, row } = await renderFigure(
+      { text: "SIZE", textSize },
+      { values: { marker: 10 }, colors: {}, sizes: {} },
+    );
+    const styles = figure.styles({
+      data: { prev: null, current: row, next: null },
+    });
+    assert.equal(styles.size, expected, `unexpected ${textSize} text size`);
+  }
+});
+
+test("preserves explicitly empty shape text and above-bar baseline", async () => {
+  const { figure, row } = await renderFigure(
+    { shape: "label-down", location: "above-bar", text: "" },
+    { values: { marker: 12 }, colors: {}, sizes: {} },
+  );
+
+  assert.deepEqual(
+    figure.attrs({ data: { prev: null, current: row, next: null } }),
+    {
+      text: "",
+      baseline: "bottom",
+    },
+  );
+});
+
 test("preserves non-text shape glyph behavior and runtime color/size", async () => {
   const { figure, row } = await renderFigure(
     { direction: "down", color: "#111111", width: 2 },
