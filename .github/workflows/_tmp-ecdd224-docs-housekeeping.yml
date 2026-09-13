@@ -1,0 +1,65 @@
+name: ECDD-224 docs housekeeping
+
+on:
+  push:
+    branches:
+      - task/ECDD-224-post-task-docs
+
+permissions:
+  contents: write
+
+jobs:
+  patch-docs:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task/ECDD-224-post-task-docs
+      - name: Apply verified SDK v2 reassessment updates
+        shell: python
+        run: |
+          from pathlib import Path
+
+          current_path = Path('docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md')
+          current = current_path.read_text(encoding='utf-8')
+
+          maintained_prefix = '| Maintained examples'
+          maintained_new = '| Maintained examples         | `atr-rope-utbot.ts` now uses SDK v2 hidden input/plot identity, canonical `history(...)` reads, semantic BUY/SELL shapes, and SDK-owned drawing handles while preserving genuine POC/profile/follow/MG domain state. | ECDD-224 complete: the maintained ATR Rope/UT Bot implementation is migrated to the v2 authoring/runtime primitives with four compiled-package semantic regression configurations preserved. | Complete (ECDD-224); regression depth remains ECDD-228 |'
+          lines = current.splitlines()
+          matches = [i for i, line in enumerate(lines) if line.startswith(maintained_prefix)]
+          if len(matches) != 1:
+              raise SystemExit(f'expected one maintained examples row, found {len(matches)}')
+          lines[matches[0]] = maintained_new
+          current = '\n'.join(lines) + '\n'
+
+          old_gap = '7. **Example migration — ECDD-224.** Rewrite ATR Rope and UT Bot using only the final v2 API.'
+          new_gap = '7. **Example migration — ECDD-224 (complete).** ATR Rope and UT Bot now use the v2 history, hidden identity, semantic marker, and drawing-handle model while preserving approved trading semantics; ECDD-228 retains the broader migration-regression matrix.'
+          if current.count(old_gap) != 1:
+              raise SystemExit(f'expected one ECDD-224 gap item, found {current.count(old_gap)}')
+          current = current.replace(old_gap, new_gap)
+          current_path.write_text(current, encoding='utf-8')
+
+          plan_path = Path('docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md')
+          plan = plan_path.read_text(encoding='utf-8')
+          old_phase = '- [ ] Phase 14 — Rewrite maintained indicators against SDK v2'
+          new_phase = '- [x] Phase 14 — Rewrite maintained indicators against SDK v2'
+          if plan.count(old_phase) != 1:
+              raise SystemExit(f'expected one Phase 14 checkbox, found {plan.count(old_phase)}')
+          plan = plan.replace(old_phase, new_phase)
+
+          old_note = '**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 (maintained-indicator rewrite) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.'
+          new_note = '**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 (v1-only public export cleanup) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.'
+          if plan.count(old_note) != 1:
+              raise SystemExit(f'expected one optimization sequencing note, found {plan.count(old_note)}')
+          plan = plan.replace(old_note, new_note)
+          plan_path.write_text(plan, encoding='utf-8')
+      - name: Commit documentation reassessment
+        shell: bash
+        run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+          git commit -m "docs(indicators): record ECDD-224 completion"
+          git push origin HEAD:task/ECDD-224-post-task-docs
