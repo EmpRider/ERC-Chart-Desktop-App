@@ -8,13 +8,6 @@ import {
   type InstalledIndicatorDefinition,
   type TimeframeId,
 } from "@erc-chart/contracts";
-import {
-  normalizeIndicatorParameters,
-  type IndicatorInputDefinition,
-  type IndicatorInputValue,
-  type IndicatorPluginModule,
-  type RuntimeIndicatorInstance,
-} from "@erc-chart/indicator-sdk/internal";
 import type {
   IndicatorWorkerDisposeMessage,
   IndicatorWorkerFailureMessage,
@@ -23,7 +16,31 @@ import type {
   IndicatorWorkerSuccessMessage,
   IndicatorWorkerSyncMessage,
 } from "./index.js";
+import { normalizeIndicatorParameters } from "./index.js";
 import { assertDenseSnapshotTimeline } from "./result-validation.js";
+
+interface RuntimeIndicatorSnapshot extends IndicatorRuntimeSnapshot {
+  readonly visualRevision?: number;
+}
+
+interface RuntimeIndicatorInstance {
+  readonly onHistory: (candles: readonly Candle[]) => void;
+  readonly onBuildingBar: (candle: Candle) => void;
+  readonly onFinalizedBar: (candle: Candle) => void;
+  readonly dispose: () => void;
+  readonly snapshot: () => RuntimeIndicatorSnapshot;
+}
+
+interface IndicatorPluginModule {
+  readonly definition: InstalledIndicatorDefinition;
+  readonly createInstance: (
+    parameters: IndicatorParameterValues,
+    context: {
+      readonly instrumentId: InstrumentId;
+      readonly timeframeId: TimeframeId;
+    },
+  ) => RuntimeIndicatorInstance;
+}
 
 interface ActiveInstance {
   readonly signature: string;
@@ -56,11 +73,8 @@ function sameCandleIdentity(left: Candle, right: Candle): boolean {
 function normalizeParameters(
   definition: InstalledIndicatorDefinition,
   supplied: IndicatorParameterValues,
-): Readonly<Record<string, IndicatorInputValue>> {
-  return normalizeIndicatorParameters(
-    definition.inputs as readonly IndicatorInputDefinition[],
-    supplied,
-  );
+): IndicatorParameterValues {
+  return normalizeIndicatorParameters(definition, supplied);
 }
 
 function projectSnapshot(
@@ -194,7 +208,7 @@ async function pluginFor(
 
 function signatureFor(
   message: IndicatorWorkerSyncMessage,
-  parameters: Readonly<Record<string, IndicatorInputValue>>,
+  parameters: IndicatorParameterValues,
 ): string {
   return JSON.stringify({
     pluginId: message.pluginId,
