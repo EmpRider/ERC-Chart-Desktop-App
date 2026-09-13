@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { atrRopeUtBotIndicator } from "../packages/indicator-examples/dist/index.js";
+import { pathToFileURL } from "node:url";
+import { buildAtrRopeUtBotIndicatorPackage } from "./build-atr-rope-utbot-indicator.mjs";
 
 // Run after npm run build. This exercises four independent maintained authored
 // indicator instances, matching the application's supported multi-chart scale.
@@ -13,6 +17,7 @@ const buildingSweepBudgetMs = 5_000;
 const maximumIncrementalBudgetMs = 100;
 const finalizedSweepBudgetMs = 1_000;
 
+const repoRoot = path.resolve(import.meta.dirname, "..");
 const timeframeId = "1m";
 const instrumentId = (chartIndex) => `PERF-${chartIndex + 1}`;
 const candle = (chartIndex, index, close = 11 + (index % 10) / 10) => ({
@@ -26,21 +31,39 @@ const candle = (chartIndex, index, close = 11 + (index % 10) / 10) => ({
   volume: index + 1,
 });
 
-const parameters = Object.fromEntries(
-  atrRopeUtBotIndicator.definition.inputs.map((input) => [
-    input.key,
-    input.defaultValue,
-  ]),
+const outputRoot = await mkdtemp(
+  path.join(os.tmpdir(), "erc-authored-multichart-performance-"),
 );
-const charts = Array.from({ length: chartCount }, (_, chartIndex) => ({
-  chartIndex,
-  instance: atrRopeUtBotIndicator.createInstance(parameters, {
-    instrumentId: instrumentId(chartIndex),
-    timeframeId,
-  }),
-}));
+const charts = [];
 
 try {
+  const built = await buildAtrRopeUtBotIndicatorPackage({
+    root: repoRoot,
+    outputRoot: path.join(outputRoot, "package"),
+  });
+  const entry = path.join(built.packageRoot, "dist", "index.js");
+  const module = await import(
+    `${pathToFileURL(entry).href}?performance=${Date.now()}`,
+  );
+  const indicator = module.default;
+  assert.ok(indicator?.definition && indicator.createInstance);
+
+  const parameters = Object.fromEntries(
+    indicator.definition.inputs.map((input) => [
+      input.key,
+      input.defaultValue,
+    ]),
+  );
+  for (let chartIndex = 0; chartIndex < chartCount; chartIndex += 1) {
+    charts.push({
+      chartIndex,
+      instance: indicator.createInstance(parameters, {
+        instrumentId: instrumentId(chartIndex),
+        timeframeId,
+      }),
+    });
+  }
+
   const historyStarted = performance.now();
   let maximumHistoryMs = 0;
   for (const { chartIndex, instance } of charts) {
@@ -167,4 +190,5 @@ try {
   );
 } finally {
   for (const { instance } of charts) instance.dispose();
+  await rm(outputRoot, { recursive: true, force: true });
 }
