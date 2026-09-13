@@ -56,16 +56,22 @@ const scalarPlotKinds = new Map([
   ["histogram", "histogram"],
   ["shape", "shape"],
 ]);
-const staticPlotDeclarationOptions = new Set([
+const literalStringPlotDeclarationOptions = new Set([
   "key",
   "title",
   "style",
   "direction",
-  "shape",
-  "location",
   "text",
   "textColor",
+]);
+const sdkConstantPlotDeclarationOptions = new Set([
+  "shape",
+  "location",
   "textSize",
+]);
+const staticPlotDeclarationOptions = new Set([
+  ...literalStringPlotDeclarationOptions,
+  ...sdkConstantPlotDeclarationOptions,
 ]);
 
 function withoutNames(map, names) {
@@ -248,7 +254,7 @@ function staticPropertyName(name) {
   return undefined;
 }
 
-function staticPrimitive(node, bindings) {
+function staticLiteralPrimitive(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
     return node.text;
   if (ts.isNumericLiteral(node)) return Number(node.text);
@@ -258,6 +264,12 @@ function staticPrimitive(node, bindings) {
     ts.isNumericLiteral(node.operand)
   )
     return -Number(node.operand.text);
+  return undefined;
+}
+
+function staticPrimitive(node, bindings) {
+  const literal = staticLiteralPrimitive(node);
+  if (literal !== undefined) return literal;
   if (
     ts.isPropertyAccessExpression(node) &&
     ts.isIdentifier(node.expression)
@@ -381,7 +393,10 @@ function compilerPlotDeclaration(
       name !== "textSize"
     )
       continue;
-    const value = staticPrimitive(property.initializer, bindings);
+    const acceptsSdkConstant = sdkConstantPlotDeclarationOptions.has(name);
+    const value = acceptsSdkConstant
+      ? staticPrimitive(property.initializer, bindings)
+      : staticLiteralPrimitive(property.initializer);
     if (
       staticPlotDeclarationOptions.has(name) &&
       typeof value !== "string"
@@ -389,7 +404,9 @@ function compilerPlotDeclaration(
       throw syntaxError(
         sourceFile,
         property.initializer,
-        `Plot declaration option "${name}" must use an SDK constant or static string literal.`,
+        acceptsSdkConstant
+          ? `Plot declaration option "${name}" must use an SDK constant or static string literal.`
+          : `Plot declaration option "${name}" must use a static string literal.`,
       );
     if (value !== undefined) declaration[name] = value;
   }
