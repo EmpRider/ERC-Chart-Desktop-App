@@ -176,6 +176,182 @@ test("provider-backed indicator sources rebuild workers from source-engine candl
   }
 });
 
+test("provider-backed indicators acquire independent base and per-TA timeframe sources", async () => {
+  const posted = [];
+  const historyRequests = [];
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory(providerProfileId, request) {
+        historyRequests.push({ providerProfileId, request });
+        return [
+          {
+            ...candle,
+            timeframeId: request.timeframeId,
+            close: request.timeframeId === "1h" ? 160 : 101,
+          },
+        ];
+      },
+      async subscribe() {
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  try {
+    await runtime.sync({
+      instanceId: "mtf-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      providerProfileId: "profile-a",
+      instrumentId: candle.instrumentId,
+      timeframeId: "1m",
+      sourceTimeframeIds: ["1h"],
+      parameters: {},
+      data: { kind: "building", candle },
+      rebuildCandles: () => [candle],
+      dataRevision: 2,
+      configGeneration: 1,
+    });
+
+    assert.deepEqual(
+      historyRequests.map(({ request }) => request.timeframeId),
+      ["1m", "1h"],
+    );
+    assert.deepEqual(posted[0].data.candles, [
+      { ...candle, timeframeId: "1m", close: 101 },
+    ]);
+    assert.deepEqual(posted[0].sources, [
+      {
+        timeframeId: "1h",
+        candles: [{ ...candle, timeframeId: "1h", close: 160 }],
+      },
+    ]);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("per-TA fallback aliases the active source under the requested timeframe ID", async () => {
+  const posted = [];
+  const historyRequests = [];
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory(providerProfileId, request) {
+        historyRequests.push({ providerProfileId, request });
+        return [{ ...candle, timeframeId: request.timeframeId }];
+      },
+      async subscribe() {
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  try {
+    await runtime.sync({
+      instanceId: "ta-fallback-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      providerProfileId: "profile-a",
+      instrumentId: candle.instrumentId,
+      timeframeId: "1m",
+      sourceTimeframes: [
+        { requestedTimeframeId: "4h", activeTimeframeId: "1m" },
+      ],
+      parameters: {},
+      data: { kind: "building", candle },
+      rebuildCandles: () => [candle],
+      dataRevision: 2,
+      configGeneration: 1,
+    });
+
+    assert.deepEqual(
+      historyRequests.map(({ request }) => request.timeframeId),
+      ["1m"],
+    );
+    assert.deepEqual(posted[0].sources, [
+      {
+        timeframeId: "4h",
+        activeTimeframeId: "1m",
+        candles: [{ ...candle, timeframeId: "1m" }],
+      },
+    ]);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("renderer provider bridge adapts history and live events for indicator sources", async () => {
   const historyRequests = [];
   const liveRequests = [];

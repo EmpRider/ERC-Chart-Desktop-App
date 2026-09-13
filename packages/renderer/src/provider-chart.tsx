@@ -692,7 +692,12 @@ export function ProviderChart({
       ? builtInSettingsFields(settingsBuiltInDefinition)
       : settingsPluginSummary === undefined
         ? []
-        : pluginIndicatorSettingsFields(settingsPluginSummary.definition);
+        : pluginIndicatorSettingsFields(
+            settingsPluginSummary.definition,
+            availableTimeframeIds,
+            session.timeframeId,
+            settingsIndicator?.parameters,
+          );
   const settingsName =
     settingsBuiltInDefinition?.name ?? settingsPluginSummary?.definition.name;
   const inputSettingsGroups = groupIndicatorSettingsFields(
@@ -743,7 +748,12 @@ export function ProviderChart({
         ? builtInSettingsFields(builtInDefinition)
         : pluginSummary === undefined
           ? []
-          : pluginIndicatorSettingsFields(pluginSummary.definition);
+          : pluginIndicatorSettingsFields(
+              pluginSummary.definition,
+              availableTimeframeIds,
+              session.timeframeId,
+              indicator.parameters,
+            );
     setSettingsTab(
       availableFields.some((field) => field.effect !== "presentation")
         ? "inputs"
@@ -966,6 +976,7 @@ export function ProviderChart({
         initialSession.timeframeId,
         pluginManagedRuntimeIds.current,
         initialSession.profileId,
+        availableTimeframeIds,
       );
       pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
       for (const instanceId of pluginReconciliation.removedInstanceIds) {
@@ -1113,6 +1124,7 @@ export function ProviderChart({
       session.timeframeId,
       pluginManagedRuntimeIds.current,
       session.profileId,
+      availableTimeframeIds,
     );
     pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
     for (const instanceId of pluginReconciliation.removedInstanceIds) {
@@ -1130,6 +1142,7 @@ export function ProviderChart({
     session.profileId,
     session.instrument.id,
     session.timeframeId,
+    availableTimeframeIds,
   ]);
 
   useEffect(() => {

@@ -96,6 +96,15 @@ export interface InstalledIndicatorDefinition {
   readonly outputs: readonly InstalledIndicatorOutputDefinition[];
   readonly plots: readonly InstalledIndicatorPlotDefinition[];
   readonly requiresLiveTicks: boolean;
+  readonly source?: InstalledIndicatorSourceDefinition;
+}
+
+export interface InstalledIndicatorSourceDefinition {
+  readonly timeframe?: {
+    readonly requestedTimeframeId: string;
+    readonly inputKey?: string;
+  };
+  readonly taTimeframeIds: readonly string[];
 }
 
 export interface InstalledIndicatorSummary {
@@ -364,6 +373,18 @@ function isPlotDefinition(
 export function isInstalledIndicatorDefinition(
   value: unknown,
 ): value is InstalledIndicatorDefinition {
+  const source = isRecord(value) ? value.source : undefined;
+  const sourceValid =
+    source === undefined ||
+    (isRecord(source) &&
+      (source.timeframe === undefined ||
+        (isRecord(source.timeframe) &&
+          isBoundedText(source.timeframe.requestedTimeframeId, 64) &&
+          (source.timeframe.inputKey === undefined ||
+            isIdentifier(source.timeframe.inputKey)))) &&
+      Array.isArray(source.taTimeframeIds) &&
+      source.taTimeframeIds.length <= 64 &&
+      source.taTimeframeIds.every((item) => isBoundedText(item, 64)));
   return (
     isRecord(value) &&
     isIdentifier(value.id) &&
@@ -380,7 +401,8 @@ export function isInstalledIndicatorDefinition(
     Array.isArray(value.plots) &&
     value.plots.length <= 128 &&
     value.plots.every(isPlotDefinition) &&
-    typeof value.requiresLiveTicks === "boolean"
+    typeof value.requiresLiveTicks === "boolean" &&
+    sourceValid
   );
 }
 

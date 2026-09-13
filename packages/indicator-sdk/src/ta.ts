@@ -899,6 +899,7 @@ export function rsi(
       "rsi",
       values,
       periodValue,
+      undefined,
       createRsiKernel,
       "close",
       hiddenCallsite,
@@ -983,6 +984,7 @@ export function highest(
       "highest",
       values,
       period,
+      undefined,
       createHighestKernel,
       "high",
       hiddenCallsite,
@@ -1012,6 +1014,7 @@ export function lowest(
       "lowest",
       values,
       period,
+      undefined,
       createLowestKernel,
       "low",
       hiddenCallsite,
@@ -1182,13 +1185,60 @@ function numericCall(
   name: string,
   valueOrPeriod: number,
   period: number | undefined,
+  timeframeId: string | undefined,
   create: (length: number) => NumericTaKernel,
-  source: "close" | "high" | "low" = "close",
+  sourceField: "close" | "high" | "low" = "close",
   hiddenCallsite?: unknown,
 ): number {
   const frame = authoringFrame();
+  if (timeframeId !== undefined) {
+    if (
+      timeframeId.length === 0 ||
+      timeframeId.length > 64 ||
+      timeframeId.trim() !== timeframeId
+    )
+      throw new RangeError("TA timeframe must be a non-empty timeframe ID.");
+    frame.taTimeframeIds.add(timeframeId);
+  }
   const length = authoringLength(period ?? valueOrPeriod);
-  const value = period === undefined ? frame.candle[source] : valueOrPeriod;
+  if (timeframeId !== undefined && !frame.discovery) {
+    const sourceCandles = frame.sourceCandles[timeframeId] ?? [];
+    const alignedSourceField =
+      period === undefined
+        ? sourceField
+        : inferCandleSourceField(valueOrPeriod, frame.candle, sourceField);
+    const state = useKernel(
+      `${name}:${length}:${timeframeId}:${alignedSourceField}`,
+      () => ({
+        kernel: create(length),
+        nextIndex: 0,
+        value: Number.NaN,
+      }),
+      taCallsite(hiddenCallsite, `ta.${name}`),
+    );
+    const boundary =
+      frame.phase === "finalized"
+        ? sourceBoundaryAfter(frame.candle, frame.sourceCandles)
+        : frame.candle.openTimeMs;
+    while (state.nextIndex + 1 < sourceCandles.length) {
+      const sourceCandle = sourceCandles[state.nextIndex];
+      const next = sourceCandles[state.nextIndex + 1];
+      if (
+        sourceCandle === undefined ||
+        next === undefined ||
+        next.openTimeMs > boundary
+      )
+        break;
+      state.value = state.kernel.update(
+        sourceCandle[alignedSourceField],
+        "finalized",
+      );
+      state.nextIndex += 1;
+    }
+    return state.value;
+  }
+  const value =
+    period === undefined ? frame.candle[sourceField] : valueOrPeriod;
   const callsite = taCallsite(hiddenCallsite, `ta.${name}`);
   return useKernel(`${name}:${length}`, () => create(length), callsite).update(
     value,
@@ -1196,32 +1246,124 @@ function numericCall(
   );
 }
 
+function inferCandleSourceField(
+  value: number,
+  candle: Candle,
+  fallback: "close" | "high" | "low",
+): "close" | "high" | "low" {
+  if (Object.is(value, candle.close)) return "close";
+  if (Object.is(value, candle.high)) return "high";
+  if (Object.is(value, candle.low)) return "low";
+  return fallback;
+}
+
+function numericAuthoringArguments(
+  periodOrTimeframe: number | string | undefined,
+  timeframeOrHidden: string | unknown,
+  hiddenCallsite: unknown,
+): {
+  readonly period: number | undefined;
+  readonly timeframeId: string | undefined;
+  readonly hiddenCallsite: unknown;
+} {
+  if (typeof timeframeOrHidden === "string") {
+    return {
+      period:
+        typeof periodOrTimeframe === "number" ? periodOrTimeframe : undefined,
+      timeframeId: timeframeOrHidden,
+      hiddenCallsite,
+    };
+  }
+  return {
+    period:
+      typeof periodOrTimeframe === "number" ? periodOrTimeframe : undefined,
+    timeframeId:
+      typeof periodOrTimeframe === "string" ? periodOrTimeframe : undefined,
+    hiddenCallsite: timeframeOrHidden,
+  };
+}
+
+function timeframeMilliseconds(timeframeId: string): number | undefined {
+  const match = /^(\d+)(s|m|h|d)$/u.exec(timeframeId);
+  if (match === null) return undefined;
+  const amount = Number(match[1]);
+  const multiplier =
+    match[2] === "s"
+      ? 1_000
+      : match[2] === "m"
+        ? 60_000
+        : match[2] === "h"
+          ? 3_600_000
+          : 86_400_000;
+  const result = amount * multiplier;
+  return Number.isSafeInteger(result) && result > 0 ? result : undefined;
+}
+
+function sourceBoundaryAfter(
+  candle: Candle,
+  sourceCandles: Readonly<Record<string, readonly Candle[]>>,
+): number {
+  const duration = timeframeMilliseconds(candle.timeframeId);
+  if (duration !== undefined) return candle.openTimeMs + duration;
+  const sameSource = sourceCandles[candle.timeframeId];
+  const index = sameSource?.findIndex(
+    ({ openTimeMs }) => openTimeMs === candle.openTimeMs,
+  );
+  const next =
+    index === undefined || index < 0 ? undefined : sameSource?.[index + 1];
+  return next?.openTimeMs ?? candle.openTimeMs;
+}
+
+export function sma(
+  valueOrLength: number,
+  periodOrTimeframe?: number | string,
+): number;
+export function sma(value: number, period: number, timeframeId: string): number;
 export function sma(
   value: number,
-  period?: number,
+  periodOrTimeframe?: number | string,
+  timeframeOrHidden?: string | unknown,
   hiddenCallsite?: unknown,
 ): number {
+  const authored = numericAuthoringArguments(
+    periodOrTimeframe,
+    timeframeOrHidden,
+    hiddenCallsite,
+  );
   return numericCall(
     "sma",
     value,
-    period,
+    authored.period,
+    authored.timeframeId,
     (length) => createMovingAverageKernel("sma", length),
     "close",
-    hiddenCallsite,
+    authored.hiddenCallsite,
   );
 }
 
 export function ema(
+  valueOrLength: number,
+  periodOrTimeframe?: number | string,
+): number;
+export function ema(value: number, period: number, timeframeId: string): number;
+export function ema(
   value: number,
-  period?: number,
+  periodOrTimeframe?: number | string,
+  timeframeOrHidden?: string | unknown,
   hiddenCallsite?: unknown,
 ): number {
+  const authored = numericAuthoringArguments(
+    periodOrTimeframe,
+    timeframeOrHidden,
+    hiddenCallsite,
+  );
   return numericCall(
     "ema",
     value,
-    period,
+    authored.period,
+    authored.timeframeId,
     (length) => createMovingAverageKernel("ema", length),
     "close",
-    hiddenCallsite,
+    authored.hiddenCallsite,
   );
 }

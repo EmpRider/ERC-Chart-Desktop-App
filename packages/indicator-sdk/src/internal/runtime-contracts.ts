@@ -35,6 +35,7 @@ export interface IndicatorSnapshot {
 export interface IndicatorInstanceContext {
   readonly instrumentId: InstrumentId;
   readonly timeframeId: TimeframeId;
+  readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
 }
 
 export interface IndicatorInstance {

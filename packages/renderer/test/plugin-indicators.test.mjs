@@ -4,8 +4,288 @@ import test from "node:test";
 import {
   clearPluginIndicatorSeriesChange,
   markPluginIndicatorSeriesChange,
+  pluginIndicatorSettingsFields,
   reconcilePluginIndicators,
+  resolvePluginIndicatorSourcePlan,
 } from "../dist/plugin-indicators.js";
+
+const timeframeDefinition = {
+  id: "erc.indicator.test.timeframe",
+  name: "Timeframe test",
+  placement: "overlay",
+  inputs: [
+    {
+      key: "input_timeframe",
+      label: "Timeframe",
+      type: "string",
+      defaultValue: "chart",
+      editor: "timeframe",
+    },
+  ],
+  outputs: [{ key: "line", label: "Line" }],
+  plots: [{ key: "line", kind: "line", outputKey: "line" }],
+  requiresLiveTicks: false,
+  source: {
+    timeframe: {
+      requestedTimeframeId: "chart",
+      inputKey: "input_timeframe",
+    },
+    taTimeframeIds: ["1h"],
+  },
+};
+
+test("timeframe settings use active provider options without storing them in plugin metadata", () => {
+  const fields = pluginIndicatorSettingsFields(
+    timeframeDefinition,
+    ["1m", "3m", "5m", "1h"],
+    "1m",
+    { input_timeframe: "3m" },
+  );
+
+  assert.deepEqual(fields[0].options, [
+    { value: "chart", label: "Chart (1m)" },
+    { value: "1m", label: "1m" },
+    { value: "3m", label: "3m" },
+    { value: "5m", label: "5m" },
+    { value: "1h", label: "1h" },
+  ]);
+  assert.equal(timeframeDefinition.inputs[0].options, undefined);
+});
+
+test("unavailable saved timeframe keeps its preference while source resolution falls back to chart", () => {
+  const indicator = {
+    instanceId: "timeframe-instance",
+    pluginId: "erc.indicator.test",
+    definitionId: timeframeDefinition.id,
+    enabled: true,
+    parameters: { input_timeframe: "3m" },
+    inputs: { source: { kind: "candles" } },
+  };
+
+  assert.deepEqual(
+    resolvePluginIndicatorSourcePlan(indicator, timeframeDefinition, "1m", [
+      "1m",
+      "5m",
+      "1h",
+    ]),
+    {
+      requestedTimeframeId: "3m",
+      activeTimeframeId: "1m",
+      usedFallback: true,
+      taTimeframeIds: ["1h"],
+      taSources: [
+        {
+          requestedTimeframeId: "1h",
+          activeTimeframeId: "1h",
+          usedFallback: false,
+        },
+      ],
+    },
+  );
+  assert.equal(indicator.parameters.input_timeframe, "3m");
+
+  const fields = pluginIndicatorSettingsFields(
+    timeframeDefinition,
+    ["1m", "5m", "1h"],
+    "1m",
+    indicator.parameters,
+  );
+  assert.deepEqual(fields[0].options.at(-1), {
+    value: "3m",
+    label: "3m (Unavailable)",
+  });
+});
+
+test("unavailable per-TA timeframe preserves its logical ID while resolving to chart data", () => {
+  const definition = {
+    ...timeframeDefinition,
+    source: {
+      ...timeframeDefinition.source,
+      taTimeframeIds: ["4h"],
+    },
+  };
+  const indicator = {
+    instanceId: "ta-fallback-instance",
+    pluginId: "erc.indicator.test",
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { input_timeframe: "chart" },
+    inputs: { source: { kind: "candles" } },
+  };
+
+  const plan = resolvePluginIndicatorSourcePlan(indicator, definition, "1m", [
+    "1m",
+    "5m",
+  ]);
+  assert.deepEqual(plan.taSources, [
+    {
+      requestedTimeframeId: "4h",
+      activeTimeframeId: "1m",
+      usedFallback: true,
+    },
+  ]);
+  assert.deepEqual(plan.taTimeframeIds, ["1m"]);
+});
+
+test("reconciliation sends the resolved indicator timeframe and per-TA sources to the runtime", async () => {
+  let template;
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const summary = {
+    pluginId: "erc.indicator.timeframe-test",
+    pluginName: "Timeframe test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.timeframe-test/1.0.0/dist/index.js",
+    definition: timeframeDefinition,
+  };
+  const indicator = {
+    instanceId: "timeframe-runtime-instance",
+    pluginId: summary.pluginId,
+    definitionId: timeframeDefinition.id,
+    enabled: true,
+    parameters: { input_timeframe: "5m" },
+    inputs: { source: { kind: "candles" } },
+  };
+  const requests = [];
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [indicator],
+    [summary],
+    async (request) => {
+      requests.push(request);
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: request.data.candles.map((item) => ({
+            openTimeMs: item.openTimeMs,
+            values: { line: item.close },
+          })),
+          overlays: [],
+          signals: [],
+        },
+      };
+    },
+    "TEST",
+    "1m",
+    new Set(),
+    "profile-a",
+    ["1m", "5m", "1h"],
+  );
+  const [runtimeId] = reconciliation.managedRuntimeIds;
+
+  await template.calc(
+    [{ timestamp: 60_000, open: 10, high: 12, low: 9, close: 11 }],
+    { id: runtimeId },
+  );
+
+  assert.equal(requests[0].timeframeId, "5m");
+  assert.deepEqual(requests[0].sourceTimeframeIds, ["1h"]);
+  assert.equal(requests[0].parameters.input_timeframe, "5m");
+  assert.equal(requests[0].data.candles[0].timeframeId, "1m");
+});
+
+test("whole-indicator timeframe snapshots align only completed source bars onto chart bars", async () => {
+  let template;
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const definition = {
+    ...timeframeDefinition,
+    id: "erc.indicator.test.whole-timeframe",
+    inputs: [],
+    source: {
+      timeframe: { requestedTimeframeId: "1h" },
+      taTimeframeIds: [],
+    },
+  };
+  const summary = {
+    pluginId: "erc.indicator.whole-timeframe-test",
+    pluginName: "Whole timeframe test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.whole-timeframe-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const indicator = {
+    instanceId: "whole-timeframe-instance",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [indicator],
+    [summary],
+    async () => ({
+      kind: "snapshot",
+      snapshot: {
+        points: [
+          { openTimeMs: 0, values: { line: 100 } },
+          { openTimeMs: 60 * 60_000, values: { line: 200 } },
+        ],
+        overlays: [],
+        signals: [],
+      },
+    }),
+    "TEST",
+    "15m",
+    new Set(),
+    "profile-a",
+    ["15m", "1h"],
+  );
+  const [runtimeId] = reconciliation.managedRuntimeIds;
+  const chartBars = Array.from({ length: 9 }, (_, index) => ({
+    timestamp: index * 15 * 60_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  }));
+
+  const rows = await template.calc(chartBars, { id: runtimeId });
+  assert.deepEqual(
+    rows.map((row) => row.line),
+    [undefined, undefined, undefined, 100, 100, 100, 100, 200, 200],
+  );
+});
 
 test("passes runtime point colors into KLineChart figure styles", async () => {
   let template;

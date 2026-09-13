@@ -38,6 +38,7 @@ interface IndicatorPluginModule {
     context: {
       readonly instrumentId: InstrumentId;
       readonly timeframeId: TimeframeId;
+      readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
     },
   ) => RuntimeIndicatorInstance;
 }
@@ -270,6 +271,16 @@ async function execute(
   const instance = plugin.createInstance(parameters, {
     instrumentId: message.instrumentId as InstrumentId,
     timeframeId: message.timeframeId as TimeframeId,
+    ...(message.sources === undefined
+      ? {}
+      : {
+          sourceCandles: Object.fromEntries(
+            message.sources.map((source) => [
+              source.timeframeId,
+              source.candles,
+            ]),
+          ),
+        }),
   });
   instance.onHistory(message.data.candles);
   const snapshot = projectSnapshot(
@@ -315,6 +326,29 @@ function isDataUpdate(value: unknown): boolean {
   );
 }
 
+function isSourceSnapshot(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const source = value as {
+    readonly timeframeId?: unknown;
+    readonly activeTimeframeId?: unknown;
+    readonly candles?: unknown;
+  };
+  const activeTimeframeId =
+    source.activeTimeframeId === undefined
+      ? source.timeframeId
+      : source.activeTimeframeId;
+  return (
+    typeof source.timeframeId === "string" &&
+    source.timeframeId.length > 0 &&
+    typeof activeTimeframeId === "string" &&
+    activeTimeframeId.length > 0 &&
+    Array.isArray(source.candles) &&
+    source.candles.every(
+      (candle) => isCandle(candle) && candle.timeframeId === activeTimeframeId,
+    )
+  );
+}
+
 function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
   if (typeof value !== "object" || value === null) return false;
   const message = value as Partial<IndicatorWorkerSyncMessage>;
@@ -334,6 +368,9 @@ function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
     Number(message.configGeneration) >= 0 &&
     typeof message.parameters === "object" &&
     message.parameters !== null &&
+    (message.sources === undefined ||
+      (Array.isArray(message.sources) &&
+        message.sources.every(isSourceSnapshot))) &&
     isDataUpdate(message.data)
   );
 }

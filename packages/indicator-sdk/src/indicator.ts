@@ -109,6 +109,7 @@ export function defineIndicator(
   };
   const discovery: AuthoringFrame = {
     candle: sample,
+    sourceCandles: {},
     phase: "building",
     historyReplay: false,
     historyFinalizedTail: false,
@@ -117,6 +118,8 @@ export function defineIndicator(
     kernelIndex: 0,
     inputs,
     inputIndex: 0,
+    timeframeInputs: [],
+    taTimeframeIds: new Set(),
     parameters: {},
     plots,
     plotIndex: 0,
@@ -146,6 +149,17 @@ export function defineIndicator(
     }
   };
   run(discovery, 0);
+  const requestedTimeframeId = discovery.indicatorTimeframeId;
+  const matchingTimeframeInputs =
+    requestedTimeframeId === undefined
+      ? []
+      : discovery.timeframeInputs.filter(
+          ({ value }) => value === requestedTimeframeId,
+        );
+  const matchingTimeframeInputKey =
+    matchingTimeframeInputs.length === 1
+      ? matchingTimeframeInputs[0]?.key
+      : undefined;
   const definition: IndicatorDefinition = Object.freeze({
     ...options,
     indicatorContractVersion,
@@ -165,6 +179,24 @@ export function defineIndicator(
       ),
     ),
     plots: Object.freeze(plots.map((value) => Object.freeze(value))),
+    ...(requestedTimeframeId === undefined &&
+    discovery.taTimeframeIds.size === 0
+      ? {}
+      : {
+          source: Object.freeze({
+            ...(requestedTimeframeId === undefined
+              ? {}
+              : {
+                  timeframe: Object.freeze({
+                    requestedTimeframeId,
+                    ...(matchingTimeframeInputKey === undefined
+                      ? {}
+                      : { inputKey: matchingTimeframeInputKey }),
+                  }),
+                }),
+            taTimeframeIds: Object.freeze([...discovery.taTimeframeIds]),
+          }),
+        }),
   });
   if (!isInstalledIndicatorDefinition(definition))
     throw new TypeError(
@@ -216,6 +248,7 @@ export function defineIndicator(
         const previousOverlays = overlays;
         const frame: AuthoringFrame = {
           candle,
+          sourceCandles: context.sourceCandles ?? {},
           phase,
           historyReplay,
           historyFinalizedTail,
@@ -224,6 +257,8 @@ export function defineIndicator(
           kernelIndex: 0,
           inputs,
           inputIndex: 0,
+          timeframeInputs: [],
+          taTimeframeIds: new Set(),
           parameters,
           plots,
           plotIndex: 0,

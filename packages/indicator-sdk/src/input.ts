@@ -310,6 +310,46 @@ function stringInput(
   ) as string;
 }
 
+function timeframeInput(
+  defaultValue: string,
+  titleOrOptions: string | InputOptions = {},
+  hiddenCallsite?: unknown,
+): string {
+  const options =
+    typeof titleOrOptions === "string"
+      ? { title: titleOrOptions }
+      : titleOrOptions;
+  if (
+    defaultValue.length === 0 ||
+    defaultValue.length > 64 ||
+    defaultValue.trim() !== defaultValue
+  ) {
+    throw new RangeError(
+      "Timeframe input default must be a non-empty timeframe ID.",
+    );
+  }
+  const callsite = readCompilerCallsite(
+    hiddenCallsite,
+    "input",
+    "input.timeframe",
+  );
+  const definition: IndicatorInputDefinition = {
+    ...metadata(options, callsite),
+    type: "string",
+    defaultValue,
+    editor: "timeframe",
+  };
+  const value = readInput(
+    definition,
+    callsite,
+    hasExplicitLabel(options),
+  ) as string;
+  const frame = authoringFrame();
+  if (frame.discovery)
+    frame.timeframeInputs.push({ key: definition.key, value });
+  return value;
+}
+
 export interface InputApi {
   readonly float: (
     defaultValue: number,
@@ -325,6 +365,10 @@ export interface InputApi {
     (defaultValue: string, options?: StringInputOptions): string;
   };
   readonly color: (defaultValue: string, options?: InputOptions) => string;
+  readonly timeframe: (
+    defaultValue: string,
+    titleOrOptions?: string | InputOptions,
+  ) => string;
 }
 
 export const input: InputApi = Object.freeze({
@@ -387,4 +431,5 @@ export const input: InputApi = Object.freeze({
       hasExplicitLabel(options),
     ) as string;
   },
+  timeframe: timeframeInput,
 });

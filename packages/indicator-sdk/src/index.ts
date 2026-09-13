@@ -115,6 +115,15 @@ export interface IndicatorDefinition {
   readonly outputs: readonly IndicatorOutputDefinition[];
   readonly plots: readonly IndicatorPlotDefinition[];
   readonly requiresLiveTicks: boolean;
+  readonly source?: IndicatorSourceDefinition;
+}
+
+export interface IndicatorSourceDefinition {
+  readonly timeframe?: {
+    readonly requestedTimeframeId: string;
+    readonly inputKey?: string;
+  };
+  readonly taTimeframeIds: readonly string[];
 }
 
 /** Author-facing result of defineIndicator(). Runtime lifecycle ports remain host-private. */
@@ -168,8 +177,16 @@ export { movingAverageTypes } from "./ta.js";
 export type { DmiPoint, MovingAverageType } from "./ta.js";
 
 export interface TechnicalAnalysisApi {
-  readonly sma: (valueOrLength: number, period?: number) => number;
-  readonly ema: (valueOrLength: number, period?: number) => number;
+  readonly sma: (
+    valueOrLength: number,
+    periodOrTimeframe?: number | string,
+    timeframeId?: string,
+  ) => number;
+  readonly ema: (
+    valueOrLength: number,
+    periodOrTimeframe?: number | string,
+    timeframeId?: string,
+  ) => number;
   readonly movingAverage: (
     value: number,
     type: MovingAverageType,
@@ -234,6 +251,10 @@ export interface InputApi {
     (defaultValue: string, options?: StringInputOptions): string;
   };
   readonly color: (defaultValue: string, options?: InputOptions) => string;
+  readonly timeframe: (
+    defaultValue: string,
+    titleOrOptions?: string | InputOptions,
+  ) => string;
 }
 export const input: InputApi = runtimeInput as InputApi;
 
@@ -276,9 +297,13 @@ export {
   location,
   shape,
   textSize,
+  timeframe,
   type ShapeKind,
   type ShapeLocation,
   type TextSize,
+  type TimeframeSelection,
 } from "./constants.js";
+
+export { indicator, type IndicatorApi } from "./indicator-controls.js";
 
 export { signal, type SignalOptions } from "./signal.js";

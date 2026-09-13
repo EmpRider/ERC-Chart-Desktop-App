@@ -14,6 +14,7 @@ export interface KernelSlot {
 }
 export interface AuthoringFrame {
   readonly candle: Candle;
+  readonly sourceCandles: Readonly<Record<string, readonly Candle[]>>;
   readonly phase: "building" | "finalized";
   readonly historyReplay: boolean;
   readonly historyFinalizedTail: boolean;
@@ -22,6 +23,12 @@ export interface AuthoringFrame {
   kernelIndex: number;
   readonly inputs: IndicatorInputDefinition[];
   inputIndex: number;
+  readonly timeframeInputs: {
+    readonly key: string;
+    readonly value: string;
+  }[];
+  indicatorTimeframeId?: string;
+  readonly taTimeframeIds: Set<string>;
   readonly parameters: Readonly<Record<string, IndicatorInputValue>>;
   readonly plots: IndicatorPlotDefinition[];
   plotIndex: number;

@@ -425,39 +425,52 @@ also limited per bar. Treat those as platform safety limits, not storage targets
 
 ## Multi-timeframe and provider-aware sources
 
-The overall SDK v2 architecture includes provider-aware source resolution,
-whole-indicator timeframe controls, and per-TA timeframe overrides. Those
-capabilities are intentionally **not claimed as complete by the ECDD-216
-optimization workstream**.
+ECDD-142 supplies the operational provider-aware MTF path. Timeframe choices are
+resolved by the host from the active provider's effective native/derived
+capabilities; indicator packages do not embed a universal selectable timeframe
+list.
 
-Operational provider-aware MTF acquisition and per-TA timeframe overrides are
-owned by **ECDD-142**. The current public optimization surface does not advertise
-an `input.timeframe()` or per-TA timeframe argument as available author APIs.
-Do not implement custom provider aggregation or lookahead-prone resampling inside
-an indicator to imitate those future host capabilities.
+Use a host-managed timeframe input for the whole indicator:
 
-When ECDD-142 lands, this guide must be updated from its shipped public contract
-and provider capability behavior. Until then, an indicator calculation runs on
-the source/timeframe supplied by the host context.
+```ts
+const tf = input.timeframe(timeframe.chart, "Timeframe");
+indicator.timeframe(tf);
+```
+
+Use a timeframe argument on a TA call when only that calculation needs another
+source:
+
+```ts
+const local = ta.ema(9);
+const trend = ta.ema(200, "1h");
+const explicitTrend = ta.ema(close, 200, "1h");
+```
+
+The runtime acquires and shares the required provider sources, aligns completed
+foreign bars without finalized lookahead, and keeps the indicator attached to the
+current chart. If a saved timeframe is no longer available after provider
+capabilities change, the requested preference is preserved while the active
+source falls back safely to the chart timeframe. Do not add author-side provider
+aggregation, resampling, fallback, or source-subscription code.
 
 ## Rewriting an older indicator to v2
 
 Rewrite the indicator from its trading/math semantics rather than preserving old
 framework plumbing.
 
-| Older concern                                       | SDK v2 rewrite                                                    |
-| --------------------------------------------------- | ----------------------------------------------------------------- |
-| Explicit input/plot/signal persistence key          | Remove it; identity is compiler/SDK-owned                         |
-| Kernel/plot/input index or call-order counter       | Remove it; call-site identity is hidden                           |
-| `appendSeries()` / `laggedValue()` source history   | Use `close[n]`, `source.at(n)`, or `history(source, n)`           |
-| Genuine recurrence/domain state                     | Keep the mathematics in `series()`                                |
-| Array-oriented TA compatibility call                | Rewrite as scalar per-bar `ta.*`                                  |
-| Conditional call workaround to preserve order       | Write the natural condition on the compiled v2 call site          |
-| Drawing ID/scope/reconciliation array               | Use `plot.box()` / `plot.segment()` handles and `delete()`        |
-| Manual signal ID/dedup/finalized-tail logic         | Use `signal(condition, direction, options?)`                      |
-| Author-side persisted-settings migration/validation | Declare `input.*`; host normalization owns stale/invalid settings |
-| `isHistory` / `isHistoryFinalizedTail` branches     | Remove replay plumbing; use v2 history/state/signal lifecycle     |
-| Custom provider/timeframe aggregation               | Do not emulate it; provider-aware MTF is owned by ECDD-142        |
+| Older concern                                       | SDK v2 rewrite                                                                                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Explicit input/plot/signal persistence key          | Remove it; identity is compiler/SDK-owned                                                                         |
+| Kernel/plot/input index or call-order counter       | Remove it; call-site identity is hidden                                                                           |
+| `appendSeries()` / `laggedValue()` source history   | Use `close[n]`, `source.at(n)`, or `history(source, n)`                                                           |
+| Genuine recurrence/domain state                     | Keep the mathematics in `series()`                                                                                |
+| Array-oriented TA compatibility call                | Rewrite as scalar per-bar `ta.*`                                                                                  |
+| Conditional call workaround to preserve order       | Write the natural condition on the compiled v2 call site                                                          |
+| Drawing ID/scope/reconciliation array               | Use `plot.box()` / `plot.segment()` handles and `delete()`                                                        |
+| Manual signal ID/dedup/finalized-tail logic         | Use `signal(condition, direction, options?)`                                                                      |
+| Author-side persisted-settings migration/validation | Declare `input.*`; host normalization owns stale/invalid settings                                                 |
+| `isHistory` / `isHistoryFinalizedTail` branches     | Remove replay plumbing; use v2 history/state/signal lifecycle                                                     |
+| Custom provider/timeframe aggregation               | Use `input.timeframe`, `indicator.timeframe`, or a `ta.*` timeframe override; the host owns acquisition/alignment |
 
 A rewrite is successful when the remaining state and branches exist because the
 indicator mathematics require them, not because ERC Chart's runtime requires

@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   defineIndicator,
+  indicator,
   input,
   plot,
   series,
   signal,
   ta,
+  timeframe,
 } from "../dist/index.js";
 import {
   isInstalledIndicatorDefinition,
@@ -83,6 +85,84 @@ test("scalar authoring generates valid definitions and dense results without out
     rsi.map((value) => (Number.isFinite(value) ? value : null)),
   );
   assert.equal(instance.snapshot().points.at(-1).colors.plot_0, "#00ff00");
+  instance.dispose();
+});
+
+test("timeframe authoring declares dynamic host metadata without static provider options", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.timeframe.main", name: "Timeframe" },
+    () => {
+      const selected = input.timeframe(timeframe.chart, "Timeframe");
+      indicator.timeframe(selected);
+      plot.line(ta.ema(200, "1h"));
+    },
+  );
+
+  assert.deepEqual(plugin.definition.inputs, [
+    {
+      key: "input_0",
+      label: "Timeframe",
+      type: "string",
+      defaultValue: "chart",
+      editor: "timeframe",
+    },
+  ]);
+  assert.equal(plugin.definition.inputs[0].options, undefined);
+  assert.deepEqual(plugin.definition.source, {
+    timeframe: {
+      requestedTimeframeId: "chart",
+      inputKey: "input_0",
+    },
+    taTimeframeIds: ["1h"],
+  });
+  assert.equal(isInstalledIndicatorDefinition(plugin.definition), true);
+});
+
+test("per-TA higher timeframe values align only after the foreign candle closes", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.mtf-alignment.main", name: "MTF alignment" },
+    ({ close }) => {
+      plot.line(ta.ema(1, "1h"));
+      plot.line(ta.ema(close, 1, "1h"));
+    },
+  );
+  const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
+  const baseCandles = Array.from({ length: 9 }, (_, index) => ({
+    ...baseContext,
+    openTimeMs: index * 15 * 60_000,
+    open: 10 + index,
+    high: 11 + index,
+    low: 9 + index,
+    close: 10 + index,
+    volume: 1,
+  }));
+  const higherCandles = [0, 60, 120].map((minute, index) => ({
+    instrumentId: "TEST",
+    timeframeId: "1h",
+    openTimeMs: minute * 60_000,
+    open: 100 + index * 100,
+    high: 100 + index * 100,
+    low: 100 + index * 100,
+    close: 100 + index * 100,
+    volume: 1,
+  }));
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...baseContext,
+      sourceCandles: { "1h": higherCandles },
+    },
+  );
+
+  instance.onHistory(baseCandles);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [null, null, null, 100, 100, 100, 100, 200, 200],
+  );
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_1),
+    [null, null, null, 100, 100, 100, 100, 200, 200],
+  );
   instance.dispose();
 });
 

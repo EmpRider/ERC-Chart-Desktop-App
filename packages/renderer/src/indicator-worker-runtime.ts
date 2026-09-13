@@ -23,6 +23,11 @@ export interface BrowserIndicatorSyncRequest extends Omit<
 > {
   readonly runtimeEntryUrl: string;
   readonly providerProfileId?: string;
+  readonly sourceTimeframeIds?: readonly string[];
+  readonly sourceTimeframes?: readonly {
+    readonly requestedTimeframeId: string;
+    readonly activeTimeframeId: string;
+  }[];
   readonly data: IndicatorWorkerDataUpdate;
   readonly rebuildCandles: () => readonly IndicatorRuntimeSyncRequest["candles"][number][];
   readonly dataRevision: number;
@@ -92,44 +97,77 @@ export function createBrowserIndicatorRuntime(
     options.sourceDataService === undefined
       ? undefined
       : createIndicatorSourceEngine(options.sourceDataService);
-  const sourceLeases = new Map<
-    string,
-    { readonly identity: string; readonly lease: IndicatorSourceLease }
-  >();
+  const sourceLeases = new Map<string, Map<string, IndicatorSourceLease>>();
 
-  const sourceFor = async (
+  const sourcesFor = async (
     request: BrowserIndicatorSyncRequest,
-  ): Promise<IndicatorSourceLease | undefined> => {
+  ): Promise<ReadonlyMap<string, IndicatorSourceLease> | undefined> => {
     if (
       sourceEngine === undefined ||
       request.providerProfileId === undefined ||
       request.providerProfileId.length === 0
     ) {
+      const current = sourceLeases.get(request.instanceId);
+      sourceLeases.delete(request.instanceId);
+      if (current !== undefined)
+        for (const source of current.values()) await source.release();
       return undefined;
     }
-    const key = {
-      providerProfileId: request.providerProfileId,
-      instrumentId: request.instrumentId,
-      timeframeId: request.timeframeId,
-      candleType: "standard" as const,
-    };
-    const identity = JSON.stringify([
-      key.providerProfileId,
-      key.instrumentId,
-      key.timeframeId,
-      key.candleType,
-    ]);
-    const current = sourceLeases.get(request.instanceId);
-    if (current?.identity === identity) return current.lease;
-    const lease = await sourceEngine.acquire(key);
-    sourceLeases.set(request.instanceId, { identity, lease });
-    await current?.lease.release();
-    return lease;
+    const timeframeIds = [
+      ...new Set([
+        request.timeframeId,
+        ...(request.sourceTimeframeIds ?? []),
+        ...(request.sourceTimeframes ?? []).map(
+          ({ activeTimeframeId }) => activeTimeframeId,
+        ),
+      ]),
+    ];
+    const current = sourceLeases.get(request.instanceId) ?? new Map();
+    const next = new Map<string, IndicatorSourceLease>();
+    try {
+      for (const timeframeId of timeframeIds) {
+        const identity = JSON.stringify([
+          request.providerProfileId,
+          request.instrumentId,
+          timeframeId,
+          "standard",
+        ]);
+        const existing = current.get(identity);
+        const lease =
+          existing ??
+          (await sourceEngine.acquire({
+            providerProfileId: request.providerProfileId,
+            instrumentId: request.instrumentId,
+            timeframeId,
+            candleType: "standard",
+          }));
+        next.set(identity, lease);
+      }
+    } catch (error) {
+      for (const [identity, lease] of next) {
+        if (!current.has(identity))
+          await lease.release().catch(() => undefined);
+      }
+      throw error;
+    }
+    sourceLeases.set(request.instanceId, next);
+    for (const [identity, lease] of current) {
+      if (!next.has(identity)) await lease.release();
+    }
+    return new Map(
+      [...next.values()].map((lease) => [lease.key.timeframeId, lease]),
+    );
   };
 
   return {
     sync: async (request): Promise<IndicatorWorkerResultUpdate> => {
-      const execute = (data: IndicatorWorkerDataUpdate) =>
+      const execute = (
+        data: IndicatorWorkerDataUpdate,
+        sources: readonly {
+          readonly timeframeId: string;
+          readonly candles: readonly Candle[];
+        }[] = [],
+      ) =>
         supervisor.sync({
           instanceId: request.instanceId,
           runtimeEntryUrl: request.runtimeEntryUrl,
@@ -138,17 +176,44 @@ export function createBrowserIndicatorRuntime(
           instrumentId: request.instrumentId,
           timeframeId: request.timeframeId,
           parameters: request.parameters,
+          ...(sources.length === 0 ? {} : { sources }),
           data,
           dataRevision: request.dataRevision,
           configGeneration: request.configGeneration,
         });
-      const source = await sourceFor(request);
+      const sources = await sourcesFor(request);
       let result;
-      if (source !== undefined) {
-        result = await execute({
-          kind: "rebuild",
-          candles: source.snapshot().candles,
-        });
+      if (sources !== undefined) {
+        const base = sources.get(request.timeframeId);
+        if (base === undefined)
+          throw new Error("Indicator base source was not acquired.");
+        const sourceMappings =
+          request.sourceTimeframes ??
+          (request.sourceTimeframeIds ?? []).map((timeframeId) => ({
+            requestedTimeframeId: timeframeId,
+            activeTimeframeId: timeframeId,
+          }));
+        const auxiliarySources = sourceMappings.map(
+          ({ requestedTimeframeId, activeTimeframeId }) => {
+            const lease = sources.get(activeTimeframeId);
+            if (lease === undefined)
+              throw new Error("Indicator auxiliary source was not acquired.");
+            return {
+              timeframeId: requestedTimeframeId,
+              ...(activeTimeframeId === requestedTimeframeId
+                ? {}
+                : { activeTimeframeId }),
+              candles: lease.snapshot().candles,
+            };
+          },
+        );
+        result = await execute(
+          {
+            kind: "rebuild",
+            candles: base.snapshot().candles,
+          },
+          auxiliarySources,
+        );
       } else {
         try {
           result = await execute(request.data);
@@ -176,9 +241,11 @@ export function createBrowserIndicatorRuntime(
     },
     disposeInstance: (instanceId): void => {
       supervisor.disposeInstance(instanceId);
-      const source = sourceLeases.get(instanceId);
+      const sources = sourceLeases.get(instanceId);
       sourceLeases.delete(instanceId);
-      void source?.lease.release().catch(() => undefined);
+      if (sources !== undefined)
+        for (const source of sources.values())
+          void source.release().catch(() => undefined);
     },
     dispose: (): void => {
       supervisor.dispose();
