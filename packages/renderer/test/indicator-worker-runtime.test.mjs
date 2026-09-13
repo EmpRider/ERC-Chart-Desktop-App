@@ -131,7 +131,9 @@ test("provider-backed indicator sources rebuild workers from source-engine candl
             }),
           );
         },
-        terminate() {},
+        terminate() {
+          return undefined;
+        },
       };
     },
   });
@@ -210,7 +212,9 @@ test("renderer provider bridge adapts history and live events for indicator sour
       onCandles(candles, series) {
         delivered.push({ candles, series });
       },
-      onTicks() {},
+      onTicks() {
+        return undefined;
+      },
       onError(code) {
         errors.push(code);
       },
