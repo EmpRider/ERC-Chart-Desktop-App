@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
-import { buildAtrRopeUtBotIndicatorPackage } from "./build-atr-rope-utbot-indicator.mjs";
+import { Worker as NodeWorker } from "node:worker_threads";
+import {
+  atrRopeUtBotPackageIdentity,
+  buildAtrRopeUtBotIndicatorPackage,
+} from "./build-atr-rope-utbot-indicator.mjs";
+import {
+  disposePluginIndicatorContexts,
+  reconcilePluginIndicators,
+} from "../packages/renderer/dist/plugin-indicators.js";
+import { createBrowserIndicatorRuntime } from "../packages/renderer/dist/indicator-worker-runtime.js";
 
-// Run after npm run build. This exercises four independent maintained authored
-// indicator instances, matching the application's supported multi-chart scale.
-// It is a runtime acceptance gate, not a renderer FPS or provider/MTF benchmark.
+// Run after npm run build. This exercises the production renderer chart scope,
+// browser-runtime supervisor, worker-entry transport and compiled SDK v2 package
+// across four independent chart objects. It is not a renderer FPS/provider gate.
 const chartCount = 4;
 const historyBarsPerChart = 25_000;
 const buildingRounds = 250;
@@ -20,10 +29,8 @@ const finalizedSweepBudgetMs = 1_000;
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const timeframeId = "1m";
 const instrumentId = (chartIndex) => `PERF-${chartIndex + 1}`;
-const candle = (chartIndex, index, close = 11 + (index % 10) / 10) => ({
-  instrumentId: instrumentId(chartIndex),
-  timeframeId,
-  openTimeMs: index * 60_000,
+const kline = (chartIndex, index, close = 11 + (index % 10) / 10) => ({
+  timestamp: index * 60_000,
   open: close - 1,
   high: close + 1,
   low: close - 2,
@@ -31,10 +38,59 @@ const candle = (chartIndex, index, close = 11 + (index % 10) / 10) => ({
   volume: index + 1,
 });
 
+function makeChart() {
+  const ids = new Set();
+  return {
+    ids,
+    chart: {
+      getIndicators({ id }) {
+        return ids.has(id) ? [{ id, name: undefined }] : [];
+      },
+      createIndicator(value) {
+        ids.add(value.id);
+        return "candle_pane";
+      },
+      overrideIndicator() {
+        return true;
+      },
+      removeIndicator({ id }) {
+        ids.delete(id);
+        return true;
+      },
+    },
+  };
+}
+
+function nodeWorkerFactory(bootstrapUrl, workerEntryUrl, createdWorkers) {
+  return () => {
+    const worker = new NodeWorker(bootstrapUrl, {
+      workerData: { workerEntryUrl },
+    });
+    createdWorkers.push(worker);
+    const adapter = {
+      onmessage: null,
+      onerror: null,
+      postMessage(message) {
+        worker.postMessage(message);
+      },
+      terminate() {
+        void worker.terminate();
+      },
+    };
+    worker.on("message", (data) => adapter.onmessage?.({ data }));
+    worker.on("error", (error) =>
+      adapter.onerror?.({ message: error.message }),
+    );
+    return adapter;
+  };
+}
+
 const outputRoot = await mkdtemp(
   path.join(os.tmpdir(), "erc-authored-multichart-performance-"),
 );
-const charts = [];
+const createdWorkers = [];
+const runtimeIds = [];
+let browserRuntime;
 
 try {
   const built = await buildAtrRopeUtBotIndicatorPackage({
@@ -42,41 +98,114 @@ try {
     outputRoot: path.join(outputRoot, "package"),
   });
   const entry = path.join(built.packageRoot, "dist", "index.js");
-  const module = await import(
-    `${pathToFileURL(entry).href}?performance=${Date.now()}`
-  );
-  const indicator = module.default;
+  const runtimeEntryUrl = pathToFileURL(entry).href;
+  const indicatorModule = await import(`${runtimeEntryUrl}?metadata=${Date.now()}`);
+  const indicator = indicatorModule.default;
   assert.ok(indicator?.definition && indicator.createInstance);
 
+  const workerEntryUrl = pathToFileURL(
+    path.join(
+      repoRoot,
+      "packages",
+      "indicator-runtime",
+      "dist",
+      "worker-entry.js",
+    ),
+  ).href;
+  const bootstrapPath = path.join(outputRoot, "worker-bootstrap.mjs");
+  await writeFile(
+    bootstrapPath,
+    `import { parentPort, workerData } from "node:worker_threads";\n` +
+      `if (parentPort === null) throw new Error("Indicator performance worker has no parent port");\n` +
+      `const queued = [];\n` +
+      `globalThis.postMessage = (message) => parentPort.postMessage(message);\n` +
+      `parentPort.on("message", (data) => {\n` +
+      `  if (typeof globalThis.onmessage === "function") globalThis.onmessage({ data });\n` +
+      `  else queued.push(data);\n` +
+      `});\n` +
+      `await import(workerData.workerEntryUrl);\n` +
+      `for (const data of queued.splice(0)) globalThis.onmessage?.({ data });\n`,
+    "utf8",
+  );
+  const bootstrapUrl = pathToFileURL(bootstrapPath);
+  browserRuntime = createBrowserIndicatorRuntime({
+    workerFactory: nodeWorkerFactory(
+      bootstrapUrl,
+      workerEntryUrl,
+      createdWorkers,
+    ),
+  });
+
+  let template;
+  const klineModule = {
+    registerIndicator(value) {
+      template ??= value;
+    },
+  };
   const parameters = Object.fromEntries(
     indicator.definition.inputs.map((input) => [input.key, input.defaultValue]),
   );
-  for (let chartIndex = 0; chartIndex < chartCount; chartIndex += 1) {
-    charts.push({
+  const summary = {
+    pluginId: atrRopeUtBotPackageIdentity.id,
+    pluginName: atrRopeUtBotPackageIdentity.name,
+    version: atrRopeUtBotPackageIdentity.version,
+    runtimeEntryUrl,
+    definition: indicator.definition,
+  };
+  const workspaceIndicator = {
+    instanceId: "multichart-performance",
+    pluginId: summary.pluginId,
+    definitionId: summary.definition.id,
+    enabled: true,
+    parameters,
+    inputs: { source: { kind: "candles" } },
+  };
+  const charts = Array.from({ length: chartCount }, (_, chartIndex) => {
+    const owned = makeChart();
+    const reconciliation = reconcilePluginIndicators(
+      klineModule,
+      owned.chart,
+      [workspaceIndicator],
+      [summary],
+      browserRuntime.sync,
+      instrumentId(chartIndex),
+      timeframeId,
+    );
+    const [runtimeId] = reconciliation.managedRuntimeIds;
+    assert.ok(runtimeId, "multi-chart reconciliation must create a runtime id");
+    runtimeIds.push(runtimeId);
+    return {
       chartIndex,
-      instance: indicator.createInstance(parameters, {
-        instrumentId: instrumentId(chartIndex),
-        timeframeId,
-      }),
-    });
-  }
+      ...owned,
+      runtimeId,
+      data: Array.from({ length: historyBarsPerChart }, (_, index) =>
+        kline(chartIndex, index),
+      ),
+      rows: undefined,
+    };
+  });
+  assert.ok(
+    template,
+    "multi-chart reconciliation must register a KLineCharts template",
+  );
+  assert.equal(new Set(runtimeIds).size, chartCount);
 
   const historyStarted = performance.now();
   let maximumHistoryMs = 0;
-  for (const { chartIndex, instance } of charts) {
+  for (const chart of charts) {
     const chartHistoryStarted = performance.now();
-    instance.onHistory(
-      Array.from({ length: historyBarsPerChart }, (_, index) =>
-        candle(chartIndex, index),
-      ),
-    );
+    chart.rows = await template.calc(chart.data, {
+      id: chart.runtimeId,
+      result: chart.rows,
+    });
     maximumHistoryMs = Math.max(
       maximumHistoryMs,
       performance.now() - chartHistoryStarted,
     );
-    assert.equal(instance.snapshot().points.length, historyBarsPerChart);
+    assert.equal(chart.rows.length, historyBarsPerChart);
   }
   const historyElapsedMs = performance.now() - historyStarted;
+  assert.equal(createdWorkers.length, chartCount);
   assert.ok(
     historyElapsedMs < historyBudgetMs,
     `Four-chart authored history exceeded the ${historyBudgetMs} ms budget: ${historyElapsedMs}`,
@@ -86,18 +215,18 @@ try {
     `One authored chart exceeded the ${historyBudgetMs} ms history budget: ${maximumHistoryMs}`,
   );
 
-  const stablePointArrays = charts.map(
-    ({ instance }) => instance.snapshot().points,
-  );
+  const stableRows = charts.map(({ rows }) => rows);
   for (let warmup = 0; warmup < 20; warmup += 1) {
-    for (const { chartIndex, instance } of charts) {
-      instance.onBuildingBar(
-        candle(
-          chartIndex,
-          historyBarsPerChart - 1,
-          20 + warmup / 100 + chartIndex / 1_000,
-        ),
+    for (const chart of charts) {
+      chart.data[historyBarsPerChart - 1] = kline(
+        chart.chartIndex,
+        historyBarsPerChart - 1,
+        20 + warmup / 100 + chart.chartIndex / 1_000,
       );
+      chart.rows = await template.calc(chart.data, {
+        id: chart.runtimeId,
+        result: chart.rows,
+      });
     }
   }
 
@@ -106,15 +235,17 @@ try {
   const buildingStarted = performance.now();
   for (let round = 0; round < buildingRounds; round += 1) {
     const sweepStarted = performance.now();
-    for (const { chartIndex, instance } of charts) {
-      const updateStarted = performance.now();
-      instance.onBuildingBar(
-        candle(
-          chartIndex,
-          historyBarsPerChart - 1,
-          30 + (round % 100) / 100 + chartIndex / 1_000,
-        ),
+    for (const chart of charts) {
+      chart.data[historyBarsPerChart - 1] = kline(
+        chart.chartIndex,
+        historyBarsPerChart - 1,
+        30 + (round % 100) / 100 + chart.chartIndex / 1_000,
       );
+      const updateStarted = performance.now();
+      chart.rows = await template.calc(chart.data, {
+        id: chart.runtimeId,
+        result: chart.rows,
+      });
       maximumBuildingMs = Math.max(
         maximumBuildingMs,
         performance.now() - updateStarted,
@@ -131,25 +262,39 @@ try {
     maximumBuildingMs < maximumIncrementalBudgetMs,
     `One authored provisional update exceeded the ${maximumIncrementalBudgetMs} ms worker budget: ${maximumBuildingMs}`,
   );
-  for (const [index, { instance }] of charts.entries()) {
+  for (const [index, chart] of charts.entries()) {
     assert.strictEqual(
-      instance.snapshot().points,
-      stablePointArrays[index],
-      "multi-chart provisional updates must not clone retained point history",
+      chart.rows,
+      stableRows[index],
+      "multi-chart provisional updates must retain renderer row history",
     );
   }
 
   let maximumFinalizedMs = 0;
   const finalizedStarted = performance.now();
-  for (const { chartIndex, instance } of charts) {
-    const updateStarted = performance.now();
-    instance.onFinalizedBar(
-      candle(chartIndex, historyBarsPerChart - 1, 40 + chartIndex / 1_000),
+  for (const chart of charts) {
+    chart.data[historyBarsPerChart - 1] = kline(
+      chart.chartIndex,
+      historyBarsPerChart - 1,
+      40 + chart.chartIndex / 1_000,
     );
+    chart.data.push(
+      kline(
+        chart.chartIndex,
+        historyBarsPerChart,
+        41 + chart.chartIndex / 1_000,
+      ),
+    );
+    const updateStarted = performance.now();
+    chart.rows = await template.calc(chart.data, {
+      id: chart.runtimeId,
+      result: chart.rows,
+    });
     maximumFinalizedMs = Math.max(
       maximumFinalizedMs,
       performance.now() - updateStarted,
     );
+    assert.equal(chart.rows.length, historyBarsPerChart + 1);
   }
   const finalizedElapsedMs = performance.now() - finalizedStarted;
   assert.ok(
@@ -163,8 +308,9 @@ try {
 
   console.log(
     JSON.stringify({
-      component: "authored-indicator-multichart",
+      component: "authored-indicator-real-multichart",
       chartCount,
+      workerCount: createdWorkers.length,
       historyBarsPerChart,
       aggregateHistoryBars: chartCount * historyBarsPerChart,
       historyElapsedMs,
@@ -186,6 +332,8 @@ try {
     }),
   );
 } finally {
-  for (const { instance } of charts) instance.dispose();
+  browserRuntime?.dispose();
+  disposePluginIndicatorContexts(runtimeIds);
+  await Promise.allSettled(createdWorkers.map((worker) => worker.terminate()));
   await rm(outputRoot, { recursive: true, force: true });
 }
