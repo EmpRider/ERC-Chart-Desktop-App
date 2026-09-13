@@ -58,8 +58,8 @@ test("composed v2 contract survives replay, provisional rollback, and finalizati
 function optionalBranch(value, openTimeMs) {
   const executions = series(0, (previous) => previous + 1);
   const average = ta.ema(value, 2);
-  plot.line(executions, { key: "optionalState", title: "Optional state" });
-  plot.line(average, { key: "optionalAverage", title: "Optional average" });
+  plot.line(executions, { title: "Optional state" });
+  plot.line(average, { title: "Optional average" });
   plot.box({
     left: openTimeMs,
     right: openTimeMs + 60_000,
@@ -72,7 +72,7 @@ function optionalBranch(value, openTimeMs) {
 
 function alwaysBranch() {
   const executions = series(100, (previous) => previous + 10);
-  plot.line(executions, { key: "alwaysState", title: "Always state" });
+  plot.line(executions, { title: "Always state" });
 }
 
 export default defineIndicator(
@@ -80,24 +80,39 @@ export default defineIndicator(
   ({ close, openTimeMs }) => {
     if (close > 15) optionalBranch(close, openTimeMs);
     alwaysBranch();
-    plot.line(close[1], { key: "indexed", title: "Indexed history" });
-    plot.line(close.at(1), { key: "at", title: "At history" });
-    plot.line(history(close, 1), { key: "function", title: "Function history" });
+    plot.line(close[1], { title: "Indexed history" });
+    plot.line(close.at(1), { title: "At history" });
+    plot.line(history(close, 1), { title: "Function history" });
   },
 );
 `,
     "erc.indicator.v2-contract",
   );
 
-  const optionalState = plugin.definition.plots.find(
-    (definition) => definition.outputKey === "optionalState",
-  );
-  const alwaysState = plugin.definition.plots.find(
-    (definition) => definition.outputKey === "alwaysState",
-  );
-  assert.match(optionalState?.key ?? "", /^erc-v2-plot-[0-9a-f]{24}$/u);
-  assert.match(alwaysState?.key ?? "", /^erc-v2-plot-[0-9a-f]{24}$/u);
-  assert.notEqual(optionalState?.key, alwaysState?.key);
+  const definitionFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    assert.match(definition.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
+    return definition;
+  };
+  const outputKeyFor = (label) => {
+    const definition = definitionFor(label);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const optionalState = definitionFor("Optional state");
+  const alwaysState = definitionFor("Always state");
+  assert.notEqual(optionalState.key, alwaysState.key);
+
+  const keys = {
+    optionalState: outputKeyFor("Optional state"),
+    alwaysState: outputKeyFor("Always state"),
+    indexed: outputKeyFor("Indexed history"),
+    at: outputKeyFor("At history"),
+    functionHistory: outputKeyFor("Function history"),
+  };
 
   const instance = plugin.createInstance({}, context);
   const values = (key) =>
@@ -113,9 +128,9 @@ export default defineIndicator(
       candle(3, 30),
     ]);
 
-    assert.deepEqual(values("alwaysState"), [110, 120, 130, 140]);
-    assert.deepEqual(values("optionalState"), [undefined, 1, undefined, 2]);
-    for (const key of ["indexed", "at", "function"])
+    assert.deepEqual(values(keys.alwaysState), [110, 120, 130, 140]);
+    assert.deepEqual(values(keys.optionalState), [undefined, 1, undefined, 2]);
+    for (const key of [keys.indexed, keys.at, keys.functionHistory])
       assert.deepEqual(values(key), [null, 10, 20, 10]);
 
     const committedOverlayId = optionalOverlay()?.id;
@@ -128,22 +143,22 @@ export default defineIndicator(
     assert.match(signalCallsite, /^erc-v2-signal-[0-9a-f]{24}$/u);
 
     instance.onBuildingBar(candle(3, 12));
-    assert.deepEqual(values("alwaysState"), [110, 120, 130, 140]);
-    assert.deepEqual(values("optionalState"), [
+    assert.deepEqual(values(keys.alwaysState), [110, 120, 130, 140]);
+    assert.deepEqual(values(keys.optionalState), [
       undefined,
       1,
       undefined,
       undefined,
     ]);
-    for (const key of ["indexed", "at", "function"])
+    for (const key of [keys.indexed, keys.at, keys.functionHistory])
       assert.equal(instance.snapshot().points.at(-1).values[key], 10);
     assert.equal(optionalOverlay()?.id, committedOverlayId);
     assert.equal(optionalOverlay()?.top, 20);
     assert.equal((instance.snapshot().signals ?? []).length, 1);
 
     instance.onFinalizedBar(candle(3, 30));
-    assert.equal(instance.snapshot().points.at(-1).values.alwaysState, 140);
-    assert.equal(instance.snapshot().points.at(-1).values.optionalState, 2);
+    assert.equal(instance.snapshot().points.at(-1).values[keys.alwaysState], 140);
+    assert.equal(instance.snapshot().points.at(-1).values[keys.optionalState], 2);
     assert.equal(optionalOverlay()?.id, committedOverlayId);
     assert.equal(optionalOverlay()?.top, 30);
     const finalizedSignals = instance.snapshot().signals ?? [];
@@ -152,12 +167,12 @@ export default defineIndicator(
     assert.equal(callsiteFromSignalId(finalizedSignals[1].id), signalCallsite);
 
     instance.onBuildingBar(candle(4, 8));
-    assert.equal(instance.snapshot().points.at(-1).values.alwaysState, 150);
+    assert.equal(instance.snapshot().points.at(-1).values[keys.alwaysState], 150);
     assert.equal(
-      instance.snapshot().points.at(-1).values.optionalState,
+      instance.snapshot().points.at(-1).values[keys.optionalState],
       undefined,
     );
-    for (const key of ["indexed", "at", "function"])
+    for (const key of [keys.indexed, keys.at, keys.functionHistory])
       assert.equal(instance.snapshot().points.at(-1).values[key], 30);
     assert.equal(optionalOverlay()?.id, committedOverlayId);
     assert.equal(optionalOverlay()?.top, 30);
