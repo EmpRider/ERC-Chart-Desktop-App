@@ -101,3 +101,43 @@ test("indicator timeframe input keys must reference declared timeframe inputs", 
     false,
   );
 });
+
+test("indicator candle type input keys must reference declared candle type inputs", () => {
+  const candleInput = {
+    key: "input_candle",
+    label: "Candle Type",
+    type: "string",
+    defaultValue: "standard",
+    editor: "candle-type",
+    options: [
+      { value: "standard", label: "Standard" },
+      { value: "heikin-ashi", label: "Heikin Ashi" },
+    ],
+  };
+  const withSource = (inputs, inputKey) => ({
+    ...definition,
+    inputs,
+    source: {
+      candleType: {
+        requestedCandleType: "standard",
+        inputKey,
+      },
+      taTimeframeIds: [],
+    },
+  });
+
+  assert.equal(
+    isInstalledIndicatorDefinition(withSource([candleInput], candleInput.key)),
+    true,
+  );
+  assert.equal(
+    isInstalledIndicatorDefinition(withSource([candleInput], "missing")),
+    false,
+  );
+  assert.equal(
+    isInstalledIndicatorDefinition(
+      withSource([{ ...candleInput, editor: "text" }], candleInput.key),
+    ),
+    false,
+  );
+});

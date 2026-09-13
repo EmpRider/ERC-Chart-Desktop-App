@@ -1,6 +1,15 @@
 import type { Candle, ProviderSeriesChange } from "@erc-chart/contracts";
+import {
+  sourceProvenanceForCandleType,
+  transformIndicatorCandles,
+  type IndicatorCandleType,
+  type IndicatorSourceProvenance,
+} from "./candle-transform.js";
 
-export type IndicatorCandleType = "standard" | "heikin-ashi";
+export type {
+  IndicatorCandleType,
+  IndicatorSourceProvenance,
+} from "./candle-transform.js";
 
 export interface IndicatorSourceKey {
   readonly providerProfileId: string;
@@ -48,6 +57,7 @@ export interface IndicatorSourceDataService {
 export interface IndicatorSourceSnapshot {
   readonly key: IndicatorSourceKey;
   readonly candles: readonly Candle[];
+  readonly provenance: IndicatorSourceProvenance;
   readonly generation: number;
   readonly revision: number;
 }
@@ -65,6 +75,8 @@ export interface IndicatorSourceEngine {
 
 interface SharedSource {
   readonly key: IndicatorSourceKey;
+  rawCandles: readonly Candle[];
+  transformSeed: Candle | undefined;
   snapshot: IndicatorSourceSnapshot;
   subscription: IndicatorSourceSubscription | undefined;
   references: number;
@@ -87,7 +99,7 @@ function requireIdentifier(value: string, label: string): string {
 
 function normalizeKey(key: IndicatorSourceKey): IndicatorSourceKey {
   const candleType = key.candleType;
-  if (candleType !== "standard") {
+  if (candleType !== "standard" && candleType !== "heikin-ashi") {
     throw new RangeError("Indicator candle transform is not available.");
   }
   return Object.freeze({
@@ -151,6 +163,26 @@ function acceptSeriesChange(
   return series.previousRevision === current.revision;
 }
 
+function nextTransformSeed(
+  source: SharedSource,
+  nextRawCandles: readonly Candle[],
+  kind: ProviderSeriesChange["kind"],
+): Candle | undefined {
+  if (kind === "rebuild") return undefined;
+  const firstOpenTimeMs = nextRawCandles[0]?.openTimeMs;
+  if (firstOpenTimeMs === undefined) return source.transformSeed;
+
+  let lastDroppedIndex = -1;
+  for (let index = 0; index < source.rawCandles.length; index += 1) {
+    const raw = source.rawCandles[index];
+    if (raw === undefined || raw.openTimeMs >= firstOpenTimeMs) break;
+    lastDroppedIndex = index;
+  }
+  return lastDroppedIndex < 0
+    ? source.transformSeed
+    : source.snapshot.candles[lastDroppedIndex];
+}
+
 export function createIndicatorSourceEngine(
   dataService: IndicatorSourceDataService,
 ): IndicatorSourceEngine {
@@ -178,11 +210,15 @@ export function createIndicatorSourceEngine(
         "Indicator source history does not match its source key.",
       );
     }
+    const rawHistory = boundedCandles(history);
     const source: SharedSource = {
       key,
+      rawCandles: rawHistory,
+      transformSeed: undefined,
       snapshot: Object.freeze({
         key,
-        candles: boundedCandles(history),
+        candles: transformIndicatorCandles(key.candleType, rawHistory),
+        provenance: sourceProvenanceForCandleType(key.candleType),
         generation: 0,
         revision: 0,
       }),
@@ -205,13 +241,25 @@ export function createIndicatorSourceEngine(
           ) {
             return;
           }
-          const nextCandles =
+          const nextRawCandles =
             series.kind === "rebuild"
               ? boundedCandles(candles)
-              : mergeIncrementalCandles(source.snapshot.candles, candles);
+              : mergeIncrementalCandles(source.rawCandles, candles);
+          const transformSeed = nextTransformSeed(
+            source,
+            nextRawCandles,
+            series.kind,
+          );
+          source.rawCandles = nextRawCandles;
+          source.transformSeed = transformSeed;
           source.snapshot = Object.freeze({
             key: source.key,
-            candles: nextCandles,
+            candles: transformIndicatorCandles(
+              source.key.candleType,
+              nextRawCandles,
+              transformSeed,
+            ),
+            provenance: sourceProvenanceForCandleType(source.key.candleType),
             generation: series.generation,
             revision: series.revision,
           });

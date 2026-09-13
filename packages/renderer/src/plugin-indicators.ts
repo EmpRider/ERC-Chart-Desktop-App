@@ -45,13 +45,14 @@ export interface PluginIndicatorSettingsField {
     readonly value: string;
     readonly label: string;
   }[];
-  readonly editor?: "text" | "color" | "timeframe";
+  readonly editor?: "text" | "color" | "timeframe" | "candle-type";
 }
 
 export interface PluginIndicatorSourcePlan {
   readonly requestedTimeframeId: string;
   readonly activeTimeframeId: string;
   readonly usedFallback: boolean;
+  readonly candleType: "standard" | "heikin-ashi";
   readonly taTimeframeIds: readonly string[];
   readonly taSources: readonly {
     readonly requestedTimeframeId: string;
@@ -77,6 +78,7 @@ interface RuntimeContext {
   instrumentId: string;
   chartTimeframeId: string;
   timeframeId: string;
+  candleType: "standard" | "heikin-ashi";
   sourceTimeframeIds: readonly string[];
   sourceTimeframes: readonly {
     readonly requestedTimeframeId: string;
@@ -309,6 +311,7 @@ export function resolvePluginIndicatorSourcePlan(
 ): PluginIndicatorSourcePlan {
   const available = new Set(availableTimeframeIds);
   const declaration = definition.source?.timeframe;
+  const candleDeclaration = definition.source?.candleType;
   const configured =
     declaration?.inputKey === undefined
       ? declaration?.requestedTimeframeId
@@ -322,6 +325,12 @@ export function resolvePluginIndicatorSourcePlan(
   const activeTimeframeId = available.has(requestedActiveTimeframeId)
     ? requestedActiveTimeframeId
     : chartTimeframeId;
+  const configuredCandleType =
+    candleDeclaration?.inputKey === undefined
+      ? candleDeclaration?.requestedCandleType
+      : indicator.parameters[candleDeclaration.inputKey];
+  const candleType =
+    configuredCandleType === "heikin-ashi" ? "heikin-ashi" : "standard";
   const taSources = (definition.source?.taTimeframeIds ?? []).map(
     (requestedTaTimeframeId) => {
       const requestedActiveTimeframeId =
@@ -345,6 +354,7 @@ export function resolvePluginIndicatorSourcePlan(
     requestedTimeframeId,
     activeTimeframeId,
     usedFallback: activeTimeframeId !== requestedActiveTimeframeId,
+    candleType,
     taTimeframeIds: Object.freeze(taTimeframeIds),
     taSources: Object.freeze(taSources),
   });
@@ -809,6 +819,7 @@ export function reconcilePluginIndicators(
       instrumentId,
       chartTimeframeId: timeframeId,
       timeframeId: sourcePlan.activeTimeframeId,
+      candleType: sourcePlan.candleType,
       sourceTimeframeIds: sourcePlan.taTimeframeIds,
       sourceTimeframes: sourcePlan.taSources.map(
         ({ requestedTimeframeId, activeTimeframeId }) => ({
@@ -954,6 +965,7 @@ export function reconcilePluginIndicators(
                   providerProfileId: context.providerProfileId,
                   instrumentId: context.instrumentId,
                   timeframeId: context.timeframeId,
+                  candleType: context.candleType,
                   sourceTimeframeIds: context.sourceTimeframeIds,
                   sourceTimeframes: context.sourceTimeframes,
                   parameters: normalizePluginIndicatorParameters(

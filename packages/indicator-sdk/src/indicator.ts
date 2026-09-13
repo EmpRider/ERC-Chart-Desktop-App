@@ -119,6 +119,7 @@ export function defineIndicator(
     inputs,
     inputIndex: 0,
     timeframeInputs: [],
+    candleTypeInputs: [],
     taTimeframeIds: new Set(),
     parameters: {},
     plots,
@@ -151,6 +152,8 @@ export function defineIndicator(
   run(discovery, 0);
   const requestedTimeframeId = discovery.indicatorTimeframeId;
   const matchingTimeframeInputKey = discovery.indicatorTimeframeInputKey;
+  const requestedCandleType = discovery.indicatorCandleType;
+  const matchingCandleTypeInputKey = discovery.indicatorCandleTypeInputKey;
   const definition: IndicatorDefinition = Object.freeze({
     ...options,
     indicatorContractVersion,
@@ -171,6 +174,7 @@ export function defineIndicator(
     ),
     plots: Object.freeze(plots.map((value) => Object.freeze(value))),
     ...(requestedTimeframeId === undefined &&
+    requestedCandleType === undefined &&
     discovery.taTimeframeIds.size === 0
       ? {}
       : {
@@ -183,6 +187,16 @@ export function defineIndicator(
                     ...(matchingTimeframeInputKey === undefined
                       ? {}
                       : { inputKey: matchingTimeframeInputKey }),
+                  }),
+                }),
+            ...(requestedCandleType === undefined
+              ? {}
+              : {
+                  candleType: Object.freeze({
+                    requestedCandleType,
+                    ...(matchingCandleTypeInputKey === undefined
+                      ? {}
+                      : { inputKey: matchingCandleTypeInputKey }),
                   }),
                 }),
             taTimeframeIds: Object.freeze([...discovery.taTimeframeIds]),
@@ -249,6 +263,7 @@ export function defineIndicator(
           inputs,
           inputIndex: 0,
           timeframeInputs: [],
+          candleTypeInputs: [],
           taTimeframeIds: new Set(),
           parameters,
           plots,

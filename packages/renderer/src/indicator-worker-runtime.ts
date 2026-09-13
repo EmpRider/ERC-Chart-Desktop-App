@@ -12,6 +12,7 @@ import {
   type IndicatorSourceDataService,
   type IndicatorSourceLease,
   type IndicatorSourceSnapshot,
+  type IndicatorCandleType,
   type IndicatorWorkerSupervisor,
   type IndicatorWorkerDataUpdate,
   type IndicatorWorkerResultUpdate,
@@ -24,6 +25,7 @@ export interface BrowserIndicatorSyncRequest extends Omit<
 > {
   readonly runtimeEntryUrl: string;
   readonly providerProfileId?: string;
+  readonly candleType?: IndicatorCandleType;
   readonly sourceTimeframeIds?: readonly string[];
   readonly sourceTimeframes?: readonly {
     readonly requestedTimeframeId: string;
@@ -140,6 +142,7 @@ export function createBrowserIndicatorRuntime(
         ),
       ]),
     ];
+    const candleType = request.candleType ?? "standard";
     const current = sourceLeases.get(request.instanceId) ?? new Map();
     const next = new Map<string, IndicatorSourceLease>();
     try {
@@ -148,7 +151,7 @@ export function createBrowserIndicatorRuntime(
           request.providerProfileId,
           request.instrumentId,
           timeframeId,
-          "standard",
+          candleType,
         ]);
         const existing = current.get(identity);
         const lease =
@@ -157,7 +160,7 @@ export function createBrowserIndicatorRuntime(
             providerProfileId: request.providerProfileId,
             instrumentId: request.instrumentId,
             timeframeId,
-            candleType: "standard",
+            candleType,
           }));
         next.set(identity, lease);
         assertSourceInstanceEpoch(request.instanceId, expectedEpoch);
@@ -224,7 +227,9 @@ export function createBrowserIndicatorRuntime(
         sources: readonly {
           readonly timeframeId: string;
           readonly candles: readonly Candle[];
+          readonly provenance?: IndicatorSourceSnapshot["provenance"];
         }[] = [],
+        sourceProvenance?: IndicatorSourceSnapshot["provenance"],
       ) =>
         supervisor.sync({
           instanceId: request.instanceId,
@@ -234,6 +239,7 @@ export function createBrowserIndicatorRuntime(
           instrumentId: request.instrumentId,
           timeframeId: request.timeframeId,
           parameters: request.parameters,
+          ...(sourceProvenance === undefined ? {} : { sourceProvenance }),
           ...(sources.length === 0 ? {} : { sources }),
           data,
           dataRevision: request.dataRevision,
@@ -270,6 +276,7 @@ export function createBrowserIndicatorRuntime(
                 ? {}
                 : { activeTimeframeId }),
               candles: snapshot.candles,
+              provenance: snapshot.provenance,
             };
           },
         );
@@ -282,6 +289,8 @@ export function createBrowserIndicatorRuntime(
               ? request.data.finalized.timeframeId === request.timeframeId &&
                 request.data.building.timeframeId === request.timeframeId
               : false;
+        const canUseRawBaseDelta =
+          dataUsesBaseTimeframe && baseSnapshot.key.candleType === "standard";
         const rebuild = () =>
           execute(
             {
@@ -289,10 +298,11 @@ export function createBrowserIndicatorRuntime(
               candles: baseSnapshot.candles,
             },
             auxiliarySources,
+            baseSnapshot.provenance,
           );
         if (
           previousVersion !== version ||
-          !dataUsesBaseTimeframe ||
+          !canUseRawBaseDelta ||
           request.data.kind === "snapshot" ||
           request.data.kind === "rebuild"
         ) {
@@ -300,7 +310,11 @@ export function createBrowserIndicatorRuntime(
           sourceVersions.set(request.instanceId, version);
         } else {
           try {
-            result = await execute(request.data, auxiliarySources);
+            result = await execute(
+              request.data,
+              auxiliarySources,
+              baseSnapshot.provenance,
+            );
           } catch (error) {
             if (
               !(error instanceof IndicatorWorkerRuntimeError) ||

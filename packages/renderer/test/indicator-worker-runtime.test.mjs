@@ -260,6 +260,7 @@ test("provider-backed indicators acquire independent base and per-TA timeframe s
       {
         timeframeId: "1h",
         candles: [{ ...candle, timeframeId: "1h", close: 160 }],
+        provenance: { kind: "market", candleType: "standard" },
       },
     ]);
   } finally {
@@ -390,8 +391,93 @@ test("per-TA fallback aliases the active source under the requested timeframe ID
         timeframeId: "4h",
         activeTimeframeId: "1m",
         candles: [{ ...candle, timeframeId: "1m" }],
+        provenance: { kind: "market", candleType: "standard" },
       },
     ]);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("provider-backed runtime acquires and rebuilds from the selected Heikin Ashi source", async () => {
+  const posted = [];
+  const raw = {
+    ...candle,
+    open: 10,
+    high: 14,
+    low: 8,
+    close: 12,
+  };
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory() {
+        return [raw];
+      },
+      async subscribe() {
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  try {
+    await runtime.sync({
+      instanceId: "ha-runtime-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      providerProfileId: "profile-a",
+      instrumentId: candle.instrumentId,
+      timeframeId: "1m",
+      candleType: "heikin-ashi",
+      parameters: {},
+      data: { kind: "building", candle: raw },
+      rebuildCandles: () => [raw],
+      dataRevision: 2,
+      configGeneration: 1,
+    });
+
+    assert.deepEqual(posted[0].data.candles, [
+      { ...raw, open: 11, high: 14, low: 8, close: 11 },
+    ]);
+    assert.deepEqual(posted[0].sourceProvenance, {
+      kind: "synthetic",
+      candleType: "heikin-ashi",
+    });
   } finally {
     runtime.dispose();
   }
