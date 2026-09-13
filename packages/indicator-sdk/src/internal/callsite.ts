@@ -11,11 +11,24 @@ const compilerCallsiteKinds = [
 
 export type CompilerCallsiteKind = (typeof compilerCallsiteKinds)[number];
 
+export const compilerSeriesSources = [
+  "open",
+  "high",
+  "low",
+  "close",
+  "volume",
+  "hl2",
+  "hlc3",
+  "ohlc4",
+] as const;
+export type CompilerSeriesSource = (typeof compilerSeriesSources)[number];
+
 export interface CompilerCallsite {
   readonly __ercCallsite: "v2";
   readonly id: string;
   readonly kind: CompilerCallsiteKind;
   readonly callee: string;
+  readonly seriesSource?: CompilerSeriesSource;
   readonly source: {
     readonly file: string;
     readonly line: number;
@@ -67,6 +80,7 @@ export function readCompilerCallsite(
   const id = candidate.id;
   const candidateKind = candidate.kind;
   const candidateCallee = candidate.callee;
+  const seriesSource = candidate.seriesSource;
   const source = candidate.source;
   const sourceFile = source?.file;
   const sourceLine = source?.line;
@@ -76,6 +90,8 @@ export function readCompilerCallsite(
     marker !== "v2" ||
     candidateKind !== kind ||
     candidateCallee !== callee ||
+    (seriesSource !== undefined &&
+      !compilerSeriesSources.includes(seriesSource)) ||
     typeof id !== "string" ||
     !id.startsWith(prefix) ||
     !callsiteSuffix.test(id.slice(prefix.length)) ||
@@ -96,6 +112,7 @@ export function readCompilerCallsite(
     id,
     kind,
     callee,
+    ...(seriesSource === undefined ? {} : { seriesSource }),
     source: Object.freeze({
       file: sourceFile,
       line: sourceLine,

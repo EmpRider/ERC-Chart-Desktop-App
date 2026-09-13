@@ -374,14 +374,26 @@ export function isInstalledIndicatorDefinition(
   value: unknown,
 ): value is InstalledIndicatorDefinition {
   const source = isRecord(value) ? value.source : undefined;
+  const inputs =
+    isRecord(value) && Array.isArray(value.inputs) ? value.inputs : [];
+  const timeframeInputKeyValid = (inputKey: unknown): boolean =>
+    inputKey === undefined ||
+    (isIdentifier(inputKey) &&
+      inputs.filter(
+        (input) =>
+          isRecord(input) &&
+          input.key === inputKey &&
+          input.type === "string" &&
+          input.editor === "timeframe" &&
+          isInputDefinition(input),
+      ).length === 1);
   const sourceValid =
     source === undefined ||
     (isRecord(source) &&
       (source.timeframe === undefined ||
         (isRecord(source.timeframe) &&
           isBoundedText(source.timeframe.requestedTimeframeId, 64) &&
-          (source.timeframe.inputKey === undefined ||
-            isIdentifier(source.timeframe.inputKey)))) &&
+          timeframeInputKeyValid(source.timeframe.inputKey))) &&
       Array.isArray(source.taTimeframeIds) &&
       source.taTimeframeIds.length <= 64 &&
       source.taTimeframeIds.every((item) => isBoundedText(item, 64)));

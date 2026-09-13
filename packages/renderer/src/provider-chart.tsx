@@ -618,6 +618,7 @@ export function ProviderChart({
   const latestInstalledIndicators = useRef(installedIndicators);
   const latestSyncIndicator = useRef(syncIndicator);
   const latestDisposeIndicator = useRef(disposeIndicator);
+  const latestAvailableTimeframeIds = useRef(availableTimeframeIds);
   const latestIndicatorCallbacks = useRef({
     onIndicatorEnabledChange,
     onIndicatorRemove,
@@ -655,6 +656,7 @@ export function ProviderChart({
   latestInstalledIndicators.current = installedIndicators;
   latestSyncIndicator.current = syncIndicator;
   latestDisposeIndicator.current = disposeIndicator;
+  latestAvailableTimeframeIds.current = availableTimeframeIds;
   latestIndicatorCallbacks.current = {
     onIndicatorEnabledChange,
     onIndicatorRemove,
@@ -750,8 +752,8 @@ export function ProviderChart({
           ? []
           : pluginIndicatorSettingsFields(
               pluginSummary.definition,
-              availableTimeframeIds,
-              session.timeframeId,
+              latestAvailableTimeframeIds.current,
+              latestSession.current.timeframeId,
               indicator.parameters,
             );
     setSettingsTab(
@@ -976,7 +978,7 @@ export function ProviderChart({
         initialSession.timeframeId,
         pluginManagedRuntimeIds.current,
         initialSession.profileId,
-        availableTimeframeIds,
+        latestAvailableTimeframeIds.current,
       );
       pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
       for (const instanceId of pluginReconciliation.removedInstanceIds) {

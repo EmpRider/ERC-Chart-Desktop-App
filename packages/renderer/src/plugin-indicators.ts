@@ -554,7 +554,7 @@ function rowForPoint(point: IndicatorRuntimePoint): PluginIndicatorFigureData {
   };
 }
 
-function rowsForSnapshot(
+export function alignPluginIndicatorSnapshotRows(
   dataList: readonly KLineData[],
   snapshot: IndicatorRuntimeSnapshot,
   sourceTimeframeId?: string,
@@ -623,7 +623,7 @@ function applyWorkerResult(
   candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
-    context.rows = rowsForSnapshot(
+    context.rows = alignPluginIndicatorSnapshotRows(
       dataList,
       result.snapshot,
       context.timeframeId,

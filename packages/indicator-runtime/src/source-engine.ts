@@ -241,8 +241,13 @@ export function createIndicatorSourceEngine(
       if (disposed) throw new Error("Indicator source engine is disposed.");
       const key = normalizeKey(keyValue);
       const identity = sourceIdentity(key);
-      const pending = sourceFor(key);
-      const source = await pending;
+      let pending = sourceFor(key);
+      let source = await pending;
+      if (!disposed && source.closed) {
+        if (sources.get(identity) === pending) sources.delete(identity);
+        pending = sourceFor(key);
+        source = await pending;
+      }
       if (disposed || source.closed) {
         if (sources.get(identity) === pending) sources.delete(identity);
         await closeSource(source);

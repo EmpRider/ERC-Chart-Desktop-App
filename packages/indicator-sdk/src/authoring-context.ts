@@ -28,6 +28,7 @@ export interface AuthoringFrame {
     readonly value: string;
   }[];
   indicatorTimeframeId?: string;
+  indicatorTimeframeInputKey?: string;
   readonly taTimeframeIds: Set<string>;
   readonly parameters: Readonly<Record<string, IndicatorInputValue>>;
   readonly plots: IndicatorPlotDefinition[];

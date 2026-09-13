@@ -267,6 +267,51 @@ test("provider-backed indicators acquire independent base and per-TA timeframe s
   }
 });
 
+test("per-TA acquisition failure releases the already acquired base source", async () => {
+  let unsubscribeCount = 0;
+  const expected = new Error("higher timeframe unavailable");
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory(_providerProfileId, request) {
+        if (request.timeframeId === "1h") throw expected;
+        return [{ ...candle, timeframeId: request.timeframeId }];
+      },
+      async subscribe() {
+        return {
+          async unsubscribe() {
+            unsubscribeCount += 1;
+          },
+        };
+      },
+    },
+  });
+
+  try {
+    await assert.rejects(
+      runtime.sync({
+        instanceId: "mtf-acquisition-failure",
+        runtimeEntryUrl:
+          "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+        pluginId: "erc.indicator.fixture",
+        definitionId: "erc.indicator.fixture.main",
+        providerProfileId: "profile-a",
+        instrumentId: candle.instrumentId,
+        timeframeId: "1m",
+        sourceTimeframeIds: ["1h"],
+        parameters: {},
+        data: { kind: "building", candle },
+        rebuildCandles: () => [candle],
+        dataRevision: 2,
+        configGeneration: 1,
+      }),
+      (error) => error === expected,
+    );
+    assert.equal(unsubscribeCount, 1);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("per-TA fallback aliases the active source under the requested timeframe ID", async () => {
   const posted = [];
   const historyRequests = [];
@@ -347,6 +392,259 @@ test("per-TA fallback aliases the active source under the requested timeframe ID
         candles: [{ ...candle, timeframeId: "1m" }],
       },
     ]);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("provider-backed indicators keep building deltas while the source revision is stable", async () => {
+  const posted = [];
+  const sourceCandle = { ...candle, timeframeId: "1m", close: 101 };
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory() {
+        return [sourceCandle];
+      },
+      async subscribe() {
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  const sync = (dataRevision, close) =>
+    runtime.sync({
+      instanceId: "stable-source-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      providerProfileId: "profile-a",
+      instrumentId: candle.instrumentId,
+      timeframeId: "1m",
+      parameters: {},
+      data: {
+        kind: "building",
+        candle: { ...sourceCandle, close },
+      },
+      rebuildCandles: () => [sourceCandle],
+      dataRevision,
+      configGeneration: 1,
+    });
+
+  try {
+    await sync(1, 101);
+    await sync(2, 102);
+    assert.equal(posted.length, 2);
+    assert.equal(posted[0].data.kind, "rebuild");
+    assert.equal(posted[1].data.kind, "building");
+    assert.equal(posted[1].data.candle.close, 102);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("provider-backed indicators rebuild when the source revision changes", async () => {
+  const posted = [];
+  let sourceSink;
+  const sourceCandle = { ...candle, timeframeId: "1m", close: 101 };
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory() {
+        return [sourceCandle];
+      },
+      async subscribe(_profileId, _request, sink) {
+        sourceSink = sink;
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+  const sync = (dataRevision, close) =>
+    runtime.sync({
+      instanceId: "changed-source-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      providerProfileId: "profile-a",
+      instrumentId: candle.instrumentId,
+      timeframeId: "1m",
+      parameters: {},
+      data: {
+        kind: "building",
+        candle: { ...sourceCandle, close },
+      },
+      rebuildCandles: () => [sourceCandle],
+      dataRevision,
+      configGeneration: 1,
+    });
+
+  try {
+    await sync(1, 101);
+    const revised = { ...sourceCandle, close: 105 };
+    sourceSink.onCandles([revised], {
+      generation: 0,
+      revision: 1,
+      previousRevision: 0,
+      kind: "incremental",
+    });
+    await sync(2, 105);
+    assert.equal(posted.length, 2);
+    assert.deepEqual(posted[1].data, {
+      kind: "rebuild",
+      candles: [revised],
+    });
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("concurrent source acquisition for one instance retains only one releasable lease", async () => {
+  let releaseHistory;
+  const historyGate = new Promise((resolve) => {
+    releaseHistory = resolve;
+  });
+  let unsubscribes = 0;
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory() {
+        await historyGate;
+        return [candle];
+      },
+      async subscribe() {
+        return {
+          async unsubscribe() {
+            unsubscribes += 1;
+          },
+        };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+  const request = (dataRevision) => ({
+    instanceId: "concurrent-source-instance",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+    pluginId: "erc.indicator.fixture",
+    definitionId: "erc.indicator.fixture.main",
+    providerProfileId: "profile-a",
+    instrumentId: candle.instrumentId,
+    timeframeId: "1m",
+    parameters: {},
+    data: { kind: "building", candle },
+    rebuildCandles: () => [candle],
+    dataRevision,
+    configGeneration: 1,
+  });
+
+  try {
+    const first = runtime.sync(request(1));
+    const second = runtime.sync(request(1));
+    await Promise.resolve();
+    releaseHistory();
+    await Promise.all([first, second]);
+    runtime.disposeInstance("concurrent-source-instance");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(unsubscribes, 1);
   } finally {
     runtime.dispose();
   }

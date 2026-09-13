@@ -150,16 +150,7 @@ export function defineIndicator(
   };
   run(discovery, 0);
   const requestedTimeframeId = discovery.indicatorTimeframeId;
-  const matchingTimeframeInputs =
-    requestedTimeframeId === undefined
-      ? []
-      : discovery.timeframeInputs.filter(
-          ({ value }) => value === requestedTimeframeId,
-        );
-  const matchingTimeframeInputKey =
-    matchingTimeframeInputs.length === 1
-      ? matchingTimeframeInputs[0]?.key
-      : undefined;
+  const matchingTimeframeInputKey = discovery.indicatorTimeframeInputKey;
   const definition: IndicatorDefinition = Object.freeze({
     ...options,
     indicatorContractVersion,

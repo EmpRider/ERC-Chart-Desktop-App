@@ -3,6 +3,7 @@ import { authoringFrame, useKernel } from "./authoring-context.js";
 import {
   readCompilerCallsite,
   type CompilerCallsite,
+  type CompilerSeriesSource,
 } from "./internal/callsite.js";
 
 export const movingAverageTypes = [
@@ -1187,10 +1188,11 @@ function numericCall(
   period: number | undefined,
   timeframeId: string | undefined,
   create: (length: number) => NumericTaKernel,
-  sourceField: "close" | "high" | "low" = "close",
+  sourceField: CompilerSeriesSource = "close",
   hiddenCallsite?: unknown,
 ): number {
   const frame = authoringFrame();
+  const callsite = taCallsite(hiddenCallsite, `ta.${name}`);
   if (timeframeId !== undefined) {
     if (
       timeframeId.length === 0 ||
@@ -1204,9 +1206,11 @@ function numericCall(
   if (timeframeId !== undefined && !frame.discovery) {
     const sourceCandles = frame.sourceCandles[timeframeId] ?? [];
     const alignedSourceField =
-      period === undefined
-        ? sourceField
-        : inferCandleSourceField(valueOrPeriod, frame.candle, sourceField);
+      period === undefined ? sourceField : callsite?.seriesSource;
+    if (alignedSourceField === undefined)
+      throw new TypeError(
+        "Higher-timeframe TA expressions must use a direct candle series such as open, high, low, close, volume, hl2, hlc3 or ohlc4.",
+      );
     const state = useKernel(
       `${name}:${length}:${timeframeId}:${alignedSourceField}`,
       () => ({
@@ -1214,23 +1218,25 @@ function numericCall(
         nextIndex: 0,
         value: Number.NaN,
       }),
-      taCallsite(hiddenCallsite, `ta.${name}`),
+      callsite,
     );
     const boundary =
       frame.phase === "finalized"
         ? sourceBoundaryAfter(frame.candle, frame.sourceCandles)
         : frame.candle.openTimeMs;
-    while (state.nextIndex + 1 < sourceCandles.length) {
+    while (state.nextIndex < sourceCandles.length) {
       const sourceCandle = sourceCandles[state.nextIndex];
       const next = sourceCandles[state.nextIndex + 1];
-      if (
-        sourceCandle === undefined ||
-        next === undefined ||
-        next.openTimeMs > boundary
-      )
+      if (sourceCandle === undefined) break;
+      const sourceDuration = timeframeMilliseconds(sourceCandle.timeframeId);
+      const sourceCloseBoundary =
+        sourceDuration === undefined
+          ? next?.openTimeMs
+          : sourceCandle.openTimeMs + sourceDuration;
+      if (sourceCloseBoundary === undefined || sourceCloseBoundary > boundary)
         break;
       state.value = state.kernel.update(
-        sourceCandle[alignedSourceField],
+        candleSourceValue(sourceCandle, alignedSourceField),
         "finalized",
       );
       state.nextIndex += 1;
@@ -1238,23 +1244,34 @@ function numericCall(
     return state.value;
   }
   const value =
-    period === undefined ? frame.candle[sourceField] : valueOrPeriod;
-  const callsite = taCallsite(hiddenCallsite, `ta.${name}`);
+    period === undefined
+      ? candleSourceValue(frame.candle, sourceField)
+      : valueOrPeriod;
   return useKernel(`${name}:${length}`, () => create(length), callsite).update(
     value,
     frame.phase,
   );
 }
 
-function inferCandleSourceField(
-  value: number,
+function candleSourceValue(
   candle: Candle,
-  fallback: "close" | "high" | "low",
-): "close" | "high" | "low" {
-  if (Object.is(value, candle.close)) return "close";
-  if (Object.is(value, candle.high)) return "high";
-  if (Object.is(value, candle.low)) return "low";
-  return fallback;
+  source: CompilerSeriesSource,
+): number {
+  switch (source) {
+    case "hl2":
+      return (candle.high + candle.low) / 2;
+    case "hlc3":
+      return (candle.high + candle.low + candle.close) / 3;
+    case "ohlc4":
+      return (candle.open + candle.high + candle.low + candle.close) / 4;
+    case "volume":
+      return candle.volume ?? Number.NaN;
+    case "open":
+    case "high":
+    case "low":
+    case "close":
+      return candle[source];
+  }
 }
 
 function numericAuthoringArguments(
@@ -1299,6 +1316,47 @@ function timeframeMilliseconds(timeframeId: string): number | undefined {
   return Number.isSafeInteger(result) && result > 0 ? result : undefined;
 }
 
+interface SourceBoundaryIndex {
+  length: number;
+  lastOpenTimeMs: number | undefined;
+  readonly boundaryAfter: Map<number, number>;
+}
+
+const sourceBoundaryIndexes = new WeakMap<
+  readonly Candle[],
+  SourceBoundaryIndex
+>();
+
+function sourceBoundaryIndex(source: readonly Candle[]): SourceBoundaryIndex {
+  let indexed = sourceBoundaryIndexes.get(source);
+  if (
+    indexed === undefined ||
+    indexed.length > source.length ||
+    (indexed.length > 0 &&
+      source[indexed.length - 1]?.openTimeMs !== indexed.lastOpenTimeMs)
+  ) {
+    indexed = {
+      length: 0,
+      lastOpenTimeMs: undefined,
+      boundaryAfter: new Map(),
+    };
+    sourceBoundaryIndexes.set(source, indexed);
+  }
+  for (
+    let index = Math.max(1, indexed.length);
+    index < source.length;
+    index += 1
+  ) {
+    const previous = source[index - 1];
+    const current = source[index];
+    if (previous !== undefined && current !== undefined)
+      indexed.boundaryAfter.set(previous.openTimeMs, current.openTimeMs);
+  }
+  indexed.length = source.length;
+  indexed.lastOpenTimeMs = source.at(-1)?.openTimeMs;
+  return indexed;
+}
+
 function sourceBoundaryAfter(
   candle: Candle,
   sourceCandles: Readonly<Record<string, readonly Candle[]>>,
@@ -1306,12 +1364,11 @@ function sourceBoundaryAfter(
   const duration = timeframeMilliseconds(candle.timeframeId);
   if (duration !== undefined) return candle.openTimeMs + duration;
   const sameSource = sourceCandles[candle.timeframeId];
-  const index = sameSource?.findIndex(
-    ({ openTimeMs }) => openTimeMs === candle.openTimeMs,
+  if (sameSource === undefined) return candle.openTimeMs;
+  return (
+    sourceBoundaryIndex(sameSource).boundaryAfter.get(candle.openTimeMs) ??
+    candle.openTimeMs
   );
-  const next =
-    index === undefined || index < 0 ? undefined : sameSource?.[index + 1];
-  return next?.openTimeMs ?? candle.openTimeMs;
 }
 
 export function sma(

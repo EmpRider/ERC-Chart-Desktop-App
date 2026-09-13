@@ -93,7 +93,7 @@ test("timeframe authoring declares dynamic host metadata without static provider
     { id: "erc.indicator.timeframe.main", name: "Timeframe" },
     () => {
       const selected = input.timeframe(timeframe.chart, "Timeframe");
-      indicator.timeframe(selected);
+      indicator.timeframe(selected, "input_0");
       plot.line(ta.ema(200, "1h"));
     },
   );
@@ -121,9 +121,8 @@ test("timeframe authoring declares dynamic host metadata without static provider
 test("per-TA higher timeframe values align only after the foreign candle closes", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.mtf-alignment.main", name: "MTF alignment" },
-    ({ close }) => {
+    () => {
       plot.line(ta.ema(1, "1h"));
-      plot.line(ta.ema(close, 1, "1h"));
     },
   );
   const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
@@ -159,9 +158,93 @@ test("per-TA higher timeframe values align only after the foreign candle closes"
     instance.snapshot().points.map((point) => point.values.plot_0),
     [null, null, null, 100, 100, 100, 100, 200, 200],
   );
+  instance.dispose();
+});
+
+test("per-TA alignment closes the final parseable source candle without a successor", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.mtf-final-source.main", name: "MTF final source" },
+    () => {
+      plot.line(ta.ema(1, "1h"));
+    },
+  );
+  const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
+  const baseCandles = Array.from({ length: 5 }, (_, index) => ({
+    ...baseContext,
+    openTimeMs: index * 15 * 60_000,
+    open: 10 + index,
+    high: 11 + index,
+    low: 9 + index,
+    close: 10 + index,
+    volume: 1,
+  }));
+  const higherCandles = [
+    {
+      instrumentId: "TEST",
+      timeframeId: "1h",
+      openTimeMs: 0,
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100,
+      volume: 1,
+    },
+  ];
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...baseContext,
+      sourceCandles: { "1h": higherCandles },
+    },
+  );
+
+  instance.onHistory(baseCandles);
   assert.deepEqual(
-    instance.snapshot().points.map((point) => point.values.plot_1),
-    [null, null, null, 100, 100, 100, 100, 200, 200],
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [null, null, null, 100, 100],
+  );
+  instance.dispose();
+});
+
+test("per-TA alignment closes parseable source candles across provider data gaps", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.mtf-gap.main", name: "MTF gap" },
+    () => {
+      plot.line(ta.ema(1, "1h"));
+    },
+  );
+  const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
+  const baseCandles = Array.from({ length: 6 }, (_, index) => ({
+    ...baseContext,
+    openTimeMs: index * 15 * 60_000,
+    open: 10 + index,
+    high: 11 + index,
+    low: 9 + index,
+    close: 10 + index,
+    volume: 1,
+  }));
+  const higherCandles = [0, 180].map((minute, index) => ({
+    instrumentId: "TEST",
+    timeframeId: "1h",
+    openTimeMs: minute * 60_000,
+    open: 100 + index * 100,
+    high: 101 + index * 100,
+    low: 99 + index * 100,
+    close: 100 + index * 100,
+    volume: 1,
+  }));
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...baseContext,
+      sourceCandles: { "1h": higherCandles },
+    },
+  );
+
+  instance.onHistory(baseCandles);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [null, null, null, 100, 100, 100],
   );
   instance.dispose();
 });
