@@ -220,9 +220,18 @@ function propertyPath(expression) {
 }
 
 function directIndicatorSeriesSource(expression, bindings) {
-  if (!ts.isIdentifier(expression)) return undefined;
-  const requestedName = expression.text;
-  let current = expression.parent;
+  const wholeBarSource =
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    builtInSeriesNames.has(expression.name.text)
+      ? { identifier: expression.expression, sourceName: expression.name.text }
+      : undefined;
+  const identifier = ts.isIdentifier(expression)
+    ? expression
+    : wholeBarSource?.identifier;
+  if (identifier === undefined) return undefined;
+  const requestedName = identifier.text;
+  let current = identifier.parent;
   while (current !== undefined && !ts.isSourceFile(current)) {
     if (ts.isFunctionLike(current)) {
       const parent = current.parent;
@@ -235,7 +244,12 @@ function directIndicatorSeriesSource(expression, bindings) {
       ))
         return undefined;
       const parameter = current.parameters[0];
-      if (parameter === undefined || !ts.isObjectBindingPattern(parameter.name))
+      if (parameter === undefined) return undefined;
+      if (ts.isIdentifier(parameter.name))
+        return parameter.name.text === requestedName
+          ? wholeBarSource?.sourceName
+          : undefined;
+      if (!ts.isObjectBindingPattern(parameter.name) || wholeBarSource !== undefined)
         return undefined;
       for (const element of parameter.name.elements) {
         if (
@@ -318,6 +332,89 @@ function signalVariableInitializerForReference(identifier) {
   return undefined;
 }
 
+function signalVariableDeclarationForReference(identifier) {
+  const requestedName = identifier.text;
+  let current = identifier.parent;
+  while (current !== undefined) {
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isSourceFile(current)
+    ) {
+      const statements = ts.isCaseBlock(current)
+        ? current.clauses.flatMap((clause) => [...clause.statements])
+        : current.statements;
+      for (const statement of statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.name.text === requestedName
+          )
+            return declaration;
+        }
+      }
+      if (scopedNames(current)?.has(requestedName)) return undefined;
+    }
+    if (ts.isFunctionLike(current) && scopedNames(current)?.has(requestedName))
+      return undefined;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function signalIdentifierIsWriteReference(identifier) {
+  const parent = identifier.parent;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.left === identifier &&
+    ts.isAssignmentOperator(parent.operatorToken.kind)
+  )
+    return true;
+  return (
+    (ts.isPrefixUnaryExpression(parent) ||
+      ts.isPostfixUnaryExpression(parent)) &&
+    parent.operand === identifier &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+      parent.operator === ts.SyntaxKind.MinusMinusToken)
+  );
+}
+
+function signalVariableIsReassignedBeforeReference(identifier) {
+  const declaration = signalVariableDeclarationForReference(identifier);
+  if (declaration === undefined) return false;
+  const requestedName = identifier.text;
+  let root = declaration.parent;
+  while (
+    root.parent !== undefined &&
+    !ts.isBlock(root) &&
+    !ts.isCaseBlock(root) &&
+    !ts.isSourceFile(root)
+  )
+    root = root.parent;
+  let reassigned = false;
+  const visit = (node) => {
+    if (reassigned || node.pos >= identifier.pos) return;
+    if (node !== root) {
+      const names = scopedNames(node);
+      if (names?.has(requestedName)) return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node !== declaration.name &&
+      node.text === requestedName &&
+      node.pos > declaration.end &&
+      signalIdentifierIsWriteReference(node)
+    ) {
+      reassigned = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return reassigned;
+}
+
 function signalIndicatorSeriesSources(identifier, bindings) {
   const requestedName = identifier.text;
   let current = identifier.parent;
@@ -333,10 +430,17 @@ function signalIndicatorSeriesSources(identifier, bindings) {
       if (isIndicatorCalculation) {
         const parameter = current.parameters[0];
         if (parameter === undefined) return [];
-        if (ts.isIdentifier(parameter.name))
-          return parameter.name.text === requestedName
-            ? [...builtInSeriesNames]
-            : [];
+        if (ts.isIdentifier(parameter.name)) {
+          if (parameter.name.text !== requestedName) return [];
+          const parent = identifier.parent;
+          if (
+            ts.isPropertyAccessExpression(parent) &&
+            parent.expression === identifier &&
+            builtInSeriesNames.has(parent.name.text)
+          )
+            return [parent.name.text];
+          return [...builtInSeriesNames];
+        }
         if (!ts.isObjectBindingPattern(parameter.name)) return [];
         for (const element of parameter.name.elements) {
           if (
@@ -1083,6 +1187,12 @@ function signalDependencyMetadata(
         }
         return;
       }
+      if (signalVariableIsReassignedBeforeReference(node))
+        throw syntaxError(
+          sourceFile,
+          node,
+          `signal condition variable ${node.text} is reassigned; use a statically traceable const expression`,
+        );
       const initializer = signalVariableInitializerForReference(node);
       if (initializer !== undefined && !resolving.has(initializer)) {
         resolving.add(initializer);
@@ -1131,7 +1241,15 @@ function signalDependencyMetadata(
             );
         }
       }
-      for (const argument of node.arguments) visit(argument);
+      for (let index = 0; index < node.arguments.length; index += 1) {
+        if (
+          metadata?.kind === "ta" &&
+          index === 0 &&
+          metadata.seriesSource !== undefined
+        )
+          continue;
+        visit(node.arguments[index]);
+      }
       return;
     }
     ts.forEachChild(node, visit);

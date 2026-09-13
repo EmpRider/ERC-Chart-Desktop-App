@@ -140,7 +140,7 @@ export default defineIndicator(
       slow = slowState(close, openTimeMs);
       fast = fastState(close);
     }
-    signal(Number.isFinite(fast.average) && fast.average > slow.average, "long");
+    signal(Number.isFinite(close) && close > 0, "long");
     plot.histogram(fast.count, { key: "fast-count", title: "Fast Count" });
     plot.histogram(slow.count, { key: "slow-count", title: "Slow Count" });
   },
