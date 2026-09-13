@@ -46,11 +46,11 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [ ] Phase 11 — Rebuild signal engine with lookahead/confirmation guarantees
 - [ ] Phase 12 — Evolve worker/contracts for source provenance and v2 deltas
 - [ ] Phase 13 — Extend renderer for marker text, text sizes, locations, and v2 drawings
-- [ ] Phase 14 — Rewrite maintained indicators against SDK v2
+- [x] Phase 14 — Rewrite maintained indicators against SDK v2
 - [ ] Phase 15 — Remove v1-only authoring/runtime surface
 - [ ] Phase 16 — Full correctness/performance/documentation acceptance
 
-**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 (maintained-indicator rewrite) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
+**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 (v1-only public export cleanup) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
 
 ---
 
