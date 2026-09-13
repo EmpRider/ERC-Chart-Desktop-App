@@ -43,11 +43,16 @@ declare const priceSource: PriceSource;
 declare const seriesNumber: SeriesNumber;
 declare const signalOptions: SignalOptions;
 void dmiPoint;
-void indicatorBar;
 void movingAverageType;
 void priceSource;
 void seriesNumber;
 void signalOptions;
+
+// History replay/finalization bookkeeping is SDK-owned in v2.
+// @ts-expect-error author callbacks do not inspect runtime history replay mode
+indicatorBar.isHistory;
+// @ts-expect-error author callbacks do not inspect runtime history tail bookkeeping
+indicatorBar.isHistoryFinalizedTail;
 
 const inputOptions: InputOptions = { title: "Length" };
 const plotOptions: PlotOptions = { title: "Average" };
