@@ -174,7 +174,9 @@ export function createIndicatorSourceEngine(
       limit: maximumIndicatorSourceBars,
     });
     if (!candlesMatchSource(key, history)) {
-      throw new Error("Indicator source history does not match its source key.");
+      throw new Error(
+        "Indicator source history does not match its source key.",
+      );
     }
     const source: SharedSource = {
       key,
