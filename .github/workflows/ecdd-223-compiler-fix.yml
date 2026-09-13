@@ -42,11 +42,10 @@ jobs:
           text = text.replace(old, new, 1)
           path.write_text(text)
           PY
-      - name: Remove one-shot workflow and commit
+      - name: Commit compiler patch
         run: |
-          rm .github/workflows/ecdd-223-compiler-fix.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add tools/indicator-authoring/callsite-transform.mjs
           git commit -m "fix(ECDD-223): preserve compiler declaration diagnostics"
           git push origin HEAD:task/ECDD-223-shape-text-size
