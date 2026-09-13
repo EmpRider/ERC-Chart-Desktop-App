@@ -50,7 +50,7 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [ ] Phase 15 — Remove v1-only authoring/runtime surface
 - [ ] Phase 16 — Full correctness/performance/documentation acceptance
 
-**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 below and is complete. ECDD-223 maps to detailed Task 8 and is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
+**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 (maintained-indicator rewrite) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
 
 ---
 
@@ -307,17 +307,17 @@ git commit -m "feat(indicators): add Pine-style series history"
 - Public examples:
 
 ```ts
-ta.ema(20)
-ta.ema(close, 20)
-ta.ema(20, close)
-ta.ema(20, "1h")
-ta.rsi(14)
-ta.atr(14)
-ta.adx(14)
-ta.dmi(14)
-ta.highest(20)
-ta.lowest(20)
-ta.crossover(fast, slow)
+ta.ema(20);
+ta.ema(close, 20);
+ta.ema(20, close);
+ta.ema(20, "1h");
+ta.rsi(14);
+ta.atr(14);
+ta.adx(14);
+ta.dmi(14);
+ta.highest(20);
+ta.lowest(20);
+ta.crossover(fast, slow);
 ```
 
 - Internal identity is call-site based, not kernel-array order.
@@ -364,14 +364,14 @@ git commit -m "feat(indicators): rebuild technical analysis runtime"
 **Interfaces:**
 
 ```ts
-input.int(14, "Length")
-input.float(1.5, "Multiplier")
-input.bool(true, "Enabled")
-input.enum("Original", ["Original", "Zero Lag"], "Mode")
-input.source(price.close, "Source")
-input.timeframe(timeframe.chart, "Timeframe")
-input.candleType(candle.standard, "Candles")
-input.color(color.green, "Color")
+input.int(14, "Length");
+input.float(1.5, "Multiplier");
+input.bool(true, "Enabled");
+input.enum("Original", ["Original", "Zero Lag"], "Mode");
+input.source(price.close, "Source");
+input.timeframe(timeframe.chart, "Timeframe");
+input.candleType(candle.standard, "Candles");
+input.color(color.green, "Color");
 ```
 
 - [ ] **Step 1: Add failing tests for compiler-generated stable input identities**
@@ -417,10 +417,10 @@ git commit -m "feat(indicators): add v2 inputs and constants"
 **Interfaces:**
 
 ```ts
-plot.line(value)
-plot.line(value, color.green)
-plot.hline(50)
-plot.histogram(volume)
+plot.line(value);
+plot.line(value, color.green);
+plot.hline(50);
+plot.histogram(volume);
 
 if (showTrend) {
   plot.line(trend);
@@ -509,7 +509,7 @@ ECDD-222 exact-head delivery/security evidence passed before squash merge. Maint
 
 ### Task 8: Add shapes with text and text-size semantics
 
-**Status:** Next SDK-v2 optimization task via ECDD-223.
+**Status:** Complete via ECDD-223 (PR #129, squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`).
 
 **Files:**
 
@@ -535,30 +535,32 @@ plot.shape(buy, "BUY");
 plot.shape(buy, shape.labelUp, "BUY");
 ```
 
-- [ ] **Step 1: Add failing contract tests for shape/text fields**
+- [x] **Step 1: Add failing contract tests for shape/text fields**
 
 Cover bounded text, supported text sizes, locations, marker types, malformed payload rejection, and empty-text behavior.
 
-- [ ] **Step 2: Add failing renderer tests for BUY/SELL text and size mapping**
+- [x] **Step 2: Add failing renderer tests for BUY/SELL text and size mapping**
 
 Cover historical, live, and provisional updates while preserving existing non-text shape behavior.
 
-- [ ] **Step 3: Extend the runtime contract**
+- [x] **Step 3: Extend the runtime contract**
 
 Carry semantic size enum values through the contract; map to actual renderer size only in renderer code.
 
-- [ ] **Step 4: Update KLineCharts figure mapping**
+- [x] **Step 4: Update KLineCharts figure mapping**
 
 The renderer chooses glyph/label positioning and DPI/pixel size.
 
-- [ ] **Step 5: Run SDK contract/renderer tests plus the normal task delivery gates**
+- [x] **Step 5: Run SDK contract/renderer tests plus the normal task delivery gates**
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/indicator-sdk/src packages/contracts/src/indicator-management.ts packages/renderer/src/plugin-indicators.ts packages/indicator-sdk/test packages/renderer/test
 git commit -m "feat(indicators): add marker text and sizing"
 ```
+
+ECDD-223 completed with RED-first coverage, exact-head Delivery #956 PASS, Semgrep PASS with 0 annotations, CodeRabbit required status PASS, no unresolved review threads, and squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. Maintained-indicator migration remains intentionally owned by ECDD-224/ECDD-228.
 
 ---
 
