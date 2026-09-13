@@ -1,0 +1,40 @@
+name: ECDD-224 docs format
+
+on:
+  push:
+    branches:
+      - task/ECDD-224-post-task-docs
+
+permissions:
+  contents: write
+
+jobs:
+  format-docs:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: task/ECDD-224-post-task-docs
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.1
+          package-manager-cache: false
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Format reassessment docs
+        run: |
+          npm ci --ignore-scripts --audit=false
+          npx prettier --write docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+          npx prettier --check docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+      - name: Commit formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git add docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+          git diff --cached --quiet && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style(docs): format ECDD-224 reassessment'
+          git push origin HEAD:task/ECDD-224-post-task-docs
