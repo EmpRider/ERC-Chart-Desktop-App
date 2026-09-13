@@ -48,6 +48,7 @@ import {
 import { PluginManager, type PluginManagerProps } from "./provider-manager.js";
 import {
   createBrowserIndicatorRuntime,
+  createRendererIndicatorSourceDataService,
   type BrowserIndicatorRuntime,
 } from "./indicator-worker-runtime.js";
 import type { PluginIndicatorSync } from "./plugin-indicators.js";
@@ -925,7 +926,9 @@ function HydratedRuntimeApplicationShell({
     undefined,
   );
   if (indicatorRuntimeRef.current === undefined) {
-    indicatorRuntimeRef.current = createBrowserIndicatorRuntime();
+    indicatorRuntimeRef.current = createBrowserIndicatorRuntime({
+      sourceDataService: createRendererIndicatorSourceDataService(bridge),
+    });
   }
   const indicatorRuntime = indicatorRuntimeRef.current;
   useEffect(

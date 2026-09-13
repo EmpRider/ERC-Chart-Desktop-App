@@ -875,7 +875,9 @@ test("resets revision state and calculation generation when provider profile cha
 
   assert.equal(requests[0].dataRevision, 50);
   assert.equal(requests[0].data.kind, "rebuild");
+  assert.equal(requests[0].providerProfileId, "profile-a");
   assert.equal(requests[1].dataRevision, 1);
   assert.equal(requests[1].data.kind, "snapshot");
+  assert.equal(requests[1].providerProfileId, "profile-b");
   assert.equal(requests[1].configGeneration, requests[0].configGeneration + 1);
 });

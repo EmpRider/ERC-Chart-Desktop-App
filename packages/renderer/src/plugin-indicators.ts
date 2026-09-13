@@ -775,6 +775,7 @@ export function reconcilePluginIndicators(
                   runtimeEntryUrl: context.summary.runtimeEntryUrl,
                   pluginId: context.indicator.pluginId,
                   definitionId: context.indicator.definitionId,
+                  providerProfileId: context.providerProfileId,
                   instrumentId: context.instrumentId,
                   timeframeId: context.timeframeId,
                   parameters: normalizePluginIndicatorParameters(
