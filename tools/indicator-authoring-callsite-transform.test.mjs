@@ -353,6 +353,51 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
 });
 
+test("signal dependency tracing fails closed for mutated condition object properties", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  state.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for mutated condition array elements", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = [false];
+  state[0] = !Number.isFinite(ta.ema(close, 14));
+  signal(state[0], "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for destructuring reassignment", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  let buy = false;
+  [buy] = [!Number.isFinite(ta.ema(close, 14))];
+  signal(buy, "long");
+});
+`),
+    /signal condition variable buy is reassigned; use a statically traceable const expression/u,
+  );
+});
+
 test("explicit-series higher-timeframe TA does not add a chart-candle signal dependency", async () => {
   const result = await transform(`
 import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
@@ -409,6 +454,43 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
   );
   assert.ok(signalCallsite);
   assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("bar literal element signal dependencies include only the accessed chart series", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  signal(bar["close"] > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("whole-bar literal element higher-timeframe TA preserves direct series provenance", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  const higher = ta.ema(bar["close"], 1, "1h");
+  signal(higher > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.equal(higherCallsite.seriesSource, "close");
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, []);
 });
 
 test("signal dependency tracing follows state callbacks that capture outer TA and chart sources", async () => {

@@ -219,13 +219,31 @@ function propertyPath(expression) {
   return ts.isIdentifier(current) ? { root: current.text, parts } : undefined;
 }
 
-function directIndicatorSeriesSource(expression, bindings) {
-  const wholeBarSource =
+function wholeBarSeriesAccess(expression) {
+  if (
     ts.isPropertyAccessExpression(expression) &&
     ts.isIdentifier(expression.expression) &&
     builtInSeriesNames.has(expression.name.text)
-      ? { identifier: expression.expression, sourceName: expression.name.text }
-      : undefined;
+  )
+    return {
+      identifier: expression.expression,
+      sourceName: expression.name.text,
+    };
+  if (
+    ts.isElementAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    ts.isStringLiteral(expression.argumentExpression) &&
+    builtInSeriesNames.has(expression.argumentExpression.text)
+  )
+    return {
+      identifier: expression.expression,
+      sourceName: expression.argumentExpression.text,
+    };
+  return undefined;
+}
+
+function directIndicatorSeriesSource(expression, bindings) {
+  const wholeBarSource = wholeBarSeriesAccess(expression);
   const identifier = ts.isIdentifier(expression)
     ? expression
     : wholeBarSource?.identifier;
@@ -364,20 +382,65 @@ function signalVariableDeclarationForReference(identifier) {
 }
 
 function signalIdentifierIsWriteReference(identifier) {
-  const parent = identifier.parent;
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.left === identifier &&
-    ts.isAssignmentOperator(parent.operatorToken.kind)
-  )
-    return true;
-  return (
-    (ts.isPrefixUnaryExpression(parent) ||
-      ts.isPostfixUnaryExpression(parent)) &&
-    parent.operand === identifier &&
-    (parent.operator === ts.SyntaxKind.PlusPlusToken ||
-      parent.operator === ts.SyntaxKind.MinusMinusToken)
-  );
+  let current = identifier;
+  while (current.parent !== undefined) {
+    const parent = current.parent;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.left === current &&
+      ts.isAssignmentOperator(parent.operatorToken.kind)
+    )
+      return true;
+    if (
+      (ts.isPrefixUnaryExpression(parent) ||
+        ts.isPostfixUnaryExpression(parent)) &&
+      parent.operand === current &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken)
+    )
+      return true;
+    if (
+      (ts.isPropertyAccessExpression(parent) ||
+        ts.isElementAccessExpression(parent)) &&
+      parent.expression === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (ts.isParenthesizedExpression(parent) && parent.expression === current) {
+      current = parent;
+      continue;
+    }
+    if (ts.isArrayLiteralExpression(parent) && parent.elements.includes(current)) {
+      current = parent;
+      continue;
+    }
+    if (
+      ts.isShorthandPropertyAssignment(parent) &&
+      parent.name === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (ts.isPropertyAssignment(parent) && parent.initializer === current) {
+      current = parent;
+      continue;
+    }
+    if (ts.isObjectLiteralExpression(parent) && parent.properties.includes(current)) {
+      current = parent;
+      continue;
+    }
+    if (ts.isSpreadElement(parent) && parent.expression === current) {
+      current = parent;
+      continue;
+    }
+    if (ts.isSpreadAssignment(parent) && parent.expression === current) {
+      current = parent;
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 function signalVariableIsReassignedBeforeReference(identifier) {
@@ -432,13 +495,9 @@ function signalIndicatorSeriesSources(identifier, bindings) {
         if (parameter === undefined) return [];
         if (ts.isIdentifier(parameter.name)) {
           if (parameter.name.text !== requestedName) return [];
-          const parent = identifier.parent;
-          if (
-            ts.isPropertyAccessExpression(parent) &&
-            parent.expression === identifier &&
-            builtInSeriesNames.has(parent.name.text)
-          )
-            return [parent.name.text];
+          const wholeBarSource = wholeBarSeriesAccess(identifier.parent);
+          if (wholeBarSource?.identifier === identifier)
+            return [wholeBarSource.sourceName];
           return [...builtInSeriesNames];
         }
         if (!ts.isObjectBindingPattern(parameter.name)) return [];
