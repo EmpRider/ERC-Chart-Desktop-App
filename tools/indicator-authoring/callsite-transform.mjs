@@ -31,6 +31,11 @@ const staticPlotDeclarationOptions = new Set([
   "title",
   "style",
   "direction",
+  "shape",
+  "location",
+  "text",
+  "textColor",
+  "textSize",
 ]);
 
 function withoutNames(map, names) {
@@ -117,7 +122,7 @@ function classifyCall(node, bindings) {
       authorArity:
         method === "box" || method === "segment" || method === "remove"
           ? 1
-          : method === "fill"
+          : method === "fill" || method === "shape"
             ? 3
             : 2,
     };
@@ -226,6 +231,12 @@ function staticPrimitive(node) {
   return undefined;
 }
 
+function staticStringArgument(sourceFile, node, message) {
+  const value = staticPrimitive(node);
+  if (typeof value !== "string") throw syntaxError(sourceFile, node, message);
+  return value;
+}
+
 function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
   if (classified.kind !== "plot") return undefined;
   const method = classified.callee.slice("plot.".length);
@@ -239,6 +250,25 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
   };
   const options = node.arguments[1];
   if (options === undefined) return Object.freeze(declaration);
+  if (method === "shape" && !ts.isObjectLiteralExpression(options)) {
+    const second = staticStringArgument(
+      sourceFile,
+      options,
+      "plot.shape text/marker overloads must use static string literals so declaration metadata can be compiled.",
+    );
+    const text = node.arguments[2];
+    if (text === undefined) {
+      declaration.text = second;
+    } else {
+      declaration.shape = second;
+      declaration.text = staticStringArgument(
+        sourceFile,
+        text,
+        "plot.shape marker text must use a static string literal so declaration metadata can be compiled.",
+      );
+    }
+    return Object.freeze(declaration);
+  }
   if (!ts.isObjectLiteralExpression(options))
     throw syntaxError(
       sourceFile,
@@ -296,7 +326,12 @@ function compilerPlotDeclaration(node, classified, metadata, sourceFile) {
       name !== "color" &&
       name !== "width" &&
       name !== "style" &&
-      name !== "direction"
+      name !== "direction" &&
+      name !== "shape" &&
+      name !== "location" &&
+      name !== "text" &&
+      name !== "textColor" &&
+      name !== "textSize"
     )
       continue;
     const value = staticPrimitive(property.initializer);
