@@ -1,5 +1,6 @@
 import type {
   Candle,
+  ContractVersion,
   InstrumentId,
   Tick,
   TimeframeId,
@@ -12,7 +13,7 @@ import type {
 } from "../index.js";
 
 export interface SignalCandidate {
-  readonly signalContractVersion: string;
+  readonly signalContractVersion: ContractVersion;
   readonly id: string;
   readonly indicatorId: string;
   readonly instrumentId: InstrumentId;
