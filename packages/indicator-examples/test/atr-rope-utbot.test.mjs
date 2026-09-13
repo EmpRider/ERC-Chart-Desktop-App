@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test, { after } from "node:test";
+import { pathToFileURL } from "node:url";
 
-import { atrRopeUtBotIndicator } from "../dist/index.js";
+import { buildAtrRopeUtBotIndicatorPackage } from "../../../tools/build-atr-rope-utbot-indicator.mjs";
+
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
+const packageRoot = await mkdtemp(
+  path.join(os.tmpdir(), "erc-atr-rope-v2-tests-"),
+);
+const built = await buildAtrRopeUtBotIndicatorPackage({
+  root: repoRoot,
+  outputRoot: path.join(packageRoot, "package"),
+});
+const module = await import(
+  `${pathToFileURL(path.join(built.packageRoot, "dist", "index.js")).href}?tests=${Date.now()}`
+);
+const atrRopeUtBotIndicator = module.default;
+after(async () => rm(packageRoot, { recursive: true, force: true }));
 
 const inputSelectors = Object.freeze({
   ropePeriod: ["ATR Rope", "ATR period"],

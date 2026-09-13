@@ -1,25 +1,65 @@
 import { isIndicatorRuntimeSnapshot } from "@erc-chart/contracts";
 import type {
   Candle,
+  IndicatorParameterValue,
   IndicatorParameterValues,
   IndicatorRuntimeOverlay,
   IndicatorRuntimePoint,
   IndicatorRuntimeSignal,
   IndicatorRuntimeSnapshot,
   InstalledIndicatorDefinition,
+  InstalledIndicatorInputDefinition,
 } from "@erc-chart/contracts";
-import {
-  normalizeIndicatorParameters as normalizeSdkIndicatorParameters,
-  type IndicatorInputDefinition,
-} from "@erc-chart/indicator-sdk";
+
+function stepDecimals(step: number): number {
+  const text = `${step}`.toLowerCase();
+  if (text.includes("e-")) {
+    const [coefficient = "", exponent = "0"] = text.split("e-");
+    const fraction = coefficient.split(".")[1]?.length ?? 0;
+    return Math.min(20, fraction + Number(exponent));
+  }
+  return Math.min(20, text.split(".")[1]?.length ?? 0);
+}
+
+function normalizeIndicatorInputValue(
+  definition: InstalledIndicatorInputDefinition,
+  value: unknown,
+): IndicatorParameterValue {
+  if (definition.type === "boolean")
+    return typeof value === "boolean" ? value : definition.defaultValue;
+  if (definition.type === "number") {
+    const raw =
+      typeof value === "number" && Number.isFinite(value)
+        ? value
+        : definition.defaultValue;
+    const bounded = Math.min(
+      definition.max ?? raw,
+      Math.max(definition.min ?? raw, raw),
+    );
+    if (definition.step === undefined) return bounded;
+    return Number(bounded.toFixed(stepDecimals(definition.step)));
+  }
+  if (typeof value !== "string" || value.length > 8_192)
+    return definition.defaultValue;
+  if (
+    definition.options !== undefined &&
+    !definition.options.some((option) => option.value === value)
+  )
+    return definition.defaultValue;
+  return value;
+}
 
 export function normalizeIndicatorParameters(
   definition: InstalledIndicatorDefinition,
   supplied: Readonly<Record<string, unknown>>,
 ): IndicatorParameterValues {
-  return normalizeSdkIndicatorParameters(
-    definition.inputs as readonly IndicatorInputDefinition[],
-    supplied,
+  return Object.freeze(
+    Object.fromEntries(
+      definition.inputs.map((input) => [
+        input.key,
+        normalizeIndicatorInputValue(input, supplied[input.key]),
+      ]),
+    ),
   );
 }
 

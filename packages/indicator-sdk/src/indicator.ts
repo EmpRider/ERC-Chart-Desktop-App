@@ -16,14 +16,16 @@ import type {
   IndicatorDefinition,
   IndicatorInputDefinition,
   IndicatorInputValue,
-  IndicatorInstanceContext,
   IndicatorOverlay,
   IndicatorPlotDefinition,
-  IndicatorPluginModule,
   IndicatorResultPoint,
+} from "./index.js";
+import type {
+  IndicatorInstanceContext,
+  IndicatorPluginModule,
   RuntimeIndicatorInstance,
   SignalCandidate,
-} from "./index.js";
+} from "./internal/runtime-contracts.js";
 import { validateDrawingUsage } from "./internal/drawings.js";
 import { compilerPlotDefinitions } from "./plot.js";
 import type { SeriesNumber } from "./series.js";

@@ -1,13 +1,24 @@
 import {
   hostApiVersion,
   indicatorContractVersion,
-  type Candle,
   type CompatibilityRange,
   type ContractVersion,
-  type InstrumentId,
-  type Tick,
-  type TimeframeId,
 } from "@erc-chart/contracts";
+import {
+  defineIndicator as runtimeDefineIndicator,
+  type IndicatorBar as RuntimeIndicatorBar,
+  type IndicatorOptions,
+} from "./indicator.js";
+import { input as runtimeInput } from "./input.js";
+import {
+  plot as runtimePlot,
+  type BoxDrawing,
+  type BoxHandle,
+  type SegmentDrawing,
+  type SegmentHandle,
+} from "./plot.js";
+import { ta as runtimeTa } from "./ta.js";
+import type { DmiPoint, MovingAverageType } from "./ta.js";
 import type { ShapeKind, ShapeLocation, TextSize } from "./constants.js";
 
 export {
@@ -106,6 +117,11 @@ export interface IndicatorDefinition {
   readonly requiresLiveTicks: boolean;
 }
 
+/** Author-facing result of defineIndicator(). Runtime lifecycle ports remain host-private. */
+export interface IndicatorModule {
+  readonly definition: IndicatorDefinition;
+}
+
 export interface IndicatorResultPoint {
   readonly openTimeMs: number;
   readonly values: Readonly<Record<string, number | null>>;
@@ -138,107 +154,124 @@ export interface IndicatorBox {
 
 export type IndicatorOverlay = IndicatorLineSegment | IndicatorBox;
 
-export interface IndicatorSnapshot {
-  readonly points: readonly IndicatorResultPoint[];
-  readonly overlays: readonly IndicatorOverlay[];
-  readonly signals?: readonly SignalCandidate[];
-  /** Optional opt-in: increment whenever overlays or signals change, including provisional rollback. */
-  readonly visualRevision?: number;
-}
-
-export interface IndicatorInstanceContext {
-  readonly instrumentId: InstrumentId;
-  readonly timeframeId: TimeframeId;
-}
-
-export interface RuntimeIndicatorInstance extends IndicatorInstance {
-  readonly snapshot: () => IndicatorSnapshot;
-}
-
-export interface IndicatorPluginModule {
-  readonly definition: IndicatorDefinition;
-  readonly createInstance: (
-    parameters: Readonly<Record<string, IndicatorInputValue>>,
-    context: IndicatorInstanceContext,
-  ) => RuntimeIndicatorInstance;
-}
-
-export interface IndicatorInstance {
-  readonly onHistory: (candles: readonly Candle[]) => void;
-  readonly onBuildingBar: (candle: Candle) => void;
-  readonly onFinalizedBar: (candle: Candle) => void;
-  readonly onTick?: (tick: Tick) => void;
-  readonly dispose: () => void;
-}
-
-export interface SignalCandidate {
-  readonly signalContractVersion: ContractVersion;
-  readonly id: string;
-  readonly indicatorId: string;
-  readonly instrumentId: InstrumentId;
-  readonly timeframeId: TimeframeId;
-  readonly occurredAtMs: number;
-  readonly direction: "long" | "neutral" | "short";
-  readonly confidence?: number;
-  readonly finalized: boolean;
-}
 export {
-  appendSeries,
-  candlesWithPriceSource,
   history,
   inputOptions,
-  laggedValue,
-  maxSeriesCollectionItems,
-  priceSeries,
   priceSources,
   priceValue,
   series,
   type PriceSource,
   type SeriesNumber,
 } from "./series.js";
-export {
-  sma,
-  ema,
-  atr,
-  createAtrKernel,
-  createDmiKernel,
-  createRsiKernel,
-  createHighestKernel,
-  createLowestKernel,
-  createCrossoverKernel,
-  createCrossunderKernel,
-  crossover,
-  crossunder,
-  createMovingAverageKernel,
-  dmi,
-  highest,
-  lowest,
-  movingAverage,
-  movingAverageTypes,
-  rsi,
-  ta,
-  trueRange,
-  type CandleTaKernel,
-  type CrossKernel,
-  type DmiPoint,
-  type DmiSeries,
-  type MovingAverageType,
-  type NumericTaKernel,
-  type TaUpdatePhase,
-  type TechnicalAnalysisApi,
-} from "./ta.js";
-export {
-  defineIndicator,
-  type IndicatorBar,
-  type IndicatorCalculation,
-  type IndicatorOptions,
-} from "./indicator.js";
-export {
-  plot,
-  type PlotApi,
-  type PlotOptions,
-  type ShapeOptions,
+
+export { movingAverageTypes } from "./ta.js";
+export type { DmiPoint, MovingAverageType } from "./ta.js";
+
+export interface TechnicalAnalysisApi {
+  readonly sma: (valueOrLength: number, period?: number) => number;
+  readonly ema: (valueOrLength: number, period?: number) => number;
+  readonly movingAverage: (
+    value: number,
+    type: MovingAverageType,
+    period: number,
+  ) => number;
+  readonly atr: (period: number) => number;
+  readonly dmi: (period: number) => DmiPoint;
+  readonly rsi: (valueOrLength: number, period?: number) => number;
+  readonly highest: (valueOrLength: number, period?: number) => number;
+  readonly lowest: (valueOrLength: number, period?: number) => number;
+  readonly crossover: (left: number, right: number) => boolean;
+  readonly crossunder: (left: number, right: number) => boolean;
+}
+
+export const ta: TechnicalAnalysisApi = runtimeTa as TechnicalAnalysisApi;
+
+export type IndicatorBar = Omit<
+  RuntimeIndicatorBar,
+  "isHistory" | "isHistoryFinalizedTail"
+>;
+export type IndicatorCalculation = (bar: IndicatorBar) => void;
+export type { IndicatorOptions } from "./indicator.js";
+export const defineIndicator: (
+  options: IndicatorOptions,
+  calculate: IndicatorCalculation,
+) => IndicatorModule = runtimeDefineIndicator as (
+  options: IndicatorOptions,
+  calculate: IndicatorCalculation,
+) => IndicatorModule;
+
+export interface InputOptions {
+  readonly title?: string;
+  readonly group?: string;
+  readonly description?: string;
+  readonly effect?: "calculation" | "presentation";
+}
+export interface NumberInputOptions extends InputOptions {
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+}
+export interface StringInputOptions extends InputOptions {
+  readonly options?: readonly (string | IndicatorInputOption)[];
+}
+type StringOptionValue<T> = T extends string
+  ? T
+  : T extends IndicatorInputOption
+    ? T["value"]
+    : never;
+export interface InputApi {
+  readonly float: (
+    defaultValue: number,
+    options?: NumberInputOptions,
+  ) => number;
+  readonly int: (defaultValue: number, options?: NumberInputOptions) => number;
+  readonly bool: (defaultValue: boolean, options?: InputOptions) => boolean;
+  readonly string: {
+    <const O extends readonly (string | IndicatorInputOption)[]>(
+      defaultValue: StringOptionValue<O[number]>,
+      options: StringInputOptions & { readonly options: O },
+    ): StringOptionValue<O[number]>;
+    (defaultValue: string, options?: StringInputOptions): string;
+  };
+  readonly color: (defaultValue: string, options?: InputOptions) => string;
+}
+export const input: InputApi = runtimeInput as InputApi;
+
+export interface PlotOptions {
+  readonly title?: string;
+  readonly color?: string;
+  readonly width?: number;
+  readonly style?: "solid" | "dashed" | "dotted";
+}
+export interface ShapeOptions extends PlotOptions {
+  readonly direction?: "up" | "down";
+  readonly shape?: ShapeKind;
+  readonly location?: ShapeLocation;
+  readonly text?: string;
+  readonly textColor?: string;
+  readonly textSize?: TextSize;
+}
+export interface ShapePlot {
+  (value: boolean | number | null, options?: ShapeOptions): void;
+  (value: boolean | number | null, text: string): void;
+  (value: boolean | number | null, shape: ShapeKind, text: string): void;
+}
+export interface PlotApi {
+  readonly line: (value: number | null, options?: PlotOptions) => void;
+  readonly hline: (value: number | null, options?: PlotOptions) => void;
+  readonly histogram: (value: number | null, options?: PlotOptions) => void;
+  readonly shape: ShapePlot;
+  readonly box: (value: BoxDrawing) => BoxHandle;
+  readonly segment: (value: SegmentDrawing) => SegmentHandle;
+}
+export type {
+  BoxDrawing,
+  BoxHandle,
+  SegmentDrawing,
+  SegmentHandle,
 } from "./plot.js";
+export const plot: PlotApi = runtimePlot as PlotApi;
+
 export {
   location,
   shape,
@@ -247,13 +280,5 @@ export {
   type ShapeLocation,
   type TextSize,
 } from "./constants.js";
-export {
-  input,
-  normalizeIndicatorInputValue,
-  normalizeIndicatorParameters,
-  type InputApi,
-  type InputOptions,
-  type NumberInputOptions,
-  type StringInputOptions,
-} from "./input.js";
+
 export { signal, type SignalOptions } from "./signal.js";
