@@ -103,9 +103,7 @@ export default defineIndicator(
   const values = (key) =>
     instance.snapshot().points.map((point) => point.values[key]);
   const optionalOverlay = () =>
-    instance
-      .snapshot()
-      .overlays.find((overlay) => overlay.color === "#008800");
+    instance.snapshot().overlays.find((overlay) => overlay.color === "#008800");
 
   try {
     instance.onHistory([
@@ -131,7 +129,12 @@ export default defineIndicator(
 
     instance.onBuildingBar(candle(3, 12));
     assert.deepEqual(values("alwaysState"), [110, 120, 130, 140]);
-    assert.deepEqual(values("optionalState"), [undefined, 1, undefined, undefined]);
+    assert.deepEqual(values("optionalState"), [
+      undefined,
+      1,
+      undefined,
+      undefined,
+    ]);
     for (const key of ["indexed", "at", "function"])
       assert.equal(instance.snapshot().points.at(-1).values[key], 10);
     assert.equal(optionalOverlay()?.id, committedOverlayId);
@@ -150,7 +153,10 @@ export default defineIndicator(
 
     instance.onBuildingBar(candle(4, 8));
     assert.equal(instance.snapshot().points.at(-1).values.alwaysState, 150);
-    assert.equal(instance.snapshot().points.at(-1).values.optionalState, undefined);
+    assert.equal(
+      instance.snapshot().points.at(-1).values.optionalState,
+      undefined,
+    );
     for (const key of ["indexed", "at", "function"])
       assert.equal(instance.snapshot().points.at(-1).values[key], 30);
     assert.equal(optionalOverlay()?.id, committedOverlayId);
