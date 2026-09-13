@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { reconcilePluginIndicators } from "../dist/plugin-indicators.js";
 
+let renderSequence = 0;
+
 async function renderFigure(plotDefinition, runtimePoint) {
+  renderSequence += 1;
+  const suffix = String(renderSequence);
   let template;
   let runtimeId;
   const module = {
@@ -27,7 +31,7 @@ async function renderFigure(plotDefinition, runtimePoint) {
     },
   };
   const definition = {
-    id: "erc.indicator.test.shape-text",
+    id: `erc.indicator.test.shape-text.${suffix}`,
     name: "Shape text",
     placement: "overlay",
     inputs: [],
@@ -43,13 +47,13 @@ async function renderFigure(plotDefinition, runtimePoint) {
     requiresLiveTicks: false,
   };
   const summary = {
-    pluginId: "erc.indicator.shape-text-test",
+    pluginId: `erc.indicator.shape-text-test-${suffix}`,
     pluginName: "Shape text test",
     version: "1.0.0",
     definition,
   };
   const indicator = {
-    instanceId: "shape-text-instance",
+    instanceId: `shape-text-instance-${suffix}`,
     pluginId: summary.pluginId,
     definitionId: definition.id,
     enabled: true,
