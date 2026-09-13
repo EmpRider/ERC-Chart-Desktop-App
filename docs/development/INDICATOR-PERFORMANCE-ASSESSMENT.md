@@ -89,60 +89,72 @@ zone settings. These component budgets do not establish whole-application FPS.
 ### ECDD-229 authored multi-chart acceptance
 
 ECDD-229 adds `tools/indicator-multichart-performance.mjs` to the repository's
-mandatory `npm run test:performance` command. The gate builds the maintained ATR
-Rope + UT Bot indicator through the real SDK v2 authoring transform, imports the
-compiled package, then measures four independent indicator instances representing
-four simultaneously active charts. Package compilation happens before runtime
-timing starts.
+mandatory `npm run test:performance` command. The canonical gate builds the
+maintained ATR Rope + UT Bot indicator through the real SDK v2 authoring
+transform, then drives four independent headless chart owners through production
+`reconcilePluginIndicators` chart scoping and production
+`createBrowserIndicatorRuntime` worker supervision. Each chart-scoped runtime ID
+owns one supervisor-managed worker executing the production indicator
+`worker-entry` against the compiled maintained plugin package.
+
+Node `worker_threads` supplies only the host adapter needed to present the browser
+Worker-style messaging surface in headless CI. Chart ownership, runtime ID
+scoping, snapshot/building/rollover classification, browser-runtime supervision,
+worker-entry transport and authored plugin execution use production code paths.
+The headless chart objects exercise orchestration and KLineCharts indicator
+lifecycle ownership but do not render pixels.
 
 The enforced workload and budgets are:
 
-- four charts with 25,000 history bars each, 100,000 bars aggregate;
+- four chart owners and four isolated workers with 25,000 history bars each,
+  100,000 bars aggregate;
 - aggregate history replay below 60,000 ms and no individual chart above that
   same history budget;
 - 250 provisional rounds across four charts, 1,000 building updates total,
   completing below 5,000 ms;
 - every individual provisional or finalized indicator update below the existing
   100 ms worker update budget;
-- one finalized update per chart, with the four-chart finalized sweep below
+- one finalized rollover per chart, with the four-chart finalized sweep below
   1,000 ms;
-- provisional updates must keep each retained point-history array stable rather
-  than cloning it.
+- provisional updates must keep each retained renderer row-history array stable
+  rather than cloning it.
 
-Delivery #1038 on Ubuntu 24.04 / Node 26.8.1 measured the final clean candidate
-as follows:
+Delivery #1047 on Ubuntu 24.04 / Node 26.8.1 measured clean head
+`0553d2de66cbbfbad2d86ad957786e0840d5489d` as follows:
 
 | ECDD-229 workload                            | Observed time | CI budget |
 | -------------------------------------------- | ------------: | --------: |
-| Four-chart history, 100,000 bars aggregate   |      12.640 s |      60 s |
-| Slowest single-chart 25,000-bar history      |       3.244 s |      60 s |
-| 1,000 provisional authored-indicator updates |      85.83 ms |       5 s |
-| Slowest four-chart provisional sweep         |       0.80 ms |    100 ms |
-| Slowest individual provisional update        |       0.50 ms |    100 ms |
-| Four-chart finalized sweep                   |       0.86 ms |       1 s |
-| Slowest individual finalized update          |       0.40 ms |    100 ms |
+| Four-chart history, 100,000 bars aggregate   |      14.247 s |      60 s |
+| Slowest single-chart 25,000-bar history      |       3.580 s |      60 s |
+| 1,000 provisional authored-indicator updates |     327.21 ms |       5 s |
+| Slowest four-chart provisional sweep         |       5.67 ms |    100 ms |
+| Slowest individual provisional update        |       2.81 ms |    100 ms |
+| Four-chart finalized rollover sweep          |       5.16 ms |       1 s |
+| Slowest individual finalized update          |       1.24 ms |    100 ms |
 
 The same CI run kept the existing authored/runtime gates green: the maintained
-ATR Rope + UT Bot 100,000-bar history completed in about 10.09 seconds, its
-1,000 building updates in about 67.93 ms total with a 0.48 ms maximum update,
-the 100,000-bar structured-series gate in about 8.89 seconds, and the 2,000
-stable-drawing/100,000-bar gate in about 28.30 seconds.
+ATR Rope + UT Bot 100,000-bar history completed in about 10.31 seconds, its
+1,000 building updates in about 70.77 ms total with a 0.58 ms maximum update,
+the 100,000-bar structured-series gate in about 8.91 seconds, and the 2,000
+stable-drawing/100,000-bar gate in about 28.78 seconds. The authored transform
+overhead measured about 5.80 ms against its 100 ms budget and package generation
+about 111.05 ms against its 5,000 ms budget.
 
-This is a real multi-instance authored **runtime** acceptance gate and is suitable
-for CI/release regression detection. It is deliberately not a claim about
-renderer FPS, provider/network latency, or end-to-end market-feed responsiveness.
-Provider-aware MTF acquisition and per-TA timeframe execution remain owned by
-ECDD-142; ECDD-229 does not duplicate that source-engine work.
+This is a real multi-chart authored **runtime/orchestration** acceptance gate and
+is suitable for CI/release regression detection. It is deliberately not a claim
+about renderer FPS, pixel-paint latency, provider/network latency or end-to-end
+market-feed responsiveness. Provider-aware MTF acquisition and per-TA timeframe
+execution remain owned by ECDD-142; ECDD-229 does not duplicate that
+source-engine work.
 
-Validation completed:
+Validation completed on Delivery #1047:
 
-- Unit suite: 501 passed, two existing Windows symlink-permission skips.
-- Integration suite: 81 passed.
-- Final targeted contract, production-shell and scalar-authoring tests: 13 passed.
-- Type checking, lint, repository formatting and Git whitespace checks passed.
-- Electron application smoke passed.
-- Electron indicator-worker smoke passed, including generated plugin loading,
-  one-point building updates, rollover, settings rebuild and visual omission.
+- Unit suite: 550 passed, one platform-specific skip, zero failures.
+- Integration suite: 148 passed, including the production-orchestration contract.
+- Repository governance, Markdown lint, formatting, lint and type checking passed.
+- Electron application, workspace-restart and multi-instance smokes passed.
+- Build, authored performance acceptance, audit and version checks passed.
+- Dependency audit reported zero vulnerabilities.
 
 ## Remaining work and practical limits
 
@@ -160,10 +172,10 @@ same-bar ticks avoid that copy.
 
 Initial load, timeframe/instrument changes, calculation settings, historical
 corrections, missed multi-bar catch-up and retention resets may rebuild from the
-start. ECDD-229 now enforces multi-chart authored-indicator runtime performance
-in CI. Live operational profiling is still required when quantifying actual
-end-user renderer FPS, provider/network latency, and a user's market-feed plus
-indicator configuration.
+start. ECDD-229 now enforces production chart/worker orchestration for
+multi-chart authored-indicator runtime performance in CI. Live operational
+profiling is still required when quantifying actual end-user renderer FPS,
+provider/network latency, and a user's market-feed plus indicator configuration.
 
 The authored API is TypeScript/JavaScript, not a Pine parser. It currently offers
 lines, horizontal lines, histograms, shapes, boxes, segments and signals.
