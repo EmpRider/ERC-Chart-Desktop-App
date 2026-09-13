@@ -1,0 +1,94 @@
+name: ECDD-226 post-task docs reassessment
+
+on:
+  push:
+    branches:
+      - task/ECDD-226-post-task-docs
+
+permissions:
+  contents: write
+
+jobs:
+  update-docs:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '26.8.1'
+          cache: npm
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Install formatting dependencies
+        run: npm ci --ignore-scripts --fund=false --audit=false
+      - name: Apply ECDD-226 reassessment
+        shell: python
+        run: |
+          from pathlib import Path
+
+          current_path = Path('docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md')
+          current = current_path.read_text(encoding='utf-8')
+          lines = current.splitlines()
+          public_found = authoring_found = False
+          for index, line in enumerate(lines):
+              if line.startswith('| Public SDK exports'):
+                  lines[index] = '| Public SDK exports | `packages/indicator-sdk/src/index.ts` exports only the SDK v2 authoring facade. Runtime snapshots/instances, host normalization, array-history compatibility helpers, flat TA/kernel APIs, and author lifecycle bookkeeping are absent from the public root. | ECDD-225 completed the v2-only public boundary; ECDD-226 now documents that final authoring model without a compatibility export path. | Complete (ECDD-225, ECDD-226) |'
+                  public_found = True
+              elif line.startswith('| Authoring docs'):
+                  lines[index] = '| Authoring docs | `INDICATOR-AUTHORING.md` now documents only the final SDK v2 authoring model: compiler-owned history/identity, scalar `ta.*`, semantic markers, drawing handles, finalized signals, and SDK-owned lifecycle. It does not advertise v1 compatibility, manual persistence IDs/keys, replay flags, or array-history helpers. | ECDD-226 complete. Provider-aware MTF acquisition and per-TA timeframe execution remain part of the overall architecture but are operationally owned by ECDD-142. | Complete (ECDD-226); ECDD-142 owns operational MTF |'
+                  authoring_found = True
+          if not public_found or not authoring_found:
+              raise SystemExit('expected current-state table rows not found')
+          current = '\n'.join(lines) + '\n'
+          old = '- Legacy/array authoring exports that would force compatibility constraints onto v2 (public-surface cleanup completed by ECDD-225; authoring-document rewrite remains ECDD-226).'
+          new = '- Legacy/array authoring exports that would force compatibility constraints onto v2 (public-surface cleanup completed by ECDD-225 and the v2-only authoring-guide rewrite completed by ECDD-226).'
+          if old not in current:
+              raise SystemExit('expected replace-for-v2 status not found')
+          current = current.replace(old, new, 1)
+          old = '9. **Documentation — ECDD-226.** Publish the final v2 authoring model and document that provider-aware MTF acquisition/per-TA overrides are delivered by ECDD-142 while remaining part of the overall SDK v2 architecture.'
+          new = '9. **Documentation — ECDD-226 (complete).** PR #135 / squash merge `a4ece67f7b9aa077108fd27e777b6c1b92374ae3` publishes the final v2-only authoring model and records that provider-aware MTF acquisition/per-TA overrides remain operationally owned by ECDD-142.'
+          if old not in current:
+              raise SystemExit('expected ECDD-226 gap item not found')
+          current = current.replace(old, new, 1)
+          current_path.write_text(current, encoding='utf-8')
+
+          plan_path = Path('docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md')
+          plan = plan_path.read_text(encoding='utf-8')
+          old = 'ECDD-226 (final v2 authoring documentation) is the next SDK-v2 optimization task.'
+          new = 'ECDD-226 completed the final v2-only authoring guide via PR #135 / squash merge `a4ece67f7b9aa077108fd27e777b6c1b92374ae3`, with provider-aware MTF/per-TA execution explicitly retained under ECDD-142 ownership. ECDD-227 (final v2 contract fixtures) is the next SDK-v2 optimization task.'
+          if old not in plan:
+              raise SystemExit('expected optimization sequencing text not found')
+          plan = plan.replace(old, new, 1)
+          old = 'Then add crossover signals, marker text, timeframe input, and Heikin Ashi.'
+          new = 'Then add crossover signals and marker text. Document timeframe and Heikin Ashi as part of the target SDK v2 architecture, while making clear that provider-aware operational timeframe/per-TA execution and source acquisition are delivered by ECDD-142 rather than ECDD-216.'
+          if old not in plan:
+              raise SystemExit('expected Task 20 example text not found')
+          plan = plan.replace(old, new, 1)
+          start = plan.find('### Task 20: Final author documentation and examples')
+          if start < 0:
+              raise SystemExit('Task 20 start not found')
+          end = plan.find('\n---\n', start)
+          if end < 0:
+              raise SystemExit('Task 20 end not found')
+          section = plan[start:end]
+          section = section.replace('- [ ] **Step ', '- [x] **Step ')
+          plan = plan[:start] + section + plan[end:]
+          plan_path.write_text(plan, encoding='utf-8')
+      - name: Format reassessment docs
+        run: npx --no-install prettier --write docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+      - name: Verify patch
+        run: |
+          git diff --check
+          git diff --exit-code -- .github/workflows/ecdd-226-post-task-docs.yml
+          git diff -- docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+      - name: Commit and push docs
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md
+          git diff --cached --quiet && { echo 'No docs changes produced'; exit 1; }
+          git commit -m 'docs(ECDD-226): record v2 guide completion'
+          git push origin HEAD:task/ECDD-226-post-task-docs
