@@ -99,7 +99,9 @@ try {
   });
   const entry = path.join(built.packageRoot, "dist", "index.js");
   const runtimeEntryUrl = pathToFileURL(entry).href;
-  const indicatorModule = await import(`${runtimeEntryUrl}?metadata=${Date.now()}`);
+  const indicatorModule = await import(
+    `${runtimeEntryUrl}?metadata=${Date.now()}`
+  );
   const indicator = indicatorModule.default;
   assert.ok(indicator?.definition && indicator.createInstance);
 
