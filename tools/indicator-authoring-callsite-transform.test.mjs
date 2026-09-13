@@ -383,6 +383,127 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
 });
 
+test("signal dependency tracing fails closed for aliased condition-object mutation", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  const alias = state;
+  alias.buy = !Number.isFinite(ta.ema(close, 14));
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed when a condition object is passed to a mutating call", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  Object.assign(state, { buy: !Number.isFinite(ta.ema(close, 14)) });
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing fails closed for condition-array mutator calls", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = [false];
+  state.splice(0, 1, !Number.isFinite(ta.ema(close, 14)));
+  signal(state[0], "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
+test("signal dependency tracing allows condition objects to be read by Object.assign", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: close > 0 };
+  const clone = Object.assign({}, state);
+  void clone;
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing allows read-only array methods before a signal", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = [close > 0];
+  const clone = state.slice();
+  void clone;
+  signal(state[0], "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing allows condition objects through read-only local helpers", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function readState(state) {
+  return state.buy;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: close > 0 };
+  void readState(state);
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing fails closed when a local helper mutates condition state", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+function updateState(state, value) {
+  state.buy = value;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: false };
+  const average = ta.ema(close, 14);
+  updateState(state, !Number.isFinite(average));
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
 test("signal dependency tracing fails closed for destructuring reassignment", async () => {
   await assert.rejects(
     () =>

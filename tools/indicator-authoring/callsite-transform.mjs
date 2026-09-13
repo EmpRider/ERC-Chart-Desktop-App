@@ -106,6 +106,26 @@ const signalSafeArrayMethods = new Set([
   "values",
   "with",
 ]);
+const signalMutatingArrayMethods = new Set([
+  "copyWithin",
+  "fill",
+  "pop",
+  "push",
+  "reverse",
+  "shift",
+  "sort",
+  "splice",
+  "unshift",
+]);
+const signalMutatingObjectMethods = new Set([
+  "assign",
+  "defineProperties",
+  "defineProperty",
+  "freeze",
+  "preventExtensions",
+  "seal",
+  "setPrototypeOf",
+]);
 const signalArrayReturningMethods = new Set([
   "concat",
   "filter",
@@ -399,6 +419,8 @@ function signalIdentifierIsWriteReference(identifier) {
         parent.operator === ts.SyntaxKind.MinusMinusToken)
     )
       return true;
+    if (ts.isDeleteExpression(parent) && parent.expression === current)
+      return true;
     if (
       (ts.isPropertyAccessExpression(parent) ||
         ts.isElementAccessExpression(parent)) &&
@@ -443,10 +465,172 @@ function signalIdentifierIsWriteReference(identifier) {
   return false;
 }
 
+function signalConditionUsesContainerReference(identifier) {
+  const parent = identifier.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === identifier
+  );
+}
+
+function signalAliasIdentifier(expression) {
+  const value = unwrapSignalCallable(expression);
+  return ts.isIdentifier(value) ? value : undefined;
+}
+
+function signalHelperParameterMayMutate(
+  functionLike,
+  parameterIndex,
+  resolving = new Set(),
+) {
+  const parameter = functionLike.parameters[parameterIndex];
+  if (parameter === undefined) return false;
+  if (!ts.isIdentifier(parameter.name) || functionLike.body === undefined)
+    return true;
+  if (resolving.has(functionLike)) return true;
+  resolving.add(functionLike);
+  const aliases = new Set([parameter.name.text]);
+  let mutates = false;
+  const visit = (node) => {
+    if (mutates) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined
+    ) {
+      const source = signalAliasIdentifier(node.initializer);
+      if (source !== undefined && aliases.has(source.text))
+        aliases.add(node.name.text);
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node !== parameter.name &&
+      aliases.has(node.text) &&
+      signalIdentifierIsValueReference(node) &&
+      (signalIdentifierIsWriteReference(node) ||
+        signalIdentifierEscapesIntoPotentialMutation(node, resolving))
+    ) {
+      mutates = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(functionLike.body);
+  resolving.delete(functionLike);
+  return mutates;
+}
+
+function signalCallArgumentMayMutate(call, argument, resolving = new Set()) {
+  const argumentIndex = call.arguments.indexOf(argument);
+  if (argumentIndex < 0) return false;
+  const callable = unwrapSignalCallable(call.expression);
+  if (ts.isIdentifier(callable)) {
+    const helper = localFunctionForReference(callable);
+    return helper === undefined
+      ? true
+      : signalHelperParameterMayMutate(helper, argumentIndex, resolving);
+  }
+  if (!ts.isPropertyAccessExpression(callable)) return true;
+  const root = propertyPath(callable)?.root;
+  if (
+    root === undefined ||
+    !signalSafeBuiltinCallRoots.has(root) ||
+    signalNameIsLexicallyBoundAt(callable, root)
+  )
+    return true;
+  if (root !== "Object") return false;
+  return (
+    signalMutatingObjectMethods.has(callable.name.text) && argumentIndex === 0
+  );
+}
+
+function signalMethodCallMayMutate(callable) {
+  if (!ts.isPropertyAccessExpression(callable)) return true;
+  if (!signalExpressionIsProvableArray(callable.expression)) return true;
+  return signalMutatingArrayMethods.has(callable.name.text);
+}
+
+function signalIdentifierEscapesIntoPotentialMutation(
+  identifier,
+  resolving = new Set(),
+) {
+  let current = identifier;
+  let traversedMemberAccess = false;
+  while (current.parent !== undefined) {
+    const parent = current.parent;
+    if (
+      (ts.isPropertyAccessExpression(parent) ||
+        ts.isElementAccessExpression(parent)) &&
+      parent.expression === current
+    ) {
+      traversedMemberAccess = true;
+      current = parent;
+      continue;
+    }
+    if (
+      (ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isTypeAssertionExpression(parent) ||
+        ts.isNonNullExpression(parent) ||
+        ts.isSatisfiesExpression(parent)) &&
+      parent.expression === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (!traversedMemberAccess) {
+      if (
+        ts.isArrayLiteralExpression(parent) &&
+        parent.elements.includes(current)
+      ) {
+        current = parent;
+        continue;
+      }
+      if (
+        ts.isShorthandPropertyAssignment(parent) &&
+        parent.name === current
+      ) {
+        current = parent;
+        continue;
+      }
+      if (ts.isPropertyAssignment(parent) && parent.initializer === current) {
+        current = parent;
+        continue;
+      }
+      if (
+        ts.isObjectLiteralExpression(parent) &&
+        parent.properties.includes(current)
+      ) {
+        current = parent;
+        continue;
+      }
+      if (
+        (ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) &&
+        parent.expression === current
+      ) {
+        current = parent;
+        continue;
+      }
+    }
+    if (!ts.isCallExpression(parent)) return false;
+    if (parent.expression === current)
+      return (
+        traversedMemberAccess && signalMethodCallMayMutate(current)
+      );
+    return (
+      !traversedMemberAccess &&
+      signalCallArgumentMayMutate(parent, current, resolving)
+    );
+  }
+  return false;
+}
+
 function signalVariableIsReassignedBeforeReference(identifier) {
   const declaration = signalVariableDeclarationForReference(identifier);
   if (declaration === undefined) return false;
-  const requestedName = identifier.text;
+  const trackContainerAliases = signalConditionUsesContainerReference(identifier);
+  const aliases = new Set([declaration]);
   let root = declaration.parent;
   while (
     root.parent !== undefined &&
@@ -458,16 +642,41 @@ function signalVariableIsReassignedBeforeReference(identifier) {
   let reassigned = false;
   const visit = (node) => {
     if (reassigned || node.pos >= identifier.pos) return;
-    if (node !== root) {
-      const names = scopedNames(node);
-      if (names?.has(requestedName)) return;
+    if (
+      trackContainerAliases &&
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined
+    ) {
+      const source = signalAliasIdentifier(node.initializer);
+      if (
+        source !== undefined &&
+        aliases.has(signalVariableDeclarationForReference(source))
+      )
+        aliases.add(node);
+    }
+    if (
+      trackContainerAliases &&
+      ts.isBinaryExpression(node) &&
+      ts.isAssignmentOperator(node.operatorToken.kind) &&
+      ts.isIdentifier(node.left)
+    ) {
+      const source = signalAliasIdentifier(node.right);
+      const targetDeclaration = signalVariableDeclarationForReference(node.left);
+      if (
+        source !== undefined &&
+        targetDeclaration !== undefined &&
+        aliases.has(signalVariableDeclarationForReference(source))
+      )
+        aliases.add(targetDeclaration);
     }
     if (
       ts.isIdentifier(node) &&
-      node !== declaration.name &&
-      node.text === requestedName &&
       node.pos > declaration.end &&
-      signalIdentifierIsWriteReference(node)
+      aliases.has(signalVariableDeclarationForReference(node)) &&
+      (signalIdentifierIsWriteReference(node) ||
+        (trackContainerAliases &&
+          signalIdentifierEscapesIntoPotentialMutation(node)))
     ) {
       reassigned = true;
       return;
