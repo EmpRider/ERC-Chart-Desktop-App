@@ -39,7 +39,7 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [ ] Phase 4 — Rebuild `ta.*` on v2 identities and overloads
 - [ ] Phase 5 — Rebuild inputs, generic constants, and host-normalized settings
 - [ ] Phase 6 — Rebuild scalar plots and conditional-call semantics
-- [ ] Phase 7 — Build persistent drawing-handle engine with hidden IDs
+- [x] Phase 7 — Build persistent drawing-handle engine with hidden IDs
 - [ ] Phase 8 — Build provider-driven effective timeframe resolver
 - [ ] Phase 9 — Build Indicator Source Engine and MTF source sharing
 - [ ] Phase 10 — Build candle transformation layer and Heikin Ashi
@@ -49,6 +49,8 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [ ] Phase 14 — Rewrite maintained indicators against SDK v2
 - [ ] Phase 15 — Remove v1-only authoring/runtime surface
 - [ ] Phase 16 — Full correctness/performance/documentation acceptance
+
+**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 below and is complete. ECDD-223 maps to detailed Task 8 and is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
 
 ---
 
@@ -450,7 +452,64 @@ git commit -m "feat(indicators): make plots callsite driven"
 
 ---
 
-### Task 7: Add shapes with text and text-size semantics
+### Task 7: Build persistent drawing handles with hidden IDs
+
+**Status:** Complete via ECDD-222; squash-merged into `epic/ECDD-135-sdk-v2-optimization` as `f70821b93c033a48d73affe1a535084edda7caab` on 2026-09-13.
+
+**Files:**
+
+- Rewrite drawing portions of `packages/indicator-sdk/src/plot.ts`
+- Create: `packages/indicator-sdk/src/internal/drawings.ts`
+- Modify: `packages/indicator-sdk/src/indicator.ts`
+- Modify: `packages/contracts/src/indicator-management.ts`
+- Modify: SDK/runtime tests
+
+**Interfaces:**
+
+```ts
+const box = plot.box({ left, right, top, bottom, color });
+box.set({ right: time, top: high });
+box.delete();
+
+const line = plot.segment({ left, right, startValue, endValue, color });
+line.delete();
+```
+
+The public handle owns no author-visible persistence ID. Renderer-facing IDs, committed/provisional lifecycle, retention, rollback, and reconciliation remain SDK/runtime concerns.
+
+- [x] **Step 1: Add failing tests showing no `id` is accepted/required in author code**
+
+- [x] **Step 2: Add failing persistence tests**
+
+A handle created on a finalized bar remains alive until updated/deleted.
+
+- [x] **Step 3: Add failing provisional rollback tests**
+
+Building-bar mutations revert to committed drawing state on replacement updates.
+
+- [x] **Step 4: Implement hidden drawing identity and handle registry**
+
+Author handle identity is separated from plain runtime overlay IDs transported to the renderer.
+
+- [x] **Step 5: Implement bounded retention/eviction inside the drawing engine**
+
+The author does not write retention code.
+
+- [x] **Step 6: Remove normal author dependence on `plot.drawings()`, `plot.sync()`, overlay arrays, and `plot.remove(id)`**
+
+No SDK v1 compatibility layer is required.
+
+- [x] **Step 7: Run drawing rollback/replay, identity, ownership, failure-path, and performance tests**
+
+- [x] **Step 8: Commit and merge**
+
+ECDD-222 exact-head delivery/security evidence passed before squash merge. Maintained-indicator retained-handle cleanup remains intentionally owned by ECDD-224/ECDD-228.
+
+---
+
+### Task 8: Add shapes with text and text-size semantics
+
+**Status:** Next SDK-v2 optimization task via ECDD-223.
 
 **Files:**
 
@@ -478,9 +537,11 @@ plot.shape(buy, shape.labelUp, "BUY");
 
 - [ ] **Step 1: Add failing contract tests for shape/text fields**
 
-Cover bounded text, supported text sizes, locations, marker types, and malformed payload rejection.
+Cover bounded text, supported text sizes, locations, marker types, malformed payload rejection, and empty-text behavior.
 
 - [ ] **Step 2: Add failing renderer tests for BUY/SELL text and size mapping**
+
+Cover historical, live, and provisional updates while preserving existing non-text shape behavior.
 
 - [ ] **Step 3: Extend the runtime contract**
 
@@ -490,75 +551,13 @@ Carry semantic size enum values through the contract; map to actual renderer siz
 
 The renderer chooses glyph/label positioning and DPI/pixel size.
 
-- [ ] **Step 5: Run contract/renderer tests**
+- [ ] **Step 5: Run SDK contract/renderer tests plus the normal task delivery gates**
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/indicator-sdk/src packages/contracts/src/indicator-management.ts packages/renderer/src/plugin-indicators.ts
+git add packages/indicator-sdk/src packages/contracts/src/indicator-management.ts packages/renderer/src/plugin-indicators.ts packages/indicator-sdk/test packages/renderer/test
 git commit -m "feat(indicators): add marker text and sizing"
-```
-
----
-
-### Task 8: Build persistent drawing handles with hidden IDs
-
-**Files:**
-
-- Rewrite drawing portions of `packages/indicator-sdk/src/plot.ts`
-- Create: `packages/indicator-sdk/src/internal/drawings.ts`
-- Modify: `packages/indicator-sdk/src/indicator.ts`
-- Modify: `packages/contracts/src/indicator-management.ts`
-- Modify: SDK/runtime tests
-
-**Interfaces:**
-
-```ts
-const box = plot.box({ left, right, top, bottom, color });
-box.right = time;
-box.top = high;
-box.delete();
-
-const line = plot.segment({ left, right, startValue, endValue, color });
-line.delete();
-```
-
-If direct property setters prove unsafe in generated/runtime code, expose an equally beginner-readable method form while keeping handles as the identity model:
-
-```ts
-box.set({ right: time, top: high });
-box.delete();
-```
-
-- [ ] **Step 1: Add failing tests showing no `id` is accepted/required in author code**
-
-- [ ] **Step 2: Add failing persistence tests**
-
-A handle created on a finalized bar remains alive until updated/deleted.
-
-- [ ] **Step 3: Add failing provisional rollback tests**
-
-Building-bar mutations must revert to the committed drawing state on the next replacement update.
-
-- [ ] **Step 4: Implement hidden drawing identity and handle registry**
-
-Separate author handle identity from plain runtime overlay IDs transported to renderer.
-
-- [ ] **Step 5: Implement bounded retention/eviction inside the drawing engine**
-
-The author should not write retention code.
-
-- [ ] **Step 6: Remove normal author dependence on `plot.drawings()`, `plot.sync()`, overlay arrays, and `plot.remove(id)`**
-
-These v1-only APIs may be deleted because legacy source compatibility is not required.
-
-- [ ] **Step 7: Run drawing rollback/replay tests**
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add packages/indicator-sdk/src packages/contracts/src/indicator-management.ts packages/indicator-sdk/test packages/indicator-runtime/test
-git commit -m "feat(indicators): add persistent drawing handles"
 ```
 
 ---
@@ -1156,6 +1155,16 @@ Append dated entries here as phases complete. Keep old entries; do not rewrite h
 - Design direction: Authoring Compiler + Indicator Source Engine + Stateful Execution Engine.
 - Current indicators are intentionally scheduled for full rewrite only after v2 foundations reach their acceptance gates.
 - No implementation completion is claimed by this entry.
+
+### 2026-09-13 — ECDD-222 drawing/signal identity completed
+
+- ECDD-222 was squash-merged into `epic/ECDD-135-sdk-v2-optimization` as `f70821b93c033a48d73affe1a535084edda7caab`.
+- Persistent box/segment handles now use SDK-owned hidden identity with committed/provisional rollback, bounded retention, ownership checks, and no normal author-created IDs/scopes.
+- Signal persistence identity is SDK/compiler-owned; failure paths do not consume fallback identity.
+- Compiler call-site metadata is normalized into immutable validated snapshots before downstream identity use.
+- Final maintained-indicator retained-handle cleanup remains intentionally deferred to ECDD-224/ECDD-228; no legacy compatibility layer was introduced.
+- The design specification and current-state inventory remain directionally correct. The detailed plan ordering was corrected so persistent drawing handles are Task 7 and `plot.shape` text/text-size work is Task 8.
+- ECDD-223 is the next SDK-v2 optimization task.
 
 ---
 
