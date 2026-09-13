@@ -22,9 +22,10 @@ function transformCandle(raw: Candle, previous: Candle | undefined): Candle {
  */
 export function toHeikinAshiCandles(
   candles: readonly Candle[],
+  previousFinalized?: Candle,
 ): readonly Candle[] {
   const transformed: Candle[] = [];
-  let previousBeforeTimestamp: Candle | undefined;
+  let previousBeforeTimestamp = previousFinalized;
   let activeTimestamp: number | undefined;
 
   for (const raw of candles) {
@@ -35,7 +36,9 @@ export function toHeikinAshiCandles(
       );
       continue;
     }
-    previousBeforeTimestamp = transformed.at(-1);
+    if (activeTimestamp !== undefined) {
+      previousBeforeTimestamp = transformed.at(-1);
+    }
     activeTimestamp = raw.openTimeMs;
     transformed.push(transformCandle(raw, previousBeforeTimestamp));
   }

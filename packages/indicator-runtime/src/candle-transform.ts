@@ -7,7 +7,10 @@ export type IndicatorSourceProvenance =
   | Readonly<{ kind: "market"; candleType: "standard" }>
   | Readonly<{ kind: "synthetic"; candleType: "heikin-ashi" }>;
 
-type CandleTransform = (candles: readonly Candle[]) => readonly Candle[];
+type CandleTransform = (
+  candles: readonly Candle[],
+  previousFinalized?: Candle,
+) => readonly Candle[];
 
 const transforms: Readonly<Record<IndicatorCandleType, CandleTransform>> =
   Object.freeze({
@@ -34,6 +37,7 @@ export function sourceProvenanceForCandleType(
 export function transformIndicatorCandles(
   candleType: IndicatorCandleType,
   candles: readonly Candle[],
+  previousFinalized?: Candle,
 ): readonly Candle[] {
-  return transforms[candleType](candles);
+  return transforms[candleType](candles, previousFinalized);
 }

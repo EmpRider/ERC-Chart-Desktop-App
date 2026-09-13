@@ -343,6 +343,54 @@ test("Heikin Ashi repeated building revisions derive from the previous finalized
   await engine.dispose();
 });
 
+test("Heikin Ashi keeps recursive state when the bounded source window advances", async () => {
+  let liveSink;
+  const history = Array.from({ length: 100_000 }, (_value, index) =>
+    ohlc(
+      "1m",
+      index * 60_000,
+      100 + index,
+      102 + index,
+      99 + index,
+      101 + index,
+    ),
+  );
+  const dataService = {
+    async requestHistory() {
+      return history;
+    },
+    async subscribe(_providerProfileId, _request, sink) {
+      liveSink = sink;
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const source = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1m",
+    candleType: "heikin-ashi",
+  });
+  const retainedBeforeAdvance = source.snapshot().candles[1];
+
+  liveSink.onCandles(
+    [ohlc("1m", 100_000 * 60_000, 100_100, 100_102, 100_099, 100_101)],
+    {
+      generation: 1,
+      revision: 1,
+      previousRevision: 0,
+      kind: "incremental",
+    },
+  );
+
+  const snapshot = source.snapshot();
+  assert.equal(snapshot.candles.length, 100_000);
+  assert.deepEqual(snapshot.candles[0], retainedBeforeAdvance);
+
+  await source.release();
+  await engine.dispose();
+});
+
 test("derived timeframe candles are aggregated before Heikin Ashi transformation", async () => {
   const upstream = {
     async getCapabilities() {

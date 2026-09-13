@@ -76,6 +76,7 @@ export interface IndicatorSourceEngine {
 interface SharedSource {
   readonly key: IndicatorSourceKey;
   rawCandles: readonly Candle[];
+  transformSeed: Candle | undefined;
   snapshot: IndicatorSourceSnapshot;
   subscription: IndicatorSourceSubscription | undefined;
   references: number;
@@ -162,6 +163,26 @@ function acceptSeriesChange(
   return series.previousRevision === current.revision;
 }
 
+function nextTransformSeed(
+  source: SharedSource,
+  nextRawCandles: readonly Candle[],
+  kind: ProviderSeriesChange["kind"],
+): Candle | undefined {
+  if (kind === "rebuild") return undefined;
+  const firstOpenTimeMs = nextRawCandles[0]?.openTimeMs;
+  if (firstOpenTimeMs === undefined) return source.transformSeed;
+
+  let lastDroppedIndex = -1;
+  for (let index = 0; index < source.rawCandles.length; index += 1) {
+    const raw = source.rawCandles[index];
+    if (raw === undefined || raw.openTimeMs >= firstOpenTimeMs) break;
+    lastDroppedIndex = index;
+  }
+  return lastDroppedIndex < 0
+    ? source.transformSeed
+    : source.snapshot.candles[lastDroppedIndex];
+}
+
 export function createIndicatorSourceEngine(
   dataService: IndicatorSourceDataService,
 ): IndicatorSourceEngine {
@@ -193,6 +214,7 @@ export function createIndicatorSourceEngine(
     const source: SharedSource = {
       key,
       rawCandles: rawHistory,
+      transformSeed: undefined,
       snapshot: Object.freeze({
         key,
         candles: transformIndicatorCandles(key.candleType, rawHistory),
@@ -223,12 +245,19 @@ export function createIndicatorSourceEngine(
             series.kind === "rebuild"
               ? boundedCandles(candles)
               : mergeIncrementalCandles(source.rawCandles, candles);
+          const transformSeed = nextTransformSeed(
+            source,
+            nextRawCandles,
+            series.kind,
+          );
           source.rawCandles = nextRawCandles;
+          source.transformSeed = transformSeed;
           source.snapshot = Object.freeze({
             key: source.key,
             candles: transformIndicatorCandles(
               source.key.candleType,
               nextRawCandles,
+              transformSeed,
             ),
             provenance: sourceProvenanceForCandleType(source.key.candleType),
             generation: series.generation,
