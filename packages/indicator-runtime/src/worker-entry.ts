@@ -39,6 +39,21 @@ interface IndicatorPluginModule {
       readonly instrumentId: InstrumentId;
       readonly timeframeId: TimeframeId;
       readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
+      readonly sourceMetadata?: Readonly<
+        Record<
+          string,
+          {
+            readonly activeTimeframeId: string;
+            readonly generation: number;
+            readonly revision: number;
+            readonly finalizedCount: number;
+            readonly provenance: {
+              readonly kind: "market" | "synthetic";
+              readonly candleType: "standard" | "heikin-ashi";
+            };
+          }
+        >
+      >;
     },
   ) => RuntimeIndicatorInstance;
 }
@@ -280,6 +295,19 @@ async function execute(
               source.candles,
             ]),
           ),
+          sourceMetadata: Object.fromEntries(
+            message.sources.map((source) => [
+              source.timeframeId,
+              {
+                activeTimeframeId:
+                  source.activeTimeframeId ?? source.timeframeId,
+                generation: source.generation,
+                revision: source.revision,
+                finalizedCount: source.finalizedCount,
+                provenance: source.provenance,
+              },
+            ]),
+          ),
         }),
   });
   instance.onHistory(message.data.candles);
@@ -332,6 +360,10 @@ function isSourceSnapshot(value: unknown): boolean {
     readonly timeframeId?: unknown;
     readonly activeTimeframeId?: unknown;
     readonly candles?: unknown;
+    readonly provenance?: unknown;
+    readonly generation?: unknown;
+    readonly revision?: unknown;
+    readonly finalizedCount?: unknown;
   };
   const activeTimeframeId =
     source.activeTimeframeId === undefined
@@ -342,7 +374,23 @@ function isSourceSnapshot(value: unknown): boolean {
     source.timeframeId.length > 0 &&
     typeof activeTimeframeId === "string" &&
     activeTimeframeId.length > 0 &&
+    typeof source.provenance === "object" &&
+    source.provenance !== null &&
+    (((source.provenance as { readonly kind?: unknown }).kind === "market" &&
+      (source.provenance as { readonly candleType?: unknown }).candleType ===
+        "standard") ||
+      ((source.provenance as { readonly kind?: unknown }).kind ===
+        "synthetic" &&
+        (source.provenance as { readonly candleType?: unknown }).candleType ===
+          "heikin-ashi")) &&
+    Number.isSafeInteger(source.generation) &&
+    Number(source.generation) >= 0 &&
+    Number.isSafeInteger(source.revision) &&
+    Number(source.revision) >= 0 &&
+    Number.isSafeInteger(source.finalizedCount) &&
+    Number(source.finalizedCount) >= 0 &&
     Array.isArray(source.candles) &&
+    Number(source.finalizedCount) <= source.candles.length &&
     source.candles.every(
       (candle) => isCandle(candle) && candle.timeframeId === activeTimeframeId,
     )

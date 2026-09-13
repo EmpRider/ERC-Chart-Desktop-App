@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isIndicatorRuntimeSnapshot,
   isInstalledIndicatorDefinition,
   isInstalledIndicatorSummary,
 } from "../dist/index.js";
@@ -138,6 +139,57 @@ test("indicator candle type input keys must reference declared candle type input
     isInstalledIndicatorDefinition(
       withSource([{ ...candleInput, editor: "text" }], candleInput.key),
     ),
+    false,
+  );
+});
+
+test("runtime signals validate source revision and synthetic provenance", () => {
+  const source = {
+    timeframeId: "1h",
+    activeTimeframeId: "1h",
+    openTimeMs: 0,
+    generation: 7,
+    revision: 11,
+    provenance: { kind: "synthetic", candleType: "heikin-ashi" },
+  };
+  const snapshot = {
+    points: [],
+    overlays: [],
+    signals: [
+      {
+        id: "signal:test",
+        occurredAtMs: 0,
+        direction: "long",
+        finalized: true,
+        sources: [source],
+      },
+    ],
+  };
+  assert.equal(isIndicatorRuntimeSnapshot(snapshot), true);
+  assert.equal(
+    isIndicatorRuntimeSnapshot({
+      ...snapshot,
+      signals: [
+        { ...snapshot.signals[0], sources: [{ ...source, revision: -1 }] },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    isIndicatorRuntimeSnapshot({
+      ...snapshot,
+      signals: [
+        {
+          ...snapshot.signals[0],
+          sources: [
+            {
+              ...source,
+              provenance: { kind: "market", candleType: "heikin-ashi" },
+            },
+          ],
+        },
+      ],
+    }),
     false,
   );
 });

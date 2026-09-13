@@ -7,6 +7,8 @@ import type {
   IndicatorResultPoint,
 } from "./index.js";
 import type { CompilerCallsite } from "./internal/callsite.js";
+import type { IndicatorSourceMetadata } from "./internal/runtime-contracts.js";
+import type { SignalDependency, SignalState } from "./internal/signals.js";
 
 export interface KernelSlot {
   readonly signature: string;
@@ -15,6 +17,7 @@ export interface KernelSlot {
 export interface AuthoringFrame {
   readonly candle: Candle;
   readonly sourceCandles: Readonly<Record<string, readonly Candle[]>>;
+  readonly sourceMetadata: Readonly<Record<string, IndicatorSourceMetadata>>;
   readonly phase: "building" | "finalized";
   readonly historyReplay: boolean;
   readonly historyFinalizedTail: boolean;
@@ -46,8 +49,13 @@ export interface AuthoringFrame {
     sizes: Record<string, number>;
   };
   readonly overlayUpdates: Map<string, IndicatorOverlay | null>;
+  readonly signalDependencies: Map<string, SignalDependency>;
+  readonly signalState: SignalState;
   readonly signals: {
     readonly key: string;
+    readonly eventKey: string;
+    readonly occurredAtMs: number;
+    readonly sources: readonly import("@erc-chart/contracts").IndicatorRuntimeSignalSource[];
     readonly direction: "long" | "short" | "neutral";
     readonly confidence?: number;
   }[];

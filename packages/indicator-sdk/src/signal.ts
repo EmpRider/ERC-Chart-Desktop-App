@@ -1,5 +1,11 @@
 import { authoringFrame, type AuthoringFrame } from "./authoring-context.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
+import {
+  resolveSignalDependencies,
+  signalAlreadyCommitted,
+  signalEventKey,
+  sourceSignalDependency,
+} from "./internal/signals.js";
 
 export interface SignalOptions {
   readonly confidence?: number;
@@ -16,7 +22,7 @@ function signalIdentities(frame: AuthoringFrame): Set<string> {
   return identities;
 }
 
-/** Only finalized bars emit signals; provisional conditions never become committed events. */
+/** Signals commit only when every compiler-traced dependency is ready and confirmed. */
 export function signal(
   condition: boolean,
   direction: "long" | "short" | "neutral",
@@ -50,12 +56,52 @@ export function signal(
     identities.add(callsite.id);
   }
   frame.signalIndex = index + 1;
-  if (condition && !frame.discovery && frame.phase === "finalized")
-    frame.signals.push({
-      key: callsite?.id ?? `signal_${index}`,
-      direction,
-      ...(options.confidence === undefined
-        ? {}
-        : { confidence: options.confidence }),
-    });
+  if (!condition || frame.discovery || frame.phase !== "finalized") return;
+
+  const resolved = resolveSignalDependencies(
+    frame.signalDependencies,
+    callsite,
+  );
+  if (!resolved.ready) return;
+  const dependencyIdentities = [...resolved.identities];
+  const sources = [...resolved.sources];
+  let occurredAtMs = resolved.occurredAtMs;
+  if ((callsite?.chartSeries?.length ?? 0) > 0) {
+    const chartDependency = sourceSignalDependency(
+      frame.candle.timeframeId,
+      frame.candle.openTimeMs,
+      true,
+      frame.sourceMetadata[frame.candle.timeframeId],
+    );
+    dependencyIdentities.push(...chartDependency.identities);
+    for (const source of chartDependency.sources) {
+      if (
+        !sources.some(
+          (candidate) =>
+            candidate.timeframeId === source.timeframeId &&
+            candidate.activeTimeframeId === source.activeTimeframeId &&
+            candidate.openTimeMs === source.openTimeMs,
+        )
+      )
+        sources.push(source);
+    }
+    occurredAtMs = frame.candle.openTimeMs;
+  }
+  const key = callsite?.id ?? `signal_${index}`;
+  const eventKey = signalEventKey(
+    key,
+    [...new Set(dependencyIdentities)],
+    frame.candle.openTimeMs,
+  );
+  if (signalAlreadyCommitted(frame.signalState, eventKey)) return;
+  frame.signals.push({
+    key,
+    eventKey,
+    occurredAtMs: occurredAtMs ?? frame.candle.openTimeMs,
+    sources,
+    direction,
+    ...(options.confidence === undefined
+      ? {}
+      : { confidence: options.confidence }),
+  });
 }

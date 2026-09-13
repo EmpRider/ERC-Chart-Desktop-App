@@ -36,6 +36,8 @@ export type {
   IndicatorRuntimeOverlay,
   IndicatorRuntimePoint,
   IndicatorRuntimeSignal,
+  IndicatorRuntimeSignalSource,
+  IndicatorRuntimeSignalSourceProvenance,
   IndicatorRuntimeSnapshot,
   IndicatorRuntimeSyncRequest,
   IndicatorRuntimeUpdateRequest,

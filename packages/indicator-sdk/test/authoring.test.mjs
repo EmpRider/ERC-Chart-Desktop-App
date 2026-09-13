@@ -192,7 +192,7 @@ test("per-TA higher timeframe values align only after the foreign candle closes"
   instance.dispose();
 });
 
-test("per-TA alignment closes the final parseable source candle without a successor", () => {
+test("per-TA alignment keeps a source candle provisional until a successor confirms it", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.mtf-final-source.main", name: "MTF final source" },
     () => {
@@ -232,7 +232,7 @@ test("per-TA alignment closes the final parseable source candle without a succes
   instance.onHistory(baseCandles);
   assert.deepEqual(
     instance.snapshot().points.map((point) => point.values.plot_0),
-    [null, null, null, 100, 100],
+    [null, null, null, null, null],
   );
   instance.dispose();
 });

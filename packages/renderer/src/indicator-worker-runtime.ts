@@ -227,7 +227,10 @@ export function createBrowserIndicatorRuntime(
         sources: readonly {
           readonly timeframeId: string;
           readonly candles: readonly Candle[];
-          readonly provenance?: IndicatorSourceSnapshot["provenance"];
+          readonly provenance: IndicatorSourceSnapshot["provenance"];
+          readonly generation: number;
+          readonly revision: number;
+          readonly finalizedCount: number;
         }[] = [],
         sourceProvenance?: IndicatorSourceSnapshot["provenance"],
       ) =>
@@ -277,9 +280,26 @@ export function createBrowserIndicatorRuntime(
                 : { activeTimeframeId }),
               candles: snapshot.candles,
               provenance: snapshot.provenance,
+              generation: snapshot.generation,
+              revision: snapshot.revision,
+              finalizedCount: snapshot.finalizedCount,
             };
           },
         );
+        const baseWorkerSource = {
+          timeframeId: request.timeframeId,
+          candles: baseSnapshot.candles,
+          provenance: baseSnapshot.provenance,
+          generation: baseSnapshot.generation,
+          revision: baseSnapshot.revision,
+          finalizedCount: baseSnapshot.finalizedCount,
+        };
+        const workerSources = [
+          baseWorkerSource,
+          ...auxiliarySources.filter(
+            (source) => source.timeframeId !== request.timeframeId,
+          ),
+        ];
         const version = sourceVersion(snapshots);
         const previousVersion = sourceVersions.get(request.instanceId);
         const dataUsesBaseTimeframe =
@@ -297,7 +317,7 @@ export function createBrowserIndicatorRuntime(
               kind: "rebuild",
               candles: baseSnapshot.candles,
             },
-            auxiliarySources,
+            workerSources,
             baseSnapshot.provenance,
           );
         if (

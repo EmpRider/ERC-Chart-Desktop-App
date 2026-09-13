@@ -27,6 +27,11 @@ import type {
   SignalCandidate,
 } from "./internal/runtime-contracts.js";
 import { validateDrawingUsage } from "./internal/drawings.js";
+import {
+  commitSignalEvents,
+  createSignalState,
+  resetSignalState,
+} from "./internal/signals.js";
 import { compilerPlotDefinitions } from "./plot.js";
 import type { SeriesNumber } from "./series.js";
 
@@ -110,6 +115,7 @@ export function defineIndicator(
   const discovery: AuthoringFrame = {
     candle: sample,
     sourceCandles: {},
+    sourceMetadata: {},
     phase: "building",
     historyReplay: false,
     historyFinalizedTail: false,
@@ -126,6 +132,8 @@ export function defineIndicator(
     plotIndex: 0,
     point: newPoint(0),
     overlayUpdates: new Map(),
+    signalDependencies: new Map(),
+    signalState: createSignalState(),
     signals: [],
     signalIndex: 0,
   };
@@ -220,6 +228,7 @@ export function defineIndicator(
       let committedOverlays: readonly IndicatorOverlay[] = [];
       let overlays: readonly IndicatorOverlay[] = [];
       let signals: SignalCandidate[] = [];
+      const signalState = createSignalState();
       let visualRevision = 0;
       let finalizedCount = 0;
       let lastFinalized: Candle | undefined;
@@ -254,6 +263,7 @@ export function defineIndicator(
         const frame: AuthoringFrame = {
           candle,
           sourceCandles: context.sourceCandles ?? {},
+          sourceMetadata: context.sourceMetadata ?? {},
           phase,
           historyReplay,
           historyFinalizedTail,
@@ -270,6 +280,8 @@ export function defineIndicator(
           plotIndex: 0,
           point: newPoint(candle.openTimeMs),
           overlayUpdates: new Map(),
+          signalDependencies: new Map(),
+          signalState,
           signals: [],
           signalIndex: 0,
         };
@@ -308,13 +320,14 @@ export function defineIndicator(
           // Validate only this point and changed bounded geometry, never the historical point array.
           const emitted: SignalCandidate[] = frame.signals.map((value) => ({
             signalContractVersion: indicatorContractVersion,
-            id: `${value.key}:${candle.openTimeMs}`,
+            id: value.eventKey,
             indicatorId: definition.id,
             instrumentId: context.instrumentId,
             timeframeId: context.timeframeId,
-            occurredAtMs: candle.openTimeMs,
+            occurredAtMs: value.occurredAtMs,
             direction: value.direction,
             finalized: true,
+            ...(value.sources.length === 0 ? {} : { sources: value.sources }),
             ...(value.confidence === undefined
               ? {}
               : { confidence: value.confidence }),
@@ -337,6 +350,10 @@ export function defineIndicator(
           if (overlays !== previousOverlays || emitted.length > 0)
             visualRevision += 1;
           if (phase === "finalized") {
+            commitSignalEvents(
+              signalState,
+              frame.signals.map((value) => value.eventKey),
+            );
             signals.push(...emitted);
             if (signals.length > 10_000)
               signals.splice(0, signals.length - 10_000);
@@ -359,6 +376,7 @@ export function defineIndicator(
           kernels = [];
           points = [];
           signals = [];
+          resetSignalState(signalState);
           committedDrawings = new Map();
           committedOverlays = [];
           overlays = [];
@@ -430,6 +448,7 @@ export function defineIndicator(
           kernels = [];
           points = [];
           signals = [];
+          resetSignalState(signalState);
           committedDrawings.clear();
           overlays = [];
           committedOverlays = [];

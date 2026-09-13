@@ -683,3 +683,36 @@ test("provider switches reacquire the source without retaining stale provider da
   assert.deepEqual(unsubscribedProviders, ["profile-a", "profile-b"]);
   await engine.dispose();
 });
+
+test("source snapshots expose the count of actually finalized candles", async () => {
+  let liveSink;
+  const dataService = {
+    async requestHistory() {
+      return [candle("1h", 0, 100)];
+    },
+    async subscribe(_providerProfileId, _request, sink) {
+      liveSink = sink;
+      return { unsubscribe: async () => undefined };
+    },
+  };
+  const engine = createIndicatorSourceEngine(dataService);
+  const source = await engine.acquire({
+    providerProfileId: "profile-a",
+    instrumentId: "EURUSD",
+    timeframeId: "1h",
+    candleType: "standard",
+  });
+  try {
+    assert.equal(source.snapshot().finalizedCount, 0);
+    liveSink.onCandles([candle("1h", 60 * 60_000, 200)], {
+      generation: 1,
+      revision: 1,
+      previousRevision: 0,
+      kind: "incremental",
+    });
+    assert.equal(source.snapshot().finalizedCount, 1);
+  } finally {
+    await source.release();
+    await engine.dispose();
+  }
+});

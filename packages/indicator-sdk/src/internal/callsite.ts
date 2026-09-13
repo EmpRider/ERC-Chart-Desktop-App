@@ -29,6 +29,8 @@ export interface CompilerCallsite {
   readonly kind: CompilerCallsiteKind;
   readonly callee: string;
   readonly seriesSource?: CompilerSeriesSource;
+  readonly dependencies?: readonly string[];
+  readonly chartSeries?: readonly CompilerSeriesSource[];
   readonly source: {
     readonly file: string;
     readonly line: number;
@@ -81,6 +83,8 @@ export function readCompilerCallsite(
   const candidateKind = candidate.kind;
   const candidateCallee = candidate.callee;
   const seriesSource = candidate.seriesSource;
+  const dependencies = candidate.dependencies;
+  const chartSeries = candidate.chartSeries;
   const source = candidate.source;
   const sourceFile = source?.file;
   const sourceLine = source?.line;
@@ -92,6 +96,21 @@ export function readCompilerCallsite(
     candidateCallee !== callee ||
     (seriesSource !== undefined &&
       !compilerSeriesSources.includes(seriesSource)) ||
+    (dependencies !== undefined &&
+      (!Array.isArray(dependencies) ||
+        dependencies.length > 256 ||
+        new Set(dependencies).size !== dependencies.length ||
+        dependencies.some(
+          (dependency) =>
+            typeof dependency !== "string" ||
+            !dependency.startsWith("erc-v2-ta-") ||
+            !callsiteSuffix.test(dependency.slice("erc-v2-ta-".length)),
+        ))) ||
+    (chartSeries !== undefined &&
+      (!Array.isArray(chartSeries) ||
+        chartSeries.length > compilerSeriesSources.length ||
+        new Set(chartSeries).size !== chartSeries.length ||
+        chartSeries.some((value) => !compilerSeriesSources.includes(value)))) ||
     typeof id !== "string" ||
     !id.startsWith(prefix) ||
     !callsiteSuffix.test(id.slice(prefix.length)) ||
@@ -113,6 +132,12 @@ export function readCompilerCallsite(
     kind,
     callee,
     ...(seriesSource === undefined ? {} : { seriesSource }),
+    ...(dependencies === undefined
+      ? {}
+      : { dependencies: Object.freeze([...dependencies]) }),
+    ...(chartSeries === undefined
+      ? {}
+      : { chartSeries: Object.freeze([...chartSeries]) }),
     source: Object.freeze({
       file: sourceFile,
       line: sourceLine,

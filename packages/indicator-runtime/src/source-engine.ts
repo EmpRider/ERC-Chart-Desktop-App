@@ -60,6 +60,8 @@ export interface IndicatorSourceSnapshot {
   readonly provenance: IndicatorSourceProvenance;
   readonly generation: number;
   readonly revision: number;
+  /** Number of leading candles confirmed final; any remaining tail is provisional. */
+  readonly finalizedCount: number;
 }
 
 export interface IndicatorSourceLease {
@@ -221,6 +223,7 @@ export function createIndicatorSourceEngine(
         provenance: sourceProvenanceForCandleType(key.candleType),
         generation: 0,
         revision: 0,
+        finalizedCount: Math.max(0, rawHistory.length - 1),
       }),
       subscription: undefined,
       references: 0,
@@ -262,6 +265,7 @@ export function createIndicatorSourceEngine(
             provenance: sourceProvenanceForCandleType(source.key.candleType),
             generation: series.generation,
             revision: series.revision,
+            finalizedCount: Math.max(0, nextRawCandles.length - 1),
           });
         },
         onTicks: () => undefined,

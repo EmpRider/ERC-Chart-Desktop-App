@@ -258,9 +258,20 @@ test("provider-backed indicators acquire independent base and per-TA timeframe s
     ]);
     assert.deepEqual(posted[0].sources, [
       {
+        timeframeId: "1m",
+        candles: [{ ...candle, timeframeId: "1m", close: 101 }],
+        provenance: { kind: "market", candleType: "standard" },
+        generation: 0,
+        revision: 0,
+        finalizedCount: 0,
+      },
+      {
         timeframeId: "1h",
         candles: [{ ...candle, timeframeId: "1h", close: 160 }],
         provenance: { kind: "market", candleType: "standard" },
+        generation: 0,
+        revision: 0,
+        finalizedCount: 0,
       },
     ]);
   } finally {
@@ -388,10 +399,21 @@ test("per-TA fallback aliases the active source under the requested timeframe ID
     );
     assert.deepEqual(posted[0].sources, [
       {
+        timeframeId: "1m",
+        candles: [{ ...candle, timeframeId: "1m" }],
+        provenance: { kind: "market", candleType: "standard" },
+        generation: 0,
+        revision: 0,
+        finalizedCount: 0,
+      },
+      {
         timeframeId: "4h",
         activeTimeframeId: "1m",
         candles: [{ ...candle, timeframeId: "1m" }],
         provenance: { kind: "market", candleType: "standard" },
+        generation: 0,
+        revision: 0,
+        finalizedCount: 0,
       },
     ]);
   } finally {

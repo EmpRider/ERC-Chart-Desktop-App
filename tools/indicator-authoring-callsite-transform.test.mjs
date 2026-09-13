@@ -305,3 +305,97 @@ plot.shape(buy, {
     ],
   );
 });
+
+test("signal callsites capture only the TA and chart-series dependencies used by the condition", async () => {
+  const result = await transform(`
+import { defineIndicator, plot, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const unrelated = ta.rsi(14);
+  const higher = ta.ema(1, "1h");
+  const buy = close > higher;
+  plot.line(unrelated);
+  signal(buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  const unrelatedCallsite = result.callsites.find(
+    (value) => value.callee === "ta.rsi",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.ok(unrelatedCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+  assert.equal(
+    signalCallsite.dependencies.includes(unrelatedCallsite.id),
+    false,
+  );
+});
+
+test("signal dependency tracing follows state callbacks that capture outer TA and chart sources", async () => {
+  const result = await transform(`
+import { defineIndicator, series, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  const higher = ta.ema(1, "1h");
+  const state = series({ buy: false }, () => ({ buy: bar.close > higher }));
+  signal(state.buy, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.ok(signalCallsite.chartSeries.includes("close"));
+});
+
+test("signal dependency tracing fails closed when a helper hides TA execution", async () => {
+  for (const helper of [
+    `function buySignal(close) {
+  const average = ta.ema(close, 14);
+  return close > average;
+}`,
+    `const buySignal = (close) => {
+  const average = ta.ema(close, 14);
+  return close > average;
+};`,
+  ]) {
+    await assert.rejects(
+      () =>
+        transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+${helper}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(buySignal(close), "long");
+});
+`),
+      /signal condition helper buySignal executes ta\.\* internally; hoist TA calls into the indicator calculation/u,
+    );
+  }
+});
+
+test("signal dependency tracing fails closed for indicator-scope helper closures", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const average = ta.ema(close, 14);
+  const buySignal = () => close > average;
+  signal(buySignal(), "long");
+});
+`),
+    /signal condition helper buySignal is nested in the indicator calculation; move it to module scope/u,
+  );
+});

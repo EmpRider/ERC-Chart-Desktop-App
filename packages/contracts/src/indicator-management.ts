@@ -184,12 +184,26 @@ export interface IndicatorRuntimeBox {
 export type IndicatorRuntimeOverlay =
   IndicatorRuntimeLineSegment | IndicatorRuntimeBox;
 
+export type IndicatorRuntimeSignalSourceProvenance =
+  | Readonly<{ kind: "market"; candleType: "standard" }>
+  | Readonly<{ kind: "synthetic"; candleType: "heikin-ashi" }>;
+
+export interface IndicatorRuntimeSignalSource {
+  readonly timeframeId: string;
+  readonly activeTimeframeId: string;
+  readonly openTimeMs: number;
+  readonly generation: number;
+  readonly revision: number;
+  readonly provenance: IndicatorRuntimeSignalSourceProvenance;
+}
+
 export interface IndicatorRuntimeSignal {
   readonly id: string;
   readonly occurredAtMs: number;
   readonly direction: "long" | "neutral" | "short";
   readonly finalized: boolean;
   readonly confidence?: number;
+  readonly sources?: readonly IndicatorRuntimeSignalSource[];
 }
 
 export interface IndicatorRuntimeSnapshot {
@@ -679,6 +693,29 @@ function isRuntimeOverlay(value: unknown): value is IndicatorRuntimeOverlay {
   return false;
 }
 
+function isRuntimeSignalSource(
+  value: unknown,
+): value is IndicatorRuntimeSignalSource {
+  if (!isRecord(value)) return false;
+  const provenance = value.provenance;
+  const validProvenance =
+    isRecord(provenance) &&
+    ((provenance.kind === "market" && provenance.candleType === "standard") ||
+      (provenance.kind === "synthetic" &&
+        provenance.candleType === "heikin-ashi"));
+  return (
+    isBoundedText(value.timeframeId, 64) &&
+    isBoundedText(value.activeTimeframeId, 64) &&
+    Number.isSafeInteger(value.openTimeMs) &&
+    Number(value.openTimeMs) >= 0 &&
+    Number.isSafeInteger(value.generation) &&
+    Number(value.generation) >= 0 &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    validProvenance
+  );
+}
+
 function isRuntimeSignal(value: unknown): value is IndicatorRuntimeSignal {
   return (
     isRecord(value) &&
@@ -691,7 +728,11 @@ function isRuntimeSignal(value: unknown): value is IndicatorRuntimeSignal {
     (value.confidence === undefined ||
       (isFiniteNumber(value.confidence) &&
         value.confidence >= 0 &&
-        value.confidence <= 1))
+        value.confidence <= 1)) &&
+    (value.sources === undefined ||
+      (Array.isArray(value.sources) &&
+        value.sources.length <= 32 &&
+        value.sources.every(isRuntimeSignalSource)))
   );
 }
 
