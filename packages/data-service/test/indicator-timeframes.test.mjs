@@ -24,7 +24,11 @@ const derived = (id, seconds, sourceTimeframeId, options = {}) => ({
   alignment: options.alignment ?? epoch,
 });
 
-function capabilities({ nativeTimeframes, derivedTimeframeIds = [], timeframes }) {
+function capabilities({
+  nativeTimeframes,
+  derivedTimeframeIds = [],
+  timeframes,
+}) {
   return {
     instruments: true,
     nativeTimeframes,
@@ -99,10 +103,7 @@ test("effective derived availability is constrained by its native source", () =>
   const provider = capabilities({
     nativeTimeframes: ["1m"],
     derivedTimeframeIds: ["3m"],
-    timeframes: [
-      native("1m", 60, { live: false }),
-      derived("3m", 180, "1m"),
-    ],
+    timeframes: [native("1m", 60, { live: false }), derived("3m", 180, "1m")],
   });
 
   assert.deepEqual(dataService.effectiveIndicatorTimeframes(provider), [
@@ -190,8 +191,7 @@ test("unavailable requested timeframe falls back without erasing the saved prefe
   );
 
   assert.throws(
-    () =>
-      dataService.resolveEffectiveIndicatorTimeframe(provider, "1h", "30m"),
+    () => dataService.resolveEffectiveIndicatorTimeframe(provider, "1h", "30m"),
     /fallback.*unavailable/i,
   );
 });
