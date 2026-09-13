@@ -157,8 +157,14 @@ export default defineIndicator(
     assert.equal((instance.snapshot().signals ?? []).length, 1);
 
     instance.onFinalizedBar(candle(3, 30));
-    assert.equal(instance.snapshot().points.at(-1).values[keys.alwaysState], 140);
-    assert.equal(instance.snapshot().points.at(-1).values[keys.optionalState], 2);
+    assert.equal(
+      instance.snapshot().points.at(-1).values[keys.alwaysState],
+      140,
+    );
+    assert.equal(
+      instance.snapshot().points.at(-1).values[keys.optionalState],
+      2,
+    );
     assert.equal(optionalOverlay()?.id, committedOverlayId);
     assert.equal(optionalOverlay()?.top, 30);
     const finalizedSignals = instance.snapshot().signals ?? [];
@@ -167,7 +173,10 @@ export default defineIndicator(
     assert.equal(callsiteFromSignalId(finalizedSignals[1].id), signalCallsite);
 
     instance.onBuildingBar(candle(4, 8));
-    assert.equal(instance.snapshot().points.at(-1).values[keys.alwaysState], 150);
+    assert.equal(
+      instance.snapshot().points.at(-1).values[keys.alwaysState],
+      150,
+    );
     assert.equal(
       instance.snapshot().points.at(-1).values[keys.optionalState],
       undefined,
