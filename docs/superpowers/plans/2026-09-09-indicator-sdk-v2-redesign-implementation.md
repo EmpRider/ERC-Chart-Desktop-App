@@ -47,10 +47,10 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [ ] Phase 12 — Evolve worker/contracts for source provenance and v2 deltas
 - [ ] Phase 13 — Extend renderer for marker text, text sizes, locations, and v2 drawings
 - [x] Phase 14 — Rewrite maintained indicators against SDK v2
-- [ ] Phase 15 — Remove v1-only authoring/runtime surface
+- [x] Phase 15 — Remove v1-only authoring/runtime surface
 - [ ] Phase 16 — Full correctness/performance/documentation acceptance
 
-**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 (v1-only public export cleanup) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
+**Optimization sequencing note (2026-09-13):** ECDD-222 maps to detailed Task 7 and is complete. ECDD-223 maps to detailed Task 8 and is complete via PR #129 / squash merge `de7262ea3723530d546df017c2ac2eed14f9250f`. ECDD-224 completed the maintained ATR Rope/UT Bot rewrite via PR #131 / squash merge `e8c94027e40e0a24be1070a588ca93b097220687`, preserving the four compiled-package trading-semantic regression configurations while moving runtime plumbing to SDK v2. ECDD-225 completed the v1-only public authoring/runtime export cleanup via PR #133 / squash merge `8b9fd709070bb884295813a07a6fdfa11c4efaf0`, leaving a v2-only author root while keeping required host/runtime mechanisms internal. ECDD-226 (final v2 authoring documentation) is the next SDK-v2 optimization task. The broader phase board groups source/runtime/renderer work at architecture level and does not override the ECDD-216 Jira task order.
 
 ---
 
@@ -997,23 +997,25 @@ git commit -m "refactor(indicators): port RSI example to SDK v2"
 
 - SDK v2 is the only supported indicator authoring model.
 
-- [ ] **Step 1: Search for v1-only APIs**
+**Completion:** ECDD-225 completed via PR #133 / squash merge `8b9fd709070bb884295813a07a6fdfa11c4efaf0`; the public package root is v2-only, required host/runtime mechanisms remain internal, maintained indicators/fixtures use the final optimization surface, and no legacy compatibility path was added.
+
+- [x] **Step 1: Search for v1-only APIs**
 
 At minimum inspect references to explicit drawing `id`, `plot.sync`, `plot.drawings`, execution-order error strings, `kernelIndex`, `plotIndex`, `inputIndex`, manual generic parameter migration helpers, and author-visible lifecycle flags.
 
-- [ ] **Step 2: Delete obsolete public APIs and corresponding tests**
+- [x] **Step 2: Delete obsolete public APIs and corresponding tests**
 
 Do not leave deprecated aliases solely for old indicator source.
 
-- [ ] **Step 3: Keep only internal mechanisms still required by host/runtime implementation**
+- [x] **Step 3: Keep only internal mechanisms still required by host/runtime implementation**
 
 Rename/move them to `internal` modules if they should never be imported by authors.
 
-- [ ] **Step 4: Run repository search again and document intentional remaining matches**
+- [x] **Step 4: Run repository search again and document intentional remaining matches**
 
-- [ ] **Step 5: Run typecheck/unit tests**
+- [x] **Step 5: Run typecheck/unit tests**
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
