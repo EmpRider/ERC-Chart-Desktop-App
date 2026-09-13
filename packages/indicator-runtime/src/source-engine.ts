@@ -1,4 +1,4 @@
-import type { Candle } from "@erc-chart/contracts";
+import type { Candle, ProviderSeriesChange } from "@erc-chart/contracts";
 
 export type IndicatorCandleType = "standard" | "heikin-ashi";
 
@@ -21,7 +21,10 @@ export interface IndicatorSourceLiveRequest {
 }
 
 export interface IndicatorSourceLiveSink {
-  readonly onCandles: (candles: readonly Candle[], series: unknown) => void;
+  readonly onCandles: (
+    candles: readonly Candle[],
+    series: ProviderSeriesChange,
+  ) => void;
   readonly onTicks: (ticks: readonly unknown[]) => void;
   readonly onError: (code: string) => void;
 }
@@ -45,6 +48,8 @@ export interface IndicatorSourceDataService {
 export interface IndicatorSourceSnapshot {
   readonly key: IndicatorSourceKey;
   readonly candles: readonly Candle[];
+  readonly generation: number;
+  readonly revision: number;
 }
 
 export interface IndicatorSourceLease {
@@ -60,8 +65,8 @@ export interface IndicatorSourceEngine {
 
 interface SharedSource {
   readonly key: IndicatorSourceKey;
-  readonly snapshot: IndicatorSourceSnapshot;
-  readonly subscription: IndicatorSourceSubscription;
+  snapshot: IndicatorSourceSnapshot;
+  subscription: IndicatorSourceSubscription | undefined;
   references: number;
   closed: boolean;
 }
@@ -105,6 +110,47 @@ function sourceIdentity(key: IndicatorSourceKey): string {
   ]);
 }
 
+function candlesMatchSource(
+  key: IndicatorSourceKey,
+  candles: readonly Candle[],
+): boolean {
+  return candles.every(
+    (candle) =>
+      candle.instrumentId === key.instrumentId &&
+      candle.timeframeId === key.timeframeId &&
+      Number.isSafeInteger(candle.openTimeMs) &&
+      candle.openTimeMs >= 0,
+  );
+}
+
+function boundedCandles(candles: readonly Candle[]): readonly Candle[] {
+  return Object.freeze(
+    [...candles]
+      .sort((left, right) => left.openTimeMs - right.openTimeMs)
+      .slice(-maximumIndicatorSourceBars),
+  );
+}
+
+function mergeIncrementalCandles(
+  current: readonly Candle[],
+  incoming: readonly Candle[],
+): readonly Candle[] {
+  const byOpenTime = new Map<number, Candle>();
+  for (const candle of current) byOpenTime.set(candle.openTimeMs, candle);
+  for (const candle of incoming) byOpenTime.set(candle.openTimeMs, candle);
+  return boundedCandles([...byOpenTime.values()]);
+}
+
+function acceptSeriesChange(
+  current: IndicatorSourceSnapshot,
+  series: ProviderSeriesChange,
+): boolean {
+  if (series.generation < current.generation) return false;
+  if (series.generation > current.generation) return true;
+  if (series.revision <= current.revision) return false;
+  return series.previousRevision === current.revision;
+}
+
 export function createIndicatorSourceEngine(
   dataService: IndicatorSourceDataService,
 ): IndicatorSourceEngine {
@@ -114,19 +160,34 @@ export function createIndicatorSourceEngine(
   const closeSource = async (source: SharedSource): Promise<void> => {
     if (source.closed) return;
     source.closed = true;
-    await source.subscription.unsubscribe();
+    const subscription = source.subscription;
+    source.subscription = undefined;
+    await subscription?.unsubscribe();
   };
 
   const createSource = async (
     key: IndicatorSourceKey,
   ): Promise<SharedSource> => {
-    const candles = Object.freeze([
-      ...(await dataService.requestHistory(key.providerProfileId, {
-        instrumentId: key.instrumentId,
-        timeframeId: key.timeframeId,
-        limit: maximumIndicatorSourceBars,
-      })),
-    ]);
+    const history = await dataService.requestHistory(key.providerProfileId, {
+      instrumentId: key.instrumentId,
+      timeframeId: key.timeframeId,
+      limit: maximumIndicatorSourceBars,
+    });
+    if (!candlesMatchSource(key, history)) {
+      throw new Error("Indicator source history does not match its source key.");
+    }
+    const source: SharedSource = {
+      key,
+      snapshot: Object.freeze({
+        key,
+        candles: boundedCandles(history),
+        generation: 0,
+        revision: 0,
+      }),
+      subscription: undefined,
+      references: 0,
+      closed: false,
+    };
     const subscription = await dataService.subscribe(
       key.providerProfileId,
       {
@@ -134,18 +195,31 @@ export function createIndicatorSourceEngine(
         timeframeId: key.timeframeId,
       },
       {
-        onCandles: () => undefined,
+        onCandles: (candles, series): void => {
+          if (
+            source.closed ||
+            !candlesMatchSource(source.key, candles) ||
+            !acceptSeriesChange(source.snapshot, series)
+          ) {
+            return;
+          }
+          const nextCandles =
+            series.kind === "rebuild"
+              ? boundedCandles(candles)
+              : mergeIncrementalCandles(source.snapshot.candles, candles);
+          source.snapshot = Object.freeze({
+            key: source.key,
+            candles: nextCandles,
+            generation: series.generation,
+            revision: series.revision,
+          });
+        },
         onTicks: () => undefined,
         onError: () => undefined,
       },
     );
-    return {
-      key,
-      snapshot: Object.freeze({ key, candles }),
-      subscription,
-      references: 0,
-      closed: false,
-    };
+    source.subscription = subscription;
+    return source;
   };
 
   const sourceFor = (key: IndicatorSourceKey): Promise<SharedSource> => {
