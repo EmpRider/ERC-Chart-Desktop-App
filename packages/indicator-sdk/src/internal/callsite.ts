@@ -91,7 +91,6 @@ export function readCompilerCallsite(
     sourceColumn < 1
   )
     throw invalidCallsite(callee);
-  if (!Object.isFrozen(value)) return candidate as CompilerCallsite;
   const validated: CompilerCallsite = Object.freeze({
     __ercCallsite: "v2",
     id,
@@ -103,6 +102,6 @@ export function readCompilerCallsite(
       column: sourceColumn,
     }),
   });
-  validatedFrozenCallsites.set(value, validated);
+  if (Object.isFrozen(value)) validatedFrozenCallsites.set(value, validated);
   return validated;
 }
