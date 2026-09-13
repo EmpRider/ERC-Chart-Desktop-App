@@ -86,6 +86,54 @@ geometry avoids allocating and freezing 2,000 replacement objects per candle.
 The ATR fixture uses flat synthetic candles; it does not exercise maximum POC
 zone settings. These component budgets do not establish whole-application FPS.
 
+### ECDD-229 authored multi-chart acceptance
+
+ECDD-229 adds `tools/indicator-multichart-performance.mjs` to the repository's
+mandatory `npm run test:performance` command. The gate builds the maintained ATR
+Rope + UT Bot indicator through the real SDK v2 authoring transform, imports the
+compiled package, then measures four independent indicator instances representing
+four simultaneously active charts. Package compilation happens before runtime
+timing starts.
+
+The enforced workload and budgets are:
+
+- four charts with 25,000 history bars each, 100,000 bars aggregate;
+- aggregate history replay below 60,000 ms and no individual chart above that
+  same history budget;
+- 250 provisional rounds across four charts, 1,000 building updates total,
+  completing below 5,000 ms;
+- every individual provisional or finalized indicator update below the existing
+  100 ms worker update budget;
+- one finalized update per chart, with the four-chart finalized sweep below
+  1,000 ms;
+- provisional updates must keep each retained point-history array stable rather
+  than cloning it.
+
+Delivery #1038 on Ubuntu 24.04 / Node 26.8.1 measured the final clean candidate
+as follows:
+
+| ECDD-229 workload                                  | Observed time | CI budget |
+| -------------------------------------------------- | ------------: | --------: |
+| Four-chart history, 100,000 bars aggregate         |     12.640 s |      60 s |
+| Slowest single-chart 25,000-bar history            |      3.244 s |      60 s |
+| 1,000 provisional authored-indicator updates       |     85.83 ms |       5 s |
+| Slowest four-chart provisional sweep               |      0.80 ms |    100 ms |
+| Slowest individual provisional update              |      0.50 ms |    100 ms |
+| Four-chart finalized sweep                         |      0.86 ms |       1 s |
+| Slowest individual finalized update                |      0.40 ms |    100 ms |
+
+The same CI run kept the existing authored/runtime gates green: the maintained
+ATR Rope + UT Bot 100,000-bar history completed in about 10.09 seconds, its
+1,000 building updates in about 67.93 ms total with a 0.48 ms maximum update,
+the 100,000-bar structured-series gate in about 8.89 seconds, and the 2,000
+stable-drawing/100,000-bar gate in about 28.30 seconds.
+
+This is a real multi-instance authored **runtime** acceptance gate and is suitable
+for CI/release regression detection. It is deliberately not a claim about
+renderer FPS, provider/network latency, or end-to-end market-feed responsiveness.
+Provider-aware MTF acquisition and per-TA timeframe execution remain owned by
+ECDD-142; ECDD-229 does not duplicate that source-engine work.
+
 Validation completed:
 
 - Unit suite: 501 passed, two existing Windows symlink-permission skips.
@@ -112,13 +160,17 @@ same-bar ticks avoid that copy.
 
 Initial load, timeframe/instrument changes, calculation settings, historical
 corrections, missed multi-bar catch-up and retention resets may rebuild from the
-start. Live multi-chart profiling is still needed to quantify responsiveness
-under the user's actual market feed and indicator configuration.
+start. ECDD-229 now enforces multi-chart authored-indicator runtime performance
+in CI. Live operational profiling is still required when quantifying actual
+end-user renderer FPS, provider/network latency, and a user's market-feed plus
+indicator configuration.
 
 The authored API is TypeScript/JavaScript, not a Pine parser. It currently offers
-lines, horizontal lines, histograms, shapes, boxes, segments and signals. MTF
-acquisition, filled bands and table/text-label APIs are not implemented. Signal
-was consulted only for authoring ideas; its code and architecture were not copied.
+lines, horizontal lines, histograms, shapes, boxes, segments and signals.
+Provider-aware MTF acquisition/per-TA execution remains ECDD-142 scope; filled
+bands and table/text-label APIs are not part of this optimization acceptance.
+Signal was consulted only for authoring ideas; its code and architecture were
+not copied.
 
 See [the authoring guide](INDICATOR-AUTHORING.md) and
 `packages/indicator-examples/src/atr-bands.ts` for the new API. Restart the rebuilt
