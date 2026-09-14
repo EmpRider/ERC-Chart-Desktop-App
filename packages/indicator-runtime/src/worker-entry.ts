@@ -559,9 +559,12 @@ function isDependencySnapshotBatch(
 ): value is readonly IndicatorWorkerDependencySnapshot[] {
   if (!Array.isArray(value) || value.length > 64) return false;
   let pointCount = 0;
+  const inputKeys = new Set<string>();
   const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
   for (const dependency of value) {
     if (!isDependencySnapshot(dependency)) return false;
+    if (inputKeys.has(dependency.inputKey)) return false;
+    inputKeys.add(dependency.inputKey);
     if (countedPointBatches.has(dependency.points)) continue;
     countedPointBatches.add(dependency.points);
     pointCount += dependency.points.length;

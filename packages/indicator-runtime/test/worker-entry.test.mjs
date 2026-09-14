@@ -262,6 +262,69 @@ test("worker still rejects distinct dependency histories above the aggregate poi
   }
 });
 
+test("worker rejects duplicate dependency input keys at the protocol boundary", async () => {
+  const originalPostMessage = globalThis.postMessage;
+  const originalOnMessage = globalThis.onmessage;
+  const posted = [];
+  globalThis.postMessage = (message) => posted.push(message);
+
+  try {
+    await import(
+      `../dist/worker-entry.js?duplicate-dependency-input=${Date.now()}`
+    );
+    globalThis.onmessage({
+      data: {
+        type: "sync",
+        instanceId: "worker-duplicate-dependency-input",
+        sequence: 1,
+        runtimeEntryUrl: new URL(
+          "./fixtures/dependency-aware-indicator.mjs",
+          import.meta.url,
+        ).href,
+        pluginId: "erc.indicator.worker-dependency",
+        definitionId: "erc.indicator.worker-dependency.main",
+        instrumentId: "TEST",
+        timeframeId: "1m",
+        parameters: {},
+        dependencies: [
+          {
+            inputKey: "source",
+            instanceId: "upstream-one",
+            outputKey: "line",
+            sourceGeneration: 1,
+            sourceRevision: 1,
+            configGeneration: 1,
+            outputRevision: 1,
+            points: [{ openTimeMs: 0, values: { line: 1 } }],
+          },
+          {
+            inputKey: "source",
+            instanceId: "upstream-two",
+            outputKey: "line",
+            sourceGeneration: 1,
+            sourceRevision: 1,
+            configGeneration: 1,
+            outputRevision: 1,
+            points: [{ openTimeMs: 0, values: { line: 2 } }],
+          },
+        ],
+        data: {
+          kind: "snapshot",
+          snapshot: createIndicatorWorkerCandleSnapshot([candle("1m", 0)]),
+        },
+        dataRevision: 1,
+        configGeneration: 1,
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(posted.length, 0);
+  } finally {
+    globalThis.postMessage = originalPostMessage;
+    globalThis.onmessage = originalOnMessage;
+  }
+});
+
 test("worker accepts shared dependency points that publish multiple bound outputs", async () => {
   const originalPostMessage = globalThis.postMessage;
   const originalOnMessage = globalThis.onmessage;
