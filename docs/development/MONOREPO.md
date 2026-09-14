@@ -94,7 +94,7 @@ does not include an automatic-update client.
 
 ## Electron Development Shell
 
-Source version `1.0.0` launches the secure Electron shell with live provider
+Source version `1.1.0` launches the secure Electron shell with live provider
 selection/history, klinecharts, built-in indicators, controlled plugin imports,
 and indicator workers. Provider connections require a configured profile; no real
 provider connection is part of deterministic smoke validation.
@@ -120,9 +120,11 @@ under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
 The release workflow publishes only after the exact current `main` commit passes
-the complete Windows release pipeline. Package manifests currently identify
-source `1.0.0`. Prior tags/changelog evidence remain historical until the current
-release workflow publishes the matching installer and checksum.
+the complete Windows release pipeline. Package manifests identify source `1.1.0`,
+which maps to tag `v1.1.0` and installer `ERC-Chart-Setup-1.1.0.exe`. The release
+preflight rejects a version that does not advance beyond the versions represented
+by existing release tags, so an already-published release identity is never
+retargeted. Prior tags and changelog entries remain historical records.
 Automatic updates remain disabled; production code signing is an open release
 gate. `test:performance` explicitly reports **NOT MEASURED** and cannot satisfy
 the measured application performance gate.

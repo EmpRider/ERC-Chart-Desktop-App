@@ -34,27 +34,27 @@
 - Consumes: `applicationVersion`, release tags reachable from git history.
 - Produces: `assertReleaseVersionAdvances(version, releasedVersions)` that rejects equal/older released versions and accepts a strictly newer SemVer version.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add focused cases showing `1.0.0` is rejected when `1.0.0` is already released, `0.9.9` is rejected as older, and `1.1.0` is accepted when the latest released version is `1.0.0`.
 
-- [ ] **Step 2: Run the focused packaging-contract test and verify RED**
+- [x] **Step 2: Run the focused packaging-contract test and verify RED**
 
 Run: `node --test tools/packaging/packaging-contract.test.mjs`
 
 Expected: FAIL because `assertReleaseVersionAdvances` does not exist.
 
-- [ ] **Step 3: Implement the minimal SemVer comparison helper**
+- [x] **Step 3: Implement the minimal SemVer comparison helper**
 
 Parse the release-safe SemVer subset already accepted by `validateReleaseVersion`; compare major/minor/patch and prerelease precedence without introducing a dependency.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run: `node --test tools/packaging/packaging-contract.test.mjs`
 
 Expected: PASS.
 
-- [ ] **Step 5: Wire the preflight into the release workflow**
+- [x] **Step 5: Wire the preflight into the release workflow**
 
 Before dependency installation, collect version tags from git history and invoke the helper against `applicationVersion`. The preflight must fail before package/test work if the current version is not newer than the latest released tag.
 
@@ -73,25 +73,25 @@ Before dependency installation, collect version tags from git history and invoke
 
 - Produces: application version `1.1.0`, tag `v1.1.0`, installer `ERC-Chart-Setup-1.1.0.exe`.
 
-- [ ] **Step 1: Update release identity fixtures to `1.1.0`**
+- [x] **Step 1: Update release identity fixtures to `1.1.0`**
 
 Change exact identity assertions and checksum fixture names in `packaging-contract.test.mjs`.
 
-- [ ] **Step 2: Verify the fixture fails against the old manifest**
+- [x] **Step 2: Verify the fixture fails against the old manifest**
 
 Run: `node --test tools/packaging/packaging-contract.test.mjs`
 
 Expected: FAIL because the manifest still reports `1.0.0`.
 
-- [ ] **Step 3: Update root manifest and lockfile to `1.1.0`**
+- [x] **Step 3: Update root manifest and lockfile to `1.1.0`**
 
 Change only the root application version entries; workspace package versions remain `0.0.0`.
 
-- [ ] **Step 4: Update release-facing text**
+- [x] **Step 4: Update release-facing text**
 
 Add a `1.1.0` SDK v2 changelog entry, replace stale Plugin Manager curated notes in `publish-release.mjs` with SDK v2 release notes, and update `MONOREPO.md` source/release identity references.
 
-- [ ] **Step 5: Verify focused release tests and version gate**
+- [x] **Step 5: Verify focused release tests and version gate**
 
 Run: `node --test tools/packaging/packaging-contract.test.mjs`
 Run: `npm run version:check`
@@ -105,17 +105,17 @@ Expected: PASS.
 - Modify only if evidence is stale: `docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md`
 - Modify only if evidence is stale: `docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md`
 
-- [ ] **Step 1: Read both SDK v2 status/plan documents after Tasks 1-2**
+- [x] **Step 1: Read both SDK v2 status/plan documents after Tasks 1-2**
 
 Confirm whether implementation claims remain true and distinguish implementation completion from release publication state.
 
-- [ ] **Step 2: Record only necessary release-state corrections**
+- [x] **Step 2: Record only necessary release-state corrections**
 
 If needed, state that PR #161 merged, Windows build/installer verification passed on rerun, and publication continues under ECDD-235 with `v1.1.0`; do not rewrite completed implementation claims.
 
 ### Task 4: Full verification and delivery
 
-- [ ] **Step 1: Run formatting, lint, typecheck, focused/unit/integration/version checks**
+- [x] **Step 1: Run formatting, lint, typecheck, focused/unit/integration/version checks**
 
 Run the repository-required gates relevant to the changed release path.
 

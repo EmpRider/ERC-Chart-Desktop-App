@@ -98,3 +98,10 @@ For ECDD-216/ECDD-217 through ECDD-229, the SDK v2 work preserves clean source/t
 - ECDD-143 and ECDD-149 complete the explicit cross-indicator dependency implementation and acceptance on top of the existing source/worker contracts without changing the no-legacy-compatibility decision or exposing runtime plumbing to authors.
 - Phase 16 is complete: the final end-to-end verification closes the SDK v2 migration plan. Further legacy-indicator/example work can proceed on top of this accepted v2 foundation without reopening compatibility requirements.
 - Post-merge direction review found no public authoring API drift from the final review fixes, so `INDICATOR-AUTHORING.md` remains correct without an API rewrite. The fixes are compiler-analysis hardening behind the existing v2 surface.
+
+## Release promotion status
+
+- PR #161 merged the accepted SDK v2 promotion into `main` as `ec58a0d890455a654415c49768ee7a32b9a99abd`.
+- The exact merged commit passed the Windows release build plus install/launch/uninstall smoke on rerun. The subsequent publication failure was release-identity reuse: the already-published `v1.0.0` release targets an older commit, so it must not be retargeted.
+- ECDD-235 therefore promotes this delivery as application version `1.1.0`, tag `v1.1.0`, and installer `ERC-Chart-Setup-1.1.0.exe`, with an early release preflight that rejects non-advancing release versions.
+- This release remediation does not change the accepted SDK v2 architecture or reopen legacy compatibility. The detailed implementation plan remains complete; publication proceeds through the existing `task` -> `epic` -> `main` delivery path.
