@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Plugin Manager redesign
+const curatedNotes = `# Indicator SDK v2
 
-This release introduces a dedicated Plugin Manager for provider and indicator plugins, with ZIP/folder import actions and a consistent installed-item list plus detail/settings layout.
+This release completes the v2-only indicator authoring/runtime model with compiler-owned hidden identity, deterministic history and conditional execution, provider-aware multi-timeframe and Heikin Ashi sources, source-confirmed signals, persistent drawing handles, and explicit cross-indicator dependency ordering.
 
-Provider management now separates Installed Providers from Installed Profiles. Profiles can be selected and edited in the same left-list/right-detail workflow, including settings, credentials, start/stop, removal, and creation against an installed provider. Indicator instance parameters remain configured per chart. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+Worker transport, recovery, bounded resource handling, maintained v2 indicators, and the final correctness/performance acceptance are included in this delivery. Legacy indicator source compatibility is intentionally outside the SDK v2 contract. Automatic updates and production code signing remain unavailable; the installer is unsigned.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
