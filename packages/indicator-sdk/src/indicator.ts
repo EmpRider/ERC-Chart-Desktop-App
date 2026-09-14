@@ -16,14 +16,24 @@ import type {
   IndicatorDefinition,
   IndicatorInputDefinition,
   IndicatorInputValue,
-  IndicatorInstanceContext,
   IndicatorOverlay,
   IndicatorPlotDefinition,
-  IndicatorPluginModule,
   IndicatorResultPoint,
+} from "./index.js";
+import type {
+  IndicatorInstanceContext,
+  IndicatorPluginModule,
   RuntimeIndicatorInstance,
   SignalCandidate,
-} from "./index.js";
+} from "./internal/runtime-contracts.js";
+import { validateDrawingUsage } from "./internal/drawings.js";
+import {
+  commitSignalEvents,
+  createSignalState,
+  resetSignalState,
+} from "./internal/signals.js";
+import { compilerPlotDefinitions } from "./plot.js";
+import type { SeriesNumber } from "./series.js";
 
 export interface IndicatorOptions {
   readonly id: string;
@@ -32,15 +42,23 @@ export interface IndicatorOptions {
   readonly placement?: "overlay" | "pane";
 }
 
-export interface IndicatorBar extends Candle {
+export type IndicatorBar = Omit<
+  Candle,
+  "open" | "high" | "low" | "close" | "volume"
+> & {
+  readonly open: SeriesNumber;
+  readonly high: SeriesNumber;
+  readonly low: SeriesNumber;
+  readonly close: SeriesNumber;
+  readonly volume: SeriesNumber;
   readonly index: number;
   readonly isConfirmed: boolean;
   readonly isHistory: boolean;
   readonly isHistoryFinalizedTail: boolean;
-  readonly hl2: number;
-  readonly hlc3: number;
-  readonly ohlc4: number;
-}
+  readonly hl2: SeriesNumber;
+  readonly hlc3: SeriesNumber;
+  readonly ohlc4: SeriesNumber;
+};
 
 export type IndicatorCalculation = (bar: IndicatorBar) => void;
 
@@ -66,6 +84,7 @@ function barContext(
 ): IndicatorBar {
   return Object.freeze({
     ...candle,
+    volume: candle.volume ?? Number.NaN,
     index,
     isConfirmed: confirmed,
     isHistory: historyReplay,
@@ -73,7 +92,7 @@ function barContext(
     hl2: (candle.high + candle.low) / 2,
     hlc3: (candle.high + candle.low + candle.close) / 3,
     ohlc4: (candle.open + candle.high + candle.low + candle.close) / 4,
-  });
+  }) as unknown as IndicatorBar;
 }
 
 /** Declares metadata once; executes one scalar calculation per building/finalized bar. */
@@ -82,7 +101,7 @@ export function defineIndicator(
   calculate: IndicatorCalculation,
 ): IndicatorPluginModule {
   const inputs: IndicatorInputDefinition[] = [];
-  const plots: IndicatorPlotDefinition[] = [];
+  const plots: IndicatorPlotDefinition[] = compilerPlotDefinitions();
   const sample: Candle = {
     instrumentId: "metadata" as Candle["instrumentId"],
     timeframeId: "1m" as Candle["timeframeId"],
@@ -95,6 +114,9 @@ export function defineIndicator(
   };
   const discovery: AuthoringFrame = {
     candle: sample,
+    sourceCandles: {},
+    sourceMetadata: {},
+    dependencyInputs: {},
     phase: "building",
     historyReplay: false,
     historyFinalizedTail: false,
@@ -103,11 +125,16 @@ export function defineIndicator(
     kernelIndex: 0,
     inputs,
     inputIndex: 0,
+    timeframeInputs: [],
+    candleTypeInputs: [],
+    taTimeframeIds: new Set(),
     parameters: {},
     plots,
     plotIndex: 0,
     point: newPoint(0),
     overlayUpdates: new Map(),
+    signalDependencies: new Map(),
+    signalState: createSignalState(),
     signals: [],
     signalIndex: 0,
   };
@@ -132,6 +159,10 @@ export function defineIndicator(
     }
   };
   run(discovery, 0);
+  const requestedTimeframeId = discovery.indicatorTimeframeId;
+  const matchingTimeframeInputKey = discovery.indicatorTimeframeInputKey;
+  const requestedCandleType = discovery.indicatorCandleType;
+  const matchingCandleTypeInputKey = discovery.indicatorCandleTypeInputKey;
   const definition: IndicatorDefinition = Object.freeze({
     ...options,
     indicatorContractVersion,
@@ -151,6 +182,35 @@ export function defineIndicator(
       ),
     ),
     plots: Object.freeze(plots.map((value) => Object.freeze(value))),
+    ...(requestedTimeframeId === undefined &&
+    requestedCandleType === undefined &&
+    discovery.taTimeframeIds.size === 0
+      ? {}
+      : {
+          source: Object.freeze({
+            ...(requestedTimeframeId === undefined
+              ? {}
+              : {
+                  timeframe: Object.freeze({
+                    requestedTimeframeId,
+                    ...(matchingTimeframeInputKey === undefined
+                      ? {}
+                      : { inputKey: matchingTimeframeInputKey }),
+                  }),
+                }),
+            ...(requestedCandleType === undefined
+              ? {}
+              : {
+                  candleType: Object.freeze({
+                    requestedCandleType,
+                    ...(matchingCandleTypeInputKey === undefined
+                      ? {}
+                      : { inputKey: matchingCandleTypeInputKey }),
+                  }),
+                }),
+            taTimeframeIds: Object.freeze([...discovery.taTimeframeIds]),
+          }),
+        }),
   });
   if (!isInstalledIndicatorDefinition(definition))
     throw new TypeError(
@@ -169,12 +229,62 @@ export function defineIndicator(
       let committedOverlays: readonly IndicatorOverlay[] = [];
       let overlays: readonly IndicatorOverlay[] = [];
       let signals: SignalCandidate[] = [];
+      const signalState = createSignalState();
       let visualRevision = 0;
       let finalizedCount = 0;
       let lastFinalized: Candle | undefined;
       let building: Candle | undefined;
       let disposed = false;
       let failed = false;
+      const dependencyPointMaps = new Map<
+        readonly IndicatorResultPoint[],
+        Map<number, IndicatorResultPoint>
+      >();
+      const dependencyInputs: Record<
+        string,
+        {
+          readonly outputKey: string;
+          readonly points: Map<number, IndicatorResultPoint>;
+        }
+      > = Object.fromEntries(
+        Object.entries(context.dependencyInputs ?? {}).map(
+          ([key, dependency]) => {
+            let points = dependencyPointMaps.get(dependency.points);
+            if (points === undefined) {
+              points = new Map(
+                dependency.points.map((point) => [point.openTimeMs, point]),
+              );
+              dependencyPointMaps.set(dependency.points, points);
+            }
+            return [key, { outputKey: dependency.outputKey, points }];
+          },
+        ),
+      );
+      const updateDependencyInputs = (
+        updates: Readonly<
+          Record<
+            string,
+            {
+              readonly outputKey: string;
+              readonly points: readonly IndicatorResultPoint[];
+            }
+          >
+        >,
+      ): void => {
+        for (const [key, dependency] of Object.entries(updates)) {
+          const current = dependencyInputs[key];
+          const points =
+            current?.points ?? new Map<number, IndicatorResultPoint>();
+          dependencyInputs[key] = { outputKey: dependency.outputKey, points };
+          for (const point of dependency.points)
+            points.set(point.openTimeMs, point);
+          while (points.size > 100_000) {
+            const oldest = points.keys().next().value;
+            if (oldest === undefined) break;
+            points.delete(oldest);
+          }
+        }
+      };
       const validate = (candle: Candle): void => {
         if (disposed) throw new Error("Indicator instance was disposed.");
         if (failed)
@@ -202,6 +312,9 @@ export function defineIndicator(
         const previousOverlays = overlays;
         const frame: AuthoringFrame = {
           candle,
+          sourceCandles: context.sourceCandles ?? {},
+          sourceMetadata: context.sourceMetadata ?? {},
+          dependencyInputs,
           phase,
           historyReplay,
           historyFinalizedTail,
@@ -210,20 +323,26 @@ export function defineIndicator(
           kernelIndex: 0,
           inputs,
           inputIndex: 0,
+          timeframeInputs: [],
+          candleTypeInputs: [],
+          taTimeframeIds: new Set(),
           parameters,
           plots,
           plotIndex: 0,
           point: newPoint(candle.openTimeMs),
           overlayUpdates: new Map(),
+          signalDependencies: new Map(),
+          signalState,
           signals: [],
           signalIndex: 0,
         };
         try {
           run(frame, finalizedCount);
+          validateDrawingUsage(frame);
           if (
             frame.kernelIndex !== discovery.kernelIndex ||
             frame.inputIndex !== inputs.length ||
-            frame.plotIndex !== plots.length ||
+            frame.plotIndex !== discovery.plotIndex ||
             kernels.some(
               (slot, index) =>
                 slot.signature.split(":")[0] !==
@@ -252,13 +371,14 @@ export function defineIndicator(
           // Validate only this point and changed bounded geometry, never the historical point array.
           const emitted: SignalCandidate[] = frame.signals.map((value) => ({
             signalContractVersion: indicatorContractVersion,
-            id: `${value.key}:${candle.openTimeMs}`,
+            id: value.eventKey,
             indicatorId: definition.id,
             instrumentId: context.instrumentId,
             timeframeId: context.timeframeId,
-            occurredAtMs: candle.openTimeMs,
+            occurredAtMs: value.occurredAtMs,
             direction: value.direction,
             finalized: true,
+            ...(value.sources.length === 0 ? {} : { sources: value.sources }),
             ...(value.confidence === undefined
               ? {}
               : { confidence: value.confidence }),
@@ -281,6 +401,7 @@ export function defineIndicator(
           if (overlays !== previousOverlays || emitted.length > 0)
             visualRevision += 1;
           if (phase === "finalized") {
+            commitSignalEvents(signalState, frame.signals);
             signals.push(...emitted);
             if (signals.length > 10_000)
               signals.splice(0, signals.length - 10_000);
@@ -296,6 +417,7 @@ export function defineIndicator(
         }
       };
       return {
+        updateDependencyInputs,
         onHistory(history) {
           if (disposed) throw new Error("Indicator instance was disposed.");
           if (history.length > 100_000)
@@ -303,6 +425,7 @@ export function defineIndicator(
           kernels = [];
           points = [];
           signals = [];
+          resetSignalState(signalState);
           committedDrawings = new Map();
           committedOverlays = [];
           overlays = [];
@@ -374,6 +497,7 @@ export function defineIndicator(
           kernels = [];
           points = [];
           signals = [];
+          resetSignalState(signalState);
           committedDrawings.clear();
           overlays = [];
           committedOverlays = [];

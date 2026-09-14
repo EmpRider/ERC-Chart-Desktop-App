@@ -192,7 +192,7 @@ async function run() {
       pluginSource(`ws://127.0.0.1:${address.port}`),
       "utf8",
     );
-    await buildIndicatorPackage({
+    const { manifest: authoredManifest } = await buildIndicatorPackage({
       source: path.join(
         repoRoot,
         "packages",
@@ -204,6 +204,13 @@ async function run() {
       version: "0.1.0",
       outputRoot: path.join(pluginRoot, "erc.indicator.atr-bands", "0.1.0"),
     });
+    const authoredLengthInputKey =
+      authoredManifest.capabilities.indicatorDefinition.inputs.find(
+        (input) => input.label === "Length",
+      )?.key;
+    if (authoredLengthInputKey === undefined) {
+      throw new Error("ATR Bands package did not declare the Length input.");
+    }
 
     await app.whenReady();
     stage("app-ready");
@@ -256,16 +263,14 @@ async function run() {
           parameters: {},
         data: {
           kind: "snapshot",
-          candles: [{
-            instrumentId: "fixture.instrument",
-            timeframeId: "1m",
-            openTimeMs: 1800000000000,
-            open: 100,
-            high: 102,
-            low: 99,
-            close: 101,
-            volume: 10
-          }]
+          snapshot: {
+            openTimeMs: Float64Array.from([1800000000000]),
+            open: Float64Array.from([100]),
+            high: Float64Array.from([102]),
+            low: Float64Array.from([99]),
+            close: Float64Array.from([101]),
+            volume: Float64Array.from([10])
+          }
         },
           sequence: 1,
           dataRevision: 1,
@@ -290,6 +295,15 @@ async function run() {
       (async () => {
         const worker = new Worker("erc-app://app/indicator-worker.js", { type: "module" });
         let sequence = 0;
+        const lengthInputKey = ${JSON.stringify(authoredLengthInputKey)};
+        const snapshot = candles => ({
+          openTimeMs: Float64Array.from(candles, candle => candle.openTimeMs),
+          open: Float64Array.from(candles, candle => candle.open),
+          high: Float64Array.from(candles, candle => candle.high),
+          low: Float64Array.from(candles, candle => candle.low),
+          close: Float64Array.from(candles, candle => candle.close),
+          volume: Float64Array.from(candles, candle => candle.volume ?? Number.NaN)
+        });
         const sync = (data, parameters = {}, configGeneration = 1) => new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error("Authored worker timed out")), 3000);
           worker.onmessage = event => { clearTimeout(timer); event.data.type === "error" ? reject(new Error(event.data.message)) : resolve(event.data.result); };
@@ -303,12 +317,12 @@ async function run() {
         try {
           const history = Array.from({ length: 1000 }, (_, index) => ({ instrumentId: "fixture.instrument", timeframeId: "1m",
             openTimeMs: 1800000000000 + index * 60000, open: 100 + index, high: 102 + index, low: 99 + index, close: 101 + index }));
-          const initial = await sync({ kind: "snapshot", candles: history });
+          const initial = await sync({ kind: "snapshot", snapshot: snapshot(history) });
           const finalized = { ...history.at(-1), close: 1101, high: 1102 };
           const building = await sync({ kind: "building", candle: finalized });
           const next = { ...finalized, openTimeMs: finalized.openTimeMs + 60000 };
           const rollover = await sync({ kind: "rollover", finalized, building: next });
-          const reset = await sync({ kind: "rebuild", candles: history }, { input_0: 7 }, 2);
+          const reset = await sync({ kind: "rebuild", snapshot: snapshot(history) }, { [lengthInputKey]: 7 }, 2);
           return { initialCount: initial.snapshot.points.length, building, rollover,
             resetCount: reset.snapshot.points.length,
             initialValue: initial.snapshot.points.at(-1).values.plot_0,

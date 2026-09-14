@@ -1,5 +1,14 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
+import {
+  readCompilerCallsite,
+  type CompilerCallsite,
+  type CompilerSeriesSource,
+} from "./internal/callsite.js";
+import {
+  recordSignalDependency,
+  sourceSignalDependency,
+} from "./internal/signals.js";
 
 export const movingAverageTypes = [
   "sma",
@@ -651,27 +660,51 @@ export function createMovingAverageKernel(
   }
 }
 
+function taCallsite(
+  hiddenCallsite: unknown,
+  callee: string,
+): CompilerCallsite | undefined {
+  return readCompilerCallsite(hiddenCallsite, "ta", callee);
+}
+
 export function movingAverage(
   values: readonly number[],
   type: MovingAverageType,
   period: number,
+  hiddenCallsite?: unknown,
 ): number[];
 export function movingAverage(
   value: number,
   type: MovingAverageType,
   period: number,
+  hiddenCallsite?: unknown,
 ): number;
 export function movingAverage(
   values: readonly number[] | number,
   type: MovingAverageType,
   period: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
+  const callsite = taCallsite(hiddenCallsite, "ta.movingAverage");
   if (typeof values === "number") {
     const frame = authoringFrame();
     const length = authoringLength(period);
-    return useKernel(`ma:${type}:${length}`, () =>
-      createMovingAverageKernel(type, length),
+    const result = useKernel(
+      `ma:${type}:${length}`,
+      () => createMovingAverageKernel(type, length),
+      callsite,
     ).update(values, frame.phase);
+    recordSignalDependency(
+      frame.signalDependencies,
+      callsite,
+      sourceSignalDependency(
+        frame.candle.timeframeId,
+        frame.candle.openTimeMs,
+        Number.isFinite(result),
+        frame.sourceMetadata[frame.candle.timeframeId],
+      ),
+    );
+    return result;
   }
   const kernel = createMovingAverageKernel(type, period);
   return values.map((value) => kernel.update(value, "finalized"));
@@ -709,19 +742,41 @@ export function createAtrKernel(periodValue: number): CandleTaKernel<number> {
   };
 }
 
-export function atr(period: number): number;
-export function atr(candles: readonly Candle[], period: number): number[];
+export function atr(
+  period: number,
+  reserved?: undefined,
+  hiddenCallsite?: unknown,
+): number;
+export function atr(
+  candles: readonly Candle[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function atr(
   candles: readonly Candle[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
+  const callsite = taCallsite(hiddenCallsite, "ta.atr");
   if (typeof candles === "number") {
     const frame = authoringFrame();
     const length = authoringLength(candles);
-    return useKernel(`atr:${length}`, () => createAtrKernel(length)).update(
-      frame.candle,
-      frame.phase,
+    const result = useKernel(
+      `atr:${length}`,
+      () => createAtrKernel(length),
+      callsite,
+    ).update(frame.candle, frame.phase);
+    recordSignalDependency(
+      frame.signalDependencies,
+      callsite,
+      sourceSignalDependency(
+        frame.candle.timeframeId,
+        frame.candle.openTimeMs,
+        Number.isFinite(result),
+        frame.sourceMetadata[frame.candle.timeframeId],
+      ),
     );
+    return result;
   }
   const kernel = createAtrKernel(period ?? 14);
   return candles.map((candle) => kernel.update(candle, "finalized"));
@@ -784,19 +839,41 @@ export function createDmiKernel(periodValue: number): CandleTaKernel<DmiPoint> {
   };
 }
 
-export function dmi(period: number): DmiPoint;
-export function dmi(candles: readonly Candle[], period: number): DmiSeries;
+export function dmi(
+  period: number,
+  reserved?: undefined,
+  hiddenCallsite?: unknown,
+): DmiPoint;
+export function dmi(
+  candles: readonly Candle[],
+  period: number,
+  hiddenCallsite?: unknown,
+): DmiSeries;
 export function dmi(
   candles: readonly Candle[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): DmiSeries | DmiPoint {
+  const callsite = taCallsite(hiddenCallsite, "ta.dmi");
   if (typeof candles === "number") {
     const frame = authoringFrame();
     const length = authoringLength(candles);
-    return useKernel(`dmi:${length}`, () => createDmiKernel(length)).update(
-      frame.candle,
-      frame.phase,
+    const result = useKernel(
+      `dmi:${length}`,
+      () => createDmiKernel(length),
+      callsite,
+    ).update(frame.candle, frame.phase);
+    recordSignalDependency(
+      frame.signalDependencies,
+      callsite,
+      sourceSignalDependency(
+        frame.candle.timeframeId,
+        frame.candle.openTimeMs,
+        [result.adx, result.plusDI, result.minusDI].every(Number.isFinite),
+        frame.sourceMetadata[frame.candle.timeframeId],
+      ),
     );
+    return result;
   }
   const kernel = createDmiKernel(period ?? 14);
   const adx: number[] = [];
@@ -840,14 +917,32 @@ export function createRsiKernel(periodValue: number): NumericTaKernel {
   };
 }
 
-export function rsi(valueOrLength: number, period?: number): number;
-export function rsi(values: readonly number[], period: number): number[];
+export function rsi(
+  valueOrLength: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number;
+export function rsi(
+  values: readonly number[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function rsi(
   values: readonly number[] | number,
   periodValue?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
   if (typeof values === "number")
-    return numericCall("rsi", values, periodValue, createRsiKernel);
+    return numericCall(
+      "rsi",
+      values,
+      periodValue,
+      undefined,
+      createRsiKernel,
+      "close",
+      hiddenCallsite,
+    );
+  taCallsite(hiddenCallsite, "ta.rsi");
   const kernel = createRsiKernel(periodValue ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
@@ -856,6 +951,7 @@ class ExtremumKernel implements NumericTaKernel {
   readonly #period: number;
   readonly #mode: "highest" | "lowest";
   readonly #deque: { readonly index: number; readonly value: number }[] = [];
+  #head = 0;
   #committedIndex = -1;
 
   constructor(period: number, mode: "highest" | "lowest") {
@@ -866,7 +962,7 @@ class ExtremumKernel implements NumericTaKernel {
   update(value: number, phase: TaUpdatePhase): number {
     const candidateIndex = this.#committedIndex + 1;
     const minimumIndex = candidateIndex - this.#period + 1;
-    let front = 0;
+    let front = this.#head;
     while (
       front < this.#deque.length &&
       (this.#deque[front]?.index ?? Number.POSITIVE_INFINITY) < minimumIndex
@@ -882,9 +978,9 @@ class ExtremumKernel implements NumericTaKernel {
           ? Math.max(committedBest, value)
           : Math.min(committedBest, value);
     if (phase === "finalized") {
-      if (front > 0) this.#deque.splice(0, front);
+      this.#head = front;
       if (Number.isFinite(value)) {
-        while (this.#deque.length > 0) {
+        while (this.#deque.length > this.#head) {
           const last = this.#deque.at(-1)?.value ?? Number.NaN;
           const shouldPop =
             this.#mode === "highest" ? last <= value : last >= value;
@@ -892,6 +988,10 @@ class ExtremumKernel implements NumericTaKernel {
           this.#deque.pop();
         }
         this.#deque.push({ index: candidateIndex, value });
+      }
+      if (this.#head > 0 && this.#head * 2 >= this.#deque.length) {
+        this.#deque.splice(0, this.#head);
+        this.#head = 0;
       }
       this.#committedIndex = candidateIndex;
     }
@@ -907,26 +1007,62 @@ export function createLowestKernel(period: number): NumericTaKernel {
   return new ExtremumKernel(period, "lowest");
 }
 
-export function highest(valueOrLength: number, period?: number): number;
-export function highest(values: readonly number[], period: number): number[];
+export function highest(
+  valueOrLength: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number;
+export function highest(
+  values: readonly number[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function highest(
   values: readonly number[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
   if (typeof values === "number")
-    return numericCall("highest", values, period, createHighestKernel, "high");
+    return numericCall(
+      "highest",
+      values,
+      period,
+      undefined,
+      createHighestKernel,
+      "high",
+      hiddenCallsite,
+    );
+  taCallsite(hiddenCallsite, "ta.highest");
   const kernel = createHighestKernel(period ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
 
-export function lowest(valueOrLength: number, period?: number): number;
-export function lowest(values: readonly number[], period: number): number[];
+export function lowest(
+  valueOrLength: number,
+  period?: number,
+  hiddenCallsite?: unknown,
+): number;
+export function lowest(
+  values: readonly number[],
+  period: number,
+  hiddenCallsite?: unknown,
+): number[];
 export function lowest(
   values: readonly number[] | number,
   period?: number,
+  hiddenCallsite?: unknown,
 ): number[] | number {
   if (typeof values === "number")
-    return numericCall("lowest", values, period, createLowestKernel, "low");
+    return numericCall(
+      "lowest",
+      values,
+      period,
+      undefined,
+      createLowestKernel,
+      "low",
+      hiddenCallsite,
+    );
+  taCallsite(hiddenCallsite, "ta.lowest");
   const kernel = createLowestKernel(period ?? 14);
   return values.map((value) => kernel.update(value, "finalized"));
 }
@@ -937,15 +1073,20 @@ export interface CrossKernel {
     right: number,
     phase: TaUpdatePhase,
   ) => boolean;
+  readonly ready: () => boolean;
 }
 
 function createCrossKernel(direction: "over" | "under"): CrossKernel {
   let previousLeft = Number.NaN;
   let previousRight = Number.NaN;
+  let lastReady = false;
   return {
     update(left, right, phase) {
+      lastReady = [previousLeft, previousRight, left, right].every(
+        Number.isFinite,
+      );
       const crossed =
-        [previousLeft, previousRight, left, right].every(Number.isFinite) &&
+        lastReady &&
         (direction === "over"
           ? previousLeft <= previousRight && left > right
           : previousLeft >= previousRight && left < right);
@@ -955,6 +1096,7 @@ function createCrossKernel(direction: "over" | "under"): CrossKernel {
       }
       return crossed;
     },
+    ready: () => lastReady,
   };
 }
 
@@ -966,21 +1108,37 @@ export function createCrossunderKernel(): CrossKernel {
   return createCrossKernel("under");
 }
 
-export function crossover(left: number, right: number): boolean;
+export function crossover(
+  left: number,
+  right: number,
+  hiddenCallsite?: unknown,
+): boolean;
 export function crossover(
   left: readonly number[],
   right: readonly number[],
+  hiddenCallsite?: unknown,
 ): boolean[];
 export function crossover(
   left: readonly number[] | number,
   right: readonly number[] | number,
+  hiddenCallsite?: unknown,
 ): boolean[] | boolean {
+  const callsite = taCallsite(hiddenCallsite, "ta.crossover");
   if (typeof left === "number" && typeof right === "number") {
-    return useKernel("crossover", createCrossoverKernel).update(
-      left,
-      right,
-      authoringFrame().phase,
+    const frame = authoringFrame();
+    const kernel = useKernel("crossover", createCrossoverKernel, callsite);
+    const result = kernel.update(left, right, frame.phase);
+    recordSignalDependency(
+      frame.signalDependencies,
+      callsite,
+      sourceSignalDependency(
+        frame.candle.timeframeId,
+        frame.candle.openTimeMs,
+        kernel.ready(),
+        frame.sourceMetadata[frame.candle.timeframeId],
+      ),
     );
+    return result;
   }
   if (typeof left === "number" || typeof right === "number")
     throw new TypeError("Cross inputs must both be scalars or arrays.");
@@ -995,21 +1153,37 @@ export function crossover(
   );
 }
 
-export function crossunder(left: number, right: number): boolean;
+export function crossunder(
+  left: number,
+  right: number,
+  hiddenCallsite?: unknown,
+): boolean;
 export function crossunder(
   left: readonly number[],
   right: readonly number[],
+  hiddenCallsite?: unknown,
 ): boolean[];
 export function crossunder(
   left: readonly number[] | number,
   right: readonly number[] | number,
+  hiddenCallsite?: unknown,
 ): boolean[] | boolean {
+  const callsite = taCallsite(hiddenCallsite, "ta.crossunder");
   if (typeof left === "number" && typeof right === "number") {
-    return useKernel("crossunder", createCrossunderKernel).update(
-      left,
-      right,
-      authoringFrame().phase,
+    const frame = authoringFrame();
+    const kernel = useKernel("crossunder", createCrossunderKernel, callsite);
+    const result = kernel.update(left, right, frame.phase);
+    recordSignalDependency(
+      frame.signalDependencies,
+      callsite,
+      sourceSignalDependency(
+        frame.candle.timeframeId,
+        frame.candle.openTimeMs,
+        kernel.ready(),
+        frame.sourceMetadata[frame.candle.timeframeId],
+      ),
     );
+    return result;
   }
   if (typeof left === "number" || typeof right === "number")
     throw new TypeError("Cross inputs must both be scalars or arrays.");
@@ -1078,26 +1252,270 @@ function numericCall(
   name: string,
   valueOrPeriod: number,
   period: number | undefined,
+  timeframeId: string | undefined,
   create: (length: number) => NumericTaKernel,
-  source: "close" | "high" | "low" = "close",
+  sourceField: CompilerSeriesSource = "close",
+  hiddenCallsite?: unknown,
 ): number {
   const frame = authoringFrame();
+  const callsite = taCallsite(hiddenCallsite, `ta.${name}`);
+  if (timeframeId !== undefined) {
+    if (
+      timeframeId.length === 0 ||
+      timeframeId.length > 64 ||
+      timeframeId.trim() !== timeframeId
+    )
+      throw new RangeError("TA timeframe must be a non-empty timeframe ID.");
+    frame.taTimeframeIds.add(timeframeId);
+  }
   const length = authoringLength(period ?? valueOrPeriod);
-  const value = period === undefined ? frame.candle[source] : valueOrPeriod;
-  return useKernel(`${name}:${length}`, () => create(length)).update(
+  if (timeframeId !== undefined && !frame.discovery) {
+    const sourceCandles = frame.sourceCandles[timeframeId] ?? [];
+    const alignedSourceField =
+      period === undefined ? sourceField : callsite?.seriesSource;
+    if (alignedSourceField === undefined)
+      throw new TypeError(
+        "Higher-timeframe TA expressions must use a direct candle series such as open, high, low, close, volume, hl2, hlc3 or ohlc4.",
+      );
+    const state = useKernel(
+      `${name}:${length}:${timeframeId}:${alignedSourceField}`,
+      () => ({
+        kernel: create(length),
+        nextIndex: 0,
+        value: Number.NaN,
+        sourceOpenTimeMs: undefined as number | undefined,
+      }),
+      callsite,
+    );
+    const boundary =
+      frame.phase === "finalized"
+        ? sourceBoundaryAfter(frame.candle, frame.sourceCandles)
+        : frame.candle.openTimeMs;
+    const sourceMetadata = frame.sourceMetadata[timeframeId];
+    const finalizedCount = Math.min(
+      sourceCandles.length,
+      sourceMetadata?.finalizedCount ?? Math.max(0, sourceCandles.length - 1),
+    );
+    while (state.nextIndex < finalizedCount) {
+      const sourceCandle = sourceCandles[state.nextIndex];
+      const next = sourceCandles[state.nextIndex + 1];
+      if (sourceCandle === undefined) break;
+      const sourceDuration = timeframeMilliseconds(sourceCandle.timeframeId);
+      const sourceCloseBoundary =
+        sourceDuration === undefined
+          ? next?.openTimeMs
+          : sourceCandle.openTimeMs + sourceDuration;
+      if (sourceCloseBoundary === undefined || sourceCloseBoundary > boundary)
+        break;
+      state.value = state.kernel.update(
+        candleSourceValue(sourceCandle, alignedSourceField),
+        "finalized",
+      );
+      state.sourceOpenTimeMs = sourceCandle.openTimeMs;
+      state.nextIndex += 1;
+    }
+    recordSignalDependency(
+      frame.signalDependencies,
+      callsite,
+      sourceSignalDependency(
+        timeframeId,
+        state.sourceOpenTimeMs,
+        Number.isFinite(state.value),
+        sourceMetadata,
+      ),
+    );
+    return state.value;
+  }
+  const value =
+    period === undefined
+      ? candleSourceValue(frame.candle, sourceField)
+      : valueOrPeriod;
+  const result = useKernel(
+    `${name}:${length}`,
+    () => create(length),
+    callsite,
+  ).update(value, frame.phase);
+  recordSignalDependency(
+    frame.signalDependencies,
+    callsite,
+    sourceSignalDependency(
+      frame.candle.timeframeId,
+      frame.candle.openTimeMs,
+      Number.isFinite(result),
+      frame.sourceMetadata[frame.candle.timeframeId],
+    ),
+  );
+  return result;
+}
+
+function candleSourceValue(
+  candle: Candle,
+  source: CompilerSeriesSource,
+): number {
+  switch (source) {
+    case "hl2":
+      return (candle.high + candle.low) / 2;
+    case "hlc3":
+      return (candle.high + candle.low + candle.close) / 3;
+    case "ohlc4":
+      return (candle.open + candle.high + candle.low + candle.close) / 4;
+    case "volume":
+      return candle.volume ?? Number.NaN;
+    case "open":
+    case "high":
+    case "low":
+    case "close":
+      return candle[source];
+  }
+}
+
+function numericAuthoringArguments(
+  periodOrTimeframe: number | string | undefined,
+  timeframeOrHidden: string | unknown,
+  hiddenCallsite: unknown,
+): {
+  readonly period: number | undefined;
+  readonly timeframeId: string | undefined;
+  readonly hiddenCallsite: unknown;
+} {
+  if (typeof timeframeOrHidden === "string") {
+    return {
+      period:
+        typeof periodOrTimeframe === "number" ? periodOrTimeframe : undefined,
+      timeframeId: timeframeOrHidden,
+      hiddenCallsite,
+    };
+  }
+  return {
+    period:
+      typeof periodOrTimeframe === "number" ? periodOrTimeframe : undefined,
+    timeframeId:
+      typeof periodOrTimeframe === "string" ? periodOrTimeframe : undefined,
+    hiddenCallsite: timeframeOrHidden,
+  };
+}
+
+function timeframeMilliseconds(timeframeId: string): number | undefined {
+  const match = /^(\d+)(s|m|h|d)$/u.exec(timeframeId);
+  if (match === null) return undefined;
+  const amount = Number(match[1]);
+  const multiplier =
+    match[2] === "s"
+      ? 1_000
+      : match[2] === "m"
+        ? 60_000
+        : match[2] === "h"
+          ? 3_600_000
+          : 86_400_000;
+  const result = amount * multiplier;
+  return Number.isSafeInteger(result) && result > 0 ? result : undefined;
+}
+
+interface SourceBoundaryIndex {
+  length: number;
+  lastOpenTimeMs: number | undefined;
+  readonly boundaryAfter: Map<number, number>;
+}
+
+const sourceBoundaryIndexes = new WeakMap<
+  readonly Candle[],
+  SourceBoundaryIndex
+>();
+
+function sourceBoundaryIndex(source: readonly Candle[]): SourceBoundaryIndex {
+  let indexed = sourceBoundaryIndexes.get(source);
+  if (
+    indexed === undefined ||
+    indexed.length > source.length ||
+    (indexed.length > 0 &&
+      source[indexed.length - 1]?.openTimeMs !== indexed.lastOpenTimeMs)
+  ) {
+    indexed = {
+      length: 0,
+      lastOpenTimeMs: undefined,
+      boundaryAfter: new Map(),
+    };
+    sourceBoundaryIndexes.set(source, indexed);
+  }
+  for (
+    let index = Math.max(1, indexed.length);
+    index < source.length;
+    index += 1
+  ) {
+    const previous = source[index - 1];
+    const current = source[index];
+    if (previous !== undefined && current !== undefined)
+      indexed.boundaryAfter.set(previous.openTimeMs, current.openTimeMs);
+  }
+  indexed.length = source.length;
+  indexed.lastOpenTimeMs = source.at(-1)?.openTimeMs;
+  return indexed;
+}
+
+function sourceBoundaryAfter(
+  candle: Candle,
+  sourceCandles: Readonly<Record<string, readonly Candle[]>>,
+): number {
+  const duration = timeframeMilliseconds(candle.timeframeId);
+  if (duration !== undefined) return candle.openTimeMs + duration;
+  const sameSource = sourceCandles[candle.timeframeId];
+  if (sameSource === undefined) return candle.openTimeMs;
+  return (
+    sourceBoundaryIndex(sameSource).boundaryAfter.get(candle.openTimeMs) ??
+    candle.openTimeMs
+  );
+}
+
+export function sma(
+  valueOrLength: number,
+  periodOrTimeframe?: number | string,
+): number;
+export function sma(value: number, period: number, timeframeId: string): number;
+export function sma(
+  value: number,
+  periodOrTimeframe?: number | string,
+  timeframeOrHidden?: string | unknown,
+  hiddenCallsite?: unknown,
+): number {
+  const authored = numericAuthoringArguments(
+    periodOrTimeframe,
+    timeframeOrHidden,
+    hiddenCallsite,
+  );
+  return numericCall(
+    "sma",
     value,
-    frame.phase,
+    authored.period,
+    authored.timeframeId,
+    (length) => createMovingAverageKernel("sma", length),
+    "close",
+    authored.hiddenCallsite,
   );
 }
 
-export function sma(value: number, period?: number): number {
-  return numericCall("sma", value, period, (length) =>
-    createMovingAverageKernel("sma", length),
+export function ema(
+  valueOrLength: number,
+  periodOrTimeframe?: number | string,
+): number;
+export function ema(value: number, period: number, timeframeId: string): number;
+export function ema(
+  value: number,
+  periodOrTimeframe?: number | string,
+  timeframeOrHidden?: string | unknown,
+  hiddenCallsite?: unknown,
+): number {
+  const authored = numericAuthoringArguments(
+    periodOrTimeframe,
+    timeframeOrHidden,
+    hiddenCallsite,
   );
-}
-
-export function ema(value: number, period?: number): number {
-  return numericCall("ema", value, period, (length) =>
-    createMovingAverageKernel("ema", length),
+  return numericCall(
+    "ema",
+    value,
+    authored.period,
+    authored.timeframeId,
+    (length) => createMovingAverageKernel("ema", length),
+    "close",
+    authored.hiddenCallsite,
   );
 }

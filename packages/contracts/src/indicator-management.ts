@@ -44,7 +44,12 @@ export type InstalledIndicatorInputDefinition = InstalledIndicatorInputBase &
         readonly type: "string";
         readonly defaultValue: string;
         readonly options?: readonly InstalledIndicatorInputOption[];
-        readonly editor?: "text" | "color" | "timeframe";
+        readonly editor?: "text" | "color" | "timeframe" | "candle-type";
+      }
+    | {
+        readonly type: "source";
+        readonly defaultValue:
+          "close" | "open" | "high" | "low" | "hl2" | "hlc3" | "ohlc4";
       }
   );
 
@@ -64,6 +69,13 @@ export type InstalledIndicatorPlotKind =
   | "box"
   | "text";
 
+export type InstalledIndicatorShapeKind =
+  "circle" | "triangle-up" | "triangle-down" | "label-up" | "label-down";
+export type InstalledIndicatorShapeLocation =
+  "above-bar" | "below-bar" | "absolute";
+export type InstalledIndicatorTextSize =
+  "tiny" | "small" | "normal" | "large" | "xlarge";
+
 export interface InstalledIndicatorPlotDefinition {
   readonly key: string;
   readonly kind: InstalledIndicatorPlotKind;
@@ -73,6 +85,11 @@ export interface InstalledIndicatorPlotDefinition {
   readonly width?: number;
   readonly style?: "solid" | "dashed" | "dotted";
   readonly direction?: "up" | "down";
+  readonly shape?: InstalledIndicatorShapeKind;
+  readonly location?: InstalledIndicatorShapeLocation;
+  readonly text?: string;
+  readonly textColor?: string;
+  readonly textSize?: InstalledIndicatorTextSize;
 }
 
 export interface InstalledIndicatorDefinition {
@@ -84,6 +101,19 @@ export interface InstalledIndicatorDefinition {
   readonly outputs: readonly InstalledIndicatorOutputDefinition[];
   readonly plots: readonly InstalledIndicatorPlotDefinition[];
   readonly requiresLiveTicks: boolean;
+  readonly source?: InstalledIndicatorSourceDefinition;
+}
+
+export interface InstalledIndicatorSourceDefinition {
+  readonly timeframe?: {
+    readonly requestedTimeframeId: string;
+    readonly inputKey?: string;
+  };
+  readonly candleType?: {
+    readonly requestedCandleType: "standard" | "heikin-ashi";
+    readonly inputKey?: string;
+  };
+  readonly taTimeframeIds: readonly string[];
 }
 
 export interface InstalledIndicatorSummary {
@@ -126,6 +156,15 @@ export interface IndicatorRuntimeUpdateRequest {
   readonly candle: Candle;
 }
 
+export interface IndicatorWorkerCandleSnapshot {
+  readonly openTimeMs: Float64Array;
+  readonly open: Float64Array;
+  readonly high: Float64Array;
+  readonly low: Float64Array;
+  readonly close: Float64Array;
+  readonly volume: Float64Array;
+}
+
 export interface IndicatorRuntimePoint {
   readonly openTimeMs: number;
   readonly values: Readonly<Record<string, number | null>>;
@@ -159,12 +198,28 @@ export interface IndicatorRuntimeBox {
 export type IndicatorRuntimeOverlay =
   IndicatorRuntimeLineSegment | IndicatorRuntimeBox;
 
+export type IndicatorRuntimeSignalSourceProvenance =
+  | Readonly<{ kind: "market"; candleType: "standard" }>
+  | Readonly<{ kind: "synthetic"; candleType: "heikin-ashi" }>;
+
+export interface IndicatorRuntimeSignalSource {
+  readonly providerProfileId?: string;
+  readonly instrumentId?: string;
+  readonly timeframeId: string;
+  readonly activeTimeframeId: string;
+  readonly openTimeMs: number;
+  readonly generation: number;
+  readonly revision: number;
+  readonly provenance: IndicatorRuntimeSignalSourceProvenance;
+}
+
 export interface IndicatorRuntimeSignal {
   readonly id: string;
   readonly occurredAtMs: number;
   readonly direction: "long" | "neutral" | "short";
   readonly finalized: boolean;
   readonly confidence?: number;
+  readonly sources?: readonly IndicatorRuntimeSignalSource[];
 }
 
 export interface IndicatorRuntimeSnapshot {
@@ -184,6 +239,10 @@ function isBoundedText(value: unknown, maximum = 256): value is string {
     value.length <= maximum &&
     value.trim() === value
   );
+}
+
+function isOptionalShapeText(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 256;
 }
 
 function isIdentifier(value: unknown): value is string {
@@ -257,7 +316,19 @@ function isInputDefinition(
       (value.editor === undefined ||
         value.editor === "text" ||
         value.editor === "color" ||
-        value.editor === "timeframe")
+        value.editor === "timeframe" ||
+        value.editor === "candle-type")
+    );
+  }
+  if (value.type === "source") {
+    return (
+      value.defaultValue === "close" ||
+      value.defaultValue === "open" ||
+      value.defaultValue === "high" ||
+      value.defaultValue === "low" ||
+      value.defaultValue === "hl2" ||
+      value.defaultValue === "hlc3" ||
+      value.defaultValue === "ohlc4"
     );
   }
   return false;
@@ -282,12 +353,37 @@ const plotKinds = new Set<InstalledIndicatorPlotKind>([
   "box",
   "text",
 ]);
+const shapeKinds = new Set<InstalledIndicatorShapeKind>([
+  "circle",
+  "triangle-up",
+  "triangle-down",
+  "label-up",
+  "label-down",
+]);
+const shapeLocations = new Set<InstalledIndicatorShapeLocation>([
+  "above-bar",
+  "below-bar",
+  "absolute",
+]);
+const textSizes = new Set<InstalledIndicatorTextSize>([
+  "tiny",
+  "small",
+  "normal",
+  "large",
+  "xlarge",
+]);
 
 function isPlotDefinition(
   value: unknown,
 ): value is InstalledIndicatorPlotDefinition {
+  if (!isRecord(value)) return false;
+  const hasShapeMetadata =
+    value.shape !== undefined ||
+    value.location !== undefined ||
+    value.text !== undefined ||
+    value.textColor !== undefined ||
+    value.textSize !== undefined;
   return (
-    isRecord(value) &&
     isIdentifier(value.key) &&
     typeof value.kind === "string" &&
     plotKinds.has(value.kind as InstalledIndicatorPlotKind) &&
@@ -302,13 +398,69 @@ function isPlotDefinition(
       value.style === "dotted") &&
     (value.direction === undefined ||
       value.direction === "up" ||
-      value.direction === "down")
+      value.direction === "down") &&
+    (value.shape === undefined ||
+      (typeof value.shape === "string" &&
+        shapeKinds.has(value.shape as InstalledIndicatorShapeKind))) &&
+    (value.location === undefined ||
+      (typeof value.location === "string" &&
+        shapeLocations.has(
+          value.location as InstalledIndicatorShapeLocation,
+        ))) &&
+    (value.text === undefined || isOptionalShapeText(value.text)) &&
+    (value.textColor === undefined || isBoundedText(value.textColor, 128)) &&
+    (value.textSize === undefined ||
+      (typeof value.textSize === "string" &&
+        textSizes.has(value.textSize as InstalledIndicatorTextSize))) &&
+    (value.kind === "shape" || !hasShapeMetadata)
   );
 }
 
 export function isInstalledIndicatorDefinition(
   value: unknown,
 ): value is InstalledIndicatorDefinition {
+  const source = isRecord(value) ? value.source : undefined;
+  const inputs =
+    isRecord(value) && Array.isArray(value.inputs) ? value.inputs : [];
+  const timeframeInputKeyValid = (inputKey: unknown): boolean =>
+    inputKey === undefined ||
+    (isIdentifier(inputKey) &&
+      inputs.filter(
+        (input) =>
+          isRecord(input) &&
+          input.key === inputKey &&
+          input.type === "string" &&
+          input.editor === "timeframe" &&
+          isInputDefinition(input),
+      ).length === 1);
+  const candleType =
+    isRecord(source) && isRecord(source.candleType)
+      ? source.candleType
+      : undefined;
+  const sourceValid =
+    source === undefined ||
+    (isRecord(source) &&
+      (source.timeframe === undefined ||
+        (isRecord(source.timeframe) &&
+          isBoundedText(source.timeframe.requestedTimeframeId, 64) &&
+          timeframeInputKeyValid(source.timeframe.inputKey))) &&
+      (source.candleType === undefined ||
+        (candleType !== undefined &&
+          (candleType.requestedCandleType === "standard" ||
+            candleType.requestedCandleType === "heikin-ashi") &&
+          (candleType.inputKey === undefined ||
+            (isIdentifier(candleType.inputKey) &&
+              inputs.filter(
+                (input) =>
+                  isRecord(input) &&
+                  input.key === candleType.inputKey &&
+                  input.type === "string" &&
+                  input.editor === "candle-type" &&
+                  isInputDefinition(input),
+              ).length === 1)))) &&
+      Array.isArray(source.taTimeframeIds) &&
+      source.taTimeframeIds.length <= 64 &&
+      source.taTimeframeIds.every((item) => isBoundedText(item, 64)));
   return (
     isRecord(value) &&
     isIdentifier(value.id) &&
@@ -325,7 +477,8 @@ export function isInstalledIndicatorDefinition(
     Array.isArray(value.plots) &&
     value.plots.length <= 128 &&
     value.plots.every(isPlotDefinition) &&
-    typeof value.requiresLiveTicks === "boolean"
+    typeof value.requiresLiveTicks === "boolean" &&
+    sourceValid
   );
 }
 
@@ -439,6 +592,96 @@ function isCandle(value: unknown): value is Candle {
     isFiniteNumber(value.low) &&
     isFiniteNumber(value.close) &&
     (value.volume === undefined || isFiniteNumber(value.volume))
+  );
+}
+
+export function createIndicatorWorkerCandleSnapshot(
+  candles: readonly Candle[],
+): IndicatorWorkerCandleSnapshot {
+  if (candles.length > 100_000 || !candles.every(isCandle)) {
+    throw new RangeError("Indicator worker candle snapshot is invalid.");
+  }
+  const openTimeMs = new Float64Array(candles.length);
+  const open = new Float64Array(candles.length);
+  const high = new Float64Array(candles.length);
+  const low = new Float64Array(candles.length);
+  const close = new Float64Array(candles.length);
+  const volume = new Float64Array(candles.length).fill(Number.NaN);
+  for (let index = 0; index < candles.length; index += 1) {
+    const candle = candles[index];
+    if (candle === undefined) continue;
+    openTimeMs[index] = candle.openTimeMs;
+    open[index] = candle.open;
+    high[index] = candle.high;
+    low[index] = candle.low;
+    close[index] = candle.close;
+    if (candle.volume !== undefined) volume[index] = candle.volume;
+  }
+  return Object.freeze({ openTimeMs, open, high, low, close, volume });
+}
+
+export function isIndicatorWorkerCandleSnapshot(
+  value: unknown,
+): value is IndicatorWorkerCandleSnapshot {
+  if (!isRecord(value) || !(value.openTimeMs instanceof Float64Array)) {
+    return false;
+  }
+  const length = value.openTimeMs.length;
+  if (length > 100_000) return false;
+  if (
+    !(value.open instanceof Float64Array) ||
+    !(value.high instanceof Float64Array) ||
+    !(value.low instanceof Float64Array) ||
+    !(value.close instanceof Float64Array) ||
+    !(value.volume instanceof Float64Array) ||
+    value.open.length !== length ||
+    value.high.length !== length ||
+    value.low.length !== length ||
+    value.close.length !== length ||
+    value.volume.length !== length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < length; index += 1) {
+    const openTimeMs = value.openTimeMs[index];
+    if (
+      !Number.isSafeInteger(openTimeMs) ||
+      Number(openTimeMs) < 0 ||
+      !Number.isFinite(value.open[index]) ||
+      !Number.isFinite(value.high[index]) ||
+      !Number.isFinite(value.low[index]) ||
+      !Number.isFinite(value.close[index]) ||
+      (!Number.isNaN(value.volume[index]) &&
+        !Number.isFinite(value.volume[index]))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function materializeIndicatorWorkerCandleSnapshot(
+  snapshot: IndicatorWorkerCandleSnapshot,
+  instrumentId: Candle["instrumentId"],
+  timeframeId: Candle["timeframeId"],
+): readonly Candle[] {
+  if (!isIndicatorWorkerCandleSnapshot(snapshot)) {
+    throw new RangeError("Indicator worker candle snapshot is invalid.");
+  }
+  return Object.freeze(
+    Array.from({ length: snapshot.openTimeMs.length }, (_, index) => {
+      const volume = snapshot.volume[index];
+      return Object.freeze({
+        instrumentId,
+        timeframeId,
+        openTimeMs: snapshot.openTimeMs[index] ?? 0,
+        open: snapshot.open[index] ?? 0,
+        high: snapshot.high[index] ?? 0,
+        low: snapshot.low[index] ?? 0,
+        close: snapshot.close[index] ?? 0,
+        ...(volume === undefined || Number.isNaN(volume) ? {} : { volume }),
+      });
+    }),
   );
 }
 
@@ -567,6 +810,33 @@ function isRuntimeOverlay(value: unknown): value is IndicatorRuntimeOverlay {
   return false;
 }
 
+function isRuntimeSignalSource(
+  value: unknown,
+): value is IndicatorRuntimeSignalSource {
+  if (!isRecord(value)) return false;
+  const provenance = value.provenance;
+  const validProvenance =
+    isRecord(provenance) &&
+    ((provenance.kind === "market" && provenance.candleType === "standard") ||
+      (provenance.kind === "synthetic" &&
+        provenance.candleType === "heikin-ashi"));
+  return (
+    (value.providerProfileId === undefined ||
+      isBoundedText(value.providerProfileId, 256)) &&
+    (value.instrumentId === undefined ||
+      isBoundedText(value.instrumentId, 256)) &&
+    isBoundedText(value.timeframeId, 64) &&
+    isBoundedText(value.activeTimeframeId, 64) &&
+    Number.isSafeInteger(value.openTimeMs) &&
+    Number(value.openTimeMs) >= 0 &&
+    Number.isSafeInteger(value.generation) &&
+    Number(value.generation) >= 0 &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    validProvenance
+  );
+}
+
 function isRuntimeSignal(value: unknown): value is IndicatorRuntimeSignal {
   return (
     isRecord(value) &&
@@ -579,7 +849,11 @@ function isRuntimeSignal(value: unknown): value is IndicatorRuntimeSignal {
     (value.confidence === undefined ||
       (isFiniteNumber(value.confidence) &&
         value.confidence >= 0 &&
-        value.confidence <= 1))
+        value.confidence <= 1)) &&
+    (value.sources === undefined ||
+      (Array.isArray(value.sources) &&
+        value.sources.length <= 32 &&
+        value.sources.every(isRuntimeSignalSource)))
   );
 }
 
