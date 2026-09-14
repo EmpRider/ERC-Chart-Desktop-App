@@ -70,6 +70,12 @@ test("requires a release version to advance beyond all published versions", () =
       "1.0.0-alpha-a",
     ]),
   );
+  assert.doesNotThrow(() =>
+    packagingContract.assertReleaseVersionAdvances("1.0.0-alpha-beta", [
+      "1.0.0-alpha-alpha",
+    ]),
+    "hyphenated prerelease identifiers must preserve their full value",
+  );
   assert.throws(
     () => packagingContract.assertReleaseVersionAdvances("1.0.0", ["1.0.0"]),
     /newer than the latest release/i,
