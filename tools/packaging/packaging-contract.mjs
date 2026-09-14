@@ -34,7 +34,15 @@ export function validateReleaseVersion(version) {
 
 function parseReleaseVersion(version) {
   const validatedVersion = validateReleaseVersion(version);
-  const [core, prerelease] = validatedVersion.split("-", 2);
+  const prereleaseSeparator = validatedVersion.indexOf("-");
+  const core =
+    prereleaseSeparator === -1
+      ? validatedVersion
+      : validatedVersion.slice(0, prereleaseSeparator);
+  const prerelease =
+    prereleaseSeparator === -1
+      ? undefined
+      : validatedVersion.slice(prereleaseSeparator + 1);
   const [major, minor, patch] = core.split(".").map(BigInt);
   return {
     major,

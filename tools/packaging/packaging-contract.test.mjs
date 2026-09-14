@@ -65,6 +65,11 @@ test("requires a release version to advance beyond all published versions", () =
       "1.0.0-9007199254740992",
     ]),
   );
+  assert.doesNotThrow(() =>
+    packagingContract.assertReleaseVersionAdvances("1.0.0-alpha-z", [
+      "1.0.0-alpha-a",
+    ]),
+  );
   assert.throws(
     () => packagingContract.assertReleaseVersionAdvances("1.0.0", ["1.0.0"]),
     /newer than the latest release/i,
