@@ -634,6 +634,117 @@ test("reconciles explicit cross-indicator bindings in dependency order", () => {
   );
 });
 
+test("rejects missing and circular dependencies before indicator activation", () => {
+  let createCalls = 0;
+  let syncCalls = 0;
+  const module = {
+    registerIndicator(value) {
+      assert.ok(value);
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      createCalls += 1;
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-acceptance",
+    name: "Dependency acceptance",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-acceptance-test",
+    pluginName: "Dependency acceptance test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-acceptance-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const indicator = (instanceId, dependencyInstanceId, outputKey = "line") => ({
+    instanceId,
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: dependencyInstanceId,
+        outputKey,
+      },
+    },
+  });
+  const sourceIndicator = (instanceId) => ({
+    instanceId,
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  });
+  const sync = async () => {
+    syncCalls += 1;
+    return {
+      kind: "snapshot",
+      snapshot: { points: [], overlays: [], signals: [] },
+    };
+  };
+  const reconcile = (indicators) =>
+    reconcilePluginIndicators(
+      module,
+      chart,
+      indicators,
+      [summary],
+      sync,
+      "TEST",
+      "1m",
+    );
+
+  assert.throws(
+    () => reconcile([indicator("consumer", "missing")]),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_MISSING_INSTANCE",
+  );
+  assert.throws(
+    () =>
+      reconcile([
+        sourceIndicator("source"),
+        indicator("consumer", "source", "missing"),
+      ]),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_MISSING_OUTPUT",
+  );
+  assert.throws(
+    () =>
+      reconcile([
+        indicator("cycle-a", "cycle-b"),
+        indicator("cycle-b", "cycle-a"),
+      ]),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_CYCLE",
+  );
+  assert.equal(createCalls, 0);
+  assert.equal(syncCalls, 0);
+});
+
 test("rejects indicator-output bindings to undeclared consumer inputs before activation", () => {
   let createCalls = 0;
   const module = {
