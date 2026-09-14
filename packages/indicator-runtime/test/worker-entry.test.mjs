@@ -130,6 +130,7 @@ test("worker passes bound indicator outputs through the private runtime context"
             sourceGeneration: 2,
             sourceRevision: 7,
             configGeneration: 4,
+            outputRevision: 1,
             points: [{ openTimeMs: 0, values: { line: 42 } }],
           },
         ],

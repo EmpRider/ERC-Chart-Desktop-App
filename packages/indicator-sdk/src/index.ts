@@ -36,7 +36,7 @@ export const indicatorSdkVersion: ContractVersion = indicatorContractVersion;
 export const indicatorHostVersion: ContractVersion = hostApiVersion;
 
 export type IndicatorInputValue = boolean | number | string;
-export type IndicatorInputKind = "boolean" | "number" | "string";
+export type IndicatorInputKind = "boolean" | "number" | "source" | "string";
 export type IndicatorInputEffect = "calculation" | "presentation";
 
 export interface IndicatorInputOption {
@@ -67,6 +67,10 @@ export type IndicatorInputDefinition = IndicatorInputMetadata &
         readonly defaultValue: string;
         readonly options?: readonly IndicatorInputOption[];
         readonly editor?: "text" | "color" | "timeframe" | "candle-type";
+      }
+    | {
+        readonly type: "source";
+        readonly defaultValue: import("./series.js").PriceSource;
       }
   );
 
@@ -255,6 +259,10 @@ export interface InputApi {
     (defaultValue: string, options?: StringInputOptions): string;
   };
   readonly color: (defaultValue: string, options?: InputOptions) => string;
+  readonly source: (
+    defaultValue: import("./series.js").PriceSource,
+    titleOrOptions?: string | InputOptions,
+  ) => number;
   readonly timeframe: (
     defaultValue: string,
     titleOrOptions?: string | InputOptions,

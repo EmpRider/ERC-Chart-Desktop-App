@@ -46,6 +46,11 @@ export type InstalledIndicatorInputDefinition = InstalledIndicatorInputBase &
         readonly options?: readonly InstalledIndicatorInputOption[];
         readonly editor?: "text" | "color" | "timeframe" | "candle-type";
       }
+    | {
+        readonly type: "source";
+        readonly defaultValue:
+          "close" | "open" | "high" | "low" | "hl2" | "hlc3" | "ohlc4";
+      }
   );
 
 export interface InstalledIndicatorOutputDefinition {
@@ -313,6 +318,17 @@ function isInputDefinition(
         value.editor === "color" ||
         value.editor === "timeframe" ||
         value.editor === "candle-type")
+    );
+  }
+  if (value.type === "source") {
+    return (
+      value.defaultValue === "close" ||
+      value.defaultValue === "open" ||
+      value.defaultValue === "high" ||
+      value.defaultValue === "low" ||
+      value.defaultValue === "hl2" ||
+      value.defaultValue === "hlc3" ||
+      value.defaultValue === "ohlc4"
     );
   }
   return false;

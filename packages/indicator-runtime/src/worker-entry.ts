@@ -248,6 +248,7 @@ function signatureFor(
         sourceGeneration,
         sourceRevision,
         configGeneration,
+        outputRevision,
       }) => ({
         inputKey,
         instanceId,
@@ -255,6 +256,7 @@ function signatureFor(
         sourceGeneration,
         sourceRevision,
         configGeneration,
+        outputRevision,
       }),
     ),
   });
@@ -465,6 +467,7 @@ function isDependencySnapshot(value: unknown): boolean {
     readonly sourceGeneration?: unknown;
     readonly sourceRevision?: unknown;
     readonly configGeneration?: unknown;
+    readonly outputRevision?: unknown;
     readonly points?: unknown;
   };
   return (
@@ -480,6 +483,8 @@ function isDependencySnapshot(value: unknown): boolean {
     Number(dependency.sourceRevision) >= 0 &&
     Number.isSafeInteger(dependency.configGeneration) &&
     Number(dependency.configGeneration) >= 0 &&
+    Number.isSafeInteger(dependency.outputRevision) &&
+    Number(dependency.outputRevision) >= 0 &&
     Array.isArray(dependency.points) &&
     isIndicatorRuntimeSnapshot({
       points: dependency.points,

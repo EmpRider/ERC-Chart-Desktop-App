@@ -54,6 +54,17 @@ function normalizeIndicatorInputValue(
     if (definition.step === undefined) return bounded;
     return Number(bounded.toFixed(stepDecimals(definition.step)));
   }
+  if (definition.type === "source") {
+    return value === "close" ||
+      value === "open" ||
+      value === "high" ||
+      value === "low" ||
+      value === "hl2" ||
+      value === "hlc3" ||
+      value === "ohlc4"
+      ? value
+      : definition.defaultValue;
+  }
   if (typeof value !== "string" || value.length > 8_192)
     return definition.defaultValue;
   if (
@@ -113,6 +124,7 @@ export interface IndicatorWorkerDependencySnapshot {
   readonly sourceGeneration: number;
   readonly sourceRevision: number;
   readonly configGeneration: number;
+  readonly outputRevision: number;
   readonly points: readonly IndicatorRuntimePoint[];
 }
 
@@ -359,6 +371,7 @@ function isWorkerDependencySnapshot(
     isSafeGeneration(value.sourceGeneration) &&
     isSafeGeneration(value.sourceRevision) &&
     isSafeGeneration(value.configGeneration) &&
+    isSafeGeneration(value.outputRevision) &&
     Array.isArray(value.points) &&
     isIndicatorRuntimeSnapshot({
       points: value.points,

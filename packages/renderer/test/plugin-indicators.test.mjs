@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   clearPluginIndicatorSeriesChange,
   markPluginIndicatorSeriesChange,
+  pluginIndicatorDependencyVersion,
   pluginIndicatorSettingsFields,
   reconcilePluginIndicators,
   resolvePluginIndicatorSourcePlan,
@@ -570,7 +571,14 @@ test("reconciles explicit cross-indicator bindings in dependency order", () => {
     id: "erc.indicator.test.dependency-order",
     name: "Dependency order",
     placement: "overlay",
-    inputs: [],
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
     outputs: [{ key: "line", label: "Line" }],
     plots: [{ key: "line", kind: "line", outputKey: "line" }],
     requiresLiveTicks: false,
@@ -626,6 +634,175 @@ test("reconciles explicit cross-indicator bindings in dependency order", () => {
   );
 });
 
+test("rejects indicator-output bindings to undeclared consumer inputs before activation", () => {
+  let createCalls = 0;
+  const module = {
+    registerIndicator(value) {
+      assert.ok(value);
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      createCalls += 1;
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-unknown-input",
+    name: "Dependency unknown input",
+    placement: "overlay",
+    inputs: [],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-unknown-input-test",
+    pluginName: "Dependency unknown input test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-unknown-input-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-unknown-input-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-unknown-input-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+
+  assert.throws(
+    () =>
+      reconcilePluginIndicators(
+        module,
+        chart,
+        [consumer, base],
+        [summary],
+        async () => ({
+          kind: "snapshot",
+          snapshot: { points: [], overlays: [], signals: [] },
+        }),
+        "TEST",
+        "1m",
+      ),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_MISSING_INPUT",
+  );
+  assert.equal(createCalls, 0);
+});
+
+test("rejects indicator-output bindings to non-source consumer inputs before activation", () => {
+  let createCalls = 0;
+  const module = {
+    registerIndicator(value) {
+      assert.ok(value);
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      createCalls += 1;
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-incompatible-input",
+    name: "Dependency incompatible input",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "number",
+        defaultValue: 14,
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-incompatible-input-test",
+    pluginName: "Dependency incompatible input test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-incompatible-input-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-incompatible-input-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { source: 14 },
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-incompatible-input-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { source: 14 },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+
+  assert.throws(
+    () =>
+      reconcilePluginIndicators(
+        module,
+        chart,
+        [consumer, base],
+        [summary],
+        async () => ({
+          kind: "snapshot",
+          snapshot: { points: [], overlays: [], signals: [] },
+        }),
+        "TEST",
+        "1m",
+      ),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_INCOMPATIBLE_INPUT",
+  );
+  assert.equal(createCalls, 0);
+});
+
 test("changing an explicit output binding advances the dependent configuration generation", async () => {
   let template;
   const activeIds = new Set();
@@ -655,7 +832,14 @@ test("changing an explicit output binding advances the dependent configuration g
     id: "erc.indicator.test.dependency-generation",
     name: "Dependency generation",
     placement: "overlay",
-    inputs: [],
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
     outputs: [{ key: "line", label: "Line" }],
     plots: [{ key: "line", kind: "line", outputKey: "line" }],
     requiresLiveTicks: false,
@@ -750,6 +934,26 @@ test("changing an explicit output binding advances the dependent configuration g
   );
 });
 
+test("dependency freshness changes when an upstream result changes without a source revision change", () => {
+  const dependency = {
+    inputKey: "source",
+    instanceId: "upstream",
+    outputKey: "line",
+    sourceGeneration: 2,
+    sourceRevision: 7,
+    configGeneration: 4,
+    outputRevision: 1,
+    points: [{ openTimeMs: 0, values: { line: 42 } }],
+  };
+
+  assert.notEqual(
+    pluginIndicatorDependencyVersion([dependency]),
+    pluginIndicatorDependencyVersion([
+      { ...dependency, outputRevision: dependency.outputRevision + 1 },
+    ]),
+  );
+});
+
 test("dependent calculation publishes upstream output first and consumes the matching revision", async () => {
   let template;
   const activeIds = new Set();
@@ -779,7 +983,14 @@ test("dependent calculation publishes upstream output first and consumes the mat
     id: "erc.indicator.test.dependency-values",
     name: "Dependency values",
     placement: "overlay",
-    inputs: [],
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
     outputs: [{ key: "line", label: "Line" }],
     plots: [{ key: "line", kind: "line", outputKey: "line" }],
     requiresLiveTicks: false,
@@ -887,6 +1098,7 @@ test("dependent calculation publishes upstream output first and consumes the mat
       sourceGeneration: 0,
       sourceRevision: 1,
       configGeneration: 1,
+      outputRevision: 1,
       points: [
         {
           openTimeMs: dataList[0].timestamp,
@@ -934,6 +1146,12 @@ test("upstream configuration changes invalidate and rebuild unchanged downstream
         type: "number",
         defaultValue: 2,
         effect: "calculation",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
       },
     ],
     outputs: [{ key: "line", label: "Line" }],
@@ -1086,6 +1304,18 @@ test("configuration-only upstream changes preserve matching source revisions acr
         type: "number",
         defaultValue: 1,
         effect: "calculation",
+      },
+      {
+        key: "first",
+        label: "First source",
+        type: "source",
+        defaultValue: "close",
+      },
+      {
+        key: "second",
+        label: "Second source",
+        type: "source",
+        defaultValue: "close",
       },
     ],
     outputs: [{ key: "line", label: "Line" }],

@@ -163,6 +163,7 @@ test("forwards bound indicator output batches to the worker unchanged", async ()
       sourceGeneration: 2,
       sourceRevision: 5,
       configGeneration: 3,
+      outputRevision: 1,
       points: [{ openTimeMs: candle.openTimeMs, values: { line: 88 } }],
     },
   ];

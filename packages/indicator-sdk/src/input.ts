@@ -9,6 +9,7 @@ import type {
   IndicatorInputValue,
 } from "./index.js";
 import { candle, type CandleTypeSelection } from "./constants.js";
+import { priceSources, priceValue, type PriceSource } from "./series.js";
 
 export interface InputOptions {
   readonly key?: string;
@@ -70,6 +71,11 @@ export function normalizeIndicatorInputValue(
     if (definition.step === undefined) return bounded;
     return Number(bounded.toFixed(stepDecimals(definition.step)));
   }
+  if (definition.type === "source")
+    return typeof value === "string" &&
+      priceSources.includes(value as PriceSource)
+      ? value
+      : definition.defaultValue;
   if (typeof value !== "string" || value.length > 8_192)
     return definition.defaultValue;
   if (
@@ -154,6 +160,11 @@ function sameInputDefinition(
         expected.defaultValue === definition.defaultValue &&
         expected.editor === definition.editor &&
         sameInputOptions(expected.options, definition.options)
+      );
+    case "source":
+      return (
+        definition.type === "source" &&
+        expected.defaultValue === definition.defaultValue
       );
   }
 }
@@ -388,6 +399,43 @@ function candleTypeInput(
   return value;
 }
 
+function sourceInput(
+  defaultValue: PriceSource,
+  titleOrOptions: string | InputOptions = {},
+  hiddenCallsite?: unknown,
+): number {
+  if (!priceSources.includes(defaultValue))
+    throw new RangeError("Source input default is invalid.");
+  const options =
+    typeof titleOrOptions === "string"
+      ? { title: titleOrOptions }
+      : titleOrOptions;
+  const callsite = readCompilerCallsite(
+    hiddenCallsite,
+    "input",
+    "input.source",
+  );
+  const definition: IndicatorInputDefinition = {
+    ...metadata(options, callsite),
+    type: "source",
+    defaultValue,
+  };
+  const selectedSource = readInput(
+    definition,
+    callsite,
+    hasExplicitLabel(options),
+  ) as PriceSource;
+  const frame = authoringFrame();
+  const dependency = frame.dependencyInputs[definition.key];
+  if (dependency === undefined) return priceValue(frame.candle, selectedSource);
+  const point = dependency.find(
+    (candidate) => candidate.openTimeMs === frame.candle.openTimeMs,
+  );
+  if (point === undefined) return Number.NaN;
+  const value = Object.values(point.values)[0];
+  return typeof value === "number" ? value : Number.NaN;
+}
+
 export interface InputApi {
   readonly float: (
     defaultValue: number,
@@ -403,6 +451,10 @@ export interface InputApi {
     (defaultValue: string, options?: StringInputOptions): string;
   };
   readonly color: (defaultValue: string, options?: InputOptions) => string;
+  readonly source: (
+    defaultValue: PriceSource,
+    titleOrOptions?: string | InputOptions,
+  ) => number;
   readonly timeframe: (
     defaultValue: string,
     titleOrOptions?: string | InputOptions,
@@ -452,6 +504,7 @@ export const input: InputApi = Object.freeze({
     ) as boolean;
   },
   string: stringInput,
+  source: sourceInput,
   color: (
     defaultValue: string,
     options: InputOptions = {},

@@ -10,6 +10,7 @@ import type {
   WorkspaceIndicator,
 } from "@erc-chart/contracts";
 import {
+  IndicatorDependencyGraphError,
   createIndicatorDependencyPlan,
   normalizeIndicatorParameters,
   type IndicatorWorkerDependencySnapshot,
@@ -109,6 +110,7 @@ interface RuntimeContext {
   dataGeneration: number;
   dataRevision: number;
   configGeneration: number;
+  outputRevision: number;
   lastCandleCount?: number;
   lastBuilding: Candle | undefined;
 }
@@ -288,6 +290,31 @@ function indicatorOutputBindings(indicator: WorkspaceIndicator): readonly {
     );
 }
 
+function validatedIndicatorOutputBindings(
+  indicator: WorkspaceIndicator,
+  definition: InstalledIndicatorDefinition,
+): ReturnType<typeof indicatorOutputBindings> {
+  const declaredInputs = new Map(
+    definition.inputs.map((input) => [input.key, input]),
+  );
+  return indicatorOutputBindings(indicator).map((binding) => {
+    const declaredInput = declaredInputs.get(binding.inputKey);
+    if (declaredInput === undefined) {
+      throw new IndicatorDependencyGraphError(
+        "INDICATOR_DEPENDENCY_MISSING_INPUT",
+        `Indicator ${indicator.instanceId} binding ${binding.inputKey} does not match a declared input.`,
+      );
+    }
+    if (declaredInput.type !== "source") {
+      throw new IndicatorDependencyGraphError(
+        "INDICATOR_DEPENDENCY_INCOMPATIBLE_INPUT",
+        `Indicator ${indicator.instanceId} binding ${binding.inputKey} requires a source input, received ${declaredInput.type}.`,
+      );
+    }
+    return binding;
+  });
+}
+
 function registrationName(summary: InstalledIndicatorSummary): string {
   return [
     "ERC_PLUGIN",
@@ -328,31 +355,33 @@ export function pluginIndicatorSettingsFields(
   chartTimeframeId?: string,
   parameters: Readonly<Record<string, unknown>> = {},
 ): readonly PluginIndicatorSettingsField[] {
-  return definition.inputs.map((input) => {
-    if (
-      input.type !== "string" ||
-      input.editor !== "timeframe" ||
-      availableTimeframeIds === undefined ||
-      chartTimeframeId === undefined
-    ) {
-      return { ...input };
-    }
-    const options = [
-      { value: "chart", label: `Chart (${chartTimeframeId})` },
-      ...availableTimeframeIds
-        .filter((value, index, values) => values.indexOf(value) === index)
-        .map((value) => ({ value, label: value })),
-    ];
-    const requested = parameters[input.key];
-    if (
-      typeof requested === "string" &&
-      requested !== "chart" &&
-      !options.some(({ value }) => value === requested)
-    ) {
-      options.push({ value: requested, label: `${requested} (Unavailable)` });
-    }
-    return { ...input, options };
-  });
+  return definition.inputs
+    .filter((input) => input.type !== "source")
+    .map((input) => {
+      if (
+        input.type !== "string" ||
+        input.editor !== "timeframe" ||
+        availableTimeframeIds === undefined ||
+        chartTimeframeId === undefined
+      ) {
+        return { ...input };
+      }
+      const options = [
+        { value: "chart", label: `Chart (${chartTimeframeId})` },
+        ...availableTimeframeIds
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .map((value) => ({ value, label: value })),
+      ];
+      const requested = parameters[input.key];
+      if (
+        typeof requested === "string" &&
+        requested !== "chart" &&
+        !options.some(({ value }) => value === requested)
+      ) {
+        options.push({ value: requested, label: `${requested} (Unavailable)` });
+      }
+      return { ...input, options };
+    });
 }
 
 export function resolvePluginIndicatorSourcePlan(
@@ -432,6 +461,10 @@ export function updatePluginIndicatorParameters(
       if (input.min !== undefined && value < input.min) return undefined;
       if (input.max !== undefined && value > input.max) return undefined;
       parameters[input.key] = value;
+      continue;
+    }
+    if (input.type === "source") {
+      parameters[input.key] = input.defaultValue;
       continue;
     }
     const value = raw ?? input.defaultValue;
@@ -769,6 +802,7 @@ async function dependencySnapshotsFor(
         sourceGeneration: upstream.dataGeneration,
         sourceRevision: upstream.dataRevision,
         configGeneration: upstream.configGeneration,
+        outputRevision: upstream.outputRevision,
         points: upstream.publishedPoints.map((point) => ({
           openTimeMs: point.openTimeMs,
           values: {
@@ -780,7 +814,7 @@ async function dependencySnapshotsFor(
   );
 }
 
-function dependencyVersion(
+export function pluginIndicatorDependencyVersion(
   dependencies: readonly IndicatorWorkerDependencySnapshot[],
 ): string | undefined {
   if (dependencies.length === 0) return undefined;
@@ -793,6 +827,7 @@ function dependencyVersion(
         sourceGeneration,
         sourceRevision,
         configGeneration,
+        outputRevision,
       }) => ({
         inputKey,
         instanceId,
@@ -800,6 +835,7 @@ function dependencyVersion(
         sourceGeneration,
         sourceRevision,
         configGeneration,
+        outputRevision,
       }),
     ),
   );
@@ -834,7 +870,8 @@ async function calculatePluginIndicator(
           context.dependencyBindings.length === 0
             ? []
             : await dependencySnapshotsFor(context, next);
-        const nextDependencyVersion = dependencyVersion(dependencies);
+        const nextDependencyVersion =
+          pluginIndicatorDependencyVersion(dependencies);
         const dependencyChanged =
           nextDependencyVersion !== context.dependencyVersion;
         let data = incrementalDataUpdate(next, context);
@@ -915,6 +952,7 @@ async function calculatePluginIndicator(
           count,
           tail,
         );
+        context.outputRevision += 1;
         if (nextDependencyVersion === undefined)
           delete context.dependencyVersion;
         else context.dependencyVersion = nextDependencyVersion;
@@ -1027,7 +1065,7 @@ export function reconcilePluginIndicators(
       instanceId: indicator.instanceId,
       outputKeys: summary.definition.outputs.map(({ key }) => key),
       bindings: Object.fromEntries(
-        indicatorOutputBindings(indicator).map(
+        validatedIndicatorOutputBindings(indicator, summary.definition).map(
           ({ inputKey, instanceId, outputKey }) => [
             inputKey,
             { instanceId, outputKey },
@@ -1150,6 +1188,7 @@ export function reconcilePluginIndicators(
         sameConfiguration && previousContext !== undefined
           ? previousContext.configGeneration
           : (previousContext?.configGeneration ?? 0) + 1,
+      outputRevision: previousContext?.outputRevision ?? 0,
       ...(sameSource && previousContext?.lastCandleCount !== undefined
         ? { lastCandleCount: previousContext.lastCandleCount }
         : {}),
