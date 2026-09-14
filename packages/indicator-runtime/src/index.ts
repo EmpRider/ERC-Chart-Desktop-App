@@ -179,6 +179,9 @@ export interface IndicatorWorkerSupervisorOptions {
   readonly workerFactory?: IndicatorWorkerFactory;
   readonly startupTimeoutMs?: number;
   readonly updateTimeoutMs?: number;
+  readonly maxActiveWorkers?: number;
+  readonly maxPendingRequestsPerInstance?: number;
+  readonly maxConsecutiveFailures?: number;
 }
 
 export interface IndicatorWorkerSupervisor {
@@ -217,12 +220,27 @@ interface WorkerState {
 
 const defaultStartupTimeoutMs = 2_000;
 const defaultUpdateTimeoutMs = 100;
+const defaultMaxActiveWorkers = 20;
+const defaultMaxPendingRequestsPerInstance = 2;
+const defaultMaxConsecutiveFailures = 3;
 const maximumHistoryTimeoutMs = 60_000;
 const historyTimeoutPerBarMs = 5;
 
 function positiveTimeout(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value > 0
     ? value
+    : fallback;
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.length > 0
+    ? error.message
     : fallback;
 }
 
@@ -400,8 +418,32 @@ export function createIndicatorWorkerSupervisor(
     options.updateTimeoutMs,
     defaultUpdateTimeoutMs,
   );
+  const maxActiveWorkers = positiveInteger(
+    options.maxActiveWorkers,
+    defaultMaxActiveWorkers,
+  );
+  const maxPendingRequestsPerInstance = positiveInteger(
+    options.maxPendingRequestsPerInstance,
+    defaultMaxPendingRequestsPerInstance,
+  );
+  const maxConsecutiveFailures = positiveInteger(
+    options.maxConsecutiveFailures,
+    defaultMaxConsecutiveFailures,
+  );
   const states = new Map<string, WorkerState>();
+  const consecutiveFailures = new Map<string, number>();
+  const latestRequests = new Map<
+    string,
+    { readonly dataRevision: number; readonly configGeneration: number }
+  >();
   let nextSequence = 1;
+
+  const recordFailure = (instanceId: string): void => {
+    consecutiveFailures.set(
+      instanceId,
+      (consecutiveFailures.get(instanceId) ?? 0) + 1,
+    );
+  };
 
   const settleStale = (state: WorkerState, pending: PendingRequest): void => {
     if (state.latestResult?.sequence === state.latestSequence) {
@@ -411,21 +453,42 @@ export function createIndicatorWorkerSupervisor(
     state.staleWaiters.push(pending);
   };
 
-  const failState = (instanceId: string, error: Error): void => {
+  const failState = (
+    instanceId: string,
+    error: Error,
+    countFailure = true,
+  ): void => {
     const state = states.get(instanceId);
-    if (state === undefined) return;
+    if (state === undefined) {
+      if (countFailure) recordFailure(instanceId);
+      return;
+    }
     states.delete(instanceId);
-    state.worker.terminate();
     for (const pending of state.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
     state.pending.clear();
     for (const pending of state.staleWaiters.splice(0)) pending.reject(error);
+    try {
+      state.worker.terminate();
+    } catch {
+      // Pending callers already received the lifecycle failure that triggered termination.
+    }
+    if (countFailure) recordFailure(instanceId);
   };
 
   const createState = (instanceId: string): WorkerState => {
-    const worker = workerFactory(instanceId);
+    let worker: IndicatorWorkerLike;
+    try {
+      worker = workerFactory(instanceId);
+    } catch (error) {
+      recordFailure(instanceId);
+      throw new IndicatorWorkerRuntimeError(
+        "INDICATOR_WORKER_START_FAILED",
+        errorMessage(error, "Indicator worker failed to start."),
+      );
+    }
     const state: WorkerState = {
       worker,
       pending: new Map(),
@@ -434,6 +497,7 @@ export function createIndicatorWorkerSupervisor(
       initialized: false,
     };
     worker.onerror = (event): void => {
+      if (states.get(instanceId) !== state) return;
       failState(
         instanceId,
         new IndicatorWorkerRuntimeError(
@@ -443,6 +507,7 @@ export function createIndicatorWorkerSupervisor(
       );
     };
     worker.onmessage = (event): void => {
+      if (states.get(instanceId) !== state) return;
       if (!isWorkerResponse(event.data)) {
         failState(
           instanceId,
@@ -471,7 +536,6 @@ export function createIndicatorWorkerSupervisor(
         return;
       }
       clearTimeout(pending.timer);
-      state.pending.delete(message.sequence);
       if (message.type === "error") {
         failState(
           instanceId,
@@ -479,12 +543,14 @@ export function createIndicatorWorkerSupervisor(
         );
         return;
       }
+      state.pending.delete(message.sequence);
       if (message.sequence < state.latestSequence) {
         settleStale(state, pending);
         return;
       }
       state.initialized = true;
       state.latestResult = message;
+      consecutiveFailures.delete(instanceId);
       pending.resolve(message);
       for (const stale of state.staleWaiters.splice(0)) {
         clearTimeout(stale.timer);
@@ -519,7 +585,58 @@ export function createIndicatorWorkerSupervisor(
         ),
       );
     }
-    const state = existingState ?? createState(request.instanceId);
+    const latestRequest = latestRequests.get(request.instanceId);
+    if (
+      latestRequest !== undefined &&
+      (request.configGeneration < latestRequest.configGeneration ||
+        (request.configGeneration === latestRequest.configGeneration &&
+          request.dataRevision < latestRequest.dataRevision))
+    ) {
+      return Promise.reject(
+        new IndicatorWorkerRuntimeError(
+          "INDICATOR_WORKER_STALE_REQUEST",
+          "Indicator worker request used a stale generation or data revision.",
+        ),
+      );
+    }
+    if (existingState === undefined) {
+      if (
+        (consecutiveFailures.get(request.instanceId) ?? 0) >=
+        maxConsecutiveFailures
+      ) {
+        return Promise.reject(
+          new IndicatorWorkerRuntimeError(
+            "INDICATOR_WORKER_RESTART_LIMIT",
+            "Indicator worker exceeded its consecutive failure restart limit.",
+          ),
+        );
+      }
+      if (states.size >= maxActiveWorkers) {
+        return Promise.reject(
+          new IndicatorWorkerRuntimeError(
+            "INDICATOR_WORKER_CAPACITY_EXCEEDED",
+            "Indicator worker capacity is exhausted.",
+          ),
+        );
+      }
+    }
+    let state: WorkerState;
+    try {
+      state = existingState ?? createState(request.instanceId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (
+      state.pending.size + state.staleWaiters.length >=
+      maxPendingRequestsPerInstance
+    ) {
+      return Promise.reject(
+        new IndicatorWorkerRuntimeError(
+          "INDICATOR_WORKER_QUEUE_FULL",
+          "Indicator worker pending-request quota is exhausted.",
+        ),
+      );
+    }
     const sequence = nextSequence;
     nextSequence += 1;
     state.latestSequence = sequence;
@@ -528,6 +645,10 @@ export function createIndicatorWorkerSupervisor(
       sequence,
       ...request,
     };
+    latestRequests.set(request.instanceId, {
+      dataRevision: request.dataRevision,
+      configGeneration: request.configGeneration,
+    });
     return new Promise<IndicatorWorkerExecutionResult>((resolve, reject) => {
       const historyCalculation =
         request.data.kind === "snapshot" || request.data.kind === "rebuild";
@@ -562,17 +683,34 @@ export function createIndicatorWorkerSupervisor(
         );
       }, timeoutMs);
       state.pending.set(sequence, { request: message, resolve, reject, timer });
-      state.worker.postMessage(message);
+      try {
+        state.worker.postMessage(message);
+      } catch (error) {
+        failState(
+          request.instanceId,
+          new IndicatorWorkerRuntimeError(
+            "INDICATOR_WORKER_POST_FAILED",
+            errorMessage(
+              error,
+              "Indicator worker request could not be posted.",
+            ),
+          ),
+        );
+      }
     });
   };
 
   return {
     sync,
     disposeInstance: (instanceId: string): void => {
+      consecutiveFailures.delete(instanceId);
+      latestRequests.delete(instanceId);
       const state = states.get(instanceId);
       if (state === undefined) return;
       try {
         state.worker.postMessage({ type: "dispose", instanceId });
+      } catch {
+        // Disposal still terminates the worker and settles pending callers below.
       } finally {
         failState(
           instanceId,
@@ -580,6 +718,7 @@ export function createIndicatorWorkerSupervisor(
             "INDICATOR_WORKER_DISPOSED",
             "Indicator worker was disposed.",
           ),
+          false,
         );
       }
     },
@@ -591,8 +730,11 @@ export function createIndicatorWorkerSupervisor(
             "INDICATOR_WORKER_DISPOSED",
             "Indicator worker was disposed.",
           ),
+          false,
         );
       }
+      consecutiveFailures.clear();
+      latestRequests.clear();
     },
   };
 }
