@@ -23,7 +23,9 @@ export default {
           })),
           overlays: [],
           signals:
-            sourceMetadata === undefined || sourceCandle === undefined
+            sourceMetadata === undefined ||
+            sourceCandle === undefined ||
+            sourceCandle.instrumentId !== sourceMetadata.instrumentId
               ? []
               : [
                   {
@@ -33,6 +35,15 @@ export default {
                     finalized: true,
                     sources: [
                       {
+                        ...(sourceMetadata.providerProfileId === undefined
+                          ? {}
+                          : {
+                              providerProfileId:
+                                sourceMetadata.providerProfileId,
+                            }),
+                        ...(sourceMetadata.instrumentId === undefined
+                          ? {}
+                          : { instrumentId: sourceMetadata.instrumentId }),
                         timeframeId: "1h",
                         activeTimeframeId: sourceMetadata.activeTimeframeId,
                         openTimeMs: sourceCandle.openTimeMs,

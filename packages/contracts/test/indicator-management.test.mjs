@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as indicatorContracts from "../dist/index.js";
 import {
   isIndicatorRuntimeSnapshot,
   isInstalledIndicatorDefinition,
@@ -35,6 +36,65 @@ function summary(runtimeEntryUrl, overrides = {}) {
     ...overrides,
   };
 }
+
+test("worker history snapshots use validated Float64Array columns and round-trip candles", () => {
+  assert.equal(
+    typeof indicatorContracts.createIndicatorWorkerCandleSnapshot,
+    "function",
+  );
+  assert.equal(
+    typeof indicatorContracts.isIndicatorWorkerCandleSnapshot,
+    "function",
+  );
+  assert.equal(
+    typeof indicatorContracts.materializeIndicatorWorkerCandleSnapshot,
+    "function",
+  );
+
+  const candles = [
+    {
+      instrumentId: "TEST",
+      timeframeId: "1m",
+      openTimeMs: 60_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+      volume: 5,
+    },
+    {
+      instrumentId: "TEST",
+      timeframeId: "1m",
+      openTimeMs: 120_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+  const snapshot =
+    indicatorContracts.createIndicatorWorkerCandleSnapshot(candles);
+
+  for (const key of ["openTimeMs", "open", "high", "low", "close", "volume"]) {
+    assert.equal(snapshot[key] instanceof Float64Array, true, key);
+  }
+  assert.deepEqual([...snapshot.openTimeMs], [60_000, 120_000]);
+  assert.deepEqual([...snapshot.close], [11, 12]);
+  assert.equal(snapshot.volume[0], 5);
+  assert.equal(Number.isNaN(snapshot.volume[1]), true);
+  assert.equal(
+    indicatorContracts.isIndicatorWorkerCandleSnapshot(snapshot),
+    true,
+  );
+  assert.deepEqual(
+    indicatorContracts.materializeIndicatorWorkerCandleSnapshot(
+      snapshot,
+      "TEST",
+      "1m",
+    ),
+    candles,
+  );
+});
 
 test("accepts only canonical erc-plugin runtime entry URLs for the installed plugin", () => {
   const revision = "a".repeat(64);
@@ -145,6 +205,8 @@ test("indicator candle type input keys must reference declared candle type input
 
 test("runtime signals validate source revision and synthetic provenance", () => {
   const source = {
+    providerProfileId: "profile-a",
+    instrumentId: "TEST",
     timeframeId: "1h",
     activeTimeframeId: "1h",
     openTimeMs: 0,
@@ -166,6 +228,18 @@ test("runtime signals validate source revision and synthetic provenance", () => 
     ],
   };
   assert.equal(isIndicatorRuntimeSnapshot(snapshot), true);
+  assert.equal(
+    isIndicatorRuntimeSnapshot({
+      ...snapshot,
+      signals: [
+        {
+          ...snapshot.signals[0],
+          sources: [{ ...source, providerProfileId: "" }],
+        },
+      ],
+    }),
+    false,
+  );
   assert.equal(
     isIndicatorRuntimeSnapshot({
       ...snapshot,

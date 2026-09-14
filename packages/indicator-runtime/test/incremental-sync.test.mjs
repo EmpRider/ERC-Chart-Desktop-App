@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createIndicatorWorkerCandleSnapshot } from "@erc-chart/contracts";
 import { createIndicatorWorkerSupervisor } from "../dist/index.js";
 
 const first = {
@@ -104,7 +105,12 @@ test("sequences consecutive data revisions through one persistent worker", async
   });
 
   try {
-    await supervisor.sync(request(1, { kind: "snapshot", candles: [first] }));
+    await supervisor.sync(
+      request(1, {
+        kind: "snapshot",
+        snapshot: createIndicatorWorkerCandleSnapshot([first]),
+      }),
+    );
     await supervisor.sync(
       request(2, { kind: "building", candle: firstUpdate }),
     );

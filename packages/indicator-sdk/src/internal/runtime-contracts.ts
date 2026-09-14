@@ -36,6 +36,8 @@ export interface IndicatorSnapshot {
 }
 
 export interface IndicatorSourceMetadata {
+  readonly providerProfileId?: string;
+  readonly instrumentId?: string;
   readonly activeTimeframeId: string;
   readonly generation: number;
   readonly revision: number;

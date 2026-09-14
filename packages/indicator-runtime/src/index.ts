@@ -1,4 +1,7 @@
-import { isIndicatorRuntimeSnapshot } from "@erc-chart/contracts";
+import {
+  isIndicatorRuntimeSnapshot,
+  isIndicatorWorkerCandleSnapshot,
+} from "@erc-chart/contracts";
 import type {
   Candle,
   IndicatorParameterValue,
@@ -7,6 +10,7 @@ import type {
   IndicatorRuntimePoint,
   IndicatorRuntimeSignal,
   IndicatorRuntimeSnapshot,
+  IndicatorWorkerCandleSnapshot,
   InstalledIndicatorDefinition,
   InstalledIndicatorInputDefinition,
 } from "@erc-chart/contracts";
@@ -80,9 +84,11 @@ export interface IndicatorWorkerExecutionRequest {
 }
 
 export interface IndicatorWorkerSourceSnapshot {
+  readonly providerProfileId: string;
+  readonly instrumentId: string;
   readonly timeframeId: string;
   readonly activeTimeframeId?: string;
-  readonly candles: readonly Candle[];
+  readonly snapshot: IndicatorWorkerCandleSnapshot;
   readonly provenance: IndicatorSourceProvenance;
   readonly generation: number;
   readonly revision: number;
@@ -91,8 +97,12 @@ export interface IndicatorWorkerSourceSnapshot {
 
 export type IndicatorWorkerDataUpdate =
   | {
-      readonly kind: "snapshot" | "rebuild";
-      readonly candles: readonly Candle[];
+      readonly kind: "snapshot";
+      readonly snapshot: IndicatorWorkerCandleSnapshot;
+    }
+  | {
+      readonly kind: "rebuild";
+      readonly snapshot: IndicatorWorkerCandleSnapshot;
     }
   | {
       readonly kind: "building";
@@ -229,6 +239,109 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isSafeGeneration(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isNonEmptyText(value: unknown, maximum = 256): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum &&
+    value.trim() === value
+  );
+}
+
+function isCandle(value: unknown): value is Candle {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyText(value.instrumentId) &&
+    isNonEmptyText(value.timeframeId, 64) &&
+    Number.isSafeInteger(value.openTimeMs) &&
+    Number(value.openTimeMs) >= 0 &&
+    Number.isFinite(value.open) &&
+    Number.isFinite(value.high) &&
+    Number.isFinite(value.low) &&
+    Number.isFinite(value.close) &&
+    (value.volume === undefined || Number.isFinite(value.volume))
+  );
+}
+
+function isSourceProvenance(
+  value: unknown,
+): value is IndicatorSourceProvenance {
+  if (!isRecord(value)) return false;
+  return (
+    (value.kind === "market" && value.candleType === "standard") ||
+    (value.kind === "synthetic" && value.candleType === "heikin-ashi")
+  );
+}
+
+function isParameterValues(value: unknown): value is IndicatorParameterValues {
+  if (!isRecord(value) || Object.keys(value).length > 128) return false;
+  return Object.values(value).every(
+    (item) =>
+      typeof item === "boolean" ||
+      (typeof item === "number" && Number.isFinite(item)) ||
+      (typeof item === "string" && item.length <= 8_192),
+  );
+}
+
+function isWorkerSourceSnapshot(
+  value: unknown,
+): value is IndicatorWorkerSourceSnapshot {
+  if (!isRecord(value)) return false;
+  const activeTimeframeId = value.activeTimeframeId ?? value.timeframeId;
+  return (
+    isNonEmptyText(value.providerProfileId) &&
+    isNonEmptyText(value.instrumentId) &&
+    isNonEmptyText(value.timeframeId, 64) &&
+    isNonEmptyText(activeTimeframeId, 64) &&
+    isIndicatorWorkerCandleSnapshot(value.snapshot) &&
+    isSourceProvenance(value.provenance) &&
+    isSafeGeneration(value.generation) &&
+    isSafeGeneration(value.revision) &&
+    Number.isSafeInteger(value.finalizedCount) &&
+    Number(value.finalizedCount) >= 0 &&
+    Number(value.finalizedCount) <= value.snapshot.openTimeMs.length
+  );
+}
+
+function isWorkerDataUpdate(
+  value: unknown,
+): value is IndicatorWorkerDataUpdate {
+  if (!isRecord(value)) return false;
+  if (value.kind === "snapshot" || value.kind === "rebuild") {
+    return isIndicatorWorkerCandleSnapshot(value.snapshot);
+  }
+  if (value.kind === "building") return isCandle(value.candle);
+  return (
+    value.kind === "rollover" &&
+    isCandle(value.finalized) &&
+    isCandle(value.building)
+  );
+}
+
+function isWorkerExecutionRequest(
+  value: unknown,
+): value is IndicatorWorkerExecutionRequest {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyText(value.instanceId) &&
+    isNonEmptyText(value.runtimeEntryUrl, 2_048) &&
+    isNonEmptyText(value.pluginId) &&
+    isNonEmptyText(value.definitionId) &&
+    isNonEmptyText(value.instrumentId) &&
+    isNonEmptyText(value.timeframeId, 64) &&
+    isParameterValues(value.parameters) &&
+    (value.sourceProvenance === undefined ||
+      isSourceProvenance(value.sourceProvenance)) &&
+    (value.sources === undefined ||
+      (Array.isArray(value.sources) &&
+        value.sources.length <= 64 &&
+        value.sources.every(isWorkerSourceSnapshot))) &&
+    isWorkerDataUpdate(value.data) &&
+    isSafeGeneration(value.dataRevision) &&
+    isSafeGeneration(value.configGeneration)
+  );
 }
 
 function isWorkerResultUpdate(
@@ -382,6 +495,14 @@ export function createIndicatorWorkerSupervisor(
   const sync = (
     request: IndicatorWorkerExecutionRequest,
   ): Promise<IndicatorWorkerExecutionResult> => {
+    if (!isWorkerExecutionRequest(request)) {
+      return Promise.reject(
+        new IndicatorWorkerRuntimeError(
+          "INDICATOR_WORKER_PROTOCOL_INVALID",
+          "Indicator worker request failed protocol validation.",
+        ),
+      );
+    }
     const existingState = states.get(request.instanceId);
     if (
       existingState === undefined &&
@@ -411,7 +532,10 @@ export function createIndicatorWorkerSupervisor(
         ? Math.min(
             maximumHistoryTimeoutMs,
             startupTimeoutMs +
-              request.data.candles.length * historyTimeoutPerBarMs,
+              (isIndicatorWorkerCandleSnapshot(request.data.snapshot)
+                ? request.data.snapshot.openTimeMs.length
+                : 0) *
+                historyTimeoutPerBarMs,
           )
         : startupTimeoutMs;
       const timeoutMs =

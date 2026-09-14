@@ -151,6 +151,15 @@ export interface IndicatorRuntimeUpdateRequest {
   readonly candle: Candle;
 }
 
+export interface IndicatorWorkerCandleSnapshot {
+  readonly openTimeMs: Float64Array;
+  readonly open: Float64Array;
+  readonly high: Float64Array;
+  readonly low: Float64Array;
+  readonly close: Float64Array;
+  readonly volume: Float64Array;
+}
+
 export interface IndicatorRuntimePoint {
   readonly openTimeMs: number;
   readonly values: Readonly<Record<string, number | null>>;
@@ -189,6 +198,8 @@ export type IndicatorRuntimeSignalSourceProvenance =
   | Readonly<{ kind: "synthetic"; candleType: "heikin-ashi" }>;
 
 export interface IndicatorRuntimeSignalSource {
+  readonly providerProfileId?: string;
+  readonly instrumentId?: string;
   readonly timeframeId: string;
   readonly activeTimeframeId: string;
   readonly openTimeMs: number;
@@ -568,6 +579,96 @@ function isCandle(value: unknown): value is Candle {
   );
 }
 
+export function createIndicatorWorkerCandleSnapshot(
+  candles: readonly Candle[],
+): IndicatorWorkerCandleSnapshot {
+  if (candles.length > 100_000 || !candles.every(isCandle)) {
+    throw new RangeError("Indicator worker candle snapshot is invalid.");
+  }
+  const openTimeMs = new Float64Array(candles.length);
+  const open = new Float64Array(candles.length);
+  const high = new Float64Array(candles.length);
+  const low = new Float64Array(candles.length);
+  const close = new Float64Array(candles.length);
+  const volume = new Float64Array(candles.length).fill(Number.NaN);
+  for (let index = 0; index < candles.length; index += 1) {
+    const candle = candles[index];
+    if (candle === undefined) continue;
+    openTimeMs[index] = candle.openTimeMs;
+    open[index] = candle.open;
+    high[index] = candle.high;
+    low[index] = candle.low;
+    close[index] = candle.close;
+    if (candle.volume !== undefined) volume[index] = candle.volume;
+  }
+  return Object.freeze({ openTimeMs, open, high, low, close, volume });
+}
+
+export function isIndicatorWorkerCandleSnapshot(
+  value: unknown,
+): value is IndicatorWorkerCandleSnapshot {
+  if (!isRecord(value) || !(value.openTimeMs instanceof Float64Array)) {
+    return false;
+  }
+  const length = value.openTimeMs.length;
+  if (length > 100_000) return false;
+  if (
+    !(value.open instanceof Float64Array) ||
+    !(value.high instanceof Float64Array) ||
+    !(value.low instanceof Float64Array) ||
+    !(value.close instanceof Float64Array) ||
+    !(value.volume instanceof Float64Array) ||
+    value.open.length !== length ||
+    value.high.length !== length ||
+    value.low.length !== length ||
+    value.close.length !== length ||
+    value.volume.length !== length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < length; index += 1) {
+    const openTimeMs = value.openTimeMs[index];
+    if (
+      !Number.isSafeInteger(openTimeMs) ||
+      Number(openTimeMs) < 0 ||
+      !Number.isFinite(value.open[index]) ||
+      !Number.isFinite(value.high[index]) ||
+      !Number.isFinite(value.low[index]) ||
+      !Number.isFinite(value.close[index]) ||
+      (!Number.isNaN(value.volume[index]) &&
+        !Number.isFinite(value.volume[index]))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function materializeIndicatorWorkerCandleSnapshot(
+  snapshot: IndicatorWorkerCandleSnapshot,
+  instrumentId: Candle["instrumentId"],
+  timeframeId: Candle["timeframeId"],
+): readonly Candle[] {
+  if (!isIndicatorWorkerCandleSnapshot(snapshot)) {
+    throw new RangeError("Indicator worker candle snapshot is invalid.");
+  }
+  return Object.freeze(
+    Array.from({ length: snapshot.openTimeMs.length }, (_, index) => {
+      const volume = snapshot.volume[index];
+      return Object.freeze({
+        instrumentId,
+        timeframeId,
+        openTimeMs: snapshot.openTimeMs[index] ?? 0,
+        open: snapshot.open[index] ?? 0,
+        high: snapshot.high[index] ?? 0,
+        low: snapshot.low[index] ?? 0,
+        close: snapshot.close[index] ?? 0,
+        ...(volume === undefined || Number.isNaN(volume) ? {} : { volume }),
+      });
+    }),
+  );
+}
+
 function isParameterValues(value: unknown): value is IndicatorParameterValues {
   return (
     isRecord(value) &&
@@ -704,6 +805,10 @@ function isRuntimeSignalSource(
       (provenance.kind === "synthetic" &&
         provenance.candleType === "heikin-ashi"));
   return (
+    (value.providerProfileId === undefined ||
+      isBoundedText(value.providerProfileId, 256)) &&
+    (value.instrumentId === undefined ||
+      isBoundedText(value.instrumentId, 256)) &&
     isBoundedText(value.timeframeId, 64) &&
     isBoundedText(value.activeTimeframeId, 64) &&
     Number.isSafeInteger(value.openTimeMs) &&
