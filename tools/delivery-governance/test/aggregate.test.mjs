@@ -4,7 +4,6 @@ import { aggregateResults } from "../src/aggregate.mjs";
 
 const base = {
   governance: "success",
-  applicationLinux: "skipped",
   applicationWindows: "skipped",
   applicationPresent: false,
   epicToMain: false,
@@ -16,34 +15,32 @@ test("no application accepts skipped jobs", () =>
   assert.equal(aggregateResults(base).ok, true));
 test("no application rejects a falsely successful application job", () =>
   assert.equal(
-    aggregateResults({ ...base, applicationLinux: "success" }).ok,
+    aggregateResults({ ...base, applicationWindows: "success" }).ok,
     false,
   ));
-test("application manifest requires Linux success", () =>
+test("application manifest requires Windows success", () =>
   assert.equal(
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationLinux: "failure",
+      applicationWindows: "failure",
     }).ok,
     false,
   ));
-test("task-to-epic accepts skipped Windows", () =>
+test("task-to-epic passes with Windows success", () =>
   assert.equal(
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationLinux: "success",
+      applicationWindows: "success",
     }).ok,
     true,
   ));
-test("task-to-epic rejects a Windows job that ran", () =>
+test("task-to-epic rejects skipped Windows", () =>
   assert.equal(
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationLinux: "success",
-      applicationWindows: "success",
     }).ok,
     false,
   ));
@@ -52,7 +49,6 @@ test("epic-to-main requires Windows success", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationLinux: "success",
       epicToMain: true,
     }).ok,
     false,
@@ -62,7 +58,6 @@ test("epic-to-main passes with Windows success", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationLinux: "success",
       applicationWindows: "success",
       epicToMain: true,
     }).ok,
@@ -84,7 +79,7 @@ test("docs-only application rejects an application job that ran", () =>
       ...base,
       applicationPresent: true,
       docsOnly: true,
-      applicationLinux: "success",
+      applicationWindows: "success",
     }).ok,
     false,
   ));
@@ -102,7 +97,7 @@ test("cancelled jobs fail", () =>
     aggregateResults({
       ...base,
       applicationPresent: true,
-      applicationLinux: "cancelled",
+      applicationWindows: "cancelled",
     }).ok,
     false,
   ));

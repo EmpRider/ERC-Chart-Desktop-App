@@ -112,60 +112,13 @@ jobs:
           console.log(`application_present=${result.applicationPresent}`);
           NODE
 
-  application-linux:
-    name: Application / Linux
-    needs: governance
-    if: >-
-      needs.governance.outputs.application_present == 'true' &&
-      needs.governance.outputs.docs_only != 'true' &&
-      needs.governance.outputs.governance_only != 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 26.8.1
-          package-manager-cache: false
-      - name: Set up pinned npm
-        run: npm install --global npm@12.0.2
-      - run: npm ci --audit=false
-      - name: Configure Chromium SUID sandbox
-        shell: bash
-        run: |
-          set -euo pipefail
-          node node_modules/electron/install.js
-          sandbox_path="node_modules/electron/dist/chrome-sandbox"
-          sudo chown root:root "$sandbox_path"
-          sudo chmod 4755 "$sandbox_path"
-          test "$(stat -c '%U:%G %a' "$sandbox_path")" = "root:root 4755"
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:unit
-      - run: npm run test:integration
-      - name: Smoke Electron development shell
-        run: xvfb-run -a npm run smoke:electron
-      - name: Smoke workspace persistence across restart
-        run: xvfb-run -a npm run smoke:workspace-restart
-      - name: Smoke two independent Electron instances
-        run: xvfb-run -a npm run smoke:multi-instance
-      - run: npm run build
-      - run: npm run test:performance
-      - run: npm run audit:ci
-      - run: npm run version:check
-
   application-windows:
     name: Application / Windows
     needs: governance
     if: >-
       needs.governance.outputs.application_present == 'true' &&
       needs.governance.outputs.docs_only != 'true' &&
-      needs.governance.outputs.governance_only != 'true' &&
-      startsWith(github.head_ref, 'epic/') &&
-      github.base_ref == 'main'
+      needs.governance.outputs.governance_only != 'true'
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -184,20 +137,24 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:integration
+      - run: npm run smoke:electron
       - run: npm run build
       - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
       - run: npm run version:check
-      - run: npm run package:win
-      - run: npm run smoke:installer
+      - name: Package Windows installer
+        if: startsWith(github.head_ref, 'epic/') && github.base_ref == 'main'
+        run: npm run package:win
+      - name: Smoke Windows installer
+        if: startsWith(github.head_ref, 'epic/') && github.base_ref == 'main'
+        run: npm run smoke:installer
 
   delivery-gates:
     name: Delivery gates
     if: always()
     needs:
       - governance
-      - application-linux
       - application-windows
     runs-on: ubuntu-24.04
     steps:
@@ -213,7 +170,6 @@ jobs:
         shell: bash
         env:
           GOVERNANCE_RESULT: ${{ needs.governance.result }}
-          APPLICATION_LINUX_RESULT: ${{ needs.application-linux.result }}
           APPLICATION_WINDOWS_RESULT: ${{ needs.application-windows.result }}
           APPLICATION_PRESENT: ${{ needs.governance.outputs.application_present == 'true' && needs.governance.outputs.docs_only != 'true' && needs.governance.outputs.governance_only != 'true' }}
           APPLICATION_CONTRACT_PRESENT: ${{ needs.governance.outputs.application_present }}
