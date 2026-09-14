@@ -125,3 +125,7 @@ Commit format: `ECDD-235: publish SDK v2 as v1.1.0`.
 - [ ] **Step 4: After task merge, run the required epic -> main review sequence**
 
 Do not publish or retarget `v1.0.0`. The successful release must create `v1.1.0` from the exact accepted `main` commit.
+
+## Execution evidence
+
+The first CI attempt for the RED commit stopped at PR metadata validation before application tests. The PR body was corrected without changing the RED test; this documentation-only commit exists solely to trigger a fresh pull-request event that sees the corrected contract.
