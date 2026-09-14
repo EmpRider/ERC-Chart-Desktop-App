@@ -16,6 +16,7 @@ import {
   type IndicatorCandleType,
   type IndicatorWorkerSupervisor,
   type IndicatorWorkerDataUpdate,
+  type IndicatorWorkerDependencySnapshot,
   type IndicatorWorkerResultUpdate,
   type IndicatorWorkerSupervisorOptions,
 } from "@erc-chart/indicator-runtime";
@@ -32,8 +33,10 @@ export interface BrowserIndicatorSyncRequest extends Omit<
     readonly requestedTimeframeId: string;
     readonly activeTimeframeId: string;
   }[];
+  readonly dependencies?: readonly IndicatorWorkerDependencySnapshot[];
   readonly data: BrowserIndicatorDataUpdate;
   readonly rebuildCandles: () => readonly IndicatorRuntimeSyncRequest["candles"][number][];
+  readonly rebuildDependencies?: () => readonly IndicatorWorkerDependencySnapshot[];
   readonly dataRevision: number;
   readonly configGeneration: number;
 }
@@ -251,6 +254,7 @@ export function createBrowserIndicatorRuntime(
           readonly finalizedCount: number;
         }[] = [],
         sourceProvenance?: IndicatorSourceSnapshot["provenance"],
+        dependencies = request.dependencies,
       ) => {
         let workerData: IndicatorWorkerDataUpdate;
         if (data.kind === "snapshot" || data.kind === "rebuild") {
@@ -277,6 +281,7 @@ export function createBrowserIndicatorRuntime(
           parameters: request.parameters,
           ...(sourceProvenance === undefined ? {} : { sourceProvenance }),
           ...(workerSources.length === 0 ? {} : { sources: workerSources }),
+          ...(dependencies === undefined ? {} : { dependencies }),
           data: workerData,
           dataRevision: request.dataRevision,
           configGeneration: request.configGeneration,
@@ -357,6 +362,7 @@ export function createBrowserIndicatorRuntime(
             },
             workerSources,
             baseSnapshot.provenance,
+            request.rebuildDependencies?.() ?? request.dependencies,
           );
         if (
           previousVersion !== version ||
@@ -395,10 +401,15 @@ export function createBrowserIndicatorRuntime(
           ) {
             throw error;
           }
-          result = await execute({
-            kind: "rebuild",
-            candles: request.rebuildCandles(),
-          });
+          result = await execute(
+            {
+              kind: "rebuild",
+              candles: request.rebuildCandles(),
+            },
+            [],
+            undefined,
+            request.rebuildDependencies?.() ?? request.dependencies,
+          );
         }
       }
       if (

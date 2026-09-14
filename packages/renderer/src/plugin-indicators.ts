@@ -10,7 +10,10 @@ import type {
   WorkspaceIndicator,
 } from "@erc-chart/contracts";
 import {
+  IndicatorDependencyGraphError,
+  createIndicatorDependencyPlan,
   normalizeIndicatorParameters,
+  type IndicatorWorkerDependencySnapshot,
   type IndicatorWorkerResultUpdate,
 } from "@erc-chart/indicator-runtime";
 import type {
@@ -19,7 +22,10 @@ import type {
   IndicatorFigure,
   KLineData,
 } from "klinecharts";
-import type { BrowserIndicatorSyncRequest } from "./indicator-worker-runtime.js";
+import type {
+  BrowserIndicatorDataUpdate,
+  BrowserIndicatorSyncRequest,
+} from "./indicator-worker-runtime.js";
 import {
   indicatorShapeBaseline,
   indicatorShapeText,
@@ -84,8 +90,20 @@ interface RuntimeContext {
     readonly requestedTimeframeId: string;
     readonly activeTimeframeId: string;
   }[];
+  dependencyBindings: readonly {
+    readonly inputKey: string;
+    readonly instanceId: string;
+    readonly runtimeId: string;
+    readonly outputKey: string;
+  }[];
+  sourceKey: string;
+  calculationKey: string;
   sync: PluginIndicatorSync;
   rows?: PluginIndicatorFigureData[];
+  publishedPoints?: Map<number, IndicatorRuntimePoint>;
+  dependencyVersion?: string;
+  dependencyHistoryVersion?: string;
+  configurationRebuildPending?: boolean;
   overlays: readonly IndicatorRuntimeOverlay[];
   signals: readonly IndicatorRuntimeSignal[];
   pendingSeriesChange?: ProviderSeriesChange;
@@ -96,6 +114,8 @@ interface RuntimeContext {
   dataGeneration: number;
   dataRevision: number;
   configGeneration: number;
+  outputRevision: number;
+  historyRevisions: Map<string, number>;
   lastCandleCount?: number;
   lastBuilding: Candle | undefined;
 }
@@ -229,10 +249,74 @@ function calculationKey(
     timeframeId,
     chartTimeframeId,
     sourceTimeframes,
+    dependencyBindings: indicatorOutputBindings(indicator),
     parameters: normalizePluginIndicatorParameters(
       indicator,
       summary.definition,
     ),
+  });
+}
+
+function sourceKey(
+  providerProfileId: string,
+  instrumentId: string,
+  chartTimeframeId: string,
+  sourcePlan: PluginIndicatorSourcePlan,
+): string {
+  return JSON.stringify({
+    providerProfileId,
+    instrumentId,
+    chartTimeframeId,
+    timeframeId: sourcePlan.activeTimeframeId,
+    candleType: sourcePlan.candleType,
+    sourceTimeframes: sourcePlan.taSources,
+  });
+}
+
+function indicatorOutputBindings(indicator: WorkspaceIndicator): readonly {
+  readonly inputKey: string;
+  readonly instanceId: string;
+  readonly outputKey: string;
+}[] {
+  return Object.entries(indicator.inputs)
+    .flatMap(([inputKey, input]) =>
+      input.kind === "indicator-output"
+        ? [
+            {
+              inputKey,
+              instanceId: input.instanceId,
+              outputKey: input.outputKey,
+            },
+          ]
+        : [],
+    )
+    .sort(({ inputKey: left }, { inputKey: right }) =>
+      left.localeCompare(right),
+    );
+}
+
+function validatedIndicatorOutputBindings(
+  indicator: WorkspaceIndicator,
+  definition: InstalledIndicatorDefinition,
+): ReturnType<typeof indicatorOutputBindings> {
+  const declaredInputs = new Map(
+    definition.inputs.map((input) => [input.key, input]),
+  );
+  return indicatorOutputBindings(indicator).map((binding) => {
+    const declaredInput = declaredInputs.get(binding.inputKey);
+    if (declaredInput === undefined) {
+      throw new IndicatorDependencyGraphError(
+        "INDICATOR_DEPENDENCY_MISSING_INPUT",
+        `Indicator ${indicator.instanceId} binding ${binding.inputKey} does not match a declared input.`,
+      );
+    }
+    if (declaredInput.type !== "source") {
+      throw new IndicatorDependencyGraphError(
+        "INDICATOR_DEPENDENCY_INCOMPATIBLE_INPUT",
+        `Indicator ${indicator.instanceId} binding ${binding.inputKey} requires a source input, received ${declaredInput.type}.`,
+      );
+    }
+    return binding;
   });
 }
 
@@ -276,31 +360,33 @@ export function pluginIndicatorSettingsFields(
   chartTimeframeId?: string,
   parameters: Readonly<Record<string, unknown>> = {},
 ): readonly PluginIndicatorSettingsField[] {
-  return definition.inputs.map((input) => {
-    if (
-      input.type !== "string" ||
-      input.editor !== "timeframe" ||
-      availableTimeframeIds === undefined ||
-      chartTimeframeId === undefined
-    ) {
-      return { ...input };
-    }
-    const options = [
-      { value: "chart", label: `Chart (${chartTimeframeId})` },
-      ...availableTimeframeIds
-        .filter((value, index, values) => values.indexOf(value) === index)
-        .map((value) => ({ value, label: value })),
-    ];
-    const requested = parameters[input.key];
-    if (
-      typeof requested === "string" &&
-      requested !== "chart" &&
-      !options.some(({ value }) => value === requested)
-    ) {
-      options.push({ value: requested, label: `${requested} (Unavailable)` });
-    }
-    return { ...input, options };
-  });
+  return definition.inputs
+    .filter((input) => input.type !== "source")
+    .map((input) => {
+      if (
+        input.type !== "string" ||
+        input.editor !== "timeframe" ||
+        availableTimeframeIds === undefined ||
+        chartTimeframeId === undefined
+      ) {
+        return { ...input };
+      }
+      const options = [
+        { value: "chart", label: `Chart (${chartTimeframeId})` },
+        ...availableTimeframeIds
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .map((value) => ({ value, label: value })),
+      ];
+      const requested = parameters[input.key];
+      if (
+        typeof requested === "string" &&
+        requested !== "chart" &&
+        !options.some(({ value }) => value === requested)
+      ) {
+        options.push({ value: requested, label: `${requested} (Unavailable)` });
+      }
+      return { ...input, options };
+    });
 }
 
 export function resolvePluginIndicatorSourcePlan(
@@ -380,6 +466,10 @@ export function updatePluginIndicatorParameters(
       if (input.min !== undefined && value < input.min) return undefined;
       if (input.max !== undefined && value > input.max) return undefined;
       parameters[input.key] = value;
+      continue;
+    }
+    if (input.type === "source") {
+      parameters[input.key] = input.defaultValue;
       continue;
     }
     const value = raw ?? input.defaultValue;
@@ -625,20 +715,99 @@ function timeframeDurationMs(timeframeId: string): number | undefined {
   return Number.isSafeInteger(result) && result > 0 ? result : undefined;
 }
 
+function dependencyPointForRow(
+  openTimeMs: number,
+  row: PluginIndicatorFigureData,
+  outputKeys: readonly string[],
+): IndicatorRuntimePoint | undefined {
+  const values = Object.fromEntries(
+    outputKeys.map((outputKey) => [
+      outputKey,
+      typeof row[outputKey] === "number" ? row[outputKey] : null,
+    ]),
+  ) as Record<string, number | null>;
+  if (!Object.values(values).some((value) => value !== null)) return undefined;
+  return { openTimeMs, values };
+}
+
+function publishedDependencyPoints(
+  dataList: readonly KLineData[],
+  rows: readonly PluginIndicatorFigureData[],
+  outputKeys: readonly string[],
+): Map<number, IndicatorRuntimePoint> {
+  const published = new Map<number, IndicatorRuntimePoint>();
+  for (let index = 0; index < dataList.length; index += 1) {
+    const data = dataList[index];
+    const row = rows[index];
+    if (data === undefined || row === undefined) continue;
+    const point = dependencyPointForRow(data.timestamp, row, outputKeys);
+    if (point !== undefined) published.set(point.openTimeMs, point);
+  }
+  return published;
+}
+
+function publishedHistoryChangedOutputs(
+  previous: ReadonlyMap<number, IndicatorRuntimePoint>,
+  next: ReadonlyMap<number, IndicatorRuntimePoint>,
+  data: BrowserIndicatorDataUpdate,
+  outputKeys: readonly string[],
+): ReadonlySet<string> {
+  const deltaOpenTimes =
+    data.kind === "building"
+      ? new Set([data.candle.openTimeMs])
+      : data.kind === "rollover"
+        ? new Set([data.finalized.openTimeMs, data.building.openTimeMs])
+        : new Set<number>();
+  const changed = new Set<string>();
+  for (const openTimeMs of new Set([...previous.keys(), ...next.keys()])) {
+    if (deltaOpenTimes.has(openTimeMs)) continue;
+    const previousPoint = previous.get(openTimeMs);
+    const nextPoint = next.get(openTimeMs);
+    for (const outputKey of outputKeys) {
+      if (
+        (previousPoint?.values[outputKey] ?? null) !==
+        (nextPoint?.values[outputKey] ?? null)
+      )
+        changed.add(outputKey);
+    }
+  }
+  return changed;
+}
+
 function applyWorkerResult(
   dataList: readonly KLineData[],
   context: RuntimeContext,
+  data: BrowserIndicatorDataUpdate,
   result: IndicatorWorkerResultUpdate,
   candleCount = dataList.length,
   candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
+    const outputKeys = context.summary.definition.outputs.map(({ key }) => key);
     context.rows = alignPluginIndicatorSnapshotRows(
       dataList,
       result.snapshot,
       context.timeframeId,
       context.chartTimeframeId,
     );
+    const nextPublishedPoints = publishedDependencyPoints(
+      dataList,
+      context.rows,
+      outputKeys,
+    );
+    if (context.publishedPoints !== undefined) {
+      for (const outputKey of publishedHistoryChangedOutputs(
+        context.publishedPoints,
+        nextPublishedPoints,
+        data,
+        outputKeys,
+      ))
+        context.historyRevisions.set(
+          outputKey,
+          (context.historyRevisions.get(outputKey) ?? 0) + 1,
+        );
+    }
+    context.publishedPoints = nextPublishedPoints;
     const first = dataList[0]?.timestamp;
     if (first !== undefined) rowStartTimes.set(context.rows, first);
     context.overlays = result.snapshot.overlays;
@@ -672,9 +841,334 @@ function applyWorkerResult(
     }
     rows[startIndex + offset] = rowForPoint(point);
   }
+  const published =
+    context.publishedPoints ?? new Map<number, IndicatorRuntimePoint>();
+  const outputKeys = context.summary.definition.outputs.map(({ key }) => key);
+  for (let offset = 0; offset < expectedPointCount; offset += 1) {
+    const data = candleTail[candleTail.length - expectedPointCount + offset];
+    const row = rows[startIndex + offset];
+    if (data === undefined || row === undefined) continue;
+    const point = dependencyPointForRow(data.timestamp, row, outputKeys);
+    if (point === undefined) published.delete(data.timestamp);
+    else published.set(point.openTimeMs, point);
+  }
+  while (published.size > 100_000) {
+    const oldestOpenTimeMs = published.keys().next().value;
+    if (oldestOpenTimeMs === undefined) break;
+    published.delete(oldestOpenTimeMs);
+  }
+  context.publishedPoints = published;
   if (result.overlays !== undefined) context.overlays = result.overlays;
   if (result.signals !== undefined) context.signals = result.signals;
   return rows;
+}
+
+interface ResolvedIndicatorDependency {
+  readonly snapshot: Omit<IndicatorWorkerDependencySnapshot, "points">;
+  readonly points: ReadonlyMap<number, IndicatorRuntimePoint>;
+  readonly historyRevision: number;
+}
+
+async function resolveDependenciesFor(
+  context: RuntimeContext,
+  dataList: readonly KLineData[],
+): Promise<readonly ResolvedIndicatorDependency[]> {
+  return Promise.all(
+    context.dependencyBindings.map(async (binding) => {
+      let expected = contexts.get(binding.runtimeId);
+      if (expected === undefined) {
+        throw new Error(
+          `Indicator dependency ${binding.instanceId} is unavailable.`,
+        );
+      }
+      while (true) {
+        await calculatePluginIndicator(binding.runtimeId, dataList);
+        const upstream = contexts.get(binding.runtimeId);
+        if (upstream === undefined) {
+          throw new Error(
+            `Indicator dependency ${binding.instanceId} is unavailable.`,
+          );
+        }
+        if (upstream !== expected) {
+          expected = upstream;
+          continue;
+        }
+        if (upstream.publishedPoints === undefined) {
+          throw new Error(
+            `Indicator dependency ${binding.instanceId}.${binding.outputKey} has not published a result.`,
+          );
+        }
+        return {
+          snapshot: {
+            inputKey: binding.inputKey,
+            instanceId: binding.instanceId,
+            outputKey: binding.outputKey,
+            sourceGeneration: upstream.dataGeneration,
+            sourceRevision: upstream.dataRevision,
+            configGeneration: upstream.configGeneration,
+            outputRevision: upstream.outputRevision,
+          },
+          points: upstream.publishedPoints,
+          historyRevision:
+            upstream.historyRevisions.get(binding.outputKey) ?? 0,
+        } satisfies ResolvedIndicatorDependency;
+      }
+    }),
+  );
+}
+
+function dependencySnapshotsForData(
+  dependencies: readonly ResolvedIndicatorDependency[],
+  data: BrowserIndicatorDataUpdate,
+): readonly IndicatorWorkerDependencySnapshot[] {
+  const openTimeMs =
+    data.kind === "building"
+      ? [data.candle.openTimeMs]
+      : data.kind === "rollover"
+        ? [data.finalized.openTimeMs, data.building.openTimeMs]
+        : undefined;
+  const outputKeysByPoints = new Map<
+    ReadonlyMap<number, IndicatorRuntimePoint>,
+    Set<string>
+  >();
+  for (const { snapshot, points } of dependencies) {
+    const outputKeys = outputKeysByPoints.get(points) ?? new Set<string>();
+    outputKeys.add(snapshot.outputKey);
+    outputKeysByPoints.set(points, outputKeys);
+  }
+  const serializedByPoints = new Map<
+    ReadonlyMap<number, IndicatorRuntimePoint>,
+    readonly IndicatorRuntimePoint[]
+  >();
+  for (const [points, outputKeys] of outputKeysByPoints) {
+    const selected =
+      openTimeMs === undefined
+        ? [...points.values()].sort(
+            (left, right) => left.openTimeMs - right.openTimeMs,
+          )
+        : openTimeMs.flatMap((timestamp) => {
+            const point = points.get(timestamp);
+            return point === undefined ? [] : [point];
+          });
+    const sortedOutputKeys = [...outputKeys].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    serializedByPoints.set(
+      points,
+      selected.map((point) => ({
+        openTimeMs: point.openTimeMs,
+        values: Object.fromEntries(
+          sortedOutputKeys.map((outputKey) => [
+            outputKey,
+            point.values[outputKey] ?? null,
+          ]),
+        ),
+      })),
+    );
+  }
+  return dependencies.map(({ snapshot, points }) => {
+    const serialized = serializedByPoints.get(points);
+    if (serialized === undefined)
+      throw new Error("Indicator dependency points are unavailable.");
+    return {
+      ...snapshot,
+      points: serialized,
+    };
+  });
+}
+
+export function pluginIndicatorDependencyVersion(
+  dependencies: readonly IndicatorWorkerDependencySnapshot[],
+): string | undefined {
+  if (dependencies.length === 0) return undefined;
+  return JSON.stringify(
+    dependencies.map(
+      ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        sourceRevision,
+        configGeneration,
+        outputRevision,
+      }) => ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        sourceRevision,
+        configGeneration,
+        outputRevision,
+      }),
+    ),
+  );
+}
+
+function pluginIndicatorDependencyHistoryVersion(
+  dependencies: readonly ResolvedIndicatorDependency[],
+): string | undefined {
+  if (dependencies.length === 0) return undefined;
+  return JSON.stringify(
+    dependencies.map(({ snapshot, historyRevision }) => ({
+      inputKey: snapshot.inputKey,
+      instanceId: snapshot.instanceId,
+      outputKey: snapshot.outputKey,
+      sourceGeneration: snapshot.sourceGeneration,
+      configGeneration: snapshot.configGeneration,
+      historyRevision,
+    })),
+  );
+}
+
+async function calculatePluginIndicator(
+  runtimeId: string,
+  dataList: readonly KLineData[],
+): Promise<PluginIndicatorFigureData[]> {
+  const context = contexts.get(runtimeId);
+  if (context === undefined) return dataList.map(() => ({}));
+  context.queuedDataList = dataList;
+  if (context.calculationRunning && context.latestCalculation !== undefined)
+    return context.latestCalculation;
+  context.calculationRunning = true;
+  const calculation = (async (): Promise<PluginIndicatorFigureData[]> => {
+    try {
+      while (context.queuedDataList !== undefined) {
+        const next = context.queuedDataList;
+        delete context.queuedDataList;
+        const sourceChange = context.pendingSeriesChange;
+        if (
+          sourceChange !== undefined &&
+          (sourceChange.generation < context.dataGeneration ||
+            (sourceChange.generation === context.dataGeneration &&
+              sourceChange.revision < context.dataRevision))
+        ) {
+          delete context.pendingSeriesChange;
+          continue;
+        }
+        const resolvedDependencies =
+          context.dependencyBindings.length === 0
+            ? []
+            : await resolveDependenciesFor(context, next);
+        const dependencyMetadata = resolvedDependencies.map(({ snapshot }) => ({
+          ...snapshot,
+          points: [],
+        }));
+        const nextDependencyVersion =
+          pluginIndicatorDependencyVersion(dependencyMetadata);
+        const dependencyChanged =
+          nextDependencyVersion !== context.dependencyVersion;
+        const nextDependencyHistoryVersion =
+          pluginIndicatorDependencyHistoryVersion(resolvedDependencies);
+        const dependencyHistoryChanged =
+          nextDependencyHistoryVersion !== context.dependencyHistoryVersion;
+        let data = incrementalDataUpdate(next, context);
+        const sourceDataChanged = data !== undefined;
+        const configurationRebuild =
+          context.configurationRebuildPending === true;
+        if (
+          (dependencyHistoryChanged || configurationRebuild) &&
+          data !== undefined &&
+          data.kind !== "snapshot" &&
+          data.kind !== "rebuild"
+        ) {
+          data = fullSnapshotData(next, context, "rebuild");
+        } else if (
+          (dependencyChanged || configurationRebuild) &&
+          data === undefined
+        ) {
+          data = fullSnapshotData(next, context, "rebuild");
+        }
+        if (data === undefined) {
+          delete context.pendingSeriesChange;
+          continue;
+        }
+        const dependencies = dependencySnapshotsForData(
+          resolvedDependencies,
+          data,
+        );
+        if (sourceChange !== undefined)
+          context.dataGeneration = sourceChange.generation;
+        delete context.pendingSeriesChange;
+        if (sourceChange !== undefined)
+          context.dataRevision = sourceChange.revision;
+        else if (sourceDataChanged) context.dataRevision += 1;
+        // Chart arrays can change while the worker runs. Capture only the tail for deltas.
+        const resultTimeline =
+          data.kind === "snapshot" || data.kind === "rebuild"
+            ? [...next]
+            : next;
+        const count = next.length;
+        const tail = next.slice(-2).map((candle) => ({ ...candle }));
+        const snapshotTimeline = (): readonly KLineData[] => {
+          const timeline = resultTimeline.slice(0, count);
+          for (let offset = 0; offset < tail.length; offset += 1) {
+            const candle = tail[offset];
+            if (candle !== undefined)
+              timeline[count - tail.length + offset] = candle;
+          }
+          return timeline;
+        };
+        const result = await context.sync({
+          instanceId: runtimeId,
+          runtimeEntryUrl: context.summary.runtimeEntryUrl,
+          pluginId: context.indicator.pluginId,
+          definitionId: context.indicator.definitionId,
+          providerProfileId: context.providerProfileId,
+          instrumentId: context.instrumentId,
+          timeframeId: context.timeframeId,
+          candleType: context.candleType,
+          sourceTimeframeIds: context.sourceTimeframeIds,
+          sourceTimeframes: context.sourceTimeframes,
+          parameters: normalizePluginIndicatorParameters(
+            context.indicator,
+            context.summary.definition,
+          ),
+          ...(dependencies.length === 0 ? {} : { dependencies }),
+          data,
+          rebuildCandles: () =>
+            snapshotTimeline().map((item) =>
+              toCandle(item, context.instrumentId, context.chartTimeframeId),
+            ),
+          ...(resolvedDependencies.length === 0
+            ? {}
+            : {
+                rebuildDependencies: () =>
+                  dependencySnapshotsForData(resolvedDependencies, {
+                    kind: "rebuild",
+                    candles: [],
+                  }),
+              }),
+          dataRevision: context.dataRevision,
+          configGeneration: context.configGeneration,
+        });
+        const current = contexts.get(runtimeId);
+        if (current !== context) {
+          return current?.latestCalculation ?? current?.rows ?? [];
+        }
+        applyWorkerResult(
+          result.kind === "snapshot" ? snapshotTimeline() : resultTimeline,
+          context,
+          data,
+          result,
+          count,
+          tail,
+        );
+        context.outputRevision += 1;
+        if (nextDependencyVersion === undefined)
+          delete context.dependencyVersion;
+        else context.dependencyVersion = nextDependencyVersion;
+        if (nextDependencyHistoryVersion === undefined)
+          delete context.dependencyHistoryVersion;
+        else context.dependencyHistoryVersion = nextDependencyHistoryVersion;
+        delete context.configurationRebuildPending;
+      }
+      return context.rows ?? [];
+    } finally {
+      context.calculationRunning = false;
+    }
+  })();
+  context.latestCalculation = calculation;
+  return calculation;
 }
 
 export interface PluginIndicatorReconciliation {
@@ -753,7 +1247,7 @@ export function reconcilePluginIndicators(
       summary,
     ]),
   );
-  const desired =
+  const desiredCandidates =
     sync === undefined
       ? []
       : indicators.flatMap((indicator) => {
@@ -770,6 +1264,30 @@ export function reconcilePluginIndicators(
                 },
               ];
         });
+  const dependencyPlan = createIndicatorDependencyPlan(
+    desiredCandidates.map(({ indicator, summary }) => ({
+      instanceId: indicator.instanceId,
+      outputKeys: summary.definition.outputs.map(({ key }) => key),
+      bindings: Object.fromEntries(
+        validatedIndicatorOutputBindings(indicator, summary.definition).map(
+          ({ inputKey, instanceId, outputKey }) => [
+            inputKey,
+            { instanceId, outputKey },
+          ],
+        ),
+      ),
+    })),
+  );
+  const desiredByInstanceId = new Map(
+    desiredCandidates.map((candidate) => [
+      candidate.indicator.instanceId,
+      candidate,
+    ]),
+  );
+  const desired = dependencyPlan.orderedInstanceIds.flatMap((instanceId) => {
+    const candidate = desiredByInstanceId.get(instanceId);
+    return candidate === undefined ? [] : [candidate];
+  });
   const desiredIds = new Set(desired.map(({ runtimeId }) => runtimeId));
   const removedInstanceIds: string[] = [];
   for (const runtimeId of previousManagedRuntimeIds) {
@@ -781,6 +1299,7 @@ export function reconcilePluginIndicators(
 
   const managedRuntimeIds = new Set<string>();
   const ownerByRuntimeId = new Map<string, string>();
+  const calculationKeysByInstanceId = new Map<string, string>();
   for (const { indicator, summary, runtimeId } of desired) {
     const name = registrationName(summary);
     const previousContext = contexts.get(runtimeId);
@@ -790,7 +1309,13 @@ export function reconcilePluginIndicators(
       timeframeId,
       availableTimeframeIds,
     );
-    const nextCalculationKey = calculationKey(
+    const nextSourceKey = sourceKey(
+      providerProfileId,
+      instrumentId,
+      timeframeId,
+      sourcePlan,
+    );
+    const ownCalculationKey = calculationKey(
       indicator,
       summary,
       providerProfileId,
@@ -799,19 +1324,34 @@ export function reconcilePluginIndicators(
       sourcePlan.taSources,
       timeframeId,
     );
-    const previousCalculationKey =
-      previousContext === undefined
-        ? undefined
-        : calculationKey(
-            previousContext.indicator,
-            previousContext.summary,
-            previousContext.providerProfileId,
-            previousContext.instrumentId,
-            previousContext.timeframeId,
-            previousContext.sourceTimeframes,
-            previousContext.chartTimeframeId,
-          );
+    const dependencyBindings = (
+      dependencyPlan.bindingsByInstanceId.get(indicator.instanceId) ?? []
+    ).map((binding) => {
+      const dependency = desiredByInstanceId.get(binding.instanceId);
+      if (dependency === undefined)
+        throw new Error(
+          `Indicator dependency ${binding.instanceId} is unavailable.`,
+        );
+      return {
+        ...binding,
+        runtimeId: dependency.runtimeId,
+      };
+    });
+    const nextCalculationKey = JSON.stringify({
+      own: ownCalculationKey,
+      dependencies: dependencyBindings.map(
+        ({ inputKey, instanceId, outputKey }) => ({
+          inputKey,
+          instanceId,
+          outputKey,
+          calculationKey: calculationKeysByInstanceId.get(instanceId),
+        }),
+      ),
+    });
+    calculationKeysByInstanceId.set(indicator.instanceId, nextCalculationKey);
+    const previousCalculationKey = previousContext?.calculationKey;
     const sameConfiguration = previousCalculationKey === nextCalculationKey;
+    const sameSource = previousContext?.sourceKey === nextSourceKey;
     const nextContext: RuntimeContext = {
       indicator,
       summary,
@@ -827,6 +1367,9 @@ export function reconcilePluginIndicators(
           activeTimeframeId,
         }),
       ),
+      dependencyBindings,
+      sourceKey: nextSourceKey,
+      calculationKey: nextCalculationKey,
       sync: sync as PluginIndicatorSync,
       overlays:
         sameConfiguration && previousContext !== undefined
@@ -838,25 +1381,41 @@ export function reconcilePluginIndicators(
           : [],
       calculationSequence: (previousContext?.calculationSequence ?? 0) + 1,
       dataGeneration:
-        sameConfiguration && previousContext !== undefined
+        sameSource && previousContext !== undefined
           ? previousContext.dataGeneration
           : 0,
       dataRevision:
-        sameConfiguration && previousContext !== undefined
+        sameSource && previousContext !== undefined
           ? previousContext.dataRevision
           : 0,
       configGeneration:
         sameConfiguration && previousContext !== undefined
           ? previousContext.configGeneration
           : (previousContext?.configGeneration ?? 0) + 1,
-      ...(sameConfiguration && previousContext?.lastCandleCount !== undefined
+      outputRevision: previousContext?.outputRevision ?? 0,
+      historyRevisions:
+        sameConfiguration && previousContext !== undefined
+          ? previousContext.historyRevisions
+          : new Map<string, number>(),
+      ...(sameSource && previousContext?.lastCandleCount !== undefined
         ? { lastCandleCount: previousContext.lastCandleCount }
         : {}),
-      lastBuilding: sameConfiguration
-        ? previousContext?.lastBuilding
-        : undefined,
+      lastBuilding: sameSource ? previousContext?.lastBuilding : undefined,
+      ...(!sameConfiguration && sameSource && previousContext !== undefined
+        ? { configurationRebuildPending: true }
+        : {}),
       ...(sameConfiguration && previousContext?.rows !== undefined
         ? { rows: previousContext.rows }
+        : {}),
+      ...(sameConfiguration && previousContext?.publishedPoints !== undefined
+        ? { publishedPoints: previousContext.publishedPoints }
+        : {}),
+      ...(sameConfiguration && previousContext?.dependencyVersion !== undefined
+        ? { dependencyVersion: previousContext.dependencyVersion }
+        : {}),
+      ...(sameConfiguration &&
+      previousContext?.dependencyHistoryVersion !== undefined
+        ? { dependencyHistoryVersion: previousContext.dependencyHistoryVersion }
         : {}),
       ...(sameConfiguration &&
       previousContext?.pendingSeriesChange !== undefined
@@ -870,6 +1429,9 @@ export function reconcilePluginIndicators(
         ? Object.assign(previousContext, {
             indicator,
             summary,
+            dependencyBindings,
+            sourceKey: nextSourceKey,
+            calculationKey: nextCalculationKey,
             sync: sync as PluginIndicatorSync,
           })
         : nextContext,
@@ -907,104 +1469,7 @@ export function reconcilePluginIndicators(
               rowStartTimes.set(aligned, first);
             }
           }
-          context.queuedDataList = dataList;
-          if (
-            context.calculationRunning &&
-            context.latestCalculation !== undefined
-          )
-            return context.latestCalculation;
-          context.calculationRunning = true;
-          const calculation = (async (): Promise<
-            PluginIndicatorFigureData[]
-          > => {
-            try {
-              while (context.queuedDataList !== undefined) {
-                const next = context.queuedDataList;
-                delete context.queuedDataList;
-                const sourceChange = context.pendingSeriesChange;
-                if (
-                  sourceChange !== undefined &&
-                  (sourceChange.generation < context.dataGeneration ||
-                    (sourceChange.generation === context.dataGeneration &&
-                      sourceChange.revision < context.dataRevision))
-                ) {
-                  delete context.pendingSeriesChange;
-                  continue;
-                }
-                const data = incrementalDataUpdate(next, context);
-                if (data === undefined) {
-                  delete context.pendingSeriesChange;
-                  continue;
-                }
-                if (sourceChange !== undefined)
-                  context.dataGeneration = sourceChange.generation;
-                delete context.pendingSeriesChange;
-                context.dataRevision =
-                  sourceChange?.revision ?? context.dataRevision + 1;
-                // Chart arrays can change while the worker runs. Capture only the tail for deltas.
-                const resultTimeline =
-                  data.kind === "snapshot" || data.kind === "rebuild"
-                    ? [...next]
-                    : next;
-                const count = next.length;
-                const tail = next.slice(-2).map((candle) => ({ ...candle }));
-                const snapshotTimeline = (): readonly KLineData[] => {
-                  const timeline = resultTimeline.slice(0, count);
-                  for (let offset = 0; offset < tail.length; offset += 1) {
-                    const candle = tail[offset];
-                    if (candle !== undefined)
-                      timeline[count - tail.length + offset] = candle;
-                  }
-                  return timeline;
-                };
-                const result = await context.sync({
-                  instanceId: runtimeIndicator.id,
-                  runtimeEntryUrl: context.summary.runtimeEntryUrl,
-                  pluginId: context.indicator.pluginId,
-                  definitionId: context.indicator.definitionId,
-                  providerProfileId: context.providerProfileId,
-                  instrumentId: context.instrumentId,
-                  timeframeId: context.timeframeId,
-                  candleType: context.candleType,
-                  sourceTimeframeIds: context.sourceTimeframeIds,
-                  sourceTimeframes: context.sourceTimeframes,
-                  parameters: normalizePluginIndicatorParameters(
-                    context.indicator,
-                    context.summary.definition,
-                  ),
-                  data,
-                  rebuildCandles: () =>
-                    snapshotTimeline().map((item) =>
-                      toCandle(
-                        item,
-                        context.instrumentId,
-                        context.chartTimeframeId,
-                      ),
-                    ),
-                  dataRevision: context.dataRevision,
-                  configGeneration: context.configGeneration,
-                });
-                const current = contexts.get(runtimeIndicator.id);
-                if (current !== context) {
-                  return current?.latestCalculation ?? current?.rows ?? [];
-                }
-                applyWorkerResult(
-                  result.kind === "snapshot"
-                    ? snapshotTimeline()
-                    : resultTimeline,
-                  context,
-                  result,
-                  count,
-                  tail,
-                );
-              }
-              return context.rows ?? [];
-            } finally {
-              context.calculationRunning = false;
-            }
-          })();
-          context.latestCalculation = calculation;
-          return calculation;
+          return calculatePluginIndicator(runtimeIndicator.id, dataList);
         },
         draw: ({ ctx, indicator: runtimeIndicator, xAxis, yAxis }): boolean => {
           drawRuntimeOverlays(runtimeIndicator.id, ctx, xAxis, yAxis);

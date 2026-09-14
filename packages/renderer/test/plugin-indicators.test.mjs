@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   clearPluginIndicatorSeriesChange,
   markPluginIndicatorSeriesChange,
+  pluginIndicatorDependencyVersion,
   pluginIndicatorSettingsFields,
   reconcilePluginIndicators,
   resolvePluginIndicatorSourcePlan,
@@ -538,6 +539,2008 @@ test("shares one KLineChart template across instances and releases removed conte
   assert.equal(templates.length, 1);
   const [releasedRow] = await template.calc([candle], { id: firstRuntimeId });
   assert.deepEqual(releasedRow, {});
+});
+
+test("reconciles explicit cross-indicator bindings in dependency order", () => {
+  let template;
+  const createdIds = [];
+  const activeIds = new Set();
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      createdIds.push(value.id);
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-order",
+    name: "Dependency order",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-order-test",
+    pluginName: "Dependency order test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-order-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const indicator = (instanceId, inputs) => ({
+    instanceId,
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs,
+  });
+  const base = indicator("dag-base", { source: { kind: "candles" } });
+  const middle = indicator("dag-middle", {
+    source: {
+      kind: "indicator-output",
+      instanceId: base.instanceId,
+      outputKey: "line",
+    },
+  });
+  const leaf = indicator("dag-leaf", {
+    source: {
+      kind: "indicator-output",
+      instanceId: middle.instanceId,
+      outputKey: "line",
+    },
+  });
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [leaf, middle, base],
+    [summary],
+    async () => ({
+      kind: "snapshot",
+      snapshot: { points: [], overlays: [], signals: [] },
+    }),
+    "TEST",
+    "1m",
+  );
+
+  assert.deepEqual(
+    createdIds.map((id) => id.slice(id.lastIndexOf(":") + 1)),
+    ["dag-base", "dag-middle", "dag-leaf"],
+  );
+});
+
+test("rejects indicator-output bindings to undeclared consumer inputs before activation", () => {
+  let createCalls = 0;
+  const module = {
+    registerIndicator(value) {
+      assert.ok(value);
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      createCalls += 1;
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-unknown-input",
+    name: "Dependency unknown input",
+    placement: "overlay",
+    inputs: [],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-unknown-input-test",
+    pluginName: "Dependency unknown input test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-unknown-input-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-unknown-input-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-unknown-input-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+
+  assert.throws(
+    () =>
+      reconcilePluginIndicators(
+        module,
+        chart,
+        [consumer, base],
+        [summary],
+        async () => ({
+          kind: "snapshot",
+          snapshot: { points: [], overlays: [], signals: [] },
+        }),
+        "TEST",
+        "1m",
+      ),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_MISSING_INPUT",
+  );
+  assert.equal(createCalls, 0);
+});
+
+test("rejects indicator-output bindings to non-source consumer inputs before activation", () => {
+  let createCalls = 0;
+  const module = {
+    registerIndicator(value) {
+      assert.ok(value);
+    },
+  };
+  const chart = {
+    getIndicators() {
+      return [];
+    },
+    createIndicator() {
+      createCalls += 1;
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator() {
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-incompatible-input",
+    name: "Dependency incompatible input",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "number",
+        defaultValue: 14,
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-incompatible-input-test",
+    pluginName: "Dependency incompatible input test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-incompatible-input-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-incompatible-input-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { source: 14 },
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-incompatible-input-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { source: 14 },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+
+  assert.throws(
+    () =>
+      reconcilePluginIndicators(
+        module,
+        chart,
+        [consumer, base],
+        [summary],
+        async () => ({
+          kind: "snapshot",
+          snapshot: { points: [], overlays: [], signals: [] },
+        }),
+        "TEST",
+        "1m",
+      ),
+    (error) => error?.code === "INDICATOR_DEPENDENCY_INCOMPATIBLE_INPUT",
+  );
+  assert.equal(createCalls, 0);
+});
+
+test("changing an explicit output binding advances the dependent configuration generation", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-generation",
+    name: "Dependency generation",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-generation-test",
+    pluginName: "Dependency generation test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-generation-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const source = (instanceId) => ({
+    instanceId,
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  });
+  const sourceA = source("binding-source-a");
+  const sourceB = source("binding-source-b");
+  const consumer = (sourceInstanceId) => ({
+    instanceId: "binding-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: sourceInstanceId,
+        outputKey: "line",
+      },
+    },
+  });
+  const sync = async (request) => {
+    requests.push(request);
+    const candles = request.data.candles ?? [request.data.candle];
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.filter(Boolean).map((item) => ({
+          openTimeMs: item.openTimeMs,
+          values: { line: item.close },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const candle = {
+    timestamp: 1_900_000_000_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  };
+
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [sourceA, sourceB, consumer(sourceA.instanceId)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(":binding-consumer"),
+  );
+  assert.ok(consumerRuntimeId);
+  await template.calc([candle], { id: consumerRuntimeId });
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [sourceA, sourceB, consumer(sourceB.instanceId)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  await template.calc([candle], { id: consumerRuntimeId });
+
+  assert.deepEqual(
+    requests
+      .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+      .map(({ configGeneration }) => configGeneration),
+    [1, 2],
+  );
+});
+
+test("dependency freshness changes when an upstream result changes without a source revision change", () => {
+  const dependency = {
+    inputKey: "source",
+    instanceId: "upstream",
+    outputKey: "line",
+    sourceGeneration: 2,
+    sourceRevision: 7,
+    configGeneration: 4,
+    outputRevision: 1,
+    points: [{ openTimeMs: 0, values: { line: 42 } }],
+  };
+
+  assert.notEqual(
+    pluginIndicatorDependencyVersion([dependency]),
+    pluginIndicatorDependencyVersion([
+      { ...dependency, outputRevision: dependency.outputRevision + 1 },
+    ]),
+  );
+});
+
+test("multiple bindings to one upstream share one serialized dependency history", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const sourceInputs = Array.from({ length: 5 }, (_, index) => ({
+    key: `source_${index}`,
+    label: `Source ${index}`,
+    type: "source",
+    defaultValue: "close",
+  }));
+  const definition = {
+    id: "erc.indicator.test.shared-dependency-history",
+    name: "Shared dependency history",
+    placement: "overlay",
+    inputs: sourceInputs,
+    outputs: [
+      { key: "line", label: "Line" },
+      { key: "signal", label: "Signal" },
+    ],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.shared-dependency-history-test",
+    pluginName: "Shared dependency history test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.shared-dependency-history-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const candleInputs = Object.fromEntries(
+    sourceInputs.map(({ key }) => [key, { kind: "candles" }]),
+  );
+  const base = {
+    instanceId: "shared-history-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: candleInputs,
+  };
+  const consumer = {
+    instanceId: "shared-history-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: Object.fromEntries(
+      sourceInputs.map(({ key }, index) => [
+        key,
+        {
+          kind: "indicator-output",
+          instanceId: base.instanceId,
+          outputKey: index % 2 === 0 ? "line" : "signal",
+        },
+      ]),
+    ),
+  };
+  const sync = async (request) => {
+    requests.push(request);
+    const candles = request.data.candles ?? [request.data.candle];
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.filter(Boolean).map((item) => ({
+          openTimeMs: item.openTimeMs,
+          values: { line: item.close * 2, signal: item.close * 3 },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  await template.calc(
+    [
+      {
+        timestamp: 1_900_000_000_000,
+        open: 10,
+        high: 12,
+        low: 9,
+        close: 11,
+      },
+    ],
+    { id: consumerRuntimeId },
+  );
+
+  const consumerRequest = requests.find(
+    ({ instanceId }) => instanceId === consumerRuntimeId,
+  );
+  assert.equal(consumerRequest?.dependencies?.length, 5);
+  assert.equal(
+    new Set(consumerRequest.dependencies.map(({ points }) => points)).size,
+    1,
+  );
+  assert.deepEqual(consumerRequest.dependencies[0].points[0].values, {
+    line: 22,
+    signal: 33,
+  });
+});
+
+test("dependent calculation publishes upstream output first and consumes the matching revision", async () => {
+  let template;
+  const activeIds = new Set();
+  const requestOrder = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-values",
+    name: "Dependency values",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-values-test",
+    pluginName: "Dependency values test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-values-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-values-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-values-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  const sync = async (request) => {
+    requestOrder.push(request);
+    const candles = request.data.candles ?? [request.data.candle];
+    if (request.instanceId.endsWith(`:${base.instanceId}`)) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: candles.filter(Boolean).map((item) => ({
+            openTimeMs: item.openTimeMs,
+            values: { line: item.close * 2 },
+          })),
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const dependency = request.dependencies?.[0];
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.filter(Boolean).map((item) => ({
+          openTimeMs: item.openTimeMs,
+          values: {
+            line:
+              (dependency?.points.find(
+                (point) => point.openTimeMs === item.openTimeMs,
+              )?.values.line ?? 0) + 1,
+          },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const dataList = [
+    {
+      timestamp: 1_900_000_000_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+  ];
+
+  const rows = await template.calc(dataList, { id: consumerRuntimeId });
+
+  assert.deepEqual(
+    requestOrder.map(({ instanceId }) =>
+      instanceId.slice(instanceId.lastIndexOf(":") + 1),
+    ),
+    [base.instanceId, consumer.instanceId],
+  );
+  assert.deepEqual(requestOrder[1].dependencies, [
+    {
+      inputKey: "source",
+      instanceId: base.instanceId,
+      outputKey: "line",
+      sourceGeneration: 0,
+      sourceRevision: 1,
+      configGeneration: 1,
+      outputRevision: 1,
+      points: [
+        {
+          openTimeMs: dataList[0].timestamp,
+          values: { line: 22 },
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(rows, [{ line: 23 }]);
+});
+
+test("live dependency updates stay incremental and send only the affected dependency point", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-incremental",
+    name: "Dependency incremental",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-incremental-test",
+    pluginName: "Dependency incremental test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-incremental-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-incremental-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-incremental-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  const pointsFor = (request, multiplier) => {
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    return candles.map((candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: {
+        line:
+          dependency === undefined
+            ? candle.close * multiplier
+            : (dependency.points.find(
+                (point) => point.openTimeMs === candle.openTimeMs,
+              )?.values.line ?? 0) + 1,
+      },
+    }));
+  };
+  const sync = async (request) => {
+    requests.push(request);
+    const points = pointsFor(request, 2);
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: 1_900_000_000_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      timestamp: 1_900_000_060_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+
+  await template.calc(data, { id: consumerRuntimeId });
+  data[1] = { ...data[1], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const consumerRequests = requests.filter(({ instanceId }) =>
+    instanceId.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.equal(consumerRequests.length, 2);
+  assert.equal(consumerRequests[1].data.kind, "building");
+  assert.deepEqual(
+    consumerRequests[1].dependencies?.[0]?.points.map(
+      ({ openTimeMs }) => openTimeMs,
+    ),
+    [data[1].timestamp],
+  );
+});
+
+test("an upstream full-output rebuild forces a downstream historical rebuild during a chart delta", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-history-rebuild",
+    name: "Dependency history rebuild",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-history-rebuild-test",
+    pluginName: "Dependency history rebuild test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-history-rebuild-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-history-rebuild-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-history-rebuild-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  let rebuildUpstreamOutput = false;
+  const historyStart = 1_900_000_000_000;
+  const sync = async (request) => {
+    requests.push(request);
+    const isBase = request.instanceId.endsWith(`:${base.instanceId}`);
+    if (isBase && rebuildUpstreamOutput) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: [
+            { openTimeMs: historyStart, values: { line: 999 } },
+            { openTimeMs: historyStart + 60_000, values: { line: 24 } },
+          ],
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    const points = candles.map((item) => ({
+      openTimeMs: item.openTimeMs,
+      values: {
+        line:
+          dependency?.points.find(
+            (point) => point.openTimeMs === item.openTimeMs,
+          )?.values.line ?? item.close * 2,
+      },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: historyStart,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      timestamp: historyStart + 60_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+  await template.calc(data, { id: consumerRuntimeId });
+
+  rebuildUpstreamOutput = true;
+  data[1] = { ...data[1], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const latestConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(latestConsumerRequest?.data.kind, "rebuild");
+  assert.deepEqual(
+    latestConsumerRequest?.dependencies?.[0]?.points.map((point) => ({
+      openTimeMs: point.openTimeMs,
+      line: point.values.line,
+    })),
+    [
+      { openTimeMs: historyStart, line: 999 },
+      { openTimeMs: historyStart + 60_000, line: 24 },
+    ],
+  );
+});
+
+test("a historical change to an unbound upstream output keeps the downstream update incremental", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-output-history",
+    name: "Dependency output history",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [
+      { key: "line", label: "Line" },
+      { key: "stable", label: "Stable" },
+    ],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-output-history-test",
+    pluginName: "Dependency output history test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-output-history-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-output-history-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-output-history-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "stable",
+      },
+    },
+  };
+  let rebuildUpstreamOutput = false;
+  const historyStart = 1_900_000_000_000;
+  const sync = async (request) => {
+    requests.push(request);
+    const isBase = request.instanceId.endsWith(`:${base.instanceId}`);
+    if (isBase && rebuildUpstreamOutput) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: [
+            {
+              openTimeMs: historyStart,
+              values: { line: 999, stable: 110 },
+            },
+            {
+              openTimeMs: historyStart + 60_000,
+              values: { line: 26, stable: 130 },
+            },
+          ],
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    const points = candles.map((item) => ({
+      openTimeMs: item.openTimeMs,
+      values: isBase
+        ? { line: item.close * 2, stable: item.close * 10 }
+        : {
+            line:
+              dependency?.points.find(
+                (point) => point.openTimeMs === item.openTimeMs,
+              )?.values.stable ?? null,
+            stable: null,
+          },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: historyStart,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      timestamp: historyStart + 60_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+  await template.calc(data, { id: consumerRuntimeId });
+
+  rebuildUpstreamOutput = true;
+  data[1] = { ...data[1], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const latestConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(latestConsumerRequest?.data.kind, "building");
+  assert.deepEqual(latestConsumerRequest?.dependencies?.[0]?.points, [
+    {
+      openTimeMs: historyStart + 60_000,
+      values: { stable: 130 },
+    },
+  ]);
+});
+
+test("aligns higher-timeframe dependency outputs only after source candles close", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-mtf",
+    name: "Dependency MTF",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+      {
+        key: "input_timeframe",
+        label: "Timeframe",
+        type: "string",
+        defaultValue: "chart",
+        editor: "timeframe",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+    source: {
+      timeframe: {
+        requestedTimeframeId: "chart",
+        inputKey: "input_timeframe",
+      },
+      taTimeframeIds: [],
+    },
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-mtf-test",
+    pluginName: "Dependency MTF test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-mtf-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-mtf-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { input_timeframe: "1h" },
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-mtf-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { input_timeframe: "chart" },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  let upstreamBuildingValue = 200;
+  const sync = async (request) => {
+    requests.push(request);
+    if (request.instanceId.endsWith(`:${base.instanceId}`)) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: [
+            { openTimeMs: 0, values: { line: 100 } },
+            {
+              openTimeMs: 60 * 60_000,
+              values: { line: upstreamBuildingValue },
+            },
+          ],
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    const points = candles.map((candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: {
+        line:
+          dependency?.points.find(
+            (point) => point.openTimeMs === candle.openTimeMs,
+          )?.values.line ?? null,
+      },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "15m",
+    new Set(),
+    "profile-a",
+    ["15m", "1h"],
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = Array.from({ length: 6 }, (_, index) => ({
+    timestamp: index * 15 * 60_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  }));
+
+  await template.calc(data, { id: consumerRuntimeId });
+  const firstConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.deepEqual(firstConsumerRequest?.dependencies?.[0]?.points, [
+    { openTimeMs: 45 * 60_000, values: { line: 100 } },
+    { openTimeMs: 60 * 60_000, values: { line: 100 } },
+    { openTimeMs: 75 * 60_000, values: { line: 100 } },
+  ]);
+
+  upstreamBuildingValue = 250;
+  data[5] = { ...data[5], close: 12 };
+  await template.calc(data, { id: consumerRuntimeId });
+  const liveConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(liveConsumerRequest?.data.kind, "building");
+  assert.deepEqual(liveConsumerRequest?.dependencies?.[0]?.points, [
+    { openTimeMs: 75 * 60_000, values: { line: 100 } },
+  ]);
+});
+
+test("re-resolves an upstream dependency when configuration changes during calculation", async () => {
+  let template;
+  const activeIds = new Set();
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-race",
+    name: "Dependency race",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "multiplier",
+        label: "Multiplier",
+        type: "number",
+        defaultValue: 1,
+        effect: "calculation",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-race-test",
+    pluginName: "Dependency race test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-race-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = (multiplier) => ({
+    instanceId: "dependency-race-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier },
+    inputs: { source: { kind: "candles" } },
+  });
+  const consumer = {
+    instanceId: "dependency-race-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier: 1 },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: "dependency-race-base",
+        outputKey: "line",
+      },
+    },
+  };
+  let resolveOldBase;
+  const sync = async (request) => {
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    if (
+      request.instanceId.endsWith(":dependency-race-base") &&
+      request.parameters.multiplier === 1
+    ) {
+      return new Promise((resolve) => {
+        resolveOldBase = resolve;
+      });
+    }
+    const dependency = request.dependencies?.[0];
+    const multiplier = request.parameters.multiplier ?? 1;
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.map((candle) => ({
+          openTimeMs: candle.openTimeMs,
+          values: {
+            line:
+              dependency?.points.find(
+                (point) => point.openTimeMs === candle.openTimeMs,
+              )?.values.line ?? candle.close * multiplier,
+          },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base(1)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(":dependency-race-consumer"),
+  );
+  assert.ok(consumerRuntimeId);
+  const candle = {
+    timestamp: 1_900_000_000_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  };
+  const oldConsumerCalculation = template.calc([candle], {
+    id: consumerRuntimeId,
+  });
+  await Promise.resolve();
+  assert.equal(typeof resolveOldBase, "function");
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base(2)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  resolveOldBase({
+    kind: "snapshot",
+    snapshot: {
+      points: [{ openTimeMs: candle.timestamp, values: { line: 11 } }],
+      overlays: [],
+      signals: [],
+    },
+  });
+
+  await assert.doesNotReject(oldConsumerCalculation);
+  const currentRows = await template.calc([candle], { id: consumerRuntimeId });
+  assert.equal(currentRows[0].line, 22);
+});
+
+test("bounds published dependency history to the worker 100k payload limit", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-bound",
+    name: "Dependency bound",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "multiplier",
+        label: "Multiplier",
+        type: "number",
+        defaultValue: 1,
+        effect: "calculation",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-bound-test",
+    pluginName: "Dependency bound test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-bound-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-bound-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier: 1 },
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = (multiplier) => ({
+    instanceId: "dependency-bound-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  });
+  const sync = async (request) => {
+    requests.push(request);
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const points = candles.map((candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: { line: candle.close },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer(1), base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(":dependency-bound-consumer"),
+  );
+  assert.ok(consumerRuntimeId);
+
+  const start = 1_900_000_000_000;
+  const data = Array.from({ length: 100_000 }, (_, index) => ({
+    timestamp: start + index * 60_000,
+    open: index,
+    high: index + 2,
+    low: index - 1,
+    close: index + 1,
+  }));
+  await template.calc(data, { id: consumerRuntimeId });
+
+  data.push({
+    timestamp: start + 100_000 * 60_000,
+    open: 100_000,
+    high: 100_002,
+    low: 99_999,
+    close: 100_001,
+  });
+  await template.calc(data, { id: consumerRuntimeId });
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer(2), base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const finalConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(finalConsumerRequest?.data.kind, "rebuild");
+  assert.equal(finalConsumerRequest?.dependencies?.[0]?.points.length, 100_000);
+  assert.equal(
+    finalConsumerRequest?.dependencies?.[0]?.points[0]?.openTimeMs,
+    start + 60_000,
+  );
+});
+
+test("upstream configuration changes invalidate and rebuild unchanged downstream data", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-invalidation",
+    name: "Dependency invalidation",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "multiplier",
+        label: "Multiplier",
+        type: "number",
+        defaultValue: 2,
+        effect: "calculation",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-invalidation-test",
+    pluginName: "Dependency invalidation test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-invalidation-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = (multiplier) => ({
+    instanceId: "dependency-invalidation-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier },
+    inputs: { source: { kind: "candles" } },
+  });
+  const consumer = {
+    instanceId: "dependency-invalidation-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier: 1 },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: "dependency-invalidation-base",
+        outputKey: "line",
+      },
+    },
+  };
+  const sync = async (request) => {
+    requests.push(request);
+    const candles = request.data.candles ?? [request.data.candle];
+    const dependency = request.dependencies?.[0];
+    const multiplier = request.parameters.multiplier ?? 1;
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.filter(Boolean).map((item) => ({
+          openTimeMs: item.openTimeMs,
+          values: {
+            line:
+              dependency === undefined
+                ? item.close * multiplier
+                : (dependency.points.find(
+                    (point) => point.openTimeMs === item.openTimeMs,
+                  )?.values.line ?? 0) * multiplier,
+          },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base(2)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const dataList = [
+    {
+      timestamp: 1_900_000_060_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+  ];
+  assert.deepEqual(await template.calc(dataList, { id: consumerRuntimeId }), [
+    { line: 22 },
+  ]);
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base(3)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  assert.deepEqual(await template.calc(dataList, { id: consumerRuntimeId }), [
+    { line: 33 },
+  ]);
+
+  const consumerRequests = requests.filter(({ instanceId }) =>
+    instanceId.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.equal(consumerRequests.length, 2);
+  assert.deepEqual(
+    consumerRequests.map(({ configGeneration }) => configGeneration),
+    [1, 2],
+  );
+  assert.deepEqual(
+    consumerRequests.map(
+      ({ dependencies }) => dependencies?.[0]?.configGeneration,
+    ),
+    [1, 2],
+  );
+});
+
+test("configuration-only upstream changes preserve matching source revisions across dependencies", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-revision",
+    name: "Dependency revision",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "multiplier",
+        label: "Multiplier",
+        type: "number",
+        defaultValue: 1,
+        effect: "calculation",
+      },
+      {
+        key: "first",
+        label: "First source",
+        type: "source",
+        defaultValue: "close",
+      },
+      {
+        key: "second",
+        label: "Second source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-revision-test",
+    pluginName: "Dependency revision test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-revision-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const source = (instanceId, multiplier) => ({
+    instanceId,
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier },
+    inputs: { source: { kind: "candles" } },
+  });
+  const sourceA = (multiplier) => source("dependency-revision-a", multiplier);
+  const sourceB = source("dependency-revision-b", 1);
+  const consumer = {
+    instanceId: "dependency-revision-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier: 1 },
+    inputs: {
+      first: {
+        kind: "indicator-output",
+        instanceId: sourceA(1).instanceId,
+        outputKey: "line",
+      },
+      second: {
+        kind: "indicator-output",
+        instanceId: sourceB.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  const sync = async (request) => {
+    requests.push(request);
+    const current =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const multiplier = request.parameters.multiplier ?? 1;
+    const dependencyTotal = (request.dependencies ?? []).reduce(
+      (sum, dependency) => sum + (dependency.points.at(-1)?.values.line ?? 0),
+      0,
+    );
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: current.map((item) => ({
+          openTimeMs: item.openTimeMs,
+          values: {
+            line:
+              request.dependencies === undefined
+                ? item.close * multiplier
+                : dependencyTotal,
+          },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, sourceB, sourceA(1)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: 1_900_000_120_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+  ];
+  await template.calc(data, { id: consumerRuntimeId });
+  data[0] = { ...data[0], close: 12 };
+  await template.calc(data, { id: consumerRuntimeId });
+  data[0] = { ...data[0], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, sourceB, sourceA(2)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const latestConsumer = requests
+    .filter(({ instanceId }) => instanceId.endsWith(`:${consumer.instanceId}`))
+    .at(-1);
+  assert.ok(latestConsumer);
+  assert.deepEqual(
+    latestConsumer.dependencies.map(({ sourceRevision }) => sourceRevision),
+    [3, 3],
+  );
 });
 
 test("scopes identical workspace instance ids to their owning chart", async () => {

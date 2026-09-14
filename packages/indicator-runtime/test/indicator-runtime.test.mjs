@@ -238,6 +238,98 @@ test("rejects malformed source provenance before creating a worker", async () =>
   }
 });
 
+test("counts shared dependency history once when validating the worker budget", async () => {
+  const { supervisor, workers } = harness();
+  const points = Array.from({ length: 100_000 }, (_, index) => ({
+    openTimeMs: index,
+    values: { line: index },
+  }));
+  const dependencies = Array.from({ length: 5 }, (_, index) => ({
+    inputKey: `source-${index}`,
+    instanceId: `upstream-${index}`,
+    outputKey: "line",
+    sourceGeneration: 1,
+    sourceRevision: 1,
+    configGeneration: 1,
+    outputRevision: 1,
+    points,
+  }));
+
+  try {
+    await supervisor.sync(request("shared-dependencies", { dependencies }));
+    assert.equal(workers.length, 1);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("rejects distinct dependency snapshots whose aggregate point count exceeds the worker budget", async () => {
+  const { supervisor, workers } = harness();
+  const dependencies = Array.from({ length: 5 }, (_, dependency) => ({
+    inputKey: `source-${dependency}`,
+    instanceId: `upstream-${dependency}`,
+    outputKey: "line",
+    sourceGeneration: 1,
+    sourceRevision: 1,
+    configGeneration: 1,
+    outputRevision: 1,
+    points: Array.from({ length: 80_001 }, (_, index) => ({
+      openTimeMs: index,
+      values: { line: dependency * 100_000 + index },
+    })),
+  }));
+
+  try {
+    await assert.rejects(
+      supervisor.sync(request("oversized-dependencies", { dependencies })),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+    );
+    assert.equal(workers.length, 0);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("rejects duplicate dependency input keys before creating a worker", async () => {
+  const { supervisor, workers } = harness();
+  const dependencies = [
+    {
+      inputKey: "source",
+      instanceId: "upstream-one",
+      outputKey: "line",
+      sourceGeneration: 1,
+      sourceRevision: 1,
+      configGeneration: 1,
+      outputRevision: 1,
+      points: [{ openTimeMs: 0, values: { line: 1 } }],
+    },
+    {
+      inputKey: "source",
+      instanceId: "upstream-two",
+      outputKey: "line",
+      sourceGeneration: 1,
+      sourceRevision: 1,
+      configGeneration: 1,
+      outputRevision: 1,
+      points: [{ openTimeMs: 0, values: { line: 2 } }],
+    },
+  ];
+
+  try {
+    await assert.rejects(
+      supervisor.sync(request("duplicate-dependency-input", { dependencies })),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+    );
+    assert.equal(workers.length, 0);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
 test("rejects null active source timeframe before creating a worker", async () => {
   const { supervisor, workers } = harness();
   try {

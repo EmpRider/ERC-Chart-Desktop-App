@@ -5,12 +5,14 @@ import {
   materializeIndicatorWorkerCandleSnapshot,
   type Candle,
   type IndicatorParameterValues,
+  type IndicatorRuntimePoint,
   type IndicatorRuntimeSnapshot,
   type InstrumentId,
   type InstalledIndicatorDefinition,
   type TimeframeId,
 } from "@erc-chart/contracts";
 import type {
+  IndicatorWorkerDependencySnapshot,
   IndicatorWorkerDisposeMessage,
   IndicatorWorkerFailureMessage,
   IndicatorWorkerRequestMessage,
@@ -18,7 +20,10 @@ import type {
   IndicatorWorkerSuccessMessage,
   IndicatorWorkerSyncMessage,
 } from "./index.js";
-import { normalizeIndicatorParameters } from "./index.js";
+import {
+  INDICATOR_WORKER_MAX_DEPENDENCY_POINTS,
+  normalizeIndicatorParameters,
+} from "./index.js";
 import { assertDenseSnapshotTimeline } from "./result-validation.js";
 
 interface RuntimeIndicatorSnapshot extends IndicatorRuntimeSnapshot {
@@ -29,6 +34,17 @@ interface RuntimeIndicatorInstance {
   readonly onHistory: (candles: readonly Candle[]) => void;
   readonly onBuildingBar: (candle: Candle) => void;
   readonly onFinalizedBar: (candle: Candle) => void;
+  readonly updateDependencyInputs?: (
+    updates: Readonly<
+      Record<
+        string,
+        {
+          readonly outputKey: string;
+          readonly points: readonly IndicatorRuntimePoint[];
+        }
+      >
+    >,
+  ) => void;
   readonly dispose: () => void;
   readonly snapshot: () => RuntimeIndicatorSnapshot;
 }
@@ -55,6 +71,15 @@ interface IndicatorPluginModule {
               readonly kind: "market" | "synthetic";
               readonly candleType: "standard" | "heikin-ashi";
             };
+          }
+        >
+      >;
+      readonly dependencyInputs?: Readonly<
+        Record<
+          string,
+          {
+            readonly outputKey: string;
+            readonly points: readonly IndicatorRuntimePoint[];
           }
         >
       >;
@@ -236,7 +261,69 @@ function signatureFor(
     instrumentId: message.instrumentId,
     timeframeId: message.timeframeId,
     parameters,
+    dependencies: message.dependencies?.map(
+      ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        configGeneration,
+      }) => ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        configGeneration,
+      }),
+    ),
   });
+}
+
+function applyDependencyUpdates(
+  instance: RuntimeIndicatorInstance,
+  dependencies: IndicatorWorkerSyncMessage["dependencies"],
+): void {
+  if (dependencies === undefined || dependencies.length === 0) return;
+  if (instance.updateDependencyInputs === undefined) {
+    throw new Error(
+      "Indicator runtime does not support live dependency input updates.",
+    );
+  }
+  instance.updateDependencyInputs(materializeDependencyInputs(dependencies));
+}
+
+function materializeDependencyInputs(
+  dependencies: readonly IndicatorWorkerDependencySnapshot[],
+): Readonly<
+  Record<
+    string,
+    {
+      readonly outputKey: string;
+      readonly points: readonly IndicatorRuntimePoint[];
+    }
+  >
+> {
+  const materializedPointBatches = new Map<
+    readonly IndicatorRuntimePoint[],
+    readonly IndicatorRuntimePoint[]
+  >();
+  return Object.fromEntries(
+    dependencies.map((dependency) => {
+      let points = materializedPointBatches.get(dependency.points);
+      if (points === undefined) {
+        points = dependency.points.map((point) => ({
+          openTimeMs: point.openTimeMs,
+          values: { ...point.values },
+          ...(point.colors === undefined
+            ? {}
+            : { colors: { ...point.colors } }),
+          ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
+        }));
+        materializedPointBatches.set(dependency.points, points);
+      }
+      return [dependency.inputKey, { outputKey: dependency.outputKey, points }];
+    }),
+  );
 }
 
 async function execute(
@@ -256,6 +343,7 @@ async function execute(
       ) {
         throw new Error("Building-bar delta does not match the active candle.");
       }
+      applyDependencyUpdates(active.instance, message.dependencies);
       active.instance.onBuildingBar(message.data.candle);
       active.lastBuilding = message.data.candle;
       return projectIncrementalResult(active, "building", [
@@ -272,6 +360,7 @@ async function execute(
           "Finalized-bar delta does not match the active candle.",
         );
       }
+      applyDependencyUpdates(active.instance, message.dependencies);
       active.instance.onFinalizedBar(message.data.finalized);
       active.instance.onBuildingBar(message.data.building);
       active.lastBuilding = message.data.building;
@@ -323,6 +412,11 @@ async function execute(
               },
             ]),
           ),
+        }),
+    ...(message.dependencies === undefined
+      ? {}
+      : {
+          dependencyInputs: materializeDependencyInputs(message.dependencies),
         }),
   });
   instance.onHistory(historyCandles);
@@ -416,6 +510,69 @@ function isSourceSnapshot(value: unknown): boolean {
   );
 }
 
+function isDependencySnapshot(
+  value: unknown,
+): value is IndicatorWorkerDependencySnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const dependency = value as {
+    readonly inputKey?: unknown;
+    readonly instanceId?: unknown;
+    readonly outputKey?: unknown;
+    readonly sourceGeneration?: unknown;
+    readonly sourceRevision?: unknown;
+    readonly configGeneration?: unknown;
+    readonly outputRevision?: unknown;
+    readonly points?: unknown;
+  };
+  return (
+    typeof dependency.inputKey === "string" &&
+    dependency.inputKey.length > 0 &&
+    typeof dependency.instanceId === "string" &&
+    dependency.instanceId.length > 0 &&
+    typeof dependency.outputKey === "string" &&
+    dependency.outputKey.length > 0 &&
+    Number.isSafeInteger(dependency.sourceGeneration) &&
+    Number(dependency.sourceGeneration) >= 0 &&
+    Number.isSafeInteger(dependency.sourceRevision) &&
+    Number(dependency.sourceRevision) >= 0 &&
+    Number.isSafeInteger(dependency.configGeneration) &&
+    Number(dependency.configGeneration) >= 0 &&
+    Number.isSafeInteger(dependency.outputRevision) &&
+    Number(dependency.outputRevision) >= 0 &&
+    Array.isArray(dependency.points) &&
+    isIndicatorRuntimeSnapshot({
+      points: dependency.points,
+      overlays: [],
+      signals: [],
+    }) &&
+    dependency.points.every((point) =>
+      Object.prototype.hasOwnProperty.call(
+        point.values,
+        dependency.outputKey as string,
+      ),
+    )
+  );
+}
+
+function isDependencySnapshotBatch(
+  value: unknown,
+): value is readonly IndicatorWorkerDependencySnapshot[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  let pointCount = 0;
+  const inputKeys = new Set<string>();
+  const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
+  for (const dependency of value) {
+    if (!isDependencySnapshot(dependency)) return false;
+    if (inputKeys.has(dependency.inputKey)) return false;
+    inputKeys.add(dependency.inputKey);
+    if (countedPointBatches.has(dependency.points)) continue;
+    countedPointBatches.add(dependency.points);
+    pointCount += dependency.points.length;
+    if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
+  }
+  return true;
+}
+
 function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
   if (typeof value !== "object" || value === null) return false;
   const message = value as Partial<IndicatorWorkerSyncMessage>;
@@ -438,6 +595,8 @@ function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
     (message.sources === undefined ||
       (Array.isArray(message.sources) &&
         message.sources.every(isSourceSnapshot))) &&
+    (message.dependencies === undefined ||
+      isDependencySnapshotBatch(message.dependencies)) &&
     isDataUpdate(message.data)
   );
 }

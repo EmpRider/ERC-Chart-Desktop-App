@@ -45,11 +45,19 @@ export interface IndicatorSourceMetadata {
   readonly provenance: IndicatorRuntimeSignalSourceProvenance;
 }
 
+export interface IndicatorDependencyInput {
+  readonly outputKey: string;
+  readonly points: readonly IndicatorResultPoint[];
+}
+
 export interface IndicatorInstanceContext {
   readonly instrumentId: InstrumentId;
   readonly timeframeId: TimeframeId;
   readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
   readonly sourceMetadata?: Readonly<Record<string, IndicatorSourceMetadata>>;
+  readonly dependencyInputs?: Readonly<
+    Record<string, IndicatorDependencyInput>
+  >;
 }
 
 export interface IndicatorInstance {
@@ -61,6 +69,9 @@ export interface IndicatorInstance {
 }
 
 export interface RuntimeIndicatorInstance extends IndicatorInstance {
+  readonly updateDependencyInputs: (
+    updates: Readonly<Record<string, IndicatorDependencyInput>>,
+  ) => void;
   readonly snapshot: () => IndicatorSnapshot;
 }
 

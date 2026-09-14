@@ -18,6 +18,15 @@ export interface AuthoringFrame {
   readonly candle: Candle;
   readonly sourceCandles: Readonly<Record<string, readonly Candle[]>>;
   readonly sourceMetadata: Readonly<Record<string, IndicatorSourceMetadata>>;
+  readonly dependencyInputs: Readonly<
+    Record<
+      string,
+      {
+        readonly outputKey: string;
+        readonly points: ReadonlyMap<number, IndicatorResultPoint>;
+      }
+    >
+  >;
   readonly phase: "building" | "finalized";
   readonly historyReplay: boolean;
   readonly historyFinalizedTail: boolean;

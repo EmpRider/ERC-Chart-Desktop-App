@@ -16,6 +16,16 @@ import type {
 } from "@erc-chart/contracts";
 import type { IndicatorSourceProvenance } from "./source-engine.js";
 
+export {
+  IndicatorDependencyGraphError,
+  createIndicatorDependencyPlan,
+  type IndicatorDependencyBinding,
+  type IndicatorDependencyBindingTarget,
+  type IndicatorDependencyGraphErrorCode,
+  type IndicatorDependencyNode,
+  type IndicatorDependencyPlan,
+} from "./dependency-graph.js";
+
 function stepDecimals(step: number): number {
   const text = `${step}`.toLowerCase();
   if (text.includes("e-")) {
@@ -43,6 +53,17 @@ function normalizeIndicatorInputValue(
     );
     if (definition.step === undefined) return bounded;
     return Number(bounded.toFixed(stepDecimals(definition.step)));
+  }
+  if (definition.type === "source") {
+    return value === "close" ||
+      value === "open" ||
+      value === "high" ||
+      value === "low" ||
+      value === "hl2" ||
+      value === "hlc3" ||
+      value === "ohlc4"
+      ? value
+      : definition.defaultValue;
   }
   if (typeof value !== "string" || value.length > 8_192)
     return definition.defaultValue;
@@ -78,6 +99,7 @@ export interface IndicatorWorkerExecutionRequest {
   readonly parameters: IndicatorParameterValues;
   readonly sourceProvenance?: IndicatorSourceProvenance;
   readonly sources?: readonly IndicatorWorkerSourceSnapshot[];
+  readonly dependencies?: readonly IndicatorWorkerDependencySnapshot[];
   readonly data: IndicatorWorkerDataUpdate;
   readonly dataRevision: number;
   readonly configGeneration: number;
@@ -94,6 +116,19 @@ export interface IndicatorWorkerSourceSnapshot {
   readonly revision: number;
   readonly finalizedCount: number;
 }
+
+export interface IndicatorWorkerDependencySnapshot {
+  readonly inputKey: string;
+  readonly instanceId: string;
+  readonly outputKey: string;
+  readonly sourceGeneration: number;
+  readonly sourceRevision: number;
+  readonly configGeneration: number;
+  readonly outputRevision: number;
+  readonly points: readonly IndicatorRuntimePoint[];
+}
+
+export const INDICATOR_WORKER_MAX_DEPENDENCY_POINTS = 400_000;
 
 export type IndicatorWorkerDataUpdate =
   | {
@@ -326,6 +361,50 @@ function isWorkerSourceSnapshot(
   );
 }
 
+function isWorkerDependencySnapshot(
+  value: unknown,
+): value is IndicatorWorkerDependencySnapshot {
+  if (!isRecord(value)) return false;
+  const outputKey = value.outputKey;
+  return (
+    isNonEmptyText(value.inputKey) &&
+    isNonEmptyText(value.instanceId) &&
+    isNonEmptyText(outputKey) &&
+    isSafeGeneration(value.sourceGeneration) &&
+    isSafeGeneration(value.sourceRevision) &&
+    isSafeGeneration(value.configGeneration) &&
+    isSafeGeneration(value.outputRevision) &&
+    Array.isArray(value.points) &&
+    isIndicatorRuntimeSnapshot({
+      points: value.points,
+      overlays: [],
+      signals: [],
+    }) &&
+    value.points.every((point) =>
+      Object.prototype.hasOwnProperty.call(point.values, outputKey),
+    )
+  );
+}
+
+function isWorkerDependencySnapshotBatch(
+  value: unknown,
+): value is readonly IndicatorWorkerDependencySnapshot[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  let pointCount = 0;
+  const inputKeys = new Set<string>();
+  const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
+  for (const dependency of value) {
+    if (!isWorkerDependencySnapshot(dependency)) return false;
+    if (inputKeys.has(dependency.inputKey)) return false;
+    inputKeys.add(dependency.inputKey);
+    if (countedPointBatches.has(dependency.points)) continue;
+    countedPointBatches.add(dependency.points);
+    pointCount += dependency.points.length;
+    if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
+  }
+  return true;
+}
+
 function isWorkerDataUpdate(
   value: unknown,
 ): value is IndicatorWorkerDataUpdate {
@@ -359,6 +438,8 @@ function isWorkerExecutionRequest(
       (Array.isArray(value.sources) &&
         value.sources.length <= 64 &&
         value.sources.every(isWorkerSourceSnapshot))) &&
+    (value.dependencies === undefined ||
+      isWorkerDependencySnapshotBatch(value.dependencies)) &&
     isWorkerDataUpdate(value.data) &&
     isSafeGeneration(value.dataRevision) &&
     isSafeGeneration(value.configGeneration)

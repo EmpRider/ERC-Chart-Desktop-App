@@ -89,6 +89,160 @@ test("scalar authoring generates valid definitions and dense results without out
   instance.dispose();
 });
 
+test("source inputs consume host-bound indicator output by declared input identity", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.main", name: "Bound source" },
+    () => {
+      const source = input.source("close", "Source");
+      plot.line(source, { title: "Bound" });
+    },
+  );
+
+  assert.deepEqual(plugin.definition.inputs, [
+    {
+      key: "input_0",
+      label: "Source",
+      type: "source",
+      defaultValue: "close",
+    },
+  ]);
+
+  const candles = [candle(0, 10), candle(1, 11)];
+  const bound = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: {
+          outputKey: "upstream",
+          points: [
+            { openTimeMs: 0, values: { upstream: 42 } },
+            { openTimeMs: 60_000, values: { upstream: 43 } },
+          ],
+        },
+      },
+    },
+  );
+  bound.onHistory(candles);
+  assert.deepEqual(
+    bound.snapshot().points.map((point) => point.values.plot_0),
+    [42, 43],
+  );
+  bound.dispose();
+
+  const fallback = plugin.createInstance({}, context);
+  fallback.onHistory(candles);
+  assert.deepEqual(
+    fallback.snapshot().points.map((point) => point.values.plot_0),
+    [10, 11],
+  );
+  fallback.dispose();
+});
+
+test("source inputs select their bound output from shared multi-output dependency points", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.outputs", name: "Bound outputs" },
+    () => {
+      plot.line(input.source("close", "Fast"), { title: "Fast" });
+      plot.line(input.source("close", "Slow"), { title: "Slow" });
+    },
+  );
+  const points = [
+    { openTimeMs: 0, values: { fast: 42, slow: 7 } },
+    { openTimeMs: 60_000, values: { fast: 43, slow: 8 } },
+  ];
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: { outputKey: "fast", points },
+        input_1: { outputKey: "slow", points },
+      },
+    },
+  );
+
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+  assert.deepEqual(
+    instance
+      .snapshot()
+      .points.map((point) => [point.values.plot_0, point.values.plot_1]),
+    [
+      [42, 7],
+      [43, 8],
+    ],
+  );
+  instance.dispose();
+});
+
+test("source inputs preindex dependency history instead of scanning it once per bar", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.indexed", name: "Indexed bound source" },
+    () => {
+      plot.line(input.source("close", "Source"), { title: "Bound" });
+    },
+  );
+  const dependency = [
+    { openTimeMs: 0, values: { upstream: 42 } },
+    { openTimeMs: 60_000, values: { upstream: 43 } },
+  ];
+  dependency.find = () => {
+    throw new Error("dependency history was scanned");
+  };
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: { outputKey: "upstream", points: dependency },
+      },
+    },
+  );
+
+  assert.doesNotThrow(() => instance.onHistory([candle(0, 10), candle(1, 11)]));
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [42, 43],
+  );
+  instance.dispose();
+});
+
+test("source inputs accept bounded live dependency point updates without replay", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.live", name: "Live bound source" },
+    () => {
+      plot.line(input.source("close", "Source"), { title: "Bound" });
+    },
+  );
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: {
+          outputKey: "upstream",
+          points: [
+            { openTimeMs: 0, values: { upstream: 42 } },
+            { openTimeMs: 60_000, values: { upstream: 43 } },
+          ],
+        },
+      },
+    },
+  );
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+
+  instance.updateDependencyInputs({
+    input_0: {
+      outputKey: "upstream",
+      points: [{ openTimeMs: 60_000, values: { upstream: 99 } }],
+    },
+  });
+  instance.onBuildingBar(candle(1, 12));
+
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 99);
+  instance.dispose();
+});
+
 test("timeframe authoring declares dynamic host metadata without static provider options", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.timeframe.main", name: "Timeframe" },

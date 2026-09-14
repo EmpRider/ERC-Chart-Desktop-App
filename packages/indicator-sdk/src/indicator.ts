@@ -116,6 +116,7 @@ export function defineIndicator(
     candle: sample,
     sourceCandles: {},
     sourceMetadata: {},
+    dependencyInputs: {},
     phase: "building",
     historyReplay: false,
     historyFinalizedTail: false,
@@ -235,6 +236,55 @@ export function defineIndicator(
       let building: Candle | undefined;
       let disposed = false;
       let failed = false;
+      const dependencyPointMaps = new Map<
+        readonly IndicatorResultPoint[],
+        Map<number, IndicatorResultPoint>
+      >();
+      const dependencyInputs: Record<
+        string,
+        {
+          readonly outputKey: string;
+          readonly points: Map<number, IndicatorResultPoint>;
+        }
+      > = Object.fromEntries(
+        Object.entries(context.dependencyInputs ?? {}).map(
+          ([key, dependency]) => {
+            let points = dependencyPointMaps.get(dependency.points);
+            if (points === undefined) {
+              points = new Map(
+                dependency.points.map((point) => [point.openTimeMs, point]),
+              );
+              dependencyPointMaps.set(dependency.points, points);
+            }
+            return [key, { outputKey: dependency.outputKey, points }];
+          },
+        ),
+      );
+      const updateDependencyInputs = (
+        updates: Readonly<
+          Record<
+            string,
+            {
+              readonly outputKey: string;
+              readonly points: readonly IndicatorResultPoint[];
+            }
+          >
+        >,
+      ): void => {
+        for (const [key, dependency] of Object.entries(updates)) {
+          const current = dependencyInputs[key];
+          const points =
+            current?.points ?? new Map<number, IndicatorResultPoint>();
+          dependencyInputs[key] = { outputKey: dependency.outputKey, points };
+          for (const point of dependency.points)
+            points.set(point.openTimeMs, point);
+          while (points.size > 100_000) {
+            const oldest = points.keys().next().value;
+            if (oldest === undefined) break;
+            points.delete(oldest);
+          }
+        }
+      };
       const validate = (candle: Candle): void => {
         if (disposed) throw new Error("Indicator instance was disposed.");
         if (failed)
@@ -264,6 +314,7 @@ export function defineIndicator(
           candle,
           sourceCandles: context.sourceCandles ?? {},
           sourceMetadata: context.sourceMetadata ?? {},
+          dependencyInputs,
           phase,
           historyReplay,
           historyFinalizedTail,
@@ -366,6 +417,7 @@ export function defineIndicator(
         }
       };
       return {
+        updateDependencyInputs,
         onHistory(history) {
           if (disposed) throw new Error("Indicator instance was disposed.");
           if (history.length > 100_000)
