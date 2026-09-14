@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { materializeIndicatorWorkerCandleSnapshot } from "@erc-chart/contracts";
 import {
   createBrowserIndicatorRuntime,
   createRendererIndicatorSourceDataService,
@@ -16,6 +17,24 @@ const candle = {
   close: 101,
   volume: 10,
 };
+
+function decodeWorkerSnapshot(snapshot, timeframeId = candle.timeframeId) {
+  return materializeIndicatorWorkerCandleSnapshot(
+    snapshot,
+    candle.instrumentId,
+    timeframeId,
+  );
+}
+
+function decodeWorkerSources(sources) {
+  return sources.map(({ snapshot, ...source }) => ({
+    ...source,
+    candles: decodeWorkerSnapshot(
+      snapshot,
+      source.activeTimeframeId ?? source.timeframeId,
+    ),
+  }));
+}
 
 test("lazily rebuilds history when an incremental update reaches a fresh worker", async () => {
   const posted = [];
@@ -80,7 +99,18 @@ test("lazily rebuilds history when an incremental update reaches a fresh worker"
     assert.equal(rebuildCalls, 1);
     assert.equal(posted.length, 1);
     assert.equal(posted[0].data.kind, "rebuild");
-    assert.deepEqual(posted[0].data.candles, [candle]);
+    assert.equal("candles" in posted[0].data, false);
+    assert.equal(
+      posted[0].data.snapshot.openTimeMs instanceof Float64Array,
+      true,
+    );
+    assert.equal(posted[0].data.snapshot.open instanceof Float64Array, true);
+    assert.equal(posted[0].data.snapshot.close instanceof Float64Array, true);
+    assert.deepEqual(
+      [...posted[0].data.snapshot.openTimeMs],
+      [candle.openTimeMs],
+    );
+    assert.deepEqual([...posted[0].data.snapshot.close], [candle.close]);
   } finally {
     runtime.dispose();
   }
@@ -167,10 +197,10 @@ test("provider-backed indicator sources rebuild workers from source-engine candl
     ]);
     assert.equal(posted.length, 1);
     assert.equal(posted[0].timeframeId, "1m");
-    assert.deepEqual(posted[0].data, {
-      kind: "rebuild",
-      candles: [sourceCandle],
-    });
+    assert.equal(posted[0].data.kind, "rebuild");
+    assert.deepEqual(decodeWorkerSnapshot(posted[0].data.snapshot, "1m"), [
+      sourceCandle,
+    ]);
   } finally {
     runtime.dispose();
   }
@@ -253,11 +283,13 @@ test("provider-backed indicators acquire independent base and per-TA timeframe s
       historyRequests.map(({ request }) => request.timeframeId),
       ["1m", "1h"],
     );
-    assert.deepEqual(posted[0].data.candles, [
+    assert.deepEqual(decodeWorkerSnapshot(posted[0].data.snapshot, "1m"), [
       { ...candle, timeframeId: "1m", close: 101 },
     ]);
-    assert.deepEqual(posted[0].sources, [
+    assert.deepEqual(decodeWorkerSources(posted[0].sources), [
       {
+        providerProfileId: "profile-a",
+        instrumentId: candle.instrumentId,
         timeframeId: "1m",
         candles: [{ ...candle, timeframeId: "1m", close: 101 }],
         provenance: { kind: "market", candleType: "standard" },
@@ -266,6 +298,8 @@ test("provider-backed indicators acquire independent base and per-TA timeframe s
         finalizedCount: 0,
       },
       {
+        providerProfileId: "profile-a",
+        instrumentId: candle.instrumentId,
         timeframeId: "1h",
         candles: [{ ...candle, timeframeId: "1h", close: 160 }],
         provenance: { kind: "market", candleType: "standard" },
@@ -397,8 +431,10 @@ test("per-TA fallback aliases the active source under the requested timeframe ID
       historyRequests.map(({ request }) => request.timeframeId),
       ["1m"],
     );
-    assert.deepEqual(posted[0].sources, [
+    assert.deepEqual(decodeWorkerSources(posted[0].sources), [
       {
+        providerProfileId: "profile-a",
+        instrumentId: candle.instrumentId,
         timeframeId: "1m",
         candles: [{ ...candle, timeframeId: "1m" }],
         provenance: { kind: "market", candleType: "standard" },
@@ -407,6 +443,8 @@ test("per-TA fallback aliases the active source under the requested timeframe ID
         finalizedCount: 0,
       },
       {
+        providerProfileId: "profile-a",
+        instrumentId: candle.instrumentId,
         timeframeId: "4h",
         activeTimeframeId: "1m",
         candles: [{ ...candle, timeframeId: "1m" }],
@@ -493,7 +531,7 @@ test("provider-backed runtime acquires and rebuilds from the selected Heikin Ash
       configGeneration: 1,
     });
 
-    assert.deepEqual(posted[0].data.candles, [
+    assert.deepEqual(decodeWorkerSnapshot(posted[0].data.snapshot, "1m"), [
       { ...raw, open: 11, high: 14, low: 8, close: 11 },
     ]);
     assert.deepEqual(posted[0].sourceProvenance, {
@@ -665,10 +703,10 @@ test("provider-backed indicators rebuild when the source revision changes", asyn
     });
     await sync(2, 105);
     assert.equal(posted.length, 2);
-    assert.deepEqual(posted[1].data, {
-      kind: "rebuild",
-      candles: [revised],
-    });
+    assert.equal(posted[1].data.kind, "rebuild");
+    assert.deepEqual(decodeWorkerSnapshot(posted[1].data.snapshot, "1m"), [
+      revised,
+    ]);
   } finally {
     runtime.dispose();
   }

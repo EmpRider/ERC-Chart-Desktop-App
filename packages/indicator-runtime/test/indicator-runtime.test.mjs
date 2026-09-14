@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createIndicatorWorkerCandleSnapshot } from "@erc-chart/contracts";
 import {
   IndicatorWorkerRuntimeError,
   createIndicatorWorkerSupervisor,
@@ -18,7 +19,10 @@ function request(instanceId, overrides = {}) {
     instrumentId: "fixture.instrument",
     timeframeId: "1m",
     parameters: {},
-    data: { kind: "snapshot", candles: [] },
+    data: {
+      kind: "snapshot",
+      snapshot: createIndicatorWorkerCandleSnapshot([]),
+    },
     dataRevision: 1,
     configGeneration: 1,
     ...overrides,
@@ -124,20 +128,114 @@ test("returns the newest generation when an older async result settles last", as
   }
 });
 
-test("rejects mismatched revision or configuration generation", async () => {
-  const { supervisor, workers } = harness({ autoRespond: false });
-  try {
-    const pending = supervisor.sync(request("one"));
-    const message = workers[0].messages[0];
-    workers[0].respond(success(message, { dataRevision: 99 }));
+for (const [label, override] of [
+  ["data revision", { dataRevision: 99 }],
+  ["configuration generation", { configGeneration: 99 }],
+]) {
+  test(`rejects a response with a mismatched ${label}`, async () => {
+    const { supervisor, workers } = harness({ autoRespond: false });
+    try {
+      const pending = supervisor.sync(request("one"));
+      const message = workers[0].messages[0];
+      workers[0].respond(success(message, override));
 
+      await assert.rejects(
+        pending,
+        (error) =>
+          error instanceof IndicatorWorkerRuntimeError &&
+          error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+      );
+      assert.equal(workers[0].terminated, true);
+    } finally {
+      supervisor.dispose();
+    }
+  });
+}
+
+test("rejects malformed history snapshots before creating a worker", async () => {
+  const { supervisor, workers } = harness();
+  try {
     await assert.rejects(
-      pending,
+      supervisor.sync(
+        request("invalid-snapshot", {
+          data: {
+            kind: "snapshot",
+            snapshot: {
+              openTimeMs: new Float64Array([60_000]),
+              open: new Float64Array([10]),
+              high: new Float64Array([12]),
+              low: new Float64Array([9]),
+              close: new Float64Array(),
+              volume: new Float64Array([1]),
+            },
+          },
+        }),
+      ),
       (error) =>
         error instanceof IndicatorWorkerRuntimeError &&
         error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
     );
-    assert.equal(workers[0].terminated, true);
+    assert.equal(workers.length, 0);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("rejects malformed source provenance before creating a worker", async () => {
+  const { supervisor, workers } = harness();
+  try {
+    await assert.rejects(
+      supervisor.sync(
+        request("invalid-source", {
+          sources: [
+            {
+              instrumentId: "fixture.instrument",
+              timeframeId: "1h",
+              snapshot: createIndicatorWorkerCandleSnapshot([]),
+              provenance: { kind: "market", candleType: "standard" },
+              generation: 1,
+              revision: 1,
+              finalizedCount: 0,
+            },
+          ],
+        }),
+      ),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+    );
+    assert.equal(workers.length, 0);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("rejects null active source timeframe before creating a worker", async () => {
+  const { supervisor, workers } = harness();
+  try {
+    await assert.rejects(
+      supervisor.sync(
+        request("invalid-active-source-timeframe", {
+          sources: [
+            {
+              providerProfileId: "fixture.provider",
+              instrumentId: "fixture.instrument",
+              timeframeId: "1h",
+              activeTimeframeId: null,
+              snapshot: createIndicatorWorkerCandleSnapshot([]),
+              provenance: { kind: "market", candleType: "standard" },
+              generation: 1,
+              revision: 1,
+              finalizedCount: 0,
+            },
+          ],
+        }),
+      ),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+    );
+    assert.equal(workers.length, 0);
   } finally {
     supervisor.dispose();
   }
@@ -210,15 +308,17 @@ for (const [bars, expectedBudget] of [
         request("one", {
           data: {
             kind: "rebuild",
-            candles: Array.from({ length: bars }, (_, index) => ({
-              instrumentId: "fixture.instrument",
-              timeframeId: "1m",
-              openTimeMs: index * 60_000,
-              open: 10,
-              high: 12,
-              low: 9,
-              close: 11,
-            })),
+            snapshot: createIndicatorWorkerCandleSnapshot(
+              Array.from({ length: bars }, (_, index) => ({
+                instrumentId: "fixture.instrument",
+                timeframeId: "1m",
+                openTimeMs: index * 60_000,
+                open: 10,
+                high: 12,
+                low: 9,
+                close: 11,
+              })),
+            ),
           },
           dataRevision: 2,
         }),
@@ -251,15 +351,17 @@ test("gives paginated history rebuilds the full history calculation budget", asy
       request("one", {
         data: {
           kind: "rebuild",
-          candles: Array.from({ length: 10 }, (_, index) => ({
-            instrumentId: "fixture.instrument",
-            timeframeId: "1m",
-            openTimeMs: index * 60_000,
-            open: 10,
-            high: 12,
-            low: 9,
-            close: 11,
-          })),
+          snapshot: createIndicatorWorkerCandleSnapshot(
+            Array.from({ length: 10 }, (_, index) => ({
+              instrumentId: "fixture.instrument",
+              timeframeId: "1m",
+              openTimeMs: index * 60_000,
+              open: 10,
+              high: 12,
+              low: 9,
+              close: 11,
+            })),
+          ),
         },
         dataRevision: 2,
       }),

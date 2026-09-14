@@ -1,6 +1,8 @@
 import {
   isIndicatorRuntimeSnapshot,
+  isIndicatorWorkerCandleSnapshot,
   isInstalledIndicatorDefinition,
+  materializeIndicatorWorkerCandleSnapshot,
   type Candle,
   type IndicatorParameterValues,
   type IndicatorRuntimeSnapshot,
@@ -43,6 +45,8 @@ interface IndicatorPluginModule {
         Record<
           string,
           {
+            readonly providerProfileId: string;
+            readonly instrumentId: string;
             readonly activeTimeframeId: string;
             readonly generation: number;
             readonly revision: number;
@@ -283,6 +287,11 @@ async function execute(
     );
   }
   active?.instance.dispose();
+  const historyCandles = materializeIndicatorWorkerCandleSnapshot(
+    message.data.snapshot,
+    message.instrumentId as InstrumentId,
+    message.timeframeId as TimeframeId,
+  );
   const instance = plugin.createInstance(parameters, {
     instrumentId: message.instrumentId as InstrumentId,
     timeframeId: message.timeframeId as TimeframeId,
@@ -292,13 +301,19 @@ async function execute(
           sourceCandles: Object.fromEntries(
             message.sources.map((source) => [
               source.timeframeId,
-              source.candles,
+              materializeIndicatorWorkerCandleSnapshot(
+                source.snapshot,
+                source.instrumentId as InstrumentId,
+                (source.activeTimeframeId ?? source.timeframeId) as TimeframeId,
+              ),
             ]),
           ),
           sourceMetadata: Object.fromEntries(
             message.sources.map((source) => [
               source.timeframeId,
               {
+                providerProfileId: source.providerProfileId,
+                instrumentId: source.instrumentId,
                 activeTimeframeId:
                   source.activeTimeframeId ?? source.timeframeId,
                 generation: source.generation,
@@ -310,15 +325,14 @@ async function execute(
           ),
         }),
   });
-  instance.onHistory(message.data.candles);
-  const snapshot = projectSnapshot(
-    instance,
-    message.data.candles.map(({ openTimeMs }) => openTimeMs),
-  );
+  instance.onHistory(historyCandles);
+  const snapshot = projectSnapshot(instance, [
+    ...message.data.snapshot.openTimeMs,
+  ]);
   active = {
     signature,
     instance,
-    lastBuilding: message.data.candles.at(-1),
+    lastBuilding: historyCandles.at(-1),
     pointCount: snapshot.points.length,
     visualRevision: instance.snapshot().visualRevision,
   };
@@ -344,7 +358,7 @@ function isDataUpdate(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const data = value as Record<string, unknown>;
   if (data.kind === "snapshot" || data.kind === "rebuild") {
-    return Array.isArray(data.candles) && data.candles.every(isCandle);
+    return isIndicatorWorkerCandleSnapshot(data.snapshot);
   }
   if (data.kind === "building") return isCandle(data.candle);
   return (
@@ -357,9 +371,11 @@ function isDataUpdate(value: unknown): boolean {
 function isSourceSnapshot(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const source = value as {
+    readonly providerProfileId?: unknown;
+    readonly instrumentId?: unknown;
     readonly timeframeId?: unknown;
     readonly activeTimeframeId?: unknown;
-    readonly candles?: unknown;
+    readonly snapshot?: unknown;
     readonly provenance?: unknown;
     readonly generation?: unknown;
     readonly revision?: unknown;
@@ -370,6 +386,12 @@ function isSourceSnapshot(value: unknown): boolean {
       ? source.timeframeId
       : source.activeTimeframeId;
   return (
+    typeof source.providerProfileId === "string" &&
+    source.providerProfileId.length > 0 &&
+    source.providerProfileId.length <= 256 &&
+    typeof source.instrumentId === "string" &&
+    source.instrumentId.length > 0 &&
+    source.instrumentId.length <= 256 &&
     typeof source.timeframeId === "string" &&
     source.timeframeId.length > 0 &&
     typeof activeTimeframeId === "string" &&
@@ -389,11 +411,8 @@ function isSourceSnapshot(value: unknown): boolean {
     Number(source.revision) >= 0 &&
     Number.isSafeInteger(source.finalizedCount) &&
     Number(source.finalizedCount) >= 0 &&
-    Array.isArray(source.candles) &&
-    Number(source.finalizedCount) <= source.candles.length &&
-    source.candles.every(
-      (candle) => isCandle(candle) && candle.timeframeId === activeTimeframeId,
-    )
+    isIndicatorWorkerCandleSnapshot(source.snapshot) &&
+    Number(source.finalizedCount) <= source.snapshot.openTimeMs.length
   );
 }
 

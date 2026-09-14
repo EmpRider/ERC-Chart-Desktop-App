@@ -5,6 +5,7 @@ import type {
   ProviderLiveEvent,
   ProviderLiveRequest,
 } from "@erc-chart/contracts";
+import { createIndicatorWorkerCandleSnapshot } from "@erc-chart/contracts";
 import {
   createIndicatorSourceEngine,
   createIndicatorWorkerSupervisor,
@@ -31,11 +32,25 @@ export interface BrowserIndicatorSyncRequest extends Omit<
     readonly requestedTimeframeId: string;
     readonly activeTimeframeId: string;
   }[];
-  readonly data: IndicatorWorkerDataUpdate;
+  readonly data: BrowserIndicatorDataUpdate;
   readonly rebuildCandles: () => readonly IndicatorRuntimeSyncRequest["candles"][number][];
   readonly dataRevision: number;
   readonly configGeneration: number;
 }
+
+export type BrowserIndicatorDataUpdate =
+  | {
+      readonly kind: "snapshot";
+      readonly candles: readonly Candle[];
+    }
+  | {
+      readonly kind: "rebuild";
+      readonly candles: readonly Candle[];
+    }
+  | Extract<
+      IndicatorWorkerDataUpdate,
+      { readonly kind: "building" | "rollover" }
+    >;
 
 export interface BrowserIndicatorRuntimeOptions extends IndicatorWorkerSupervisorOptions {
   readonly sourceDataService?: IndicatorSourceDataService;
@@ -223,9 +238,12 @@ export function createBrowserIndicatorRuntime(
   return {
     sync: async (request): Promise<IndicatorWorkerResultUpdate> => {
       const execute = (
-        data: IndicatorWorkerDataUpdate,
+        data: BrowserIndicatorDataUpdate,
         sources: readonly {
+          readonly providerProfileId: string;
+          readonly instrumentId: string;
           readonly timeframeId: string;
+          readonly activeTimeframeId?: string;
           readonly candles: readonly Candle[];
           readonly provenance: IndicatorSourceSnapshot["provenance"];
           readonly generation: number;
@@ -233,8 +251,23 @@ export function createBrowserIndicatorRuntime(
           readonly finalizedCount: number;
         }[] = [],
         sourceProvenance?: IndicatorSourceSnapshot["provenance"],
-      ) =>
-        supervisor.sync({
+      ) => {
+        let workerData: IndicatorWorkerDataUpdate;
+        if (data.kind === "snapshot" || data.kind === "rebuild") {
+          workerData = {
+            kind: data.kind,
+            snapshot: createIndicatorWorkerCandleSnapshot(data.candles),
+          };
+        } else if (data.kind === "building") {
+          workerData = data;
+        } else {
+          workerData = data;
+        }
+        const workerSources = sources.map(({ candles, ...source }) => ({
+          ...source,
+          snapshot: createIndicatorWorkerCandleSnapshot(candles),
+        }));
+        return supervisor.sync({
           instanceId: request.instanceId,
           runtimeEntryUrl: request.runtimeEntryUrl,
           pluginId: request.pluginId,
@@ -243,11 +276,12 @@ export function createBrowserIndicatorRuntime(
           timeframeId: request.timeframeId,
           parameters: request.parameters,
           ...(sourceProvenance === undefined ? {} : { sourceProvenance }),
-          ...(sources.length === 0 ? {} : { sources }),
-          data,
+          ...(workerSources.length === 0 ? {} : { sources: workerSources }),
+          data: workerData,
           dataRevision: request.dataRevision,
           configGeneration: request.configGeneration,
         });
+      };
       const expectedSourceEpoch = sourceInstanceEpoch(request.instanceId);
       const sources = await sourcesFor(request, expectedSourceEpoch);
       assertSourceInstanceEpoch(request.instanceId, expectedSourceEpoch);
@@ -274,6 +308,8 @@ export function createBrowserIndicatorRuntime(
             if (snapshot === undefined)
               throw new Error("Indicator auxiliary source was not acquired.");
             return {
+              providerProfileId: snapshot.key.providerProfileId,
+              instrumentId: snapshot.key.instrumentId,
               timeframeId: requestedTimeframeId,
               ...(activeTimeframeId === requestedTimeframeId
                 ? {}
@@ -287,6 +323,8 @@ export function createBrowserIndicatorRuntime(
           },
         );
         const baseWorkerSource = {
+          providerProfileId: baseSnapshot.key.providerProfileId,
+          instrumentId: baseSnapshot.key.instrumentId,
           timeframeId: request.timeframeId,
           candles: baseSnapshot.candles,
           provenance: baseSnapshot.provenance,

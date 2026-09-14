@@ -16,8 +16,10 @@ export {
   indicatorImportPreviewChannel,
   indicatorRemoveChannel,
   indicatorsListChannel,
+  createIndicatorWorkerCandleSnapshot,
   isIndicatorImportPreview,
   isIndicatorImportPreviewResult,
+  isIndicatorWorkerCandleSnapshot,
   isIndicatorRuntimeInstanceId,
   isIndicatorRuntimeSnapshot,
   isIndicatorRuntimeSyncRequest,
@@ -25,6 +27,7 @@ export {
   isInstalledIndicatorDefinition,
   isInstalledIndicatorList,
   isInstalledIndicatorSummary,
+  materializeIndicatorWorkerCandleSnapshot,
 } from "./indicator-management.js";
 export type {
   IndicatorImportPreview,
@@ -41,6 +44,7 @@ export type {
   IndicatorRuntimeSnapshot,
   IndicatorRuntimeSyncRequest,
   IndicatorRuntimeUpdateRequest,
+  IndicatorWorkerCandleSnapshot,
   InstalledIndicatorDefinition,
   InstalledIndicatorInputDefinition,
   InstalledIndicatorInputOption,

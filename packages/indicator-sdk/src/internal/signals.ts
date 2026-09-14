@@ -71,6 +71,12 @@ export function sourceSignalDependency(
     occurredAtMs: openTimeMs,
     sources: [
       Object.freeze({
+        ...(metadata.providerProfileId === undefined
+          ? {}
+          : { providerProfileId: metadata.providerProfileId }),
+        ...(metadata.instrumentId === undefined
+          ? {}
+          : { instrumentId: metadata.instrumentId }),
         timeframeId,
         activeTimeframeId,
         openTimeMs,

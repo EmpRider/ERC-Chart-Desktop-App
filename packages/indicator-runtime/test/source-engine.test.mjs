@@ -565,6 +565,16 @@ test("live source revisions replace provisional candles without accepting stale 
   assert.equal(source.snapshot().revision, 2);
   assert.equal(source.snapshot().candles.at(-1).close, 104);
 
+  liveSink.onCandles([candle("1m", 60_000, 998)], {
+    generation: 0,
+    revision: 999,
+    previousRevision: 2,
+    kind: "incremental",
+  });
+  assert.equal(source.snapshot().generation, 1);
+  assert.equal(source.snapshot().revision, 2);
+  assert.equal(source.snapshot().candles.at(-1).close, 104);
+
   await source.release();
   await engine.dispose();
 });
