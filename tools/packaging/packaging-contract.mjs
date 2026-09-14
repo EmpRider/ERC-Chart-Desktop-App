@@ -35,7 +35,7 @@ export function validateReleaseVersion(version) {
 function parseReleaseVersion(version) {
   const validatedVersion = validateReleaseVersion(version);
   const [core, prerelease] = validatedVersion.split("-", 2);
-  const [major, minor, patch] = core.split(".").map(Number);
+  const [major, minor, patch] = core.split(".").map(BigInt);
   return {
     major,
     minor,
@@ -49,7 +49,11 @@ function comparePrereleaseIdentifiers(left, right) {
   const rightNumeric = /^\d+$/.test(right);
 
   if (leftNumeric && rightNumeric) {
-    return Number(left) - Number(right);
+    const leftValue = BigInt(left);
+    const rightValue = BigInt(right);
+    if (leftValue < rightValue) return -1;
+    if (leftValue > rightValue) return 1;
+    return 0;
   }
   if (leftNumeric) return -1;
   if (rightNumeric) return 1;
@@ -63,7 +67,8 @@ function compareReleaseVersions(leftVersion, rightVersion) {
   const right = parseReleaseVersion(rightVersion);
 
   for (const key of ["major", "minor", "patch"]) {
-    if (left[key] !== right[key]) return left[key] - right[key];
+    if (left[key] < right[key]) return -1;
+    if (left[key] > right[key]) return 1;
   }
 
   if (left.prerelease === null && right.prerelease === null) return 0;
