@@ -244,10 +244,18 @@ function signatureFor(
     timeframeId: message.timeframeId,
     parameters,
     dependencies: message.dependencies?.map(
-      ({ inputKey, instanceId, outputKey }) => ({
+      ({
         inputKey,
         instanceId,
         outputKey,
+        sourceGeneration,
+        configGeneration,
+      }) => ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        configGeneration,
       }),
     ),
   });
