@@ -64,6 +64,9 @@ export interface IndicatorInstance {
 }
 
 export interface RuntimeIndicatorInstance extends IndicatorInstance {
+  readonly updateDependencyInputs: (
+    updates: Readonly<Record<string, readonly IndicatorResultPoint[]>>,
+  ) => void;
   readonly snapshot: () => IndicatorSnapshot;
 }
 

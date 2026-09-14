@@ -236,12 +236,29 @@ export function defineIndicator(
       let building: Candle | undefined;
       let disposed = false;
       let failed = false;
-      const dependencyInputs = Object.fromEntries(
+      const dependencyInputs: Record<
+        string,
+        Map<number, IndicatorResultPoint>
+      > = Object.fromEntries(
         Object.entries(context.dependencyInputs ?? {}).map(([key, points]) => [
           key,
           new Map(points.map((point) => [point.openTimeMs, point])),
         ]),
       );
+      const updateDependencyInputs = (
+        updates: Readonly<Record<string, readonly IndicatorResultPoint[]>>,
+      ): void => {
+        for (const [key, points] of Object.entries(updates)) {
+          const values = dependencyInputs[key] ?? new Map();
+          dependencyInputs[key] = values;
+          for (const point of points) values.set(point.openTimeMs, point);
+          while (values.size > 100_000) {
+            const oldest = values.keys().next().value;
+            if (oldest === undefined) break;
+            values.delete(oldest);
+          }
+        }
+      };
       const validate = (candle: Candle): void => {
         if (disposed) throw new Error("Indicator instance was disposed.");
         if (failed)
@@ -374,6 +391,7 @@ export function defineIndicator(
         }
       };
       return {
+        updateDependencyInputs,
         onHistory(history) {
           if (disposed) throw new Error("Indicator instance was disposed.");
           if (history.length > 100_000)

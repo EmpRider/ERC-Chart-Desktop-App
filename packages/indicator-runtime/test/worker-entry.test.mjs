@@ -154,6 +154,93 @@ test("worker passes bound indicator outputs through the private runtime context"
   }
 });
 
+test("worker applies live dependency deltas without recreating history", async () => {
+  const originalPostMessage = globalThis.postMessage;
+  const originalOnMessage = globalThis.onmessage;
+  const pendingResponses = [];
+  globalThis.postMessage = (message) => pendingResponses.shift()?.(message);
+  const responseFor = (message) =>
+    new Promise((resolve) => {
+      pendingResponses.push(resolve);
+      globalThis.onmessage({ data: message });
+    });
+
+  try {
+    await import(`../dist/worker-entry.js?dependency-delta=${Date.now()}`);
+    const runtimeEntryUrl = new URL(
+      "./fixtures/dependency-aware-indicator.mjs",
+      import.meta.url,
+    ).href;
+    const base = {
+      type: "sync",
+      instanceId: "worker-dependency-delta-instance",
+      runtimeEntryUrl,
+      pluginId: "erc.indicator.worker-dependency",
+      definitionId: "erc.indicator.worker-dependency.main",
+      instrumentId: "TEST",
+      timeframeId: "1m",
+      parameters: {},
+      configGeneration: 1,
+    };
+    const initial = await responseFor({
+      ...base,
+      sequence: 1,
+      dependencies: [
+        {
+          inputKey: "source",
+          instanceId: "upstream-instance",
+          outputKey: "line",
+          sourceGeneration: 0,
+          sourceRevision: 1,
+          configGeneration: 1,
+          outputRevision: 1,
+          points: [
+            { openTimeMs: 0, values: { line: 42 } },
+            { openTimeMs: 60_000, values: { line: 43 } },
+          ],
+        },
+      ],
+      data: {
+        kind: "snapshot",
+        snapshot: createIndicatorWorkerCandleSnapshot([
+          candle("1m", 0),
+          candle("1m", 60_000),
+        ]),
+      },
+      dataRevision: 1,
+    });
+    assert.equal(initial.type, "result");
+
+    const updated = await responseFor({
+      ...base,
+      sequence: 2,
+      dependencies: [
+        {
+          inputKey: "source",
+          instanceId: "upstream-instance",
+          outputKey: "line",
+          sourceGeneration: 0,
+          sourceRevision: 2,
+          configGeneration: 1,
+          outputRevision: 2,
+          points: [{ openTimeMs: 60_000, values: { line: 99 } }],
+        },
+      ],
+      data: { kind: "building", candle: candle("1m", 60_000) },
+      dataRevision: 2,
+    });
+
+    assert.equal(updated.type, "result");
+    assert.equal(updated.result.kind, "building");
+    assert.deepEqual(updated.result.points, [
+      { openTimeMs: 60_000, values: { line: 100 } },
+    ]);
+  } finally {
+    globalThis.postMessage = originalPostMessage;
+    globalThis.onmessage = originalOnMessage;
+  }
+});
+
 test("worker rejects snapshots whose drawing handles exceed the overlay cap", async () => {
   const originalPostMessage = globalThis.postMessage;
   const originalOnMessage = globalThis.onmessage;

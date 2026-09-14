@@ -30,6 +30,9 @@ interface RuntimeIndicatorInstance {
   readonly onHistory: (candles: readonly Candle[]) => void;
   readonly onBuildingBar: (candle: Candle) => void;
   readonly onFinalizedBar: (candle: Candle) => void;
+  readonly updateDependencyInputs?: (
+    updates: Readonly<Record<string, readonly IndicatorRuntimePoint[]>>,
+  ) => void;
   readonly dispose: () => void;
   readonly snapshot: () => RuntimeIndicatorSnapshot;
 }
@@ -241,25 +244,40 @@ function signatureFor(
     timeframeId: message.timeframeId,
     parameters,
     dependencies: message.dependencies?.map(
-      ({
+      ({ inputKey, instanceId, outputKey }) => ({
         inputKey,
         instanceId,
         outputKey,
-        sourceGeneration,
-        sourceRevision,
-        configGeneration,
-        outputRevision,
-      }) => ({
-        inputKey,
-        instanceId,
-        outputKey,
-        sourceGeneration,
-        sourceRevision,
-        configGeneration,
-        outputRevision,
       }),
     ),
   });
+}
+
+function applyDependencyUpdates(
+  instance: RuntimeIndicatorInstance,
+  dependencies: IndicatorWorkerSyncMessage["dependencies"],
+): void {
+  if (dependencies === undefined || dependencies.length === 0) return;
+  if (instance.updateDependencyInputs === undefined) {
+    throw new Error(
+      "Indicator runtime does not support live dependency input updates.",
+    );
+  }
+  instance.updateDependencyInputs(
+    Object.fromEntries(
+      dependencies.map((dependency) => [
+        dependency.inputKey,
+        dependency.points.map((point) => ({
+          openTimeMs: point.openTimeMs,
+          values: { ...point.values },
+          ...(point.colors === undefined
+            ? {}
+            : { colors: { ...point.colors } }),
+          ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
+        })),
+      ]),
+    ),
+  );
 }
 
 async function execute(
@@ -279,6 +297,7 @@ async function execute(
       ) {
         throw new Error("Building-bar delta does not match the active candle.");
       }
+      applyDependencyUpdates(active.instance, message.dependencies);
       active.instance.onBuildingBar(message.data.candle);
       active.lastBuilding = message.data.candle;
       return projectIncrementalResult(active, "building", [
@@ -295,6 +314,7 @@ async function execute(
           "Finalized-bar delta does not match the active candle.",
         );
       }
+      applyDependencyUpdates(active.instance, message.dependencies);
       active.instance.onFinalizedBar(message.data.finalized);
       active.instance.onBuildingBar(message.data.building);
       active.lastBuilding = message.data.building;

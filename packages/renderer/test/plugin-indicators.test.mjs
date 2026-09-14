@@ -1110,6 +1110,154 @@ test("dependent calculation publishes upstream output first and consumes the mat
   assert.deepEqual(rows, [{ line: 23 }]);
 });
 
+test("live dependency updates stay incremental and send only the affected dependency point", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-incremental",
+    name: "Dependency incremental",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-incremental-test",
+    pluginName: "Dependency incremental test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-incremental-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-incremental-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-incremental-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  const pointsFor = (request, multiplier) => {
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    return candles.map((candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: {
+        line:
+          dependency === undefined
+            ? candle.close * multiplier
+            : (dependency.points.find(
+                (point) => point.openTimeMs === candle.openTimeMs,
+              )?.values.line ?? 0) + 1,
+      },
+    }));
+  };
+  const sync = async (request) => {
+    requests.push(request);
+    const points = pointsFor(request, 2);
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: 1_900_000_000_000,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      timestamp: 1_900_000_060_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+
+  await template.calc(data, { id: consumerRuntimeId });
+  data[1] = { ...data[1], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const consumerRequests = requests.filter(({ instanceId }) =>
+    instanceId.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.equal(consumerRequests.length, 2);
+  assert.equal(consumerRequests[1].data.kind, "building");
+  assert.deepEqual(
+    consumerRequests[1].dependencies?.[0]?.points.map(
+      ({ openTimeMs }) => openTimeMs,
+    ),
+    [data[1].timestamp],
+  );
+});
+
 test("upstream configuration changes invalidate and rebuild unchanged downstream data", async () => {
   let template;
   const activeIds = new Set();

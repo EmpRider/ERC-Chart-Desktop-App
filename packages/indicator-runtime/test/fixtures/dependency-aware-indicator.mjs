@@ -11,29 +11,44 @@ export default {
     requiresLiveTicks: false,
   },
   createInstance(_parameters, context) {
+    const dependencyByOpenTime = new Map(
+      (context.dependencyInputs?.source ?? []).map((point) => [
+        point.openTimeMs,
+        point.values.line,
+      ]),
+    );
+    const pointFor = (candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: {
+        line:
+          typeof dependencyByOpenTime.get(candle.openTimeMs) === "number"
+            ? dependencyByOpenTime.get(candle.openTimeMs) + 1
+            : null,
+      },
+    });
     currentSnapshot = { points: [], overlays: [], signals: [] };
     return {
+      updateDependencyInputs(updates) {
+        for (const point of updates.source ?? [])
+          dependencyByOpenTime.set(point.openTimeMs, point.values.line);
+      },
       onHistory(candles) {
-        const bound = context.dependencyInputs?.source ?? [];
-        const byOpenTime = new Map(
-          bound.map((point) => [point.openTimeMs, point.values.line]),
-        );
         currentSnapshot = {
-          points: candles.map((candle) => ({
-            openTimeMs: candle.openTimeMs,
-            values: {
-              line:
-                typeof byOpenTime.get(candle.openTimeMs) === "number"
-                  ? byOpenTime.get(candle.openTimeMs) + 1
-                  : null,
-            },
-          })),
+          points: candles.map(pointFor),
           overlays: [],
           signals: [],
         };
       },
-      onBuildingBar() {
-        void 0;
+      onBuildingBar(candle) {
+        currentSnapshot = {
+          ...currentSnapshot,
+          points: [
+            ...currentSnapshot.points.filter(
+              (point) => point.openTimeMs !== candle.openTimeMs,
+            ),
+            pointFor(candle),
+          ].sort((left, right) => left.openTimeMs - right.openTimeMs),
+        };
       },
       onFinalizedBar() {
         void 0;

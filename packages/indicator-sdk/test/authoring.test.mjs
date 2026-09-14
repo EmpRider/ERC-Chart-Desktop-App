@@ -166,6 +166,36 @@ test("source inputs preindex dependency history instead of scanning it once per 
   instance.dispose();
 });
 
+test("source inputs accept bounded live dependency point updates without replay", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.live", name: "Live bound source" },
+    () => {
+      plot.line(input.source("close", "Source"), { title: "Bound" });
+    },
+  );
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: [
+          { openTimeMs: 0, values: { upstream: 42 } },
+          { openTimeMs: 60_000, values: { upstream: 43 } },
+        ],
+      },
+    },
+  );
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+
+  instance.updateDependencyInputs({
+    input_0: [{ openTimeMs: 60_000, values: { upstream: 99 } }],
+  });
+  instance.onBuildingBar(candle(1, 12));
+
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 99);
+  instance.dispose();
+});
+
 test("timeframe authoring declares dynamic host metadata without static provider options", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.timeframe.main", name: "Timeframe" },

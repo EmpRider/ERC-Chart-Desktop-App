@@ -22,7 +22,10 @@ import type {
   IndicatorFigure,
   KLineData,
 } from "klinecharts";
-import type { BrowserIndicatorSyncRequest } from "./indicator-worker-runtime.js";
+import type {
+  BrowserIndicatorDataUpdate,
+  BrowserIndicatorSyncRequest,
+} from "./indicator-worker-runtime.js";
 import {
   indicatorShapeBaseline,
   indicatorShapeText,
@@ -97,7 +100,7 @@ interface RuntimeContext {
   calculationKey: string;
   sync: PluginIndicatorSync;
   rows?: PluginIndicatorFigureData[];
-  publishedPoints?: IndicatorRuntimePoint[];
+  publishedPoints?: Map<number, IndicatorRuntimePoint>;
   dependencyVersion?: string;
   configurationRebuildPending?: boolean;
   overlays: readonly IndicatorRuntimeOverlay[];
@@ -718,12 +721,19 @@ function applyWorkerResult(
   candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
-    context.publishedPoints = result.snapshot.points.map((point) => ({
-      openTimeMs: point.openTimeMs,
-      values: { ...point.values },
-      ...(point.colors === undefined ? {} : { colors: { ...point.colors } }),
-      ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
-    }));
+    context.publishedPoints = new Map(
+      result.snapshot.points.map((point) => [
+        point.openTimeMs,
+        {
+          openTimeMs: point.openTimeMs,
+          values: { ...point.values },
+          ...(point.colors === undefined
+            ? {}
+            : { colors: { ...point.colors } }),
+          ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
+        },
+      ]),
+    );
     context.rows = alignPluginIndicatorSnapshotRows(
       dataList,
       result.snapshot,
@@ -763,9 +773,8 @@ function applyWorkerResult(
     }
     rows[startIndex + offset] = rowForPoint(point);
   }
-  const published = new Map(
-    (context.publishedPoints ?? []).map((point) => [point.openTimeMs, point]),
-  );
+  const published =
+    context.publishedPoints ?? new Map<number, IndicatorRuntimePoint>();
   for (const point of result.points) {
     published.set(point.openTimeMs, {
       openTimeMs: point.openTimeMs,
@@ -774,18 +783,21 @@ function applyWorkerResult(
       ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
     });
   }
-  context.publishedPoints = [...published.values()].sort(
-    (left, right) => left.openTimeMs - right.openTimeMs,
-  );
+  context.publishedPoints = published;
   if (result.overlays !== undefined) context.overlays = result.overlays;
   if (result.signals !== undefined) context.signals = result.signals;
   return rows;
 }
 
-async function dependencySnapshotsFor(
+interface ResolvedIndicatorDependency {
+  readonly snapshot: Omit<IndicatorWorkerDependencySnapshot, "points">;
+  readonly points: ReadonlyMap<number, IndicatorRuntimePoint>;
+}
+
+async function resolveDependenciesFor(
   context: RuntimeContext,
   dataList: readonly KLineData[],
-): Promise<readonly IndicatorWorkerDependencySnapshot[]> {
+): Promise<readonly ResolvedIndicatorDependency[]> {
   return Promise.all(
     context.dependencyBindings.map(async (binding) => {
       await calculatePluginIndicator(binding.runtimeId, dataList);
@@ -796,22 +808,51 @@ async function dependencySnapshotsFor(
         );
       }
       return {
-        inputKey: binding.inputKey,
-        instanceId: binding.instanceId,
-        outputKey: binding.outputKey,
-        sourceGeneration: upstream.dataGeneration,
-        sourceRevision: upstream.dataRevision,
-        configGeneration: upstream.configGeneration,
-        outputRevision: upstream.outputRevision,
-        points: upstream.publishedPoints.map((point) => ({
-          openTimeMs: point.openTimeMs,
-          values: {
-            [binding.outputKey]: point.values[binding.outputKey] ?? null,
-          },
-        })),
-      } satisfies IndicatorWorkerDependencySnapshot;
+        snapshot: {
+          inputKey: binding.inputKey,
+          instanceId: binding.instanceId,
+          outputKey: binding.outputKey,
+          sourceGeneration: upstream.dataGeneration,
+          sourceRevision: upstream.dataRevision,
+          configGeneration: upstream.configGeneration,
+          outputRevision: upstream.outputRevision,
+        },
+        points: upstream.publishedPoints,
+      } satisfies ResolvedIndicatorDependency;
     }),
   );
+}
+
+function dependencySnapshotsForData(
+  dependencies: readonly ResolvedIndicatorDependency[],
+  data: BrowserIndicatorDataUpdate,
+): readonly IndicatorWorkerDependencySnapshot[] {
+  const openTimeMs =
+    data.kind === "building"
+      ? [data.candle.openTimeMs]
+      : data.kind === "rollover"
+        ? [data.finalized.openTimeMs, data.building.openTimeMs]
+        : undefined;
+  return dependencies.map(({ snapshot, points }) => {
+    const selected =
+      openTimeMs === undefined
+        ? [...points.values()].sort(
+            (left, right) => left.openTimeMs - right.openTimeMs,
+          )
+        : openTimeMs.flatMap((timestamp) => {
+            const point = points.get(timestamp);
+            return point === undefined ? [] : [point];
+          });
+    return {
+      ...snapshot,
+      points: selected.map((point) => ({
+        openTimeMs: point.openTimeMs,
+        values: {
+          [snapshot.outputKey]: point.values[snapshot.outputKey] ?? null,
+        },
+      })),
+    };
+  });
 }
 
 export function pluginIndicatorDependencyVersion(
@@ -866,12 +907,16 @@ async function calculatePluginIndicator(
           delete context.pendingSeriesChange;
           continue;
         }
-        const dependencies =
+        const resolvedDependencies =
           context.dependencyBindings.length === 0
             ? []
-            : await dependencySnapshotsFor(context, next);
+            : await resolveDependenciesFor(context, next);
+        const dependencyMetadata = resolvedDependencies.map(({ snapshot }) => ({
+          ...snapshot,
+          points: [],
+        }));
         const nextDependencyVersion =
-          pluginIndicatorDependencyVersion(dependencies);
+          pluginIndicatorDependencyVersion(dependencyMetadata);
         const dependencyChanged =
           nextDependencyVersion !== context.dependencyVersion;
         let data = incrementalDataUpdate(next, context);
@@ -879,7 +924,7 @@ async function calculatePluginIndicator(
         const configurationRebuild =
           context.configurationRebuildPending === true;
         if (
-          (dependencyChanged || configurationRebuild) &&
+          configurationRebuild &&
           data !== undefined &&
           data.kind !== "snapshot" &&
           data.kind !== "rebuild"
@@ -895,6 +940,10 @@ async function calculatePluginIndicator(
           delete context.pendingSeriesChange;
           continue;
         }
+        const dependencies = dependencySnapshotsForData(
+          resolvedDependencies,
+          data,
+        );
         if (sourceChange !== undefined)
           context.dataGeneration = sourceChange.generation;
         delete context.pendingSeriesChange;
