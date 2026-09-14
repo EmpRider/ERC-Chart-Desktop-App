@@ -618,6 +618,7 @@ export function ProviderChart({
   const latestInstalledIndicators = useRef(installedIndicators);
   const latestSyncIndicator = useRef(syncIndicator);
   const latestDisposeIndicator = useRef(disposeIndicator);
+  const latestAvailableTimeframeIds = useRef(availableTimeframeIds);
   const latestIndicatorCallbacks = useRef({
     onIndicatorEnabledChange,
     onIndicatorRemove,
@@ -655,6 +656,7 @@ export function ProviderChart({
   latestInstalledIndicators.current = installedIndicators;
   latestSyncIndicator.current = syncIndicator;
   latestDisposeIndicator.current = disposeIndicator;
+  latestAvailableTimeframeIds.current = availableTimeframeIds;
   latestIndicatorCallbacks.current = {
     onIndicatorEnabledChange,
     onIndicatorRemove,
@@ -692,7 +694,12 @@ export function ProviderChart({
       ? builtInSettingsFields(settingsBuiltInDefinition)
       : settingsPluginSummary === undefined
         ? []
-        : pluginIndicatorSettingsFields(settingsPluginSummary.definition);
+        : pluginIndicatorSettingsFields(
+            settingsPluginSummary.definition,
+            availableTimeframeIds,
+            session.timeframeId,
+            settingsIndicator?.parameters,
+          );
   const settingsName =
     settingsBuiltInDefinition?.name ?? settingsPluginSummary?.definition.name;
   const inputSettingsGroups = groupIndicatorSettingsFields(
@@ -743,7 +750,12 @@ export function ProviderChart({
         ? builtInSettingsFields(builtInDefinition)
         : pluginSummary === undefined
           ? []
-          : pluginIndicatorSettingsFields(pluginSummary.definition);
+          : pluginIndicatorSettingsFields(
+              pluginSummary.definition,
+              latestAvailableTimeframeIds.current,
+              latestSession.current.timeframeId,
+              indicator.parameters,
+            );
     setSettingsTab(
       availableFields.some((field) => field.effect !== "presentation")
         ? "inputs"
@@ -966,6 +978,7 @@ export function ProviderChart({
         initialSession.timeframeId,
         pluginManagedRuntimeIds.current,
         initialSession.profileId,
+        latestAvailableTimeframeIds.current,
       );
       pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
       for (const instanceId of pluginReconciliation.removedInstanceIds) {
@@ -1113,6 +1126,7 @@ export function ProviderChart({
       session.timeframeId,
       pluginManagedRuntimeIds.current,
       session.profileId,
+      availableTimeframeIds,
     );
     pluginManagedRuntimeIds.current = pluginReconciliation.managedRuntimeIds;
     for (const instanceId of pluginReconciliation.removedInstanceIds) {
@@ -1130,6 +1144,7 @@ export function ProviderChart({
     session.profileId,
     session.instrument.id,
     session.timeframeId,
+    availableTimeframeIds,
   ]);
 
   useEffect(() => {

@@ -1,21 +1,18 @@
 import {
   isIndicatorRuntimeSnapshot,
+  isIndicatorWorkerCandleSnapshot,
   isInstalledIndicatorDefinition,
+  materializeIndicatorWorkerCandleSnapshot,
   type Candle,
   type IndicatorParameterValues,
+  type IndicatorRuntimePoint,
   type IndicatorRuntimeSnapshot,
   type InstrumentId,
   type InstalledIndicatorDefinition,
   type TimeframeId,
 } from "@erc-chart/contracts";
-import {
-  normalizeIndicatorParameters,
-  type IndicatorInputDefinition,
-  type IndicatorInputValue,
-  type IndicatorPluginModule,
-  type RuntimeIndicatorInstance,
-} from "@erc-chart/indicator-sdk";
 import type {
+  IndicatorWorkerDependencySnapshot,
   IndicatorWorkerDisposeMessage,
   IndicatorWorkerFailureMessage,
   IndicatorWorkerRequestMessage,
@@ -23,7 +20,72 @@ import type {
   IndicatorWorkerSuccessMessage,
   IndicatorWorkerSyncMessage,
 } from "./index.js";
+import {
+  INDICATOR_WORKER_MAX_DEPENDENCY_POINTS,
+  normalizeIndicatorParameters,
+} from "./index.js";
 import { assertDenseSnapshotTimeline } from "./result-validation.js";
+
+interface RuntimeIndicatorSnapshot extends IndicatorRuntimeSnapshot {
+  readonly visualRevision?: number;
+}
+
+interface RuntimeIndicatorInstance {
+  readonly onHistory: (candles: readonly Candle[]) => void;
+  readonly onBuildingBar: (candle: Candle) => void;
+  readonly onFinalizedBar: (candle: Candle) => void;
+  readonly updateDependencyInputs?: (
+    updates: Readonly<
+      Record<
+        string,
+        {
+          readonly outputKey: string;
+          readonly points: readonly IndicatorRuntimePoint[];
+        }
+      >
+    >,
+  ) => void;
+  readonly dispose: () => void;
+  readonly snapshot: () => RuntimeIndicatorSnapshot;
+}
+
+interface IndicatorPluginModule {
+  readonly definition: InstalledIndicatorDefinition;
+  readonly createInstance: (
+    parameters: IndicatorParameterValues,
+    context: {
+      readonly instrumentId: InstrumentId;
+      readonly timeframeId: TimeframeId;
+      readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
+      readonly sourceMetadata?: Readonly<
+        Record<
+          string,
+          {
+            readonly providerProfileId: string;
+            readonly instrumentId: string;
+            readonly activeTimeframeId: string;
+            readonly generation: number;
+            readonly revision: number;
+            readonly finalizedCount: number;
+            readonly provenance: {
+              readonly kind: "market" | "synthetic";
+              readonly candleType: "standard" | "heikin-ashi";
+            };
+          }
+        >
+      >;
+      readonly dependencyInputs?: Readonly<
+        Record<
+          string,
+          {
+            readonly outputKey: string;
+            readonly points: readonly IndicatorRuntimePoint[];
+          }
+        >
+      >;
+    },
+  ) => RuntimeIndicatorInstance;
+}
 
 interface ActiveInstance {
   readonly signature: string;
@@ -56,11 +118,8 @@ function sameCandleIdentity(left: Candle, right: Candle): boolean {
 function normalizeParameters(
   definition: InstalledIndicatorDefinition,
   supplied: IndicatorParameterValues,
-): Readonly<Record<string, IndicatorInputValue>> {
-  return normalizeIndicatorParameters(
-    definition.inputs as readonly IndicatorInputDefinition[],
-    supplied,
-  );
+): IndicatorParameterValues {
+  return normalizeIndicatorParameters(definition, supplied);
 }
 
 function projectSnapshot(
@@ -194,7 +253,7 @@ async function pluginFor(
 
 function signatureFor(
   message: IndicatorWorkerSyncMessage,
-  parameters: Readonly<Record<string, IndicatorInputValue>>,
+  parameters: IndicatorParameterValues,
 ): string {
   return JSON.stringify({
     pluginId: message.pluginId,
@@ -202,7 +261,69 @@ function signatureFor(
     instrumentId: message.instrumentId,
     timeframeId: message.timeframeId,
     parameters,
+    dependencies: message.dependencies?.map(
+      ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        configGeneration,
+      }) => ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        configGeneration,
+      }),
+    ),
   });
+}
+
+function applyDependencyUpdates(
+  instance: RuntimeIndicatorInstance,
+  dependencies: IndicatorWorkerSyncMessage["dependencies"],
+): void {
+  if (dependencies === undefined || dependencies.length === 0) return;
+  if (instance.updateDependencyInputs === undefined) {
+    throw new Error(
+      "Indicator runtime does not support live dependency input updates.",
+    );
+  }
+  instance.updateDependencyInputs(materializeDependencyInputs(dependencies));
+}
+
+function materializeDependencyInputs(
+  dependencies: readonly IndicatorWorkerDependencySnapshot[],
+): Readonly<
+  Record<
+    string,
+    {
+      readonly outputKey: string;
+      readonly points: readonly IndicatorRuntimePoint[];
+    }
+  >
+> {
+  const materializedPointBatches = new Map<
+    readonly IndicatorRuntimePoint[],
+    readonly IndicatorRuntimePoint[]
+  >();
+  return Object.fromEntries(
+    dependencies.map((dependency) => {
+      let points = materializedPointBatches.get(dependency.points);
+      if (points === undefined) {
+        points = dependency.points.map((point) => ({
+          openTimeMs: point.openTimeMs,
+          values: { ...point.values },
+          ...(point.colors === undefined
+            ? {}
+            : { colors: { ...point.colors } }),
+          ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
+        }));
+        materializedPointBatches.set(dependency.points, points);
+      }
+      return [dependency.inputKey, { outputKey: dependency.outputKey, points }];
+    }),
+  );
 }
 
 async function execute(
@@ -222,6 +343,7 @@ async function execute(
       ) {
         throw new Error("Building-bar delta does not match the active candle.");
       }
+      applyDependencyUpdates(active.instance, message.dependencies);
       active.instance.onBuildingBar(message.data.candle);
       active.lastBuilding = message.data.candle;
       return projectIncrementalResult(active, "building", [
@@ -238,6 +360,7 @@ async function execute(
           "Finalized-bar delta does not match the active candle.",
         );
       }
+      applyDependencyUpdates(active.instance, message.dependencies);
       active.instance.onFinalizedBar(message.data.finalized);
       active.instance.onBuildingBar(message.data.building);
       active.lastBuilding = message.data.building;
@@ -253,19 +376,57 @@ async function execute(
     );
   }
   active?.instance.dispose();
+  const historyCandles = materializeIndicatorWorkerCandleSnapshot(
+    message.data.snapshot,
+    message.instrumentId as InstrumentId,
+    message.timeframeId as TimeframeId,
+  );
   const instance = plugin.createInstance(parameters, {
     instrumentId: message.instrumentId as InstrumentId,
     timeframeId: message.timeframeId as TimeframeId,
+    ...(message.sources === undefined
+      ? {}
+      : {
+          sourceCandles: Object.fromEntries(
+            message.sources.map((source) => [
+              source.timeframeId,
+              materializeIndicatorWorkerCandleSnapshot(
+                source.snapshot,
+                source.instrumentId as InstrumentId,
+                (source.activeTimeframeId ?? source.timeframeId) as TimeframeId,
+              ),
+            ]),
+          ),
+          sourceMetadata: Object.fromEntries(
+            message.sources.map((source) => [
+              source.timeframeId,
+              {
+                providerProfileId: source.providerProfileId,
+                instrumentId: source.instrumentId,
+                activeTimeframeId:
+                  source.activeTimeframeId ?? source.timeframeId,
+                generation: source.generation,
+                revision: source.revision,
+                finalizedCount: source.finalizedCount,
+                provenance: source.provenance,
+              },
+            ]),
+          ),
+        }),
+    ...(message.dependencies === undefined
+      ? {}
+      : {
+          dependencyInputs: materializeDependencyInputs(message.dependencies),
+        }),
   });
-  instance.onHistory(message.data.candles);
-  const snapshot = projectSnapshot(
-    instance,
-    message.data.candles.map(({ openTimeMs }) => openTimeMs),
-  );
+  instance.onHistory(historyCandles);
+  const snapshot = projectSnapshot(instance, [
+    ...message.data.snapshot.openTimeMs,
+  ]);
   active = {
     signature,
     instance,
-    lastBuilding: message.data.candles.at(-1),
+    lastBuilding: historyCandles.at(-1),
     pointCount: snapshot.points.length,
     visualRevision: instance.snapshot().visualRevision,
   };
@@ -291,7 +452,7 @@ function isDataUpdate(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const data = value as Record<string, unknown>;
   if (data.kind === "snapshot" || data.kind === "rebuild") {
-    return Array.isArray(data.candles) && data.candles.every(isCandle);
+    return isIndicatorWorkerCandleSnapshot(data.snapshot);
   }
   if (data.kind === "building") return isCandle(data.candle);
   return (
@@ -299,6 +460,117 @@ function isDataUpdate(value: unknown): boolean {
     isCandle(data.finalized) &&
     isCandle(data.building)
   );
+}
+
+function isSourceSnapshot(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const source = value as {
+    readonly providerProfileId?: unknown;
+    readonly instrumentId?: unknown;
+    readonly timeframeId?: unknown;
+    readonly activeTimeframeId?: unknown;
+    readonly snapshot?: unknown;
+    readonly provenance?: unknown;
+    readonly generation?: unknown;
+    readonly revision?: unknown;
+    readonly finalizedCount?: unknown;
+  };
+  const activeTimeframeId =
+    source.activeTimeframeId === undefined
+      ? source.timeframeId
+      : source.activeTimeframeId;
+  return (
+    typeof source.providerProfileId === "string" &&
+    source.providerProfileId.length > 0 &&
+    source.providerProfileId.length <= 256 &&
+    typeof source.instrumentId === "string" &&
+    source.instrumentId.length > 0 &&
+    source.instrumentId.length <= 256 &&
+    typeof source.timeframeId === "string" &&
+    source.timeframeId.length > 0 &&
+    typeof activeTimeframeId === "string" &&
+    activeTimeframeId.length > 0 &&
+    typeof source.provenance === "object" &&
+    source.provenance !== null &&
+    (((source.provenance as { readonly kind?: unknown }).kind === "market" &&
+      (source.provenance as { readonly candleType?: unknown }).candleType ===
+        "standard") ||
+      ((source.provenance as { readonly kind?: unknown }).kind ===
+        "synthetic" &&
+        (source.provenance as { readonly candleType?: unknown }).candleType ===
+          "heikin-ashi")) &&
+    Number.isSafeInteger(source.generation) &&
+    Number(source.generation) >= 0 &&
+    Number.isSafeInteger(source.revision) &&
+    Number(source.revision) >= 0 &&
+    Number.isSafeInteger(source.finalizedCount) &&
+    Number(source.finalizedCount) >= 0 &&
+    isIndicatorWorkerCandleSnapshot(source.snapshot) &&
+    Number(source.finalizedCount) <= source.snapshot.openTimeMs.length
+  );
+}
+
+function isDependencySnapshot(
+  value: unknown,
+): value is IndicatorWorkerDependencySnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const dependency = value as {
+    readonly inputKey?: unknown;
+    readonly instanceId?: unknown;
+    readonly outputKey?: unknown;
+    readonly sourceGeneration?: unknown;
+    readonly sourceRevision?: unknown;
+    readonly configGeneration?: unknown;
+    readonly outputRevision?: unknown;
+    readonly points?: unknown;
+  };
+  return (
+    typeof dependency.inputKey === "string" &&
+    dependency.inputKey.length > 0 &&
+    typeof dependency.instanceId === "string" &&
+    dependency.instanceId.length > 0 &&
+    typeof dependency.outputKey === "string" &&
+    dependency.outputKey.length > 0 &&
+    Number.isSafeInteger(dependency.sourceGeneration) &&
+    Number(dependency.sourceGeneration) >= 0 &&
+    Number.isSafeInteger(dependency.sourceRevision) &&
+    Number(dependency.sourceRevision) >= 0 &&
+    Number.isSafeInteger(dependency.configGeneration) &&
+    Number(dependency.configGeneration) >= 0 &&
+    Number.isSafeInteger(dependency.outputRevision) &&
+    Number(dependency.outputRevision) >= 0 &&
+    Array.isArray(dependency.points) &&
+    isIndicatorRuntimeSnapshot({
+      points: dependency.points,
+      overlays: [],
+      signals: [],
+    }) &&
+    dependency.points.every((point) =>
+      Object.prototype.hasOwnProperty.call(
+        point.values,
+        dependency.outputKey as string,
+      ),
+    )
+  );
+}
+
+function isDependencySnapshotBatch(
+  value: unknown,
+): value is readonly IndicatorWorkerDependencySnapshot[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  let pointCount = 0;
+  const inputKeys = new Set<string>();
+  const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
+  for (const dependency of value) {
+    if (!isDependencySnapshot(dependency)) return false;
+    if (inputKeys.has(dependency.inputKey)) return false;
+    inputKeys.add(dependency.inputKey);
+    if (countedPointBatches.has(dependency.points)) continue;
+    countedPointBatches.add(dependency.points);
+    pointCount += dependency.points.length;
+    if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
+  }
+  return true;
 }
 
 function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
@@ -320,6 +592,11 @@ function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
     Number(message.configGeneration) >= 0 &&
     typeof message.parameters === "object" &&
     message.parameters !== null &&
+    (message.sources === undefined ||
+      (Array.isArray(message.sources) &&
+        message.sources.every(isSourceSnapshot))) &&
+    (message.dependencies === undefined ||
+      isDependencySnapshotBatch(message.dependencies)) &&
     isDataUpdate(message.data)
   );
 }

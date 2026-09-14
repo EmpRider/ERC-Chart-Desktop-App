@@ -86,15 +86,114 @@ geometry avoids allocating and freezing 2,000 replacement objects per candle.
 The ATR fixture uses flat synthetic candles; it does not exercise maximum POC
 zone settings. These component budgets do not establish whole-application FPS.
 
-Validation completed:
+### ECDD-229 authored multi-chart acceptance
 
-- Unit suite: 501 passed, two existing Windows symlink-permission skips.
-- Integration suite: 81 passed.
-- Final targeted contract, production-shell and scalar-authoring tests: 13 passed.
-- Type checking, lint, repository formatting and Git whitespace checks passed.
-- Electron application smoke passed.
-- Electron indicator-worker smoke passed, including generated plugin loading,
-  one-point building updates, rollover, settings rebuild and visual omission.
+ECDD-229 adds `tools/indicator-multichart-performance.mjs` to the repository's
+mandatory `npm run test:performance` command. The canonical gate builds the
+maintained ATR Rope + UT Bot indicator through the real SDK v2 authoring
+transform, then drives four independent headless chart owners through production
+`reconcilePluginIndicators` chart scoping and production
+`createBrowserIndicatorRuntime` worker supervision. Each chart-scoped runtime ID
+owns one supervisor-managed worker executing the production indicator
+`worker-entry` against the compiled maintained plugin package.
+
+Node `worker_threads` supplies only the host adapter needed to present the browser
+Worker-style messaging surface in headless CI. Chart ownership, runtime ID
+scoping, snapshot/building/rollover classification, browser-runtime supervision,
+worker-entry transport and authored plugin execution use production code paths.
+The headless chart objects exercise orchestration and KLineCharts indicator
+lifecycle ownership but do not render pixels.
+
+The enforced workload and budgets are:
+
+- four chart owners and four isolated workers with 25,000 history bars each,
+  100,000 bars aggregate;
+- aggregate history replay below 60,000 ms and no individual chart above that
+  same history budget;
+- 250 provisional rounds across four charts, 1,000 building updates total,
+  completing below 5,000 ms;
+- every individual provisional or finalized indicator update below the existing
+  100 ms worker update budget;
+- one finalized rollover per chart, with the four-chart finalized sweep below
+  1,000 ms;
+- provisional updates must keep each retained renderer row-history array stable
+  rather than cloning it.
+
+Delivery #1047 on Ubuntu 24.04 / Node 26.8.1 measured clean head
+`0553d2de66cbbfbad2d86ad957786e0840d5489d` as follows:
+
+| ECDD-229 workload                            | Observed time | CI budget |
+| -------------------------------------------- | ------------: | --------: |
+| Four-chart history, 100,000 bars aggregate   |      14.247 s |      60 s |
+| Slowest single-chart 25,000-bar history      |       3.580 s |      60 s |
+| 1,000 provisional authored-indicator updates |     327.21 ms |       5 s |
+| Slowest four-chart provisional sweep         |       5.67 ms |    100 ms |
+| Slowest individual provisional update        |       2.81 ms |    100 ms |
+| Four-chart finalized rollover sweep          |       5.16 ms |       1 s |
+| Slowest individual finalized update          |       1.24 ms |    100 ms |
+
+The same CI run kept the existing authored/runtime gates green: the maintained
+ATR Rope + UT Bot 100,000-bar history completed in about 10.31 seconds, its
+1,000 building updates in about 70.77 ms total with a 0.58 ms maximum update,
+the 100,000-bar structured-series gate in about 8.91 seconds, and the 2,000
+stable-drawing/100,000-bar gate in about 28.78 seconds. The authored transform
+overhead measured about 5.80 ms against its 100 ms budget and package generation
+about 111.05 ms against its 5,000 ms budget.
+
+This is a real multi-chart authored **runtime/orchestration** acceptance gate and
+is suitable for CI/release regression detection. It is deliberately not a claim
+about renderer FPS, pixel-paint latency, provider/network latency or end-to-end
+market-feed responsiveness. Provider-aware MTF acquisition and per-TA timeframe
+execution remain owned by ECDD-142; ECDD-229 does not duplicate that
+source-engine work.
+
+Validation completed on Delivery #1047:
+
+- Unit suite: 550 passed, one platform-specific skip, zero failures.
+- Integration suite: 148 passed, including the production-orchestration contract.
+- Repository governance, Markdown lint, formatting, lint and type checking passed.
+- Electron application, workspace-restart and multi-instance smokes passed.
+- Build, authored performance acceptance, audit and version checks passed.
+- Dependency audit reported zero vulnerabilities.
+
+## ECDD-145 worker resilience and TA complexity gate
+
+ECDD-145 adds an enforced finalized steady-state complexity fixture at
+`tools/indicator-ta-complexity-performance.mjs`. It runs 100,000 updates per
+kernel and uses a 50,000-period adversarial window for SMA, EMA, highest and
+lowest. Each kernel has a deliberately loose 1,000 ms regression budget so CI
+detects accidental history/window rescans without depending on workstation
+micro-benchmark noise.
+
+The fixture covers the Jira acceptance matrix directly: SMA, EMA, RSI, ATR and
+crossover must retain O(1) steady-state update structure, while highest/lowest
+must retain amortized O(1) behavior. Before the ECDD-145 extrema fix, the
+50,000-period descending `highest` case took about 9.9-11.9 seconds for 100,000
+updates because each expiration shifted the retained array prefix. The runtime
+now advances a deque head and only compacts an accumulated stale prefix
+occasionally, keeping both work and retained memory bounded. The local GREEN
+measurement after that change was:
+
+| Kernel    | 100,000-update time | Gate budget |
+| --------- | ------------------: | ----------: |
+| SMA       |             7.17 ms |    1,000 ms |
+| EMA       |             5.82 ms |    1,000 ms |
+| RSI       |            12.06 ms |    1,000 ms |
+| ATR       |             4.46 ms |    1,000 ms |
+| Crossover |             3.33 ms |    1,000 ms |
+| Highest   |             8.53 ms |    1,000 ms |
+| Lowest    |             9.83 ms |    1,000 ms |
+
+Worker supervision now also enforces the existing product/resource limits at
+the runtime boundary: at most 20 active indicator workers for the four-chart,
+five-indicator-per-chart product maximum, at most two in-flight requests per
+instance, and at most three consecutive lifecycle failures before automatic
+recreation is refused. A successful calculation clears the consecutive-failure
+counter; explicit instance disposal clears the disabled state so a user-driven
+restart can start fresh. Lower configuration generations and lower revisions in
+the current configuration are rejected before dispatch. Worker creation,
+`postMessage`, timeout/crash/protocol failure, and termination paths settle
+callers deterministically even when host worker methods themselves throw.
 
 ## Remaining work and practical limits
 
@@ -112,13 +211,17 @@ same-bar ticks avoid that copy.
 
 Initial load, timeframe/instrument changes, calculation settings, historical
 corrections, missed multi-bar catch-up and retention resets may rebuild from the
-start. Live multi-chart profiling is still needed to quantify responsiveness
-under the user's actual market feed and indicator configuration.
+start. ECDD-229 now enforces production chart/worker orchestration for
+multi-chart authored-indicator runtime performance in CI. Live operational
+profiling is still required when quantifying actual end-user renderer FPS,
+provider/network latency, and a user's market-feed plus indicator configuration.
 
 The authored API is TypeScript/JavaScript, not a Pine parser. It currently offers
-lines, horizontal lines, histograms, shapes, boxes, segments and signals. MTF
-acquisition, filled bands and table/text-label APIs are not implemented. Signal
-was consulted only for authoring ideas; its code and architecture were not copied.
+lines, horizontal lines, histograms, shapes, boxes, segments and signals.
+Provider-aware MTF acquisition/per-TA execution remains ECDD-142 scope; filled
+bands and table/text-label APIs are not part of this optimization acceptance.
+Signal was consulted only for authoring ideas; its code and architecture were
+not copied.
 
 See [the authoring guide](INDICATOR-AUTHORING.md) and
 `packages/indicator-examples/src/atr-bands.ts` for the new API. Restart the rebuilt

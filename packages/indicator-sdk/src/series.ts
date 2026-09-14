@@ -1,7 +1,30 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
+import { readCompilerCallsite } from "./internal/callsite.js";
+import { historyValue } from "./internal/series-history.js";
 
 export const maxSeriesCollectionItems = 4_096;
+
+/**
+ * Compile-time authoring view for scalar market values.
+ *
+ * The runtime value stays a primitive number. The authoring transform lowers
+ * bracket and `.at()` history access to `history()` before the code executes.
+ */
+export type SeriesNumber = number & {
+  readonly [barsBack: number]: number;
+  readonly at: (barsBack: number) => number;
+};
+
+/**
+ * Read a prior value from the same scalar source.
+ *
+ * `barsBack = 0` returns the current value. Missing history returns NaN. The
+ * authoring compiler lowers `close[n]` and `close.at(n)` to this operation.
+ */
+export function history(source: number | undefined, barsBack: number): number {
+  return historyValue(source ?? Number.NaN, barsBack);
+}
 
 function cloneSeriesState<T>(value: T): T {
   const seen = new Map<object, unknown>();
@@ -119,16 +142,25 @@ function assertBoundedSeriesCollections(value: unknown): void {
 }
 
 /** Recurrence: every building update starts from the previous committed bar. */
-export function series<T>(initial: T, update: (previous: Readonly<T>) => T): T {
+export function series<T>(
+  initial: T,
+  update: (previous: Readonly<T>) => T,
+  hiddenCallsite?: unknown,
+): T {
   const frame = authoringFrame();
+  const callsite = readCompilerCallsite(hiddenCallsite, "state", "series");
   const kind = Array.isArray(initial) ? "array" : typeof initial;
   const structured = initial !== null && typeof initial === "object";
-  const state = useKernel(`series-${kind}`, () => {
-    assertBoundedSeriesCollections(initial);
-    return {
-      committed: structured ? cloneSeriesState(initial) : initial,
-    };
-  });
+  const state = useKernel(
+    `series-${kind}`,
+    () => {
+      assertBoundedSeriesCollections(initial);
+      return {
+        committed: structured ? cloneSeriesState(initial) : initial,
+      };
+    },
+    callsite,
+  );
   const value = update(cloneSeriesState(state.committed));
   const valueKind = Array.isArray(value) ? "array" : typeof value;
   if (valueKind !== kind)

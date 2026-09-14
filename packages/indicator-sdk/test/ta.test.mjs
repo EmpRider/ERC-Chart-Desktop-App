@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { movingAverageTypes, ta } from "../dist/index.js";
+import { candlesWithPriceSource, priceSeries } from "../dist/series.js";
 import {
-  candlesWithPriceSource,
   createAtrKernel,
   createCrossoverKernel,
   createHighestKernel,
   createLowestKernel,
   createRsiKernel,
   movingAverage,
-  movingAverageTypes,
-  priceSeries,
-  ta,
-} from "../dist/index.js";
+} from "../dist/ta.js";
 
 function candle(index, close, overrides = {}) {
   const open = overrides.open ?? close - 0.25;

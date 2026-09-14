@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 import {
   defineIndicator,
-  maxSeriesCollectionItems,
   plot,
   series,
 } from "../packages/indicator-sdk/dist/index.js";
+import { maxSeriesCollectionItems } from "../packages/indicator-sdk/dist/series.js";
 
 // Run after npm run build. Synthetic, no renderer, storage or network.
 const historyBars = 100_000;

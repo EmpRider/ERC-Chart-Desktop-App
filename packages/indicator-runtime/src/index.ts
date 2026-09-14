@@ -1,25 +1,91 @@
-import { isIndicatorRuntimeSnapshot } from "@erc-chart/contracts";
+import {
+  isIndicatorRuntimeSnapshot,
+  isIndicatorWorkerCandleSnapshot,
+} from "@erc-chart/contracts";
 import type {
   Candle,
+  IndicatorParameterValue,
   IndicatorParameterValues,
   IndicatorRuntimeOverlay,
   IndicatorRuntimePoint,
   IndicatorRuntimeSignal,
   IndicatorRuntimeSnapshot,
+  IndicatorWorkerCandleSnapshot,
   InstalledIndicatorDefinition,
+  InstalledIndicatorInputDefinition,
 } from "@erc-chart/contracts";
-import {
-  normalizeIndicatorParameters as normalizeSdkIndicatorParameters,
-  type IndicatorInputDefinition,
-} from "@erc-chart/indicator-sdk";
+import type { IndicatorSourceProvenance } from "./source-engine.js";
+
+export {
+  IndicatorDependencyGraphError,
+  createIndicatorDependencyPlan,
+  type IndicatorDependencyBinding,
+  type IndicatorDependencyBindingTarget,
+  type IndicatorDependencyGraphErrorCode,
+  type IndicatorDependencyNode,
+  type IndicatorDependencyPlan,
+} from "./dependency-graph.js";
+
+function stepDecimals(step: number): number {
+  const text = `${step}`.toLowerCase();
+  if (text.includes("e-")) {
+    const [coefficient = "", exponent = "0"] = text.split("e-");
+    const fraction = coefficient.split(".")[1]?.length ?? 0;
+    return Math.min(20, fraction + Number(exponent));
+  }
+  return Math.min(20, text.split(".")[1]?.length ?? 0);
+}
+
+function normalizeIndicatorInputValue(
+  definition: InstalledIndicatorInputDefinition,
+  value: unknown,
+): IndicatorParameterValue {
+  if (definition.type === "boolean")
+    return typeof value === "boolean" ? value : definition.defaultValue;
+  if (definition.type === "number") {
+    const raw =
+      typeof value === "number" && Number.isFinite(value)
+        ? value
+        : definition.defaultValue;
+    const bounded = Math.min(
+      definition.max ?? raw,
+      Math.max(definition.min ?? raw, raw),
+    );
+    if (definition.step === undefined) return bounded;
+    return Number(bounded.toFixed(stepDecimals(definition.step)));
+  }
+  if (definition.type === "source") {
+    return value === "close" ||
+      value === "open" ||
+      value === "high" ||
+      value === "low" ||
+      value === "hl2" ||
+      value === "hlc3" ||
+      value === "ohlc4"
+      ? value
+      : definition.defaultValue;
+  }
+  if (typeof value !== "string" || value.length > 8_192)
+    return definition.defaultValue;
+  if (
+    definition.options !== undefined &&
+    !definition.options.some((option) => option.value === value)
+  )
+    return definition.defaultValue;
+  return value;
+}
 
 export function normalizeIndicatorParameters(
   definition: InstalledIndicatorDefinition,
   supplied: Readonly<Record<string, unknown>>,
 ): IndicatorParameterValues {
-  return normalizeSdkIndicatorParameters(
-    definition.inputs as readonly IndicatorInputDefinition[],
-    supplied,
+  return Object.freeze(
+    Object.fromEntries(
+      definition.inputs.map((input) => [
+        input.key,
+        normalizeIndicatorInputValue(input, supplied[input.key]),
+      ]),
+    ),
   );
 }
 
@@ -31,15 +97,47 @@ export interface IndicatorWorkerExecutionRequest {
   readonly instrumentId: string;
   readonly timeframeId: string;
   readonly parameters: IndicatorParameterValues;
+  readonly sourceProvenance?: IndicatorSourceProvenance;
+  readonly sources?: readonly IndicatorWorkerSourceSnapshot[];
+  readonly dependencies?: readonly IndicatorWorkerDependencySnapshot[];
   readonly data: IndicatorWorkerDataUpdate;
   readonly dataRevision: number;
   readonly configGeneration: number;
 }
 
+export interface IndicatorWorkerSourceSnapshot {
+  readonly providerProfileId: string;
+  readonly instrumentId: string;
+  readonly timeframeId: string;
+  readonly activeTimeframeId?: string;
+  readonly snapshot: IndicatorWorkerCandleSnapshot;
+  readonly provenance: IndicatorSourceProvenance;
+  readonly generation: number;
+  readonly revision: number;
+  readonly finalizedCount: number;
+}
+
+export interface IndicatorWorkerDependencySnapshot {
+  readonly inputKey: string;
+  readonly instanceId: string;
+  readonly outputKey: string;
+  readonly sourceGeneration: number;
+  readonly sourceRevision: number;
+  readonly configGeneration: number;
+  readonly outputRevision: number;
+  readonly points: readonly IndicatorRuntimePoint[];
+}
+
+export const INDICATOR_WORKER_MAX_DEPENDENCY_POINTS = 400_000;
+
 export type IndicatorWorkerDataUpdate =
   | {
-      readonly kind: "snapshot" | "rebuild";
-      readonly candles: readonly Candle[];
+      readonly kind: "snapshot";
+      readonly snapshot: IndicatorWorkerCandleSnapshot;
+    }
+  | {
+      readonly kind: "rebuild";
+      readonly snapshot: IndicatorWorkerCandleSnapshot;
     }
   | {
       readonly kind: "building";
@@ -116,6 +214,9 @@ export interface IndicatorWorkerSupervisorOptions {
   readonly workerFactory?: IndicatorWorkerFactory;
   readonly startupTimeoutMs?: number;
   readonly updateTimeoutMs?: number;
+  readonly maxActiveWorkers?: number;
+  readonly maxPendingRequestsPerInstance?: number;
+  readonly maxConsecutiveFailures?: number;
 }
 
 export interface IndicatorWorkerSupervisor {
@@ -154,12 +255,27 @@ interface WorkerState {
 
 const defaultStartupTimeoutMs = 2_000;
 const defaultUpdateTimeoutMs = 100;
+const defaultMaxActiveWorkers = 20;
+const defaultMaxPendingRequestsPerInstance = 2;
+const defaultMaxConsecutiveFailures = 3;
 const maximumHistoryTimeoutMs = 60_000;
 const historyTimeoutPerBarMs = 5;
 
 function positiveTimeout(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value > 0
     ? value
+    : fallback;
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.length > 0
+    ? error.message
     : fallback;
 }
 
@@ -176,6 +292,158 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isSafeGeneration(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isNonEmptyText(value: unknown, maximum = 256): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum &&
+    value.trim() === value
+  );
+}
+
+function isCandle(value: unknown): value is Candle {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyText(value.instrumentId) &&
+    isNonEmptyText(value.timeframeId, 64) &&
+    Number.isSafeInteger(value.openTimeMs) &&
+    Number(value.openTimeMs) >= 0 &&
+    Number.isFinite(value.open) &&
+    Number.isFinite(value.high) &&
+    Number.isFinite(value.low) &&
+    Number.isFinite(value.close) &&
+    (value.volume === undefined || Number.isFinite(value.volume))
+  );
+}
+
+function isSourceProvenance(
+  value: unknown,
+): value is IndicatorSourceProvenance {
+  if (!isRecord(value)) return false;
+  return (
+    (value.kind === "market" && value.candleType === "standard") ||
+    (value.kind === "synthetic" && value.candleType === "heikin-ashi")
+  );
+}
+
+function isParameterValues(value: unknown): value is IndicatorParameterValues {
+  if (!isRecord(value) || Object.keys(value).length > 128) return false;
+  return Object.values(value).every(
+    (item) =>
+      typeof item === "boolean" ||
+      (typeof item === "number" && Number.isFinite(item)) ||
+      (typeof item === "string" && item.length <= 8_192),
+  );
+}
+
+function isWorkerSourceSnapshot(
+  value: unknown,
+): value is IndicatorWorkerSourceSnapshot {
+  if (!isRecord(value)) return false;
+  const activeTimeframeId =
+    value.activeTimeframeId === undefined
+      ? value.timeframeId
+      : value.activeTimeframeId;
+  return (
+    isNonEmptyText(value.providerProfileId) &&
+    isNonEmptyText(value.instrumentId) &&
+    isNonEmptyText(value.timeframeId, 64) &&
+    isNonEmptyText(activeTimeframeId, 64) &&
+    isIndicatorWorkerCandleSnapshot(value.snapshot) &&
+    isSourceProvenance(value.provenance) &&
+    isSafeGeneration(value.generation) &&
+    isSafeGeneration(value.revision) &&
+    Number.isSafeInteger(value.finalizedCount) &&
+    Number(value.finalizedCount) >= 0 &&
+    Number(value.finalizedCount) <= value.snapshot.openTimeMs.length
+  );
+}
+
+function isWorkerDependencySnapshot(
+  value: unknown,
+): value is IndicatorWorkerDependencySnapshot {
+  if (!isRecord(value)) return false;
+  const outputKey = value.outputKey;
+  return (
+    isNonEmptyText(value.inputKey) &&
+    isNonEmptyText(value.instanceId) &&
+    isNonEmptyText(outputKey) &&
+    isSafeGeneration(value.sourceGeneration) &&
+    isSafeGeneration(value.sourceRevision) &&
+    isSafeGeneration(value.configGeneration) &&
+    isSafeGeneration(value.outputRevision) &&
+    Array.isArray(value.points) &&
+    isIndicatorRuntimeSnapshot({
+      points: value.points,
+      overlays: [],
+      signals: [],
+    }) &&
+    value.points.every((point) =>
+      Object.prototype.hasOwnProperty.call(point.values, outputKey),
+    )
+  );
+}
+
+function isWorkerDependencySnapshotBatch(
+  value: unknown,
+): value is readonly IndicatorWorkerDependencySnapshot[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  let pointCount = 0;
+  const inputKeys = new Set<string>();
+  const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
+  for (const dependency of value) {
+    if (!isWorkerDependencySnapshot(dependency)) return false;
+    if (inputKeys.has(dependency.inputKey)) return false;
+    inputKeys.add(dependency.inputKey);
+    if (countedPointBatches.has(dependency.points)) continue;
+    countedPointBatches.add(dependency.points);
+    pointCount += dependency.points.length;
+    if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
+  }
+  return true;
+}
+
+function isWorkerDataUpdate(
+  value: unknown,
+): value is IndicatorWorkerDataUpdate {
+  if (!isRecord(value)) return false;
+  if (value.kind === "snapshot" || value.kind === "rebuild") {
+    return isIndicatorWorkerCandleSnapshot(value.snapshot);
+  }
+  if (value.kind === "building") return isCandle(value.candle);
+  return (
+    value.kind === "rollover" &&
+    isCandle(value.finalized) &&
+    isCandle(value.building)
+  );
+}
+
+function isWorkerExecutionRequest(
+  value: unknown,
+): value is IndicatorWorkerExecutionRequest {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyText(value.instanceId) &&
+    isNonEmptyText(value.runtimeEntryUrl, 2_048) &&
+    isNonEmptyText(value.pluginId) &&
+    isNonEmptyText(value.definitionId) &&
+    isNonEmptyText(value.instrumentId) &&
+    isNonEmptyText(value.timeframeId, 64) &&
+    isParameterValues(value.parameters) &&
+    (value.sourceProvenance === undefined ||
+      isSourceProvenance(value.sourceProvenance)) &&
+    (value.sources === undefined ||
+      (Array.isArray(value.sources) &&
+        value.sources.length <= 64 &&
+        value.sources.every(isWorkerSourceSnapshot))) &&
+    (value.dependencies === undefined ||
+      isWorkerDependencySnapshotBatch(value.dependencies)) &&
+    isWorkerDataUpdate(value.data) &&
+    isSafeGeneration(value.dataRevision) &&
+    isSafeGeneration(value.configGeneration)
+  );
 }
 
 function isWorkerResultUpdate(
@@ -231,8 +499,32 @@ export function createIndicatorWorkerSupervisor(
     options.updateTimeoutMs,
     defaultUpdateTimeoutMs,
   );
+  const maxActiveWorkers = positiveInteger(
+    options.maxActiveWorkers,
+    defaultMaxActiveWorkers,
+  );
+  const maxPendingRequestsPerInstance = positiveInteger(
+    options.maxPendingRequestsPerInstance,
+    defaultMaxPendingRequestsPerInstance,
+  );
+  const maxConsecutiveFailures = positiveInteger(
+    options.maxConsecutiveFailures,
+    defaultMaxConsecutiveFailures,
+  );
   const states = new Map<string, WorkerState>();
+  const consecutiveFailures = new Map<string, number>();
+  const latestRequests = new Map<
+    string,
+    { readonly dataRevision: number; readonly configGeneration: number }
+  >();
   let nextSequence = 1;
+
+  const recordFailure = (instanceId: string): void => {
+    consecutiveFailures.set(
+      instanceId,
+      (consecutiveFailures.get(instanceId) ?? 0) + 1,
+    );
+  };
 
   const settleStale = (state: WorkerState, pending: PendingRequest): void => {
     if (state.latestResult?.sequence === state.latestSequence) {
@@ -242,21 +534,42 @@ export function createIndicatorWorkerSupervisor(
     state.staleWaiters.push(pending);
   };
 
-  const failState = (instanceId: string, error: Error): void => {
+  const failState = (
+    instanceId: string,
+    error: Error,
+    countFailure = true,
+  ): void => {
     const state = states.get(instanceId);
-    if (state === undefined) return;
+    if (state === undefined) {
+      if (countFailure) recordFailure(instanceId);
+      return;
+    }
     states.delete(instanceId);
-    state.worker.terminate();
     for (const pending of state.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
     state.pending.clear();
     for (const pending of state.staleWaiters.splice(0)) pending.reject(error);
+    try {
+      state.worker.terminate();
+    } catch {
+      // Pending callers already received the lifecycle failure that triggered termination.
+    }
+    if (countFailure) recordFailure(instanceId);
   };
 
   const createState = (instanceId: string): WorkerState => {
-    const worker = workerFactory(instanceId);
+    let worker: IndicatorWorkerLike;
+    try {
+      worker = workerFactory(instanceId);
+    } catch (error) {
+      recordFailure(instanceId);
+      throw new IndicatorWorkerRuntimeError(
+        "INDICATOR_WORKER_START_FAILED",
+        errorMessage(error, "Indicator worker failed to start."),
+      );
+    }
     const state: WorkerState = {
       worker,
       pending: new Map(),
@@ -265,6 +578,7 @@ export function createIndicatorWorkerSupervisor(
       initialized: false,
     };
     worker.onerror = (event): void => {
+      if (states.get(instanceId) !== state) return;
       failState(
         instanceId,
         new IndicatorWorkerRuntimeError(
@@ -274,6 +588,7 @@ export function createIndicatorWorkerSupervisor(
       );
     };
     worker.onmessage = (event): void => {
+      if (states.get(instanceId) !== state) return;
       if (!isWorkerResponse(event.data)) {
         failState(
           instanceId,
@@ -302,7 +617,6 @@ export function createIndicatorWorkerSupervisor(
         return;
       }
       clearTimeout(pending.timer);
-      state.pending.delete(message.sequence);
       if (message.type === "error") {
         failState(
           instanceId,
@@ -310,12 +624,14 @@ export function createIndicatorWorkerSupervisor(
         );
         return;
       }
+      state.pending.delete(message.sequence);
       if (message.sequence < state.latestSequence) {
         settleStale(state, pending);
         return;
       }
       state.initialized = true;
       state.latestResult = message;
+      consecutiveFailures.delete(instanceId);
       pending.resolve(message);
       for (const stale of state.staleWaiters.splice(0)) {
         clearTimeout(stale.timer);
@@ -329,6 +645,14 @@ export function createIndicatorWorkerSupervisor(
   const sync = (
     request: IndicatorWorkerExecutionRequest,
   ): Promise<IndicatorWorkerExecutionResult> => {
+    if (!isWorkerExecutionRequest(request)) {
+      return Promise.reject(
+        new IndicatorWorkerRuntimeError(
+          "INDICATOR_WORKER_PROTOCOL_INVALID",
+          "Indicator worker request failed protocol validation.",
+        ),
+      );
+    }
     const existingState = states.get(request.instanceId);
     if (
       existingState === undefined &&
@@ -342,7 +666,58 @@ export function createIndicatorWorkerSupervisor(
         ),
       );
     }
-    const state = existingState ?? createState(request.instanceId);
+    const latestRequest = latestRequests.get(request.instanceId);
+    if (
+      latestRequest !== undefined &&
+      (request.configGeneration < latestRequest.configGeneration ||
+        (request.configGeneration === latestRequest.configGeneration &&
+          request.dataRevision < latestRequest.dataRevision))
+    ) {
+      return Promise.reject(
+        new IndicatorWorkerRuntimeError(
+          "INDICATOR_WORKER_STALE_REQUEST",
+          "Indicator worker request used a stale generation or data revision.",
+        ),
+      );
+    }
+    if (existingState === undefined) {
+      if (
+        (consecutiveFailures.get(request.instanceId) ?? 0) >=
+        maxConsecutiveFailures
+      ) {
+        return Promise.reject(
+          new IndicatorWorkerRuntimeError(
+            "INDICATOR_WORKER_RESTART_LIMIT",
+            "Indicator worker exceeded its consecutive failure restart limit.",
+          ),
+        );
+      }
+      if (states.size >= maxActiveWorkers) {
+        return Promise.reject(
+          new IndicatorWorkerRuntimeError(
+            "INDICATOR_WORKER_CAPACITY_EXCEEDED",
+            "Indicator worker capacity is exhausted.",
+          ),
+        );
+      }
+    }
+    let state: WorkerState;
+    try {
+      state = existingState ?? createState(request.instanceId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (
+      state.pending.size + state.staleWaiters.length >=
+      maxPendingRequestsPerInstance
+    ) {
+      return Promise.reject(
+        new IndicatorWorkerRuntimeError(
+          "INDICATOR_WORKER_QUEUE_FULL",
+          "Indicator worker pending-request quota is exhausted.",
+        ),
+      );
+    }
     const sequence = nextSequence;
     nextSequence += 1;
     state.latestSequence = sequence;
@@ -351,6 +726,10 @@ export function createIndicatorWorkerSupervisor(
       sequence,
       ...request,
     };
+    latestRequests.set(request.instanceId, {
+      dataRevision: request.dataRevision,
+      configGeneration: request.configGeneration,
+    });
     return new Promise<IndicatorWorkerExecutionResult>((resolve, reject) => {
       const historyCalculation =
         request.data.kind === "snapshot" || request.data.kind === "rebuild";
@@ -358,7 +737,10 @@ export function createIndicatorWorkerSupervisor(
         ? Math.min(
             maximumHistoryTimeoutMs,
             startupTimeoutMs +
-              request.data.candles.length * historyTimeoutPerBarMs,
+              (isIndicatorWorkerCandleSnapshot(request.data.snapshot)
+                ? request.data.snapshot.openTimeMs.length
+                : 0) *
+                historyTimeoutPerBarMs,
           )
         : startupTimeoutMs;
       const timeoutMs =
@@ -382,17 +764,34 @@ export function createIndicatorWorkerSupervisor(
         );
       }, timeoutMs);
       state.pending.set(sequence, { request: message, resolve, reject, timer });
-      state.worker.postMessage(message);
+      try {
+        state.worker.postMessage(message);
+      } catch (error) {
+        failState(
+          request.instanceId,
+          new IndicatorWorkerRuntimeError(
+            "INDICATOR_WORKER_POST_FAILED",
+            errorMessage(
+              error,
+              "Indicator worker request could not be posted.",
+            ),
+          ),
+        );
+      }
     });
   };
 
   return {
     sync,
     disposeInstance: (instanceId: string): void => {
+      consecutiveFailures.delete(instanceId);
+      latestRequests.delete(instanceId);
       const state = states.get(instanceId);
       if (state === undefined) return;
       try {
         state.worker.postMessage({ type: "dispose", instanceId });
+      } catch {
+        // Disposal still terminates the worker and settles pending callers below.
       } finally {
         failState(
           instanceId,
@@ -400,6 +799,7 @@ export function createIndicatorWorkerSupervisor(
             "INDICATOR_WORKER_DISPOSED",
             "Indicator worker was disposed.",
           ),
+          false,
         );
       }
     },
@@ -411,8 +811,26 @@ export function createIndicatorWorkerSupervisor(
             "INDICATOR_WORKER_DISPOSED",
             "Indicator worker was disposed.",
           ),
+          false,
         );
       }
+      consecutiveFailures.clear();
+      latestRequests.clear();
     },
   };
 }
+
+export { createIndicatorSourceEngine } from "./source-engine.js";
+export type {
+  IndicatorCandleType,
+  IndicatorSourceProvenance,
+  IndicatorSourceDataService,
+  IndicatorSourceEngine,
+  IndicatorSourceHistoryRequest,
+  IndicatorSourceKey,
+  IndicatorSourceLease,
+  IndicatorSourceLiveRequest,
+  IndicatorSourceLiveSink,
+  IndicatorSourceSnapshot,
+  IndicatorSourceSubscription,
+} from "./source-engine.js";
