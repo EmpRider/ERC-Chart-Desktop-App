@@ -536,7 +536,6 @@ export function createIndicatorWorkerSupervisor(
         return;
       }
       clearTimeout(pending.timer);
-      state.pending.delete(message.sequence);
       if (message.type === "error") {
         failState(
           instanceId,
@@ -544,6 +543,7 @@ export function createIndicatorWorkerSupervisor(
         );
         return;
       }
+      state.pending.delete(message.sequence);
       if (message.sequence < state.latestSequence) {
         settleStale(state, pending);
         return;

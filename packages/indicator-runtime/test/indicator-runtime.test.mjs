@@ -152,6 +152,34 @@ for (const [label, override] of [
   });
 }
 
+test("rejects a valid worker error response and terminates the failed instance", async () => {
+  const { supervisor, workers } = harness({ autoRespond: false });
+  try {
+    const pending = supervisor.sync(request("one"));
+    const message = workers[0].messages[0];
+    workers[0].respond({
+      type: "error",
+      instanceId: message.instanceId,
+      sequence: message.sequence,
+      dataRevision: message.dataRevision,
+      configGeneration: message.configGeneration,
+      code: "INDICATOR_FIXTURE_FAILED",
+      message: "fixture failure",
+    });
+
+    await assert.rejects(
+      pending,
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_FIXTURE_FAILED" &&
+        error.message === "fixture failure",
+    );
+    assert.equal(workers[0].terminated, true);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
 test("rejects malformed history snapshots before creating a worker", async () => {
   const { supervisor, workers } = harness();
   try {
