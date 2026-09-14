@@ -290,7 +290,10 @@ function directIndicatorSeriesSource(expression, bindings) {
         return parameter.name.text === requestedName
           ? wholeBarSource?.sourceName
           : undefined;
-      if (!ts.isObjectBindingPattern(parameter.name) || wholeBarSource !== undefined)
+      if (
+        !ts.isObjectBindingPattern(parameter.name) ||
+        wholeBarSource !== undefined
+      )
         return undefined;
       for (const element of parameter.name.elements) {
         if (
@@ -442,14 +445,14 @@ function signalIdentifierIsWriteReference(identifier) {
       current = parent;
       continue;
     }
-    if (ts.isArrayLiteralExpression(parent) && parent.elements.includes(current)) {
+    if (
+      ts.isArrayLiteralExpression(parent) &&
+      parent.elements.includes(current)
+    ) {
       current = parent;
       continue;
     }
-    if (
-      ts.isShorthandPropertyAssignment(parent) &&
-      parent.name === current
-    ) {
+    if (ts.isShorthandPropertyAssignment(parent) && parent.name === current) {
       current = parent;
       continue;
     }
@@ -457,7 +460,10 @@ function signalIdentifierIsWriteReference(identifier) {
       current = parent;
       continue;
     }
-    if (ts.isObjectLiteralExpression(parent) && parent.properties.includes(current)) {
+    if (
+      ts.isObjectLiteralExpression(parent) &&
+      parent.properties.includes(current)
+    ) {
       current = parent;
       continue;
     }
@@ -486,7 +492,8 @@ function signalConditionUsesContainerReference(identifier) {
 function signalAliasRootIdentifier(expression) {
   let value = unwrapSignalCallable(expression);
   while (
-    ts.isPropertyAccessExpression(value) || ts.isElementAccessExpression(value)
+    ts.isPropertyAccessExpression(value) ||
+    ts.isElementAccessExpression(value)
   )
     value = unwrapSignalCallable(value.expression);
   return ts.isIdentifier(value) ? value : undefined;
@@ -580,6 +587,9 @@ function signalHelperParameterMayMutate(
     }
     ts.forEachChild(node, visit);
   };
+  for (const candidate of functionLike.parameters) {
+    if (candidate.initializer !== undefined) visit(candidate.initializer);
+  }
   visit(functionLike.body);
   resolving.delete(functionLike);
   return mutates;
@@ -651,10 +661,7 @@ function signalIdentifierEscapesIntoPotentialMutation(
         current = parent;
         continue;
       }
-      if (
-        ts.isShorthandPropertyAssignment(parent) &&
-        parent.name === current
-      ) {
+      if (ts.isShorthandPropertyAssignment(parent) && parent.name === current) {
         current = parent;
         continue;
       }
@@ -679,9 +686,7 @@ function signalIdentifierEscapesIntoPotentialMutation(
     }
     if (!ts.isCallExpression(parent)) return false;
     if (parent.expression === current)
-      return (
-        traversedMemberAccess && signalMethodCallMayMutate(current)
-      );
+      return traversedMemberAccess && signalMethodCallMayMutate(current);
     return (
       !traversedMemberAccess &&
       signalCallArgumentMayMutate(parent, current, resolving)
@@ -693,7 +698,8 @@ function signalIdentifierEscapesIntoPotentialMutation(
 function signalVariableIsReassignedBeforeReference(identifier) {
   const declaration = signalVariableDeclarationForReference(identifier);
   if (declaration === undefined) return false;
-  const trackContainerAliases = signalConditionUsesContainerReference(identifier);
+  const trackContainerAliases =
+    signalConditionUsesContainerReference(identifier);
   const aliases = new Set([declaration]);
   let root = declaration.parent;
   while (
@@ -727,9 +733,13 @@ function signalVariableIsReassignedBeforeReference(identifier) {
       const sourceIsAlias =
         source !== undefined &&
         aliases.has(signalVariableDeclarationForReference(source));
-      if (sourceIsAlias || signalExpressionReferencesAlias(node.right, aliases)) {
+      if (
+        sourceIsAlias ||
+        signalExpressionReferencesAlias(node.right, aliases)
+      ) {
         for (const target of signalAssignmentTargetIdentifiers(node.left)) {
-          const targetDeclaration = signalVariableDeclarationForReference(target);
+          const targetDeclaration =
+            signalVariableDeclarationForReference(target);
           if (targetDeclaration !== undefined) aliases.add(targetDeclaration);
         }
       }
@@ -865,7 +875,8 @@ function signalHelperParameterSeriesSources(
         ts.isCallExpression(node.parent) &&
         node.parent.arguments[0] === node &&
         ts.isIdentifier(node.parent.expression) &&
-        bindings.get(node.parent.expression.text) === "priceValue"
+        signalImportedBindingForIdentifier(node.parent.expression, bindings) ===
+          "priceValue"
       ) {
         const source = node.parent.arguments[1];
         const choices =
@@ -916,6 +927,9 @@ function signalHelperParameterSeriesSources(
     ts.forEachChild(node, visit);
   };
 
+  for (const candidate of functionLike.parameters) {
+    if (candidate.initializer !== undefined) visit(candidate.initializer);
+  }
   if (functionLike.body !== undefined) visit(functionLike.body);
   resolving.delete(functionLike);
   return precise ? sources : undefined;
@@ -924,7 +938,8 @@ function signalHelperParameterSeriesSources(
 function signalPriceValueSeriesSources(call, bindings) {
   if (
     !ts.isIdentifier(call.expression) ||
-    bindings.get(call.expression.text) !== "priceValue"
+    signalImportedBindingForIdentifier(call.expression, bindings) !==
+      "priceValue"
   )
     return undefined;
   const candle = call.arguments[0];
@@ -1232,7 +1247,8 @@ function signalSourceFileImportBindsName(sourceFile, name) {
       if (named.name.text === name) return true;
       continue;
     }
-    if (named.elements.some((element) => element.name.text === name)) return true;
+    if (named.elements.some((element) => element.name.text === name))
+      return true;
   }
   return false;
 }
@@ -1249,6 +1265,16 @@ function signalNameIsLexicallyBoundAt(node, name) {
     current = current.parent;
   }
   return false;
+}
+
+function signalImportedBindingForIdentifier(identifier, bindings) {
+  const requestedName = identifier.text;
+  let current = identifier.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (scopedNames(current)?.has(requestedName)) return undefined;
+    current = current.parent;
+  }
+  return bindings.get(requestedName);
 }
 
 function signalCallbackParameterType(functionLike, parameterIndex) {
@@ -1289,9 +1315,7 @@ function signalIdentifierDeclaredType(identifier) {
           ts.isIdentifier(parameter.name) &&
           parameter.name.text === requestedName
         )
-          return (
-            parameter.type ?? signalCallbackParameterType(current, index)
-          );
+          return parameter.type ?? signalCallbackParameterType(current, index);
       }
       if (scopedNames(current)?.has(requestedName)) return undefined;
     }
@@ -1340,7 +1364,8 @@ function signalExpressionDeclaredType(expression, resolving = new Set()) {
     const declaredType = signalIdentifierDeclaredType(value);
     if (declaredType !== undefined) return declaredType;
     const initializer = signalVariableInitializerForReference(value);
-    if (initializer === undefined || resolving.has(initializer)) return undefined;
+    if (initializer === undefined || resolving.has(initializer))
+      return undefined;
     resolving.add(initializer);
     const result = signalExpressionDeclaredType(initializer, resolving);
     resolving.delete(initializer);
@@ -1381,7 +1406,8 @@ function signalExpressionArrayElementType(expression, resolving = new Set()) {
   const value = unwrapSignalCallable(expression);
   if (ts.isIdentifier(value)) {
     const initializer = signalVariableInitializerForReference(value);
-    if (initializer === undefined || resolving.has(initializer)) return undefined;
+    if (initializer === undefined || resolving.has(initializer))
+      return undefined;
     resolving.add(initializer);
     const result = signalExpressionArrayElementType(initializer, resolving);
     resolving.delete(initializer);
@@ -1480,7 +1506,7 @@ function signalCallableAnalysis(expression, bindings) {
   if (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable))
     return { kind: "helper", helper: callable };
   if (ts.isIdentifier(callable)) {
-    const imported = bindings.get(callable.text);
+    const imported = signalImportedBindingForIdentifier(callable, bindings);
     if (imported !== undefined && signalSafeSdkFunctionRoots.has(imported))
       return { kind: "safe" };
     const helper = localFunctionForReference(callable);
@@ -1601,6 +1627,9 @@ function helperSignalCallRisk(
     }
     ts.forEachChild(node, visit);
   };
+  for (const candidate of functionLike.parameters) {
+    if (candidate.initializer !== undefined) visit(candidate.initializer);
+  }
   if (functionLike.body !== undefined) visit(functionLike.body);
   resolving.delete(functionLike);
   return risk;

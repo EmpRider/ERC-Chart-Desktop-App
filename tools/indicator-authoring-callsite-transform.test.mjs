@@ -573,6 +573,24 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
 });
 
+test("signal dependency tracing fails closed when a helper default initializer mutates condition state", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function updateState(state, ignored = Object.assign(state, { buy: true })) {
+  return ignored;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const state = { buy: close > 0 };
+  void updateState(state);
+  signal(state.buy, "long");
+});
+`),
+    /signal condition variable state is reassigned; use a statically traceable const expression/u,
+  );
+});
+
 test("signal dependency tracing fails closed for destructuring reassignment", async () => {
   await assert.rejects(
     () =>
@@ -730,6 +748,9 @@ test("signal dependency tracing fails closed when a helper hides TA execution", 
   const average = ta.ema(close, 14);
   return close > average;
 };`,
+    `function buySignal(close, average = ta.ema(close, 14)) {
+  return close > average;
+}`,
   ]) {
     await assert.rejects(
       () =>
@@ -921,6 +942,43 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
     "hlc3",
     "ohlc4",
   ]);
+});
+
+test("signal dependency tracing respects a local helper that shadows imported priceValue", async () => {
+  const result = await transform(`
+import { defineIndicator, priceValue, signal } from "@erc-chart/indicator-sdk";
+function aboveZero(bar) {
+  const priceValue = (value) => value.volume;
+  return priceValue(bar) > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  signal(aboveZero(bar), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["volume"]);
+});
+
+test("signal dependency tracing includes whole-bar helper default parameter initializers", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function aboveThreshold(bar, threshold = bar.open) {
+  return bar.close > threshold;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
+  signal(aboveThreshold(bar), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["open", "close"]);
 });
 
 test("signal dependency tracing follows whole-bar parameters through module helper chains", async () => {
