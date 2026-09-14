@@ -380,10 +380,8 @@ function isWorkerDependencySnapshot(
       overlays: [],
       signals: [],
     }) &&
-    value.points.every(
-      (point) =>
-        Object.keys(point.values).length === 1 &&
-        Object.prototype.hasOwnProperty.call(point.values, outputKey),
+    value.points.every((point) =>
+      Object.prototype.hasOwnProperty.call(point.values, outputKey),
     )
   );
 }
@@ -393,8 +391,11 @@ function isWorkerDependencySnapshotBatch(
 ): value is readonly IndicatorWorkerDependencySnapshot[] {
   if (!Array.isArray(value) || value.length > 64) return false;
   let pointCount = 0;
+  const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
   for (const dependency of value) {
     if (!isWorkerDependencySnapshot(dependency)) return false;
+    if (countedPointBatches.has(dependency.points)) continue;
+    countedPointBatches.add(dependency.points);
     pointCount += dependency.points.length;
     if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
   }

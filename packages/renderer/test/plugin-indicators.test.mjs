@@ -954,6 +954,140 @@ test("dependency freshness changes when an upstream result changes without a sou
   );
 });
 
+test("multiple bindings to one upstream share one serialized dependency history", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const sourceInputs = Array.from({ length: 5 }, (_, index) => ({
+    key: `source_${index}`,
+    label: `Source ${index}`,
+    type: "source",
+    defaultValue: "close",
+  }));
+  const definition = {
+    id: "erc.indicator.test.shared-dependency-history",
+    name: "Shared dependency history",
+    placement: "overlay",
+    inputs: sourceInputs,
+    outputs: [
+      { key: "line", label: "Line" },
+      { key: "signal", label: "Signal" },
+    ],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.shared-dependency-history-test",
+    pluginName: "Shared dependency history test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.shared-dependency-history-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const candleInputs = Object.fromEntries(
+    sourceInputs.map(({ key }) => [key, { kind: "candles" }]),
+  );
+  const base = {
+    instanceId: "shared-history-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: candleInputs,
+  };
+  const consumer = {
+    instanceId: "shared-history-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: Object.fromEntries(
+      sourceInputs.map(({ key }, index) => [
+        key,
+        {
+          kind: "indicator-output",
+          instanceId: base.instanceId,
+          outputKey: index % 2 === 0 ? "line" : "signal",
+        },
+      ]),
+    ),
+  };
+  const sync = async (request) => {
+    requests.push(request);
+    const candles = request.data.candles ?? [request.data.candle];
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.filter(Boolean).map((item) => ({
+          openTimeMs: item.openTimeMs,
+          values: { line: item.close * 2, signal: item.close * 3 },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  await template.calc(
+    [
+      {
+        timestamp: 1_900_000_000_000,
+        open: 10,
+        high: 12,
+        low: 9,
+        close: 11,
+      },
+    ],
+    { id: consumerRuntimeId },
+  );
+
+  const consumerRequest = requests.find(
+    ({ instanceId }) => instanceId === consumerRuntimeId,
+  );
+  assert.equal(consumerRequest?.dependencies?.length, 5);
+  assert.equal(
+    new Set(consumerRequest.dependencies.map(({ points }) => points)).size,
+    1,
+  );
+  assert.deepEqual(consumerRequest.dependencies[0].points[0].values, {
+    line: 22,
+    signal: 33,
+  });
+});
+
 test("dependent calculation publishes upstream output first and consumes the matching revision", async () => {
   let template;
   const activeIds = new Set();
@@ -1419,6 +1553,177 @@ test("an upstream full-output rebuild forces a downstream historical rebuild dur
       { openTimeMs: historyStart + 60_000, line: 24 },
     ],
   );
+});
+
+test("a historical change to an unbound upstream output keeps the downstream update incremental", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-output-history",
+    name: "Dependency output history",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [
+      { key: "line", label: "Line" },
+      { key: "stable", label: "Stable" },
+    ],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-output-history-test",
+    pluginName: "Dependency output history test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-output-history-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-output-history-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-output-history-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "stable",
+      },
+    },
+  };
+  let rebuildUpstreamOutput = false;
+  const historyStart = 1_900_000_000_000;
+  const sync = async (request) => {
+    requests.push(request);
+    const isBase = request.instanceId.endsWith(`:${base.instanceId}`);
+    if (isBase && rebuildUpstreamOutput) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: [
+            {
+              openTimeMs: historyStart,
+              values: { line: 999, stable: 110 },
+            },
+            {
+              openTimeMs: historyStart + 60_000,
+              values: { line: 26, stable: 130 },
+            },
+          ],
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    const points = candles.map((item) => ({
+      openTimeMs: item.openTimeMs,
+      values: isBase
+        ? { line: item.close * 2, stable: item.close * 10 }
+        : {
+            line:
+              dependency?.points.find(
+                (point) => point.openTimeMs === item.openTimeMs,
+              )?.values.stable ?? null,
+            stable: null,
+          },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: historyStart,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      timestamp: historyStart + 60_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+  await template.calc(data, { id: consumerRuntimeId });
+
+  rebuildUpstreamOutput = true;
+  data[1] = { ...data[1], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const latestConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(latestConsumerRequest?.data.kind, "building");
+  assert.deepEqual(latestConsumerRequest?.dependencies?.[0]?.points, [
+    {
+      openTimeMs: historyStart + 60_000,
+      values: { stable: 130 },
+    },
+  ]);
 });
 
 test("aligns higher-timeframe dependency outputs only after source candles close", async () => {

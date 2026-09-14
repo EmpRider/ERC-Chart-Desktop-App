@@ -238,7 +238,7 @@ test("rejects malformed source provenance before creating a worker", async () =>
   }
 });
 
-test("rejects dependency snapshots whose aggregate point count exceeds the worker budget", async () => {
+test("counts shared dependency history once when validating the worker budget", async () => {
   const { supervisor, workers } = harness();
   const points = Array.from({ length: 100_000 }, (_, index) => ({
     openTimeMs: index,
@@ -253,6 +253,30 @@ test("rejects dependency snapshots whose aggregate point count exceeds the worke
     configGeneration: 1,
     outputRevision: 1,
     points,
+  }));
+
+  try {
+    await supervisor.sync(request("shared-dependencies", { dependencies }));
+    assert.equal(workers.length, 1);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("rejects distinct dependency snapshots whose aggregate point count exceeds the worker budget", async () => {
+  const { supervisor, workers } = harness();
+  const dependencies = Array.from({ length: 5 }, (_, dependency) => ({
+    inputKey: `source-${dependency}`,
+    instanceId: `upstream-${dependency}`,
+    outputKey: "line",
+    sourceGeneration: 1,
+    sourceRevision: 1,
+    configGeneration: 1,
+    outputRevision: 1,
+    points: Array.from({ length: 80_001 }, (_, index) => ({
+      openTimeMs: index,
+      values: { line: dependency * 100_000 + index },
+    })),
   }));
 
   try {

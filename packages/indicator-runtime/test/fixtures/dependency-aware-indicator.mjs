@@ -12,9 +12,9 @@ export default {
   },
   createInstance(_parameters, context) {
     const dependencyByOpenTime = new Map(
-      (context.dependencyInputs?.source ?? []).map((point) => [
+      (context.dependencyInputs?.source?.points ?? []).map((point) => [
         point.openTimeMs,
-        point.values.line,
+        point.values[context.dependencyInputs.source.outputKey],
       ]),
     );
     const pointFor = (candle) => ({
@@ -29,8 +29,12 @@ export default {
     currentSnapshot = { points: [], overlays: [], signals: [] };
     return {
       updateDependencyInputs(updates) {
-        for (const point of updates.source ?? [])
-          dependencyByOpenTime.set(point.openTimeMs, point.values.line);
+        const dependency = updates.source;
+        for (const point of dependency?.points ?? [])
+          dependencyByOpenTime.set(
+            point.openTimeMs,
+            point.values[dependency.outputKey],
+          );
       },
       onHistory(candles) {
         currentSnapshot = {

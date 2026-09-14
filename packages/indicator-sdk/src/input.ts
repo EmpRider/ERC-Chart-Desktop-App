@@ -428,9 +428,9 @@ function sourceInput(
   const frame = authoringFrame();
   const dependency = frame.dependencyInputs[definition.key];
   if (dependency === undefined) return priceValue(frame.candle, selectedSource);
-  const point = dependency.get(frame.candle.openTimeMs);
+  const point = dependency.points.get(frame.candle.openTimeMs);
   if (point === undefined) return Number.NaN;
-  const value = Object.values(point.values)[0];
+  const value = point.values[dependency.outputKey];
   return typeof value === "number" ? value : Number.NaN;
 }
 

@@ -113,10 +113,13 @@ test("source inputs consume host-bound indicator output by declared input identi
     {
       ...context,
       dependencyInputs: {
-        input_0: [
-          { openTimeMs: 0, values: { upstream: 42 } },
-          { openTimeMs: 60_000, values: { upstream: 43 } },
-        ],
+        input_0: {
+          outputKey: "upstream",
+          points: [
+            { openTimeMs: 0, values: { upstream: 42 } },
+            { openTimeMs: 60_000, values: { upstream: 43 } },
+          ],
+        },
       },
     },
   );
@@ -134,6 +137,42 @@ test("source inputs consume host-bound indicator output by declared input identi
     [10, 11],
   );
   fallback.dispose();
+});
+
+test("source inputs select their bound output from shared multi-output dependency points", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.outputs", name: "Bound outputs" },
+    () => {
+      plot.line(input.source("close", "Fast"), { title: "Fast" });
+      plot.line(input.source("close", "Slow"), { title: "Slow" });
+    },
+  );
+  const points = [
+    { openTimeMs: 0, values: { fast: 42, slow: 7 } },
+    { openTimeMs: 60_000, values: { fast: 43, slow: 8 } },
+  ];
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: { outputKey: "fast", points },
+        input_1: { outputKey: "slow", points },
+      },
+    },
+  );
+
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+  assert.deepEqual(
+    instance
+      .snapshot()
+      .points.map((point) => [point.values.plot_0, point.values.plot_1]),
+    [
+      [42, 7],
+      [43, 8],
+    ],
+  );
+  instance.dispose();
 });
 
 test("source inputs preindex dependency history instead of scanning it once per bar", () => {
@@ -154,7 +193,9 @@ test("source inputs preindex dependency history instead of scanning it once per 
     {},
     {
       ...context,
-      dependencyInputs: { input_0: dependency },
+      dependencyInputs: {
+        input_0: { outputKey: "upstream", points: dependency },
+      },
     },
   );
 
@@ -178,17 +219,23 @@ test("source inputs accept bounded live dependency point updates without replay"
     {
       ...context,
       dependencyInputs: {
-        input_0: [
-          { openTimeMs: 0, values: { upstream: 42 } },
-          { openTimeMs: 60_000, values: { upstream: 43 } },
-        ],
+        input_0: {
+          outputKey: "upstream",
+          points: [
+            { openTimeMs: 0, values: { upstream: 42 } },
+            { openTimeMs: 60_000, values: { upstream: 43 } },
+          ],
+        },
       },
     },
   );
   instance.onHistory([candle(0, 10), candle(1, 11)]);
 
   instance.updateDependencyInputs({
-    input_0: [{ openTimeMs: 60_000, values: { upstream: 99 } }],
+    input_0: {
+      outputKey: "upstream",
+      points: [{ openTimeMs: 60_000, values: { upstream: 99 } }],
+    },
   });
   instance.onBuildingBar(candle(1, 12));
 

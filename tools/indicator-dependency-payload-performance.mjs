@@ -8,33 +8,45 @@ import {
 } from "../packages/indicator-runtime/dist/index.js";
 
 // Run after npm run build. One chart supports five active indicators, so a
-// consumer can depend on at most four other 100k-history indicators. Exercise
-// that full 400k dependency payload through host validation and structured
-// cloning, matching the Worker.postMessage cost that the runtime must absorb.
+// consumer can depend on at most four other 100k-history indicators. A single
+// upstream may satisfy many source inputs, so exercise the full 64-binding
+// protocol limit while sharing the four actual history payloads through host
+// validation and structured cloning, matching Worker.postMessage semantics.
 const activeIndicatorsPerChart = 5;
 const pointsPerIndicator = 100_000;
-const dependencyCount = activeIndicatorsPerChart - 1;
-const aggregatePoints = dependencyCount * pointsPerIndicator;
+const upstreamDependencyCount = activeIndicatorsPerChart - 1;
+const dependencyBindingCount = 64;
+const bindingsPerUpstream = dependencyBindingCount / upstreamDependencyCount;
+const aggregatePoints = upstreamDependencyCount * pointsPerIndicator;
 const measurementRuns = 3;
 const payloadBudgetMs = 5_000;
 
 assert.equal(aggregatePoints, INDICATOR_WORKER_MAX_DEPENDENCY_POINTS);
+assert.equal(Number.isInteger(bindingsPerUpstream), true);
 
-const dependencies = Array.from(
-  { length: dependencyCount },
-  (_, dependency) => ({
-    inputKey: `source-${dependency}`,
-    instanceId: `upstream-${dependency}`,
-    outputKey: "line",
-    sourceGeneration: 1,
-    sourceRevision: 1,
-    configGeneration: 1,
-    outputRevision: 1,
-    points: Array.from({ length: pointsPerIndicator }, (_, index) => ({
+const upstreamPointBatches = Array.from(
+  { length: upstreamDependencyCount },
+  (_, upstream) =>
+    Array.from({ length: pointsPerIndicator }, (_, index) => ({
       openTimeMs: index * 60_000,
-      values: { line: dependency * pointsPerIndicator + index },
+      values: { line: upstream * pointsPerIndicator + index },
     })),
-  }),
+);
+const dependencies = Array.from(
+  { length: dependencyBindingCount },
+  (_, binding) => {
+    const upstream = Math.floor(binding / bindingsPerUpstream);
+    return {
+      inputKey: `source-${binding}`,
+      instanceId: `upstream-${upstream}`,
+      outputKey: "line",
+      sourceGeneration: 1,
+      sourceRevision: 1,
+      configGeneration: 1,
+      outputRevision: 1,
+      points: upstreamPointBatches[upstream],
+    };
+  },
 );
 
 const elapsedMs = [];
@@ -52,11 +64,14 @@ const supervisor = createIndicatorWorkerSupervisor({
       onerror: null,
       postMessage(message) {
         const cloned = structuredClone(message);
-        checksum +=
-          cloned.dependencies?.reduce(
-            (total, dependency) => total + dependency.points.length,
-            0,
-          ) ?? 0;
+        const uniquePointBatches = new Set(
+          cloned.dependencies?.map((dependency) => dependency.points) ?? [],
+        );
+        assert.equal(uniquePointBatches.size, upstreamDependencyCount);
+        checksum += [...uniquePointBatches].reduce(
+          (total, points) => total + points.length,
+          0,
+        );
         queueMicrotask(() =>
           onmessage?.({
             data: {
@@ -120,7 +135,9 @@ console.log(
     component: "indicator-dependency-payload",
     measurementRuns,
     activeIndicatorsPerChart,
-    dependencyCount,
+    upstreamDependencyCount,
+    dependencyBindingCount,
+    bindingsPerUpstream,
     pointsPerIndicator,
     aggregatePoints,
     configuredPointBudget: INDICATOR_WORKER_MAX_DEPENDENCY_POINTS,

@@ -115,7 +115,7 @@ interface RuntimeContext {
   dataRevision: number;
   configGeneration: number;
   outputRevision: number;
-  historyRevision: number;
+  historyRevisions: Map<string, number>;
   lastCandleCount?: number;
   lastBuilding: Candle | undefined;
 }
@@ -746,42 +746,32 @@ function publishedDependencyPoints(
   return published;
 }
 
-function samePublishedDependencyPoint(
-  left: IndicatorRuntimePoint | undefined,
-  right: IndicatorRuntimePoint | undefined,
-): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  const leftEntries = Object.entries(left.values);
-  const rightEntries = Object.entries(right.values);
-  return (
-    left.openTimeMs === right.openTimeMs &&
-    leftEntries.length === rightEntries.length &&
-    leftEntries.every(([key, value]) => right.values[key] === value)
-  );
-}
-
-function publishedHistoryChanged(
+function publishedHistoryChangedOutputs(
   previous: ReadonlyMap<number, IndicatorRuntimePoint>,
   next: ReadonlyMap<number, IndicatorRuntimePoint>,
   data: BrowserIndicatorDataUpdate,
-): boolean {
+  outputKeys: readonly string[],
+): ReadonlySet<string> {
   const deltaOpenTimes =
     data.kind === "building"
       ? new Set([data.candle.openTimeMs])
       : data.kind === "rollover"
         ? new Set([data.finalized.openTimeMs, data.building.openTimeMs])
         : new Set<number>();
+  const changed = new Set<string>();
   for (const openTimeMs of new Set([...previous.keys(), ...next.keys()])) {
     if (deltaOpenTimes.has(openTimeMs)) continue;
-    if (
-      !samePublishedDependencyPoint(
-        previous.get(openTimeMs),
-        next.get(openTimeMs),
+    const previousPoint = previous.get(openTimeMs);
+    const nextPoint = next.get(openTimeMs);
+    for (const outputKey of outputKeys) {
+      if (
+        (previousPoint?.values[outputKey] ?? null) !==
+        (nextPoint?.values[outputKey] ?? null)
       )
-    )
-      return true;
+        changed.add(outputKey);
+    }
   }
-  return false;
+  return changed;
 }
 
 function applyWorkerResult(
@@ -793,6 +783,7 @@ function applyWorkerResult(
   candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
+    const outputKeys = context.summary.definition.outputs.map(({ key }) => key);
     context.rows = alignPluginIndicatorSnapshotRows(
       dataList,
       result.snapshot,
@@ -802,17 +793,20 @@ function applyWorkerResult(
     const nextPublishedPoints = publishedDependencyPoints(
       dataList,
       context.rows,
-      context.summary.definition.outputs.map(({ key }) => key),
+      outputKeys,
     );
-    if (
-      context.publishedPoints !== undefined &&
-      publishedHistoryChanged(
+    if (context.publishedPoints !== undefined) {
+      for (const outputKey of publishedHistoryChangedOutputs(
         context.publishedPoints,
         nextPublishedPoints,
         data,
-      )
-    )
-      context.historyRevision += 1;
+        outputKeys,
+      ))
+        context.historyRevisions.set(
+          outputKey,
+          (context.historyRevisions.get(outputKey) ?? 0) + 1,
+        );
+    }
     context.publishedPoints = nextPublishedPoints;
     const first = dataList[0]?.timestamp;
     if (first !== undefined) rowStartTimes.set(context.rows, first);
@@ -915,7 +909,8 @@ async function resolveDependenciesFor(
             outputRevision: upstream.outputRevision,
           },
           points: upstream.publishedPoints,
-          historyRevision: upstream.historyRevision,
+          historyRevision:
+            upstream.historyRevisions.get(binding.outputKey) ?? 0,
         } satisfies ResolvedIndicatorDependency;
       }
     }),
@@ -932,7 +927,20 @@ function dependencySnapshotsForData(
       : data.kind === "rollover"
         ? [data.finalized.openTimeMs, data.building.openTimeMs]
         : undefined;
-  return dependencies.map(({ snapshot, points }) => {
+  const outputKeysByPoints = new Map<
+    ReadonlyMap<number, IndicatorRuntimePoint>,
+    Set<string>
+  >();
+  for (const { snapshot, points } of dependencies) {
+    const outputKeys = outputKeysByPoints.get(points) ?? new Set<string>();
+    outputKeys.add(snapshot.outputKey);
+    outputKeysByPoints.set(points, outputKeys);
+  }
+  const serializedByPoints = new Map<
+    ReadonlyMap<number, IndicatorRuntimePoint>,
+    readonly IndicatorRuntimePoint[]
+  >();
+  for (const [points, outputKeys] of outputKeysByPoints) {
     const selected =
       openTimeMs === undefined
         ? [...points.values()].sort(
@@ -942,14 +950,29 @@ function dependencySnapshotsForData(
             const point = points.get(timestamp);
             return point === undefined ? [] : [point];
           });
+    const sortedOutputKeys = [...outputKeys].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    serializedByPoints.set(
+      points,
+      selected.map((point) => ({
+        openTimeMs: point.openTimeMs,
+        values: Object.fromEntries(
+          sortedOutputKeys.map((outputKey) => [
+            outputKey,
+            point.values[outputKey] ?? null,
+          ]),
+        ),
+      })),
+    );
+  }
+  return dependencies.map(({ snapshot, points }) => {
+    const serialized = serializedByPoints.get(points);
+    if (serialized === undefined)
+      throw new Error("Indicator dependency points are unavailable.");
     return {
       ...snapshot,
-      points: selected.map((point) => ({
-        openTimeMs: point.openTimeMs,
-        values: {
-          [snapshot.outputKey]: point.values[snapshot.outputKey] ?? null,
-        },
-      })),
+      points: serialized,
     };
   });
 }
@@ -1370,7 +1393,10 @@ export function reconcilePluginIndicators(
           ? previousContext.configGeneration
           : (previousContext?.configGeneration ?? 0) + 1,
       outputRevision: previousContext?.outputRevision ?? 0,
-      historyRevision: previousContext?.historyRevision ?? 0,
+      historyRevisions:
+        sameConfiguration && previousContext !== undefined
+          ? previousContext.historyRevisions
+          : new Map<string, number>(),
       ...(sameSource && previousContext?.lastCandleCount !== undefined
         ? { lastCandleCount: previousContext.lastCandleCount }
         : {}),

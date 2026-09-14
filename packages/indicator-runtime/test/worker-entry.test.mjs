@@ -154,7 +154,7 @@ test("worker passes bound indicator outputs through the private runtime context"
   }
 });
 
-test("worker rejects dependency payloads above the aggregate point budget", async () => {
+test("worker counts shared dependency history once across multiple bindings", async () => {
   const originalPostMessage = globalThis.postMessage;
   const originalOnMessage = globalThis.onmessage;
   const posted = [];
@@ -200,7 +200,132 @@ test("worker rejects dependency payloads above the aggregate point budget", asyn
     });
     await new Promise((resolve) => setImmediate(resolve));
 
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0]?.type, "result");
+  } finally {
+    globalThis.postMessage = originalPostMessage;
+    globalThis.onmessage = originalOnMessage;
+  }
+});
+
+test("worker still rejects distinct dependency histories above the aggregate point budget", async () => {
+  const originalPostMessage = globalThis.postMessage;
+  const originalOnMessage = globalThis.onmessage;
+  const posted = [];
+  globalThis.postMessage = (message) => posted.push(message);
+
+  try {
+    await import(
+      `../dist/worker-entry.js?dependency-distinct-budget=${Date.now()}`
+    );
+    globalThis.onmessage({
+      data: {
+        type: "sync",
+        instanceId: "worker-distinct-dependency-budget-instance",
+        sequence: 1,
+        runtimeEntryUrl: new URL(
+          "./fixtures/dependency-aware-indicator.mjs",
+          import.meta.url,
+        ).href,
+        pluginId: "erc.indicator.worker-dependency",
+        definitionId: "erc.indicator.worker-dependency.main",
+        instrumentId: "TEST",
+        timeframeId: "1m",
+        parameters: {},
+        dependencies: Array.from({ length: 5 }, (_, dependency) => ({
+          inputKey: `source-${dependency}`,
+          instanceId: `upstream-${dependency}`,
+          outputKey: "line",
+          sourceGeneration: 1,
+          sourceRevision: 1,
+          configGeneration: 1,
+          outputRevision: 1,
+          points: Array.from({ length: 80_001 }, (_, index) => ({
+            openTimeMs: index,
+            values: { line: dependency * 100_000 + index },
+          })),
+        })),
+        data: {
+          kind: "snapshot",
+          snapshot: createIndicatorWorkerCandleSnapshot([candle("1m", 0)]),
+        },
+        dataRevision: 1,
+        configGeneration: 1,
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
     assert.deepEqual(posted, []);
+  } finally {
+    globalThis.postMessage = originalPostMessage;
+    globalThis.onmessage = originalOnMessage;
+  }
+});
+
+test("worker accepts shared dependency points that publish multiple bound outputs", async () => {
+  const originalPostMessage = globalThis.postMessage;
+  const originalOnMessage = globalThis.onmessage;
+  const posted = [];
+  globalThis.postMessage = (message) => posted.push(message);
+  const points = [
+    {
+      openTimeMs: 0,
+      values: { line: 42, signal: 7 },
+    },
+  ];
+
+  try {
+    await import(
+      `../dist/worker-entry.js?dependency-shared-outputs=${Date.now()}`
+    );
+    globalThis.onmessage({
+      data: {
+        type: "sync",
+        instanceId: "worker-shared-dependency-output-instance",
+        sequence: 1,
+        runtimeEntryUrl: new URL(
+          "./fixtures/dependency-aware-indicator.mjs",
+          import.meta.url,
+        ).href,
+        pluginId: "erc.indicator.worker-dependency",
+        definitionId: "erc.indicator.worker-dependency.main",
+        instrumentId: "TEST",
+        timeframeId: "1m",
+        parameters: {},
+        dependencies: [
+          {
+            inputKey: "source",
+            instanceId: "upstream",
+            outputKey: "line",
+            sourceGeneration: 1,
+            sourceRevision: 1,
+            configGeneration: 1,
+            outputRevision: 1,
+            points,
+          },
+          {
+            inputKey: "signal-source",
+            instanceId: "upstream",
+            outputKey: "signal",
+            sourceGeneration: 1,
+            sourceRevision: 1,
+            configGeneration: 1,
+            outputRevision: 1,
+            points,
+          },
+        ],
+        data: {
+          kind: "snapshot",
+          snapshot: createIndicatorWorkerCandleSnapshot([candle("1m", 0)]),
+        },
+        dataRevision: 1,
+        configGeneration: 1,
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0]?.type, "result");
   } finally {
     globalThis.postMessage = originalPostMessage;
     globalThis.onmessage = originalOnMessage;

@@ -236,26 +236,52 @@ export function defineIndicator(
       let building: Candle | undefined;
       let disposed = false;
       let failed = false;
+      const dependencyPointMaps = new Map<
+        readonly IndicatorResultPoint[],
+        Map<number, IndicatorResultPoint>
+      >();
       const dependencyInputs: Record<
         string,
-        Map<number, IndicatorResultPoint>
+        {
+          readonly outputKey: string;
+          readonly points: Map<number, IndicatorResultPoint>;
+        }
       > = Object.fromEntries(
-        Object.entries(context.dependencyInputs ?? {}).map(([key, points]) => [
-          key,
-          new Map(points.map((point) => [point.openTimeMs, point])),
-        ]),
+        Object.entries(context.dependencyInputs ?? {}).map(
+          ([key, dependency]) => {
+            let points = dependencyPointMaps.get(dependency.points);
+            if (points === undefined) {
+              points = new Map(
+                dependency.points.map((point) => [point.openTimeMs, point]),
+              );
+              dependencyPointMaps.set(dependency.points, points);
+            }
+            return [key, { outputKey: dependency.outputKey, points }];
+          },
+        ),
       );
       const updateDependencyInputs = (
-        updates: Readonly<Record<string, readonly IndicatorResultPoint[]>>,
+        updates: Readonly<
+          Record<
+            string,
+            {
+              readonly outputKey: string;
+              readonly points: readonly IndicatorResultPoint[];
+            }
+          >
+        >,
       ): void => {
-        for (const [key, points] of Object.entries(updates)) {
-          const values = dependencyInputs[key] ?? new Map();
-          dependencyInputs[key] = values;
-          for (const point of points) values.set(point.openTimeMs, point);
-          while (values.size > 100_000) {
-            const oldest = values.keys().next().value;
+        for (const [key, dependency] of Object.entries(updates)) {
+          const current = dependencyInputs[key];
+          const points =
+            current?.points ?? new Map<number, IndicatorResultPoint>();
+          dependencyInputs[key] = { outputKey: dependency.outputKey, points };
+          for (const point of dependency.points)
+            points.set(point.openTimeMs, point);
+          while (points.size > 100_000) {
+            const oldest = points.keys().next().value;
             if (oldest === undefined) break;
-            values.delete(oldest);
+            points.delete(oldest);
           }
         }
       };

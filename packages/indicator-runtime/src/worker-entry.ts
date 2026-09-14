@@ -35,7 +35,15 @@ interface RuntimeIndicatorInstance {
   readonly onBuildingBar: (candle: Candle) => void;
   readonly onFinalizedBar: (candle: Candle) => void;
   readonly updateDependencyInputs?: (
-    updates: Readonly<Record<string, readonly IndicatorRuntimePoint[]>>,
+    updates: Readonly<
+      Record<
+        string,
+        {
+          readonly outputKey: string;
+          readonly points: readonly IndicatorRuntimePoint[];
+        }
+      >
+    >,
   ) => void;
   readonly dispose: () => void;
   readonly snapshot: () => RuntimeIndicatorSnapshot;
@@ -67,7 +75,13 @@ interface IndicatorPluginModule {
         >
       >;
       readonly dependencyInputs?: Readonly<
-        Record<string, readonly IndicatorRuntimePoint[]>
+        Record<
+          string,
+          {
+            readonly outputKey: string;
+            readonly points: readonly IndicatorRuntimePoint[];
+          }
+        >
       >;
     },
   ) => RuntimeIndicatorInstance;
@@ -275,20 +289,40 @@ function applyDependencyUpdates(
       "Indicator runtime does not support live dependency input updates.",
     );
   }
-  instance.updateDependencyInputs(
-    Object.fromEntries(
-      dependencies.map((dependency) => [
-        dependency.inputKey,
-        dependency.points.map((point) => ({
+  instance.updateDependencyInputs(materializeDependencyInputs(dependencies));
+}
+
+function materializeDependencyInputs(
+  dependencies: readonly IndicatorWorkerDependencySnapshot[],
+): Readonly<
+  Record<
+    string,
+    {
+      readonly outputKey: string;
+      readonly points: readonly IndicatorRuntimePoint[];
+    }
+  >
+> {
+  const materializedPointBatches = new Map<
+    readonly IndicatorRuntimePoint[],
+    readonly IndicatorRuntimePoint[]
+  >();
+  return Object.fromEntries(
+    dependencies.map((dependency) => {
+      let points = materializedPointBatches.get(dependency.points);
+      if (points === undefined) {
+        points = dependency.points.map((point) => ({
           openTimeMs: point.openTimeMs,
           values: { ...point.values },
           ...(point.colors === undefined
             ? {}
             : { colors: { ...point.colors } }),
           ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
-        })),
-      ]),
-    ),
+        }));
+        materializedPointBatches.set(dependency.points, points);
+      }
+      return [dependency.inputKey, { outputKey: dependency.outputKey, points }];
+    }),
   );
 }
 
@@ -382,21 +416,7 @@ async function execute(
     ...(message.dependencies === undefined
       ? {}
       : {
-          dependencyInputs: Object.fromEntries(
-            message.dependencies.map((dependency) => [
-              dependency.inputKey,
-              dependency.points.map((point) => ({
-                openTimeMs: point.openTimeMs,
-                values: { ...point.values },
-                ...(point.colors === undefined
-                  ? {}
-                  : { colors: { ...point.colors } }),
-                ...(point.sizes === undefined
-                  ? {}
-                  : { sizes: { ...point.sizes } }),
-              })),
-            ]),
-          ),
+          dependencyInputs: materializeDependencyInputs(message.dependencies),
         }),
   });
   instance.onHistory(historyCandles);
@@ -525,13 +545,11 @@ function isDependencySnapshot(
       overlays: [],
       signals: [],
     }) &&
-    dependency.points.every(
-      (point) =>
-        Object.keys(point.values).length === 1 &&
-        Object.prototype.hasOwnProperty.call(
-          point.values,
-          dependency.outputKey as string,
-        ),
+    dependency.points.every((point) =>
+      Object.prototype.hasOwnProperty.call(
+        point.values,
+        dependency.outputKey as string,
+      ),
     )
   );
 }
@@ -541,8 +559,11 @@ function isDependencySnapshotBatch(
 ): value is readonly IndicatorWorkerDependencySnapshot[] {
   if (!Array.isArray(value) || value.length > 64) return false;
   let pointCount = 0;
+  const countedPointBatches = new Set<readonly IndicatorRuntimePoint[]>();
   for (const dependency of value) {
     if (!isDependencySnapshot(dependency)) return false;
+    if (countedPointBatches.has(dependency.points)) continue;
+    countedPointBatches.add(dependency.points);
     pointCount += dependency.points.length;
     if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
   }
