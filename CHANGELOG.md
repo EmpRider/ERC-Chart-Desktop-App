@@ -2,6 +2,27 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [1.1.0] - 2026-09-14
+
+### Indicator SDK v2
+
+- Completed the v2-only indicator authoring/runtime contract with compiler-owned
+  hidden identity for inputs, TA state, plots, drawings, and signals.
+- Added deterministic history and conditional execution, provider-aware
+  multi-timeframe and Heikin Ashi sources, source-confirmed signals, persistent
+  drawing handles, and explicit cross-indicator dependency ordering.
+- Hardened worker transport and recovery with typed snapshots, bounded deltas,
+  generation/revision validation, resource limits, and final correctness and
+  performance acceptance across maintained v2 indicators.
+
+### v1.1.0 release packaging
+
+- Publishes the completed SDK v2 delivery under the new immutable `v1.1.0`
+  release identity instead of reusing the published `v1.0.0` tag.
+- Adds a release preflight that rejects an application version when it does not
+  advance beyond the versions already represented by release tags.
+- Automatic updates remain disabled and the Windows installer remains unsigned.
+
 ## [1.0.0] - 2026-09-08
 
 ### MVP release hardening

@@ -3,6 +3,7 @@ import path from "node:path";
 import test from "node:test";
 import { electronFusePolicy } from "../../packages/electron-main/dist/index.js";
 import builderConfiguration from "./electron-builder.config.mjs";
+import * as packagingContract from "./packaging-contract.mjs";
 import {
   applicationVersion,
   assertReleaseAssetUploaded,
@@ -21,12 +22,12 @@ import {
 } from "./packaging-contract.mjs";
 
 test("defines klinecharts architecture release identity", () => {
-  assert.equal(applicationVersion, "1.0.0");
+  assert.equal(applicationVersion, "1.1.0");
   assert.equal(packageIdentityName, "erc-chart-desktop-app");
-  assert.equal(releaseTag(applicationVersion), "v1.0.0");
+  assert.equal(releaseTag(applicationVersion), "v1.1.0");
   assert.equal(
     installerArtifactName(applicationVersion),
-    "ERC-Chart-Setup-1.0.0.exe",
+    "ERC-Chart-Setup-1.1.0.exe",
   );
 });
 
@@ -42,6 +43,48 @@ test("rejects versions outside the exact release-safe SemVer subset", () => {
   ]) {
     assert.throws(() => validateReleaseVersion(value), /release version/i);
   }
+});
+
+test("requires a release version to advance beyond all published versions", () => {
+  assert.equal(
+    typeof packagingContract.assertReleaseVersionAdvances,
+    "function",
+    "release preflight must expose version advancement validation",
+  );
+
+  assert.doesNotThrow(() =>
+    packagingContract.assertReleaseVersionAdvances("1.1.0", ["0.3.6", "1.0.0"]),
+  );
+  assert.doesNotThrow(() =>
+    packagingContract.assertReleaseVersionAdvances("9007199254740993.0.0", [
+      "9007199254740992.0.0",
+    ]),
+  );
+  assert.doesNotThrow(() =>
+    packagingContract.assertReleaseVersionAdvances("1.0.0-9007199254740993", [
+      "1.0.0-9007199254740992",
+    ]),
+  );
+  assert.doesNotThrow(() =>
+    packagingContract.assertReleaseVersionAdvances("1.0.0-alpha-z", [
+      "1.0.0-alpha-a",
+    ]),
+  );
+  assert.doesNotThrow(
+    () =>
+      packagingContract.assertReleaseVersionAdvances("1.0.0-alpha-beta", [
+        "1.0.0-alpha-alpha",
+      ]),
+    "hyphenated prerelease identifiers must preserve their full value",
+  );
+  assert.throws(
+    () => packagingContract.assertReleaseVersionAdvances("1.0.0", ["1.0.0"]),
+    /newer than the latest release/i,
+  );
+  assert.throws(
+    () => packagingContract.assertReleaseVersionAdvances("0.9.9", ["1.0.0"]),
+    /newer than the latest release/i,
+  );
 });
 
 test("configures one unsigned per-user x64 NSIS installer without updates", () => {
@@ -108,7 +151,7 @@ test("creates packaged smoke arguments without a development entry path", () => 
 });
 
 test("requires the packaged ASAR manifest to carry the release version", () => {
-  assert.doesNotThrow(() => assertPackagedVersion("1.0.0"));
+  assert.doesNotThrow(() => assertPackagedVersion("1.1.0"));
   assert.throws(
     () => assertPackagedVersion("0.1.0-dev.1"),
     /Packaged application/,
@@ -117,8 +160,8 @@ test("requires the packaged ASAR manifest to carry the release version", () => {
 
 test("writes a conventional SHA-256 checksum line", () => {
   assert.equal(
-    checksumLine("a".repeat(64), "ERC-Chart-Setup-1.0.0.exe"),
-    `${"a".repeat(64)}  ERC-Chart-Setup-1.0.0.exe\n`,
+    checksumLine("a".repeat(64), "ERC-Chart-Setup-1.1.0.exe"),
+    `${"a".repeat(64)}  ERC-Chart-Setup-1.1.0.exe\n`,
   );
   assert.throws(() => checksumLine("not-a-digest", "setup.exe"), /SHA-256/);
   assert.throws(() => checksumLine("a".repeat(64), "../setup.exe"), /filename/);

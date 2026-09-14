@@ -124,7 +124,8 @@ test("delivery workflow executes every governance verification command", async (
 });
 
 test("release workflow ignores documentation and workflow-only pushes", async () => {
-  const workflow = parse(await read(".github/workflows/release.yml"));
+  const source = await read(".github/workflows/release.yml");
+  const workflow = parse(source);
   assert.deepEqual(workflow.on.push.branches, ["main"]);
   assert.deepEqual(workflow.on.push.paths, [
     "apps/**",
@@ -140,6 +141,10 @@ test("release workflow ignores documentation and workflow-only pushes", async ()
     "tsconfig.tests.json",
   ]);
   assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
+  assert.ok(
+    source.includes('["tag", "--merged", "HEAD", "--list", "v*"]'),
+    "release preflight must consider only release tags reachable from HEAD",
+  );
 });
 
 test("calibration evidence schema requires solo-maintainer enforcement assertions", async () => {
