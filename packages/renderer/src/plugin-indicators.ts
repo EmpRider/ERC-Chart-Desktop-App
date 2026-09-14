@@ -102,6 +102,7 @@ interface RuntimeContext {
   rows?: PluginIndicatorFigureData[];
   publishedPoints?: Map<number, IndicatorRuntimePoint>;
   dependencyVersion?: string;
+  dependencyHistoryVersion?: string;
   configurationRebuildPending?: boolean;
   overlays: readonly IndicatorRuntimeOverlay[];
   signals: readonly IndicatorRuntimeSignal[];
@@ -114,6 +115,7 @@ interface RuntimeContext {
   dataRevision: number;
   configGeneration: number;
   outputRevision: number;
+  historyRevision: number;
   lastCandleCount?: number;
   lastBuilding: Candle | undefined;
 }
@@ -744,9 +746,48 @@ function publishedDependencyPoints(
   return published;
 }
 
+function samePublishedDependencyPoint(
+  left: IndicatorRuntimePoint | undefined,
+  right: IndicatorRuntimePoint | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const leftEntries = Object.entries(left.values);
+  const rightEntries = Object.entries(right.values);
+  return (
+    left.openTimeMs === right.openTimeMs &&
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(([key, value]) => right.values[key] === value)
+  );
+}
+
+function publishedHistoryChanged(
+  previous: ReadonlyMap<number, IndicatorRuntimePoint>,
+  next: ReadonlyMap<number, IndicatorRuntimePoint>,
+  data: BrowserIndicatorDataUpdate,
+): boolean {
+  const deltaOpenTimes =
+    data.kind === "building"
+      ? new Set([data.candle.openTimeMs])
+      : data.kind === "rollover"
+        ? new Set([data.finalized.openTimeMs, data.building.openTimeMs])
+        : new Set<number>();
+  for (const openTimeMs of new Set([...previous.keys(), ...next.keys()])) {
+    if (deltaOpenTimes.has(openTimeMs)) continue;
+    if (
+      !samePublishedDependencyPoint(
+        previous.get(openTimeMs),
+        next.get(openTimeMs),
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
 function applyWorkerResult(
   dataList: readonly KLineData[],
   context: RuntimeContext,
+  data: BrowserIndicatorDataUpdate,
   result: IndicatorWorkerResultUpdate,
   candleCount = dataList.length,
   candleTail = dataList.slice(-2),
@@ -758,11 +799,21 @@ function applyWorkerResult(
       context.timeframeId,
       context.chartTimeframeId,
     );
-    context.publishedPoints = publishedDependencyPoints(
+    const nextPublishedPoints = publishedDependencyPoints(
       dataList,
       context.rows,
       context.summary.definition.outputs.map(({ key }) => key),
     );
+    if (
+      context.publishedPoints !== undefined &&
+      publishedHistoryChanged(
+        context.publishedPoints,
+        nextPublishedPoints,
+        data,
+      )
+    )
+      context.historyRevision += 1;
+    context.publishedPoints = nextPublishedPoints;
     const first = dataList[0]?.timestamp;
     if (first !== undefined) rowStartTimes.set(context.rows, first);
     context.overlays = result.snapshot.overlays;
@@ -821,6 +872,7 @@ function applyWorkerResult(
 interface ResolvedIndicatorDependency {
   readonly snapshot: Omit<IndicatorWorkerDependencySnapshot, "points">;
   readonly points: ReadonlyMap<number, IndicatorRuntimePoint>;
+  readonly historyRevision: number;
 }
 
 async function resolveDependenciesFor(
@@ -863,6 +915,7 @@ async function resolveDependenciesFor(
             outputRevision: upstream.outputRevision,
           },
           points: upstream.publishedPoints,
+          historyRevision: upstream.historyRevision,
         } satisfies ResolvedIndicatorDependency;
       }
     }),
@@ -928,6 +981,22 @@ export function pluginIndicatorDependencyVersion(
   );
 }
 
+function pluginIndicatorDependencyHistoryVersion(
+  dependencies: readonly ResolvedIndicatorDependency[],
+): string | undefined {
+  if (dependencies.length === 0) return undefined;
+  return JSON.stringify(
+    dependencies.map(({ snapshot, historyRevision }) => ({
+      inputKey: snapshot.inputKey,
+      instanceId: snapshot.instanceId,
+      outputKey: snapshot.outputKey,
+      sourceGeneration: snapshot.sourceGeneration,
+      configGeneration: snapshot.configGeneration,
+      historyRevision,
+    })),
+  );
+}
+
 async function calculatePluginIndicator(
   runtimeId: string,
   dataList: readonly KLineData[],
@@ -965,12 +1034,16 @@ async function calculatePluginIndicator(
           pluginIndicatorDependencyVersion(dependencyMetadata);
         const dependencyChanged =
           nextDependencyVersion !== context.dependencyVersion;
+        const nextDependencyHistoryVersion =
+          pluginIndicatorDependencyHistoryVersion(resolvedDependencies);
+        const dependencyHistoryChanged =
+          nextDependencyHistoryVersion !== context.dependencyHistoryVersion;
         let data = incrementalDataUpdate(next, context);
         const sourceDataChanged = data !== undefined;
         const configurationRebuild =
           context.configurationRebuildPending === true;
         if (
-          configurationRebuild &&
+          (dependencyHistoryChanged || configurationRebuild) &&
           data !== undefined &&
           data.kind !== "snapshot" &&
           data.kind !== "rebuild"
@@ -1033,6 +1106,15 @@ async function calculatePluginIndicator(
             snapshotTimeline().map((item) =>
               toCandle(item, context.instrumentId, context.chartTimeframeId),
             ),
+          ...(resolvedDependencies.length === 0
+            ? {}
+            : {
+                rebuildDependencies: () =>
+                  dependencySnapshotsForData(resolvedDependencies, {
+                    kind: "rebuild",
+                    candles: [],
+                  }),
+              }),
           dataRevision: context.dataRevision,
           configGeneration: context.configGeneration,
         });
@@ -1043,6 +1125,7 @@ async function calculatePluginIndicator(
         applyWorkerResult(
           result.kind === "snapshot" ? snapshotTimeline() : resultTimeline,
           context,
+          data,
           result,
           count,
           tail,
@@ -1051,6 +1134,9 @@ async function calculatePluginIndicator(
         if (nextDependencyVersion === undefined)
           delete context.dependencyVersion;
         else context.dependencyVersion = nextDependencyVersion;
+        if (nextDependencyHistoryVersion === undefined)
+          delete context.dependencyHistoryVersion;
+        else context.dependencyHistoryVersion = nextDependencyHistoryVersion;
         delete context.configurationRebuildPending;
       }
       return context.rows ?? [];
@@ -1284,6 +1370,7 @@ export function reconcilePluginIndicators(
           ? previousContext.configGeneration
           : (previousContext?.configGeneration ?? 0) + 1,
       outputRevision: previousContext?.outputRevision ?? 0,
+      historyRevision: previousContext?.historyRevision ?? 0,
       ...(sameSource && previousContext?.lastCandleCount !== undefined
         ? { lastCandleCount: previousContext.lastCandleCount }
         : {}),
@@ -1299,6 +1386,10 @@ export function reconcilePluginIndicators(
         : {}),
       ...(sameConfiguration && previousContext?.dependencyVersion !== undefined
         ? { dependencyVersion: previousContext.dependencyVersion }
+        : {}),
+      ...(sameConfiguration &&
+      previousContext?.dependencyHistoryVersion !== undefined
+        ? { dependencyHistoryVersion: previousContext.dependencyHistoryVersion }
         : {}),
       ...(sameConfiguration &&
       previousContext?.pendingSeriesChange !== undefined

@@ -154,6 +154,59 @@ test("worker passes bound indicator outputs through the private runtime context"
   }
 });
 
+test("worker rejects dependency payloads above the aggregate point budget", async () => {
+  const originalPostMessage = globalThis.postMessage;
+  const originalOnMessage = globalThis.onmessage;
+  const posted = [];
+  globalThis.postMessage = (message) => posted.push(message);
+  const points = Array.from({ length: 100_000 }, (_, index) => ({
+    openTimeMs: index,
+    values: { line: index },
+  }));
+
+  try {
+    await import(`../dist/worker-entry.js?dependency-budget=${Date.now()}`);
+    globalThis.onmessage({
+      data: {
+        type: "sync",
+        instanceId: "worker-dependency-budget-instance",
+        sequence: 1,
+        runtimeEntryUrl: new URL(
+          "./fixtures/dependency-aware-indicator.mjs",
+          import.meta.url,
+        ).href,
+        pluginId: "erc.indicator.worker-dependency",
+        definitionId: "erc.indicator.worker-dependency.main",
+        instrumentId: "TEST",
+        timeframeId: "1m",
+        parameters: {},
+        dependencies: Array.from({ length: 5 }, (_, index) => ({
+          inputKey: `source-${index}`,
+          instanceId: `upstream-${index}`,
+          outputKey: "line",
+          sourceGeneration: 1,
+          sourceRevision: 1,
+          configGeneration: 1,
+          outputRevision: 1,
+          points,
+        })),
+        data: {
+          kind: "snapshot",
+          snapshot: createIndicatorWorkerCandleSnapshot([candle("1m", 0)]),
+        },
+        dataRevision: 1,
+        configGeneration: 1,
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(posted, []);
+  } finally {
+    globalThis.postMessage = originalPostMessage;
+    globalThis.onmessage = originalOnMessage;
+  }
+});
+
 test("worker applies live dependency deltas without recreating history", async () => {
   const originalPostMessage = globalThis.postMessage;
   const originalOnMessage = globalThis.onmessage;

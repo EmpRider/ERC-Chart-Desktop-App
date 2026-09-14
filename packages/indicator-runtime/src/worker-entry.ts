@@ -12,6 +12,7 @@ import {
   type TimeframeId,
 } from "@erc-chart/contracts";
 import type {
+  IndicatorWorkerDependencySnapshot,
   IndicatorWorkerDisposeMessage,
   IndicatorWorkerFailureMessage,
   IndicatorWorkerRequestMessage,
@@ -19,7 +20,10 @@ import type {
   IndicatorWorkerSuccessMessage,
   IndicatorWorkerSyncMessage,
 } from "./index.js";
-import { normalizeIndicatorParameters } from "./index.js";
+import {
+  INDICATOR_WORKER_MAX_DEPENDENCY_POINTS,
+  normalizeIndicatorParameters,
+} from "./index.js";
 import { assertDenseSnapshotTimeline } from "./result-validation.js";
 
 interface RuntimeIndicatorSnapshot extends IndicatorRuntimeSnapshot {
@@ -486,7 +490,9 @@ function isSourceSnapshot(value: unknown): boolean {
   );
 }
 
-function isDependencySnapshot(value: unknown): boolean {
+function isDependencySnapshot(
+  value: unknown,
+): value is IndicatorWorkerDependencySnapshot {
   if (typeof value !== "object" || value === null) return false;
   const dependency = value as {
     readonly inputKey?: unknown;
@@ -530,6 +536,19 @@ function isDependencySnapshot(value: unknown): boolean {
   );
 }
 
+function isDependencySnapshotBatch(
+  value: unknown,
+): value is readonly IndicatorWorkerDependencySnapshot[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  let pointCount = 0;
+  for (const dependency of value) {
+    if (!isDependencySnapshot(dependency)) return false;
+    pointCount += dependency.points.length;
+    if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
+  }
+  return true;
+}
+
 function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
   if (typeof value !== "object" || value === null) return false;
   const message = value as Partial<IndicatorWorkerSyncMessage>;
@@ -553,9 +572,7 @@ function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
       (Array.isArray(message.sources) &&
         message.sources.every(isSourceSnapshot))) &&
     (message.dependencies === undefined ||
-      (Array.isArray(message.dependencies) &&
-        message.dependencies.length <= 64 &&
-        message.dependencies.every(isDependencySnapshot))) &&
+      isDependencySnapshotBatch(message.dependencies)) &&
     isDataUpdate(message.data)
   );
 }

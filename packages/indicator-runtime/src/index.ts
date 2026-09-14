@@ -128,6 +128,8 @@ export interface IndicatorWorkerDependencySnapshot {
   readonly points: readonly IndicatorRuntimePoint[];
 }
 
+export const INDICATOR_WORKER_MAX_DEPENDENCY_POINTS = 400_000;
+
 export type IndicatorWorkerDataUpdate =
   | {
       readonly kind: "snapshot";
@@ -386,6 +388,19 @@ function isWorkerDependencySnapshot(
   );
 }
 
+function isWorkerDependencySnapshotBatch(
+  value: unknown,
+): value is readonly IndicatorWorkerDependencySnapshot[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  let pointCount = 0;
+  for (const dependency of value) {
+    if (!isWorkerDependencySnapshot(dependency)) return false;
+    pointCount += dependency.points.length;
+    if (pointCount > INDICATOR_WORKER_MAX_DEPENDENCY_POINTS) return false;
+  }
+  return true;
+}
+
 function isWorkerDataUpdate(
   value: unknown,
 ): value is IndicatorWorkerDataUpdate {
@@ -420,9 +435,7 @@ function isWorkerExecutionRequest(
         value.sources.length <= 64 &&
         value.sources.every(isWorkerSourceSnapshot))) &&
     (value.dependencies === undefined ||
-      (Array.isArray(value.dependencies) &&
-        value.dependencies.length <= 64 &&
-        value.dependencies.every(isWorkerDependencySnapshot))) &&
+      isWorkerDependencySnapshotBatch(value.dependencies)) &&
     isWorkerDataUpdate(value.data) &&
     isSafeGeneration(value.dataRevision) &&
     isSafeGeneration(value.configGeneration)

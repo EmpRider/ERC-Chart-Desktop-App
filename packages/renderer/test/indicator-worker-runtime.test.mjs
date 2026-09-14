@@ -117,6 +117,93 @@ test("lazily rebuilds history when an incremental update reaches a fresh worker"
   assert.equal(terminations, 1);
 });
 
+test("snapshot-required rebuild regenerates full dependency history instead of reusing delta points", async () => {
+  const posted = [];
+  const runtime = createBrowserIndicatorRuntime({
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          void 0;
+        },
+      };
+    },
+  });
+  const previous = { ...candle, openTimeMs: candle.openTimeMs - 60_000 };
+  const deltaDependencies = [
+    {
+      inputKey: "source",
+      instanceId: "upstream-instance",
+      outputKey: "line",
+      sourceGeneration: 1,
+      sourceRevision: 2,
+      configGeneration: 1,
+      outputRevision: 2,
+      points: [{ openTimeMs: candle.openTimeMs, values: { line: 88 } }],
+    },
+  ];
+  const fullDependencies = [
+    {
+      ...deltaDependencies[0],
+      points: [
+        { openTimeMs: previous.openTimeMs, values: { line: 77 } },
+        { openTimeMs: candle.openTimeMs, values: { line: 88 } },
+      ],
+    },
+  ];
+
+  try {
+    await runtime.sync({
+      instanceId: "dependent-rebuild-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      instrumentId: candle.instrumentId,
+      timeframeId: candle.timeframeId,
+      parameters: {},
+      dependencies: deltaDependencies,
+      data: { kind: "building", candle },
+      rebuildCandles: () => [previous, candle],
+      rebuildDependencies: () => fullDependencies,
+      dataRevision: 2,
+      configGeneration: 1,
+    });
+
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].data.kind, "rebuild");
+    assert.deepEqual(posted[0].dependencies, fullDependencies);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("forwards bound indicator output batches to the worker unchanged", async () => {
   const posted = [];
   const runtime = createBrowserIndicatorRuntime({

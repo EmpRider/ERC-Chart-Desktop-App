@@ -238,6 +238,36 @@ test("rejects malformed source provenance before creating a worker", async () =>
   }
 });
 
+test("rejects dependency snapshots whose aggregate point count exceeds the worker budget", async () => {
+  const { supervisor, workers } = harness();
+  const points = Array.from({ length: 100_000 }, (_, index) => ({
+    openTimeMs: index,
+    values: { line: index },
+  }));
+  const dependencies = Array.from({ length: 5 }, (_, index) => ({
+    inputKey: `source-${index}`,
+    instanceId: `upstream-${index}`,
+    outputKey: "line",
+    sourceGeneration: 1,
+    sourceRevision: 1,
+    configGeneration: 1,
+    outputRevision: 1,
+    points,
+  }));
+
+  try {
+    await assert.rejects(
+      supervisor.sync(request("oversized-dependencies", { dependencies })),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+    );
+    assert.equal(workers.length, 0);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
 test("rejects null active source timeframe before creating a worker", async () => {
   const { supervisor, workers } = harness();
   try {

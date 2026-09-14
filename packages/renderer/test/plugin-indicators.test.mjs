@@ -1258,6 +1258,169 @@ test("live dependency updates stay incremental and send only the affected depend
   );
 });
 
+test("an upstream full-output rebuild forces a downstream historical rebuild during a chart delta", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-history-rebuild",
+    name: "Dependency history rebuild",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-history-rebuild-test",
+    pluginName: "Dependency history rebuild test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-history-rebuild-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-history-rebuild-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-history-rebuild-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: {},
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  let rebuildUpstreamOutput = false;
+  const historyStart = 1_900_000_000_000;
+  const sync = async (request) => {
+    requests.push(request);
+    const isBase = request.instanceId.endsWith(`:${base.instanceId}`);
+    if (isBase && rebuildUpstreamOutput) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: [
+            { openTimeMs: historyStart, values: { line: 999 } },
+            { openTimeMs: historyStart + 60_000, values: { line: 24 } },
+          ],
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    const points = candles.map((item) => ({
+      openTimeMs: item.openTimeMs,
+      values: {
+        line:
+          dependency?.points.find(
+            (point) => point.openTimeMs === item.openTimeMs,
+          )?.values.line ?? item.close * 2,
+      },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = [
+    {
+      timestamp: historyStart,
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11,
+    },
+    {
+      timestamp: historyStart + 60_000,
+      open: 11,
+      high: 13,
+      low: 10,
+      close: 12,
+    },
+  ];
+  await template.calc(data, { id: consumerRuntimeId });
+
+  rebuildUpstreamOutput = true;
+  data[1] = { ...data[1], close: 13 };
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const latestConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(latestConsumerRequest?.data.kind, "rebuild");
+  assert.deepEqual(
+    latestConsumerRequest?.dependencies?.[0]?.points.map((point) => ({
+      openTimeMs: point.openTimeMs,
+      line: point.values.line,
+    })),
+    [
+      { openTimeMs: historyStart, line: 999 },
+      { openTimeMs: historyStart + 60_000, line: 24 },
+    ],
+  );
+});
+
 test("aligns higher-timeframe dependency outputs only after source candles close", async () => {
   let template;
   const activeIds = new Set();
