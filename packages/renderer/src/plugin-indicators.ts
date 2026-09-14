@@ -783,6 +783,11 @@ function applyWorkerResult(
       ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
     });
   }
+  while (published.size > 100_000) {
+    const oldestOpenTimeMs = published.keys().next().value;
+    if (oldestOpenTimeMs === undefined) break;
+    published.delete(oldestOpenTimeMs);
+  }
   context.publishedPoints = published;
   if (result.overlays !== undefined) context.overlays = result.overlays;
   if (result.signals !== undefined) context.signals = result.signals;

@@ -1258,6 +1258,159 @@ test("live dependency updates stay incremental and send only the affected depend
   );
 });
 
+test("bounds published dependency history to the worker 100k payload limit", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-bound",
+    name: "Dependency bound",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "multiplier",
+        label: "Multiplier",
+        type: "number",
+        defaultValue: 1,
+        effect: "calculation",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-bound-test",
+    pluginName: "Dependency bound test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-bound-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-bound-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier: 1 },
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = (multiplier) => ({
+    instanceId: "dependency-bound-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  });
+  const sync = async (request) => {
+    requests.push(request);
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const points = candles.map((candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: { line: candle.close },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer(1), base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(":dependency-bound-consumer"),
+  );
+  assert.ok(consumerRuntimeId);
+
+  const start = 1_900_000_000_000;
+  const data = Array.from({ length: 100_000 }, (_, index) => ({
+    timestamp: start + index * 60_000,
+    open: index,
+    high: index + 2,
+    low: index - 1,
+    close: index + 1,
+  }));
+  await template.calc(data, { id: consumerRuntimeId });
+
+  data.push({
+    timestamp: start + 100_000 * 60_000,
+    open: 100_000,
+    high: 100_002,
+    low: 99_999,
+    close: 100_001,
+  });
+  await template.calc(data, { id: consumerRuntimeId });
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer(2), base],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  await template.calc(data, { id: consumerRuntimeId });
+
+  const finalConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(finalConsumerRequest?.data.kind, "rebuild");
+  assert.equal(finalConsumerRequest?.dependencies?.[0]?.points.length, 100_000);
+  assert.equal(
+    finalConsumerRequest?.dependencies?.[0]?.points[0]?.openTimeMs,
+    start + 60_000,
+  );
+});
+
 test("upstream configuration changes invalidate and rebuild unchanged downstream data", async () => {
   let template;
   const activeIds = new Set();
