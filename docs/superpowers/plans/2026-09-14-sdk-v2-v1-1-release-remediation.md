@@ -123,7 +123,7 @@ Run the repository-required gates relevant to the changed release path.
 
 Verify Windows packaging, installer smoke, checksum, and release identity on the reviewed head.
 
-- [ ] **Step 3: Commit/push and open the task -> epic PR**
+- [x] **Step 3: Commit/push and open the task -> epic PR**
 
 Commit format: `ECDD-235: publish SDK v2 as v1.1.0`.
 
