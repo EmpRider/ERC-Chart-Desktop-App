@@ -44,7 +44,7 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 - [ ] Phase 9 — Build Indicator Source Engine and MTF source sharing
 - [ ] Phase 10 — Build candle transformation layer and Heikin Ashi
 - [ ] Phase 11 — Rebuild signal engine with lookahead/confirmation guarantees
-- [ ] Phase 12 — Evolve worker/contracts for source provenance and v2 deltas
+- [x] Phase 12 — Evolve worker/contracts for source provenance and v2 deltas
 - [ ] Phase 13 — Extend renderer for marker text, text sizes, locations, and v2 drawings
 - [x] Phase 14 — Rewrite maintained indicators against SDK v2
 - [x] Phase 15 — Remove v1-only authoring/runtime surface
@@ -59,6 +59,8 @@ Use this board as the high-level status record. Change `[ ]` to `[x]` only after
 **ECDD-233 sequencing update (2026-09-14):** ECDD-233 completed source-confirmed/no-lookahead signal semantics via PR #147 / squash merge `eb4b9b78b47d79f72c354abc436b78eed42ab374`. The shipped path traces chart/TA dependencies at compile time, suppresses unready/provisional events, keys finalized signal identity to confirmed source candles, carries source revision/synthetic provenance internally, preserves replay/live equivalence, and invalidates corrected-history downstream signals. Detailed Task 13 is therefore complete. Detailed Task 14 is next, but it must build on rather than duplicate the provenance fields already required by Task 13: its remaining scope is the broader validated worker/runtime v2 transport/delta contract, stale generation/revision rejection, and bounded output acceptance. Phase 16 remains open for that contract work, later renderer/global acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final end-to-end pass.
 
 **ECDD-140 sequencing update (2026-09-14):** ECDD-140 completed the transport/delta slice of detailed Task 14 via PR #149 / squash merge `bdb66d5d10ff5c49ec8869faf6a51a58224cc5a2`. Full history/rebuild traffic now uses validated columnar `Float64Array` snapshots, building/rollover traffic stays as bounded candle deltas, and worker source metadata retains provider/instrument/timeframe/candle/source-revision provenance without exposing authoring objects. Malformed source snapshots are rejected before worker creation, including explicit `activeTimeframeId: null`; stale data/config generation safety and bounded drawing output remain intact. The materialization path is now covered by an enforced 100,000-row primary plus representative MTF-source benchmark. ECDD-145 is the remaining Task 14 resilience slice: broaden generation/revision rejection acceptance, budgets, quotas, termination, bounded restart, and the associated complexity/resource measurements. Phase 16 remains open for ECDD-145, later renderer/global acceptance, cross-indicator dependency-DAG validation (ECDD-143/ECDD-149), and the final end-to-end pass.
+
+**ECDD-145 sequencing update (2026-09-14):** ECDD-145 completed the remaining resilience slice of detailed Task 14 via PR #151 / squash merge `5a77a2338633af7642a90e506794dfc207dbe5bf`. The supervisor now rejects stale generation/revision requests before dispatch, caps active workers at 20 and in-flight work at two requests per instance, refuses automatic recreation after three consecutive lifecycle failures, settles startup/post/timeout/crash/protocol/termination failures deterministically, and ignores late events from replaced workers. The enforced performance path now exercises 100,000 finalized updates for SMA, EMA, RSI, ATR, crossover, highest, and lowest, retaining O(1) steady-state behavior for the first five and amortized O(1) extrema. Detailed Task 14 and Phase 12 are therefore complete. Phase 16 remains open for the explicit cross-indicator dependency DAG and missing/circular dependency rejection owned by ECDD-143/ECDD-149, followed by the final global acceptance pass.
 
 ---
 
@@ -846,7 +848,7 @@ git commit -m "feat(indicators): enforce safe signal semantics"
 
 ### Task 14: Evolve worker/runtime contracts for v2 provenance and deltas
 
-**Reassessment after ECDD-140:** Source generation/revision and market/synthetic provenance fields already crossed the worker boundary for Task 13. ECDD-140 reused that model and completed the plain-data snapshot/delta transport slice instead of recreating it. Full history/rebuild payloads are validated typed-array snapshots; building/rollover updates remain bounded candle deltas; malformed source metadata is rejected before worker creation; stale data/config generation protection and bounded output still hold. Do not reopen those contracts in ECDD-145 unless a resilience test proves a defect. ECDD-145 owns the remaining broader rejection/budget/quota/termination/restart acceptance and complexity evidence.
+**Reassessment after ECDD-145:** Source generation/revision and market/synthetic provenance fields already crossed the worker boundary for Task 13. ECDD-140 reused that model and completed the plain-data snapshot/delta transport slice; ECDD-145 then closed the remaining rejection/budget/quota/termination/restart and complexity acceptance without redesigning transport. Full history/rebuild payloads remain validated typed-array snapshots, building/rollover updates remain bounded candle deltas, stale work is rejected before it can replace current results, and worker lifecycle/resource use is bounded. Detailed Task 14 is complete; subsequent work should preserve these contracts unless failing evidence requires a correction.
 
 **Files:**
 
@@ -875,13 +877,13 @@ The renderer/browser boundary remains candle-oriented; the worker boundary uses 
 
 Add tests proving a response from a previous source/config generation cannot replace current results.
 
-- [ ] **Step 5: Broaden generation/revision rejection, budgets, quotas, termination, and bounded restart — ECDD-145**
+- [x] **Step 5: Broaden generation/revision rejection, budgets, quotas, termination, and bounded restart — ECDD-145**
 
 Drawing handles must not bypass overlay/output caps. Worker startup/history/update execution, restart behavior, queue/resource quotas, and repeated-failure handling must remain bounded and deterministic. Add the complexity/resource measurements required by the ECDD-145 acceptance clarification.
 
-- [ ] **Step 6: Run the complete runtime/contract/resilience and performance acceptance**
+- [x] **Step 6: Run the complete runtime/contract/resilience and performance acceptance**
 
-- [ ] **Step 7: Commit the ECDD-145 resilience slice**
+- [x] **Step 7: Commit the ECDD-145 resilience slice**
 
 ```bash
 git add packages/contracts/src/indicator-management.ts packages/indicator-runtime/src packages/renderer/src/indicator-worker-runtime.ts packages/indicator-runtime/test
@@ -1241,6 +1243,17 @@ Append dated entries here as phases complete. Keep old entries; do not rewrite h
 - Exact-head local verification passed 610 unit tests with 2 expected Windows symlink capability skips, 191/191 integration tests, the complete performance suite, build, format, lint, typecheck, audit with zero vulnerabilities, version checks, the maintained ATR Rope/UT Bot package build, and `git diff --check`.
 - Delivery run `34793658807`, Semgrep, and the required CodeRabbit status passed on the final head. Both actionable CodeRabbit conversations were resolved; the stale old-head `CHANGES_REQUESTED` review was dismissed only after its two findings were fixed and current-head machine evidence was green, consistent with the task-to-epic review runbook.
 - The design specification remains correct and the public authoring guide requires no API change: worker snapshots, deltas, provenance, generations, and recovery remain host/runtime concerns. Detailed Task 14 is not globally complete because ECDD-145 still owns the broader generation/revision rejection, budgets, quotas, termination, bounded-restart, and complexity/resource acceptance. Global Phase 16 remains open for that work and the later dependency-DAG/global verification slices.
+
+### 2026-09-14 — ECDD-145 worker resilience completed
+
+- ECDD-145 was squash-merged into `epic/ECDD-135-sdk-v2-optimization` as `5a77a2338633af7642a90e506794dfc207dbe5bf` via PR #151; the final implementation head was `4c8e040ff4fa1c1d6d523d4686224179bdba02c1`.
+- The worker supervisor now rejects stale configuration generations and lower revisions in the active generation before dispatch, caps active workers at 20, caps in-flight requests at two per instance, and refuses automatic recreation after three consecutive failures until explicit disposal resets the instance.
+- Startup, `postMessage`, timeout, crash, protocol, worker-error, disposal, and termination paths settle pending callers deterministically. Worker callbacks are bound to the state instance that created them, so late events from a terminated worker cannot tear down its replacement.
+- CodeRabbit found one valid Major issue on the penultimate head: a valid worker `type: "error"` response was removed from `pending` before `failState()` could reject its `sync()` promise. The final fix keeps the request pending through failure settlement and adds a regression proving rejection and termination.
+- The enforced `npm run test:performance` path now includes 100,000 finalized updates each for SMA, EMA, RSI, ATR, crossover, highest, and lowest, with 50,000-period adversarial windows where applicable. SMA/EMA/RSI/ATR/crossover retain O(1) steady-state structure and extrema use an amortized O(1) deque with bounded compaction.
+- Before the final review fix, the complete local suite passed 615 unit tests with 2 expected skips, 191/191 integration tests, the full performance suite, Electron indicator-worker smoke, build, format, lint, typecheck, audit/version checks, and `git diff --check`. After the fix, build, 22/22 supervisor tests, format, lint/boundaries, typecheck, and diff validation passed; exact-head CI then re-ran the full required suite.
+- Exact-head Delivery run `34805954899` passed governance, Linux application tests, Electron smokes, build, performance, audit, version check, and aggregate delivery. Semgrep scan `226863189` and the required CodeRabbit status passed; the PR had zero unresolved review threads and the final exact-head maintainer review found no remaining actionable issue.
+- Detailed Task 14 and Phase 12 are complete. The next confirmed SDK v2 work is ECDD-143/ECDD-149: explicit cross-indicator bindings, runtime dependency DAG construction, and rejection of missing/circular dependencies before calculation. Global Phase 16 remains open until that work and the final end-to-end acceptance gate are complete.
 
 ---
 
