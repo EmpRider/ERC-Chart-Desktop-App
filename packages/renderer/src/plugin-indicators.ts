@@ -713,6 +713,37 @@ function timeframeDurationMs(timeframeId: string): number | undefined {
   return Number.isSafeInteger(result) && result > 0 ? result : undefined;
 }
 
+function dependencyPointForRow(
+  openTimeMs: number,
+  row: PluginIndicatorFigureData,
+  outputKeys: readonly string[],
+): IndicatorRuntimePoint | undefined {
+  const values = Object.fromEntries(
+    outputKeys.map((outputKey) => [
+      outputKey,
+      typeof row[outputKey] === "number" ? row[outputKey] : null,
+    ]),
+  ) as Record<string, number | null>;
+  if (!Object.values(values).some((value) => value !== null)) return undefined;
+  return { openTimeMs, values };
+}
+
+function publishedDependencyPoints(
+  dataList: readonly KLineData[],
+  rows: readonly PluginIndicatorFigureData[],
+  outputKeys: readonly string[],
+): Map<number, IndicatorRuntimePoint> {
+  const published = new Map<number, IndicatorRuntimePoint>();
+  for (let index = 0; index < dataList.length; index += 1) {
+    const data = dataList[index];
+    const row = rows[index];
+    if (data === undefined || row === undefined) continue;
+    const point = dependencyPointForRow(data.timestamp, row, outputKeys);
+    if (point !== undefined) published.set(point.openTimeMs, point);
+  }
+  return published;
+}
+
 function applyWorkerResult(
   dataList: readonly KLineData[],
   context: RuntimeContext,
@@ -721,24 +752,16 @@ function applyWorkerResult(
   candleTail = dataList.slice(-2),
 ): PluginIndicatorFigureData[] {
   if (result.kind === "snapshot") {
-    context.publishedPoints = new Map(
-      result.snapshot.points.map((point) => [
-        point.openTimeMs,
-        {
-          openTimeMs: point.openTimeMs,
-          values: { ...point.values },
-          ...(point.colors === undefined
-            ? {}
-            : { colors: { ...point.colors } }),
-          ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
-        },
-      ]),
-    );
     context.rows = alignPluginIndicatorSnapshotRows(
       dataList,
       result.snapshot,
       context.timeframeId,
       context.chartTimeframeId,
+    );
+    context.publishedPoints = publishedDependencyPoints(
+      dataList,
+      context.rows,
+      context.summary.definition.outputs.map(({ key }) => key),
     );
     const first = dataList[0]?.timestamp;
     if (first !== undefined) rowStartTimes.set(context.rows, first);
@@ -775,13 +798,14 @@ function applyWorkerResult(
   }
   const published =
     context.publishedPoints ?? new Map<number, IndicatorRuntimePoint>();
-  for (const point of result.points) {
-    published.set(point.openTimeMs, {
-      openTimeMs: point.openTimeMs,
-      values: { ...point.values },
-      ...(point.colors === undefined ? {} : { colors: { ...point.colors } }),
-      ...(point.sizes === undefined ? {} : { sizes: { ...point.sizes } }),
-    });
+  const outputKeys = context.summary.definition.outputs.map(({ key }) => key);
+  for (let offset = 0; offset < expectedPointCount; offset += 1) {
+    const data = candleTail[candleTail.length - expectedPointCount + offset];
+    const row = rows[startIndex + offset];
+    if (data === undefined || row === undefined) continue;
+    const point = dependencyPointForRow(data.timestamp, row, outputKeys);
+    if (point === undefined) published.delete(data.timestamp);
+    else published.set(point.openTimeMs, point);
   }
   while (published.size > 100_000) {
     const oldestOpenTimeMs = published.keys().next().value;
@@ -805,25 +829,42 @@ async function resolveDependenciesFor(
 ): Promise<readonly ResolvedIndicatorDependency[]> {
   return Promise.all(
     context.dependencyBindings.map(async (binding) => {
-      await calculatePluginIndicator(binding.runtimeId, dataList);
-      const upstream = contexts.get(binding.runtimeId);
-      if (upstream === undefined || upstream.publishedPoints === undefined) {
+      let expected = contexts.get(binding.runtimeId);
+      if (expected === undefined) {
         throw new Error(
-          `Indicator dependency ${binding.instanceId}.${binding.outputKey} has not published a result.`,
+          `Indicator dependency ${binding.instanceId} is unavailable.`,
         );
       }
-      return {
-        snapshot: {
-          inputKey: binding.inputKey,
-          instanceId: binding.instanceId,
-          outputKey: binding.outputKey,
-          sourceGeneration: upstream.dataGeneration,
-          sourceRevision: upstream.dataRevision,
-          configGeneration: upstream.configGeneration,
-          outputRevision: upstream.outputRevision,
-        },
-        points: upstream.publishedPoints,
-      } satisfies ResolvedIndicatorDependency;
+      while (true) {
+        await calculatePluginIndicator(binding.runtimeId, dataList);
+        const upstream = contexts.get(binding.runtimeId);
+        if (upstream === undefined) {
+          throw new Error(
+            `Indicator dependency ${binding.instanceId} is unavailable.`,
+          );
+        }
+        if (upstream !== expected) {
+          expected = upstream;
+          continue;
+        }
+        if (upstream.publishedPoints === undefined) {
+          throw new Error(
+            `Indicator dependency ${binding.instanceId}.${binding.outputKey} has not published a result.`,
+          );
+        }
+        return {
+          snapshot: {
+            inputKey: binding.inputKey,
+            instanceId: binding.instanceId,
+            outputKey: binding.outputKey,
+            sourceGeneration: upstream.dataGeneration,
+            sourceRevision: upstream.dataRevision,
+            configGeneration: upstream.configGeneration,
+            outputRevision: upstream.outputRevision,
+          },
+          points: upstream.publishedPoints,
+        } satisfies ResolvedIndicatorDependency;
+      }
     }),
   );
 }

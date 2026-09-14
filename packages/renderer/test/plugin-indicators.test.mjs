@@ -1258,6 +1258,341 @@ test("live dependency updates stay incremental and send only the affected depend
   );
 });
 
+test("aligns higher-timeframe dependency outputs only after source candles close", async () => {
+  let template;
+  const activeIds = new Set();
+  const requests = [];
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-mtf",
+    name: "Dependency MTF",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+      {
+        key: "input_timeframe",
+        label: "Timeframe",
+        type: "string",
+        defaultValue: "chart",
+        editor: "timeframe",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+    source: {
+      timeframe: {
+        requestedTimeframeId: "chart",
+        inputKey: "input_timeframe",
+      },
+      taTimeframeIds: [],
+    },
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-mtf-test",
+    pluginName: "Dependency MTF test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-mtf-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = {
+    instanceId: "dependency-mtf-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { input_timeframe: "1h" },
+    inputs: { source: { kind: "candles" } },
+  };
+  const consumer = {
+    instanceId: "dependency-mtf-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { input_timeframe: "chart" },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: base.instanceId,
+        outputKey: "line",
+      },
+    },
+  };
+  let upstreamBuildingValue = 200;
+  const sync = async (request) => {
+    requests.push(request);
+    if (request.instanceId.endsWith(`:${base.instanceId}`)) {
+      return {
+        kind: "snapshot",
+        snapshot: {
+          points: [
+            { openTimeMs: 0, values: { line: 100 } },
+            {
+              openTimeMs: 60 * 60_000,
+              values: { line: upstreamBuildingValue },
+            },
+          ],
+          overlays: [],
+          signals: [],
+        },
+      };
+    }
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    const dependency = request.dependencies?.[0];
+    const points = candles.map((candle) => ({
+      openTimeMs: candle.openTimeMs,
+      values: {
+        line:
+          dependency?.points.find(
+            (point) => point.openTimeMs === candle.openTimeMs,
+          )?.values.line ?? null,
+      },
+    }));
+    if (request.data.kind === "building") return { kind: "building", points };
+    if (request.data.kind === "rollover") return { kind: "rollover", points };
+    return {
+      kind: "snapshot",
+      snapshot: { points, overlays: [], signals: [] },
+    };
+  };
+  const reconciliation = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base],
+    [summary],
+    sync,
+    "TEST",
+    "15m",
+    new Set(),
+    "profile-a",
+    ["15m", "1h"],
+  );
+  const consumerRuntimeId = [...reconciliation.managedRuntimeIds].find((id) =>
+    id.endsWith(`:${consumer.instanceId}`),
+  );
+  assert.ok(consumerRuntimeId);
+  const data = Array.from({ length: 6 }, (_, index) => ({
+    timestamp: index * 15 * 60_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  }));
+
+  await template.calc(data, { id: consumerRuntimeId });
+  const firstConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.deepEqual(firstConsumerRequest?.dependencies?.[0]?.points, [
+    { openTimeMs: 45 * 60_000, values: { line: 100 } },
+    { openTimeMs: 60 * 60_000, values: { line: 100 } },
+    { openTimeMs: 75 * 60_000, values: { line: 100 } },
+  ]);
+
+  upstreamBuildingValue = 250;
+  data[5] = { ...data[5], close: 12 };
+  await template.calc(data, { id: consumerRuntimeId });
+  const liveConsumerRequest = requests
+    .filter(({ instanceId }) => instanceId === consumerRuntimeId)
+    .at(-1);
+  assert.equal(liveConsumerRequest?.data.kind, "building");
+  assert.deepEqual(liveConsumerRequest?.dependencies?.[0]?.points, [
+    { openTimeMs: 75 * 60_000, values: { line: 100 } },
+  ]);
+});
+
+test("re-resolves an upstream dependency when configuration changes during calculation", async () => {
+  let template;
+  const activeIds = new Set();
+  const module = {
+    registerIndicator(value) {
+      template = value;
+    },
+  };
+  const chart = {
+    getIndicators({ id }) {
+      return activeIds.has(id) ? [{ id, name: template?.name }] : [];
+    },
+    createIndicator(value) {
+      activeIds.add(value.id);
+      return "candle_pane";
+    },
+    overrideIndicator() {
+      return true;
+    },
+    removeIndicator({ id }) {
+      activeIds.delete(id);
+      return true;
+    },
+  };
+  const definition = {
+    id: "erc.indicator.test.dependency-race",
+    name: "Dependency race",
+    placement: "overlay",
+    inputs: [
+      {
+        key: "multiplier",
+        label: "Multiplier",
+        type: "number",
+        defaultValue: 1,
+        effect: "calculation",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+      },
+    ],
+    outputs: [{ key: "line", label: "Line" }],
+    plots: [{ key: "line", kind: "line", outputKey: "line" }],
+    requiresLiveTicks: false,
+  };
+  const summary = {
+    pluginId: "erc.indicator.dependency-race-test",
+    pluginName: "Dependency race test",
+    version: "1.0.0",
+    runtimeEntryUrl:
+      "erc-plugin://plugin/erc.indicator.dependency-race-test/1.0.0/dist/index.js",
+    definition,
+  };
+  const base = (multiplier) => ({
+    instanceId: "dependency-race-base",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier },
+    inputs: { source: { kind: "candles" } },
+  });
+  const consumer = {
+    instanceId: "dependency-race-consumer",
+    pluginId: summary.pluginId,
+    definitionId: definition.id,
+    enabled: true,
+    parameters: { multiplier: 1 },
+    inputs: {
+      source: {
+        kind: "indicator-output",
+        instanceId: "dependency-race-base",
+        outputKey: "line",
+      },
+    },
+  };
+  let resolveOldBase;
+  const sync = async (request) => {
+    const candles =
+      request.data.kind === "building"
+        ? [request.data.candle]
+        : request.data.kind === "rollover"
+          ? [request.data.finalized, request.data.building]
+          : request.data.candles;
+    if (
+      request.instanceId.endsWith(":dependency-race-base") &&
+      request.parameters.multiplier === 1
+    ) {
+      return new Promise((resolve) => {
+        resolveOldBase = resolve;
+      });
+    }
+    const dependency = request.dependencies?.[0];
+    const multiplier = request.parameters.multiplier ?? 1;
+    return {
+      kind: "snapshot",
+      snapshot: {
+        points: candles.map((candle) => ({
+          openTimeMs: candle.openTimeMs,
+          values: {
+            line:
+              dependency?.points.find(
+                (point) => point.openTimeMs === candle.openTimeMs,
+              )?.values.line ?? candle.close * multiplier,
+          },
+        })),
+        overlays: [],
+        signals: [],
+      },
+    };
+  };
+  const first = reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base(1)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+  );
+  const consumerRuntimeId = [...first.managedRuntimeIds].find((id) =>
+    id.endsWith(":dependency-race-consumer"),
+  );
+  assert.ok(consumerRuntimeId);
+  const candle = {
+    timestamp: 1_900_000_000_000,
+    open: 10,
+    high: 12,
+    low: 9,
+    close: 11,
+  };
+  const oldConsumerCalculation = template.calc([candle], {
+    id: consumerRuntimeId,
+  });
+  await Promise.resolve();
+  assert.equal(typeof resolveOldBase, "function");
+
+  reconcilePluginIndicators(
+    module,
+    chart,
+    [consumer, base(2)],
+    [summary],
+    sync,
+    "TEST",
+    "1m",
+    first.managedRuntimeIds,
+  );
+  resolveOldBase({
+    kind: "snapshot",
+    snapshot: {
+      points: [{ openTimeMs: candle.timestamp, values: { line: 11 } }],
+      overlays: [],
+      signals: [],
+    },
+  });
+
+  await assert.doesNotReject(oldConsumerCalculation);
+  const currentRows = await template.calc([candle], { id: consumerRuntimeId });
+  assert.equal(currentRows[0].line, 22);
+});
+
 test("bounds published dependency history to the worker 100k payload limit", async () => {
   let template;
   const activeIds = new Set();
