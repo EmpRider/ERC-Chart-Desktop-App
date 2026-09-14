@@ -117,6 +117,80 @@ test("lazily rebuilds history when an incremental update reaches a fresh worker"
   assert.equal(terminations, 1);
 });
 
+test("forwards bound indicator output batches to the worker unchanged", async () => {
+  const posted = [];
+  const runtime = createBrowserIndicatorRuntime({
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          void 0;
+        },
+      };
+    },
+  });
+  const dependencies = [
+    {
+      inputKey: "source",
+      instanceId: "upstream-instance",
+      outputKey: "line",
+      sourceGeneration: 2,
+      sourceRevision: 5,
+      configGeneration: 3,
+      points: [{ openTimeMs: candle.openTimeMs, values: { line: 88 } }],
+    },
+  ];
+
+  try {
+    await runtime.sync({
+      instanceId: "dependent-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      instrumentId: candle.instrumentId,
+      timeframeId: candle.timeframeId,
+      parameters: {},
+      dependencies,
+      data: { kind: "snapshot", candles: [candle] },
+      rebuildCandles: () => [candle],
+      dataRevision: 5,
+      configGeneration: 1,
+    });
+
+    assert.equal(posted.length, 1);
+    assert.deepEqual(posted[0].dependencies, dependencies);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("provider-backed indicator sources rebuild workers from source-engine candles instead of chart candles", async () => {
   const posted = [];
   const historyRequests = [];

@@ -16,6 +16,7 @@ import {
   type IndicatorCandleType,
   type IndicatorWorkerSupervisor,
   type IndicatorWorkerDataUpdate,
+  type IndicatorWorkerDependencySnapshot,
   type IndicatorWorkerResultUpdate,
   type IndicatorWorkerSupervisorOptions,
 } from "@erc-chart/indicator-runtime";
@@ -32,6 +33,7 @@ export interface BrowserIndicatorSyncRequest extends Omit<
     readonly requestedTimeframeId: string;
     readonly activeTimeframeId: string;
   }[];
+  readonly dependencies?: readonly IndicatorWorkerDependencySnapshot[];
   readonly data: BrowserIndicatorDataUpdate;
   readonly rebuildCandles: () => readonly IndicatorRuntimeSyncRequest["candles"][number][];
   readonly dataRevision: number;
@@ -277,6 +279,9 @@ export function createBrowserIndicatorRuntime(
           parameters: request.parameters,
           ...(sourceProvenance === undefined ? {} : { sourceProvenance }),
           ...(workerSources.length === 0 ? {} : { sources: workerSources }),
+          ...(request.dependencies === undefined
+            ? {}
+            : { dependencies: request.dependencies }),
           data: workerData,
           dataRevision: request.dataRevision,
           configGeneration: request.configGeneration,

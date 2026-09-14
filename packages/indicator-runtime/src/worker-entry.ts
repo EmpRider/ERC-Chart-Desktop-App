@@ -5,6 +5,7 @@ import {
   materializeIndicatorWorkerCandleSnapshot,
   type Candle,
   type IndicatorParameterValues,
+  type IndicatorRuntimePoint,
   type IndicatorRuntimeSnapshot,
   type InstrumentId,
   type InstalledIndicatorDefinition,
@@ -57,6 +58,9 @@ interface IndicatorPluginModule {
             };
           }
         >
+      >;
+      readonly dependencyInputs?: Readonly<
+        Record<string, readonly IndicatorRuntimePoint[]>
       >;
     },
   ) => RuntimeIndicatorInstance;
@@ -236,6 +240,23 @@ function signatureFor(
     instrumentId: message.instrumentId,
     timeframeId: message.timeframeId,
     parameters,
+    dependencies: message.dependencies?.map(
+      ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        sourceRevision,
+        configGeneration,
+      }) => ({
+        inputKey,
+        instanceId,
+        outputKey,
+        sourceGeneration,
+        sourceRevision,
+        configGeneration,
+      }),
+    ),
   });
 }
 
@@ -321,6 +342,25 @@ async function execute(
                 finalizedCount: source.finalizedCount,
                 provenance: source.provenance,
               },
+            ]),
+          ),
+        }),
+    ...(message.dependencies === undefined
+      ? {}
+      : {
+          dependencyInputs: Object.fromEntries(
+            message.dependencies.map((dependency) => [
+              dependency.inputKey,
+              dependency.points.map((point) => ({
+                openTimeMs: point.openTimeMs,
+                values: { ...point.values },
+                ...(point.colors === undefined
+                  ? {}
+                  : { colors: { ...point.colors } }),
+                ...(point.sizes === undefined
+                  ? {}
+                  : { sizes: { ...point.sizes } }),
+              })),
             ]),
           ),
         }),
@@ -416,6 +456,47 @@ function isSourceSnapshot(value: unknown): boolean {
   );
 }
 
+function isDependencySnapshot(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const dependency = value as {
+    readonly inputKey?: unknown;
+    readonly instanceId?: unknown;
+    readonly outputKey?: unknown;
+    readonly sourceGeneration?: unknown;
+    readonly sourceRevision?: unknown;
+    readonly configGeneration?: unknown;
+    readonly points?: unknown;
+  };
+  return (
+    typeof dependency.inputKey === "string" &&
+    dependency.inputKey.length > 0 &&
+    typeof dependency.instanceId === "string" &&
+    dependency.instanceId.length > 0 &&
+    typeof dependency.outputKey === "string" &&
+    dependency.outputKey.length > 0 &&
+    Number.isSafeInteger(dependency.sourceGeneration) &&
+    Number(dependency.sourceGeneration) >= 0 &&
+    Number.isSafeInteger(dependency.sourceRevision) &&
+    Number(dependency.sourceRevision) >= 0 &&
+    Number.isSafeInteger(dependency.configGeneration) &&
+    Number(dependency.configGeneration) >= 0 &&
+    Array.isArray(dependency.points) &&
+    isIndicatorRuntimeSnapshot({
+      points: dependency.points,
+      overlays: [],
+      signals: [],
+    }) &&
+    dependency.points.every(
+      (point) =>
+        Object.keys(point.values).length === 1 &&
+        Object.prototype.hasOwnProperty.call(
+          point.values,
+          dependency.outputKey as string,
+        ),
+    )
+  );
+}
+
 function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
   if (typeof value !== "object" || value === null) return false;
   const message = value as Partial<IndicatorWorkerSyncMessage>;
@@ -438,6 +519,10 @@ function isSyncMessage(value: unknown): value is IndicatorWorkerSyncMessage {
     (message.sources === undefined ||
       (Array.isArray(message.sources) &&
         message.sources.every(isSourceSnapshot))) &&
+    (message.dependencies === undefined ||
+      (Array.isArray(message.dependencies) &&
+        message.dependencies.length <= 64 &&
+        message.dependencies.every(isDependencySnapshot))) &&
     isDataUpdate(message.data)
   );
 }

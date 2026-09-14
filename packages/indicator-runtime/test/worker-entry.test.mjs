@@ -96,6 +96,63 @@ test("worker passes source metadata into the SDK instance and preserves source-a
   }
 });
 
+test("worker passes bound indicator outputs through the private runtime context", async () => {
+  const originalPostMessage = globalThis.postMessage;
+  const originalOnMessage = globalThis.onmessage;
+  let resolveResponse;
+  const response = new Promise((resolve) => {
+    resolveResponse = resolve;
+  });
+  globalThis.postMessage = (message) => resolveResponse(message);
+
+  try {
+    await import(`../dist/worker-entry.js?dependency-input=${Date.now()}`);
+    const runtimeEntryUrl = new URL(
+      "./fixtures/dependency-aware-indicator.mjs",
+      import.meta.url,
+    ).href;
+    globalThis.onmessage({
+      data: {
+        type: "sync",
+        instanceId: "worker-dependency-instance",
+        sequence: 1,
+        runtimeEntryUrl,
+        pluginId: "erc.indicator.worker-dependency",
+        definitionId: "erc.indicator.worker-dependency.main",
+        instrumentId: "TEST",
+        timeframeId: "1m",
+        parameters: {},
+        dependencies: [
+          {
+            inputKey: "source",
+            instanceId: "upstream-instance",
+            outputKey: "line",
+            sourceGeneration: 2,
+            sourceRevision: 7,
+            configGeneration: 4,
+            points: [{ openTimeMs: 0, values: { line: 42 } }],
+          },
+        ],
+        data: {
+          kind: "snapshot",
+          snapshot: createIndicatorWorkerCandleSnapshot([candle("1m", 0)]),
+        },
+        dataRevision: 7,
+        configGeneration: 1,
+      },
+    });
+
+    const result = await response;
+    assert.equal(result.type, "result");
+    assert.deepEqual(result.result.snapshot.points, [
+      { openTimeMs: 0, values: { line: 43 } },
+    ]);
+  } finally {
+    globalThis.postMessage = originalPostMessage;
+    globalThis.onmessage = originalOnMessage;
+  }
+});
+
 test("worker rejects snapshots whose drawing handles exceed the overlay cap", async () => {
   const originalPostMessage = globalThis.postMessage;
   const originalOnMessage = globalThis.onmessage;

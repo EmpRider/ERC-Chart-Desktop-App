@@ -50,6 +50,9 @@ export interface IndicatorInstanceContext {
   readonly timeframeId: TimeframeId;
   readonly sourceCandles?: Readonly<Record<string, readonly Candle[]>>;
   readonly sourceMetadata?: Readonly<Record<string, IndicatorSourceMetadata>>;
+  readonly dependencyInputs?: Readonly<
+    Record<string, readonly IndicatorResultPoint[]>
+  >;
 }
 
 export interface IndicatorInstance {
