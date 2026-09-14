@@ -951,6 +951,7 @@ class ExtremumKernel implements NumericTaKernel {
   readonly #period: number;
   readonly #mode: "highest" | "lowest";
   readonly #deque: { readonly index: number; readonly value: number }[] = [];
+  #head = 0;
   #committedIndex = -1;
 
   constructor(period: number, mode: "highest" | "lowest") {
@@ -961,7 +962,7 @@ class ExtremumKernel implements NumericTaKernel {
   update(value: number, phase: TaUpdatePhase): number {
     const candidateIndex = this.#committedIndex + 1;
     const minimumIndex = candidateIndex - this.#period + 1;
-    let front = 0;
+    let front = this.#head;
     while (
       front < this.#deque.length &&
       (this.#deque[front]?.index ?? Number.POSITIVE_INFINITY) < minimumIndex
@@ -977,9 +978,9 @@ class ExtremumKernel implements NumericTaKernel {
           ? Math.max(committedBest, value)
           : Math.min(committedBest, value);
     if (phase === "finalized") {
-      if (front > 0) this.#deque.splice(0, front);
+      this.#head = front;
       if (Number.isFinite(value)) {
-        while (this.#deque.length > 0) {
+        while (this.#deque.length > this.#head) {
           const last = this.#deque.at(-1)?.value ?? Number.NaN;
           const shouldPop =
             this.#mode === "highest" ? last <= value : last >= value;
@@ -987,6 +988,10 @@ class ExtremumKernel implements NumericTaKernel {
           this.#deque.pop();
         }
         this.#deque.push({ index: candidateIndex, value });
+      }
+      if (this.#head > 0 && this.#head * 2 >= this.#deque.length) {
+        this.#deque.splice(0, this.#head);
+        this.#head = 0;
       }
       this.#committedIndex = candidateIndex;
     }

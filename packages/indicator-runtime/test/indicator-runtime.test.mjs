@@ -426,3 +426,192 @@ test("dispose rejects pending work, terminates the worker and permits restart", 
     supervisor.dispose();
   }
 });
+
+test("rejects stale request revisions while allowing a new configuration generation to reset revision", async () => {
+  const { supervisor, workers } = harness();
+  try {
+    await supervisor.sync(
+      request("one", { dataRevision: 5, configGeneration: 2 }),
+    );
+
+    await assert.rejects(
+      supervisor.sync(request("one", { dataRevision: 4, configGeneration: 2 })),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_STALE_REQUEST",
+    );
+    await assert.rejects(
+      supervisor.sync(
+        request("one", { dataRevision: 99, configGeneration: 1 }),
+      ),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_STALE_REQUEST",
+    );
+
+    await supervisor.sync(
+      request("one", { dataRevision: 1, configGeneration: 3 }),
+    );
+    assert.deepEqual(
+      workers[0].messages
+        .filter((message) => message.type === "sync")
+        .map(({ dataRevision, configGeneration }) => ({
+          dataRevision,
+          configGeneration,
+        })),
+      [
+        { dataRevision: 5, configGeneration: 2 },
+        { dataRevision: 1, configGeneration: 3 },
+      ],
+    );
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("caps active workers at the configured supervisor capacity", async () => {
+  const { supervisor, workers } = harness({
+    autoRespond: false,
+    maxActiveWorkers: 2,
+  });
+  const first = supervisor.sync(request("one"));
+  const second = supervisor.sync(request("two"));
+  try {
+    await assert.rejects(
+      supervisor.sync(request("three")),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_CAPACITY_EXCEEDED",
+    );
+    assert.equal(workers.length, 2);
+  } finally {
+    supervisor.dispose();
+    await Promise.allSettled([first, second]);
+  }
+});
+
+test("caps pending requests per indicator instance", async () => {
+  const { supervisor, workers } = harness({
+    autoRespond: false,
+    maxPendingRequestsPerInstance: 2,
+  });
+  try {
+    const first = supervisor.sync(request("one", { dataRevision: 1 }));
+    const second = supervisor.sync(request("one", { dataRevision: 2 }));
+
+    await assert.rejects(
+      supervisor.sync(request("one", { dataRevision: 3 })),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_QUEUE_FULL",
+    );
+    assert.equal(
+      workers[0].messages.filter((message) => message.type === "sync").length,
+      2,
+    );
+
+    const firstMessage = workers[0].messages[0];
+    const secondMessage = workers[0].messages[1];
+    workers[0].respond(success(secondMessage));
+    workers[0].respond(success(firstMessage));
+    await Promise.all([first, second]);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("bounds consecutive worker restarts until explicit disposal resets the instance", async () => {
+  const { supervisor, workers } = harness({
+    autoRespond: false,
+    maxConsecutiveFailures: 2,
+  });
+  try {
+    const first = supervisor.sync(request("one", { dataRevision: 1 }));
+    workers[0].crash("first crash");
+    await assert.rejects(
+      first,
+      (error) => error.code === "INDICATOR_WORKER_CRASHED",
+    );
+
+    const second = supervisor.sync(request("one", { dataRevision: 2 }));
+    workers[1].crash("second crash");
+    await assert.rejects(
+      second,
+      (error) => error.code === "INDICATOR_WORKER_CRASHED",
+    );
+
+    await assert.rejects(
+      supervisor.sync(request("one", { dataRevision: 3 })),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_RESTART_LIMIT",
+    );
+    assert.equal(workers.length, 2);
+
+    supervisor.disposeInstance("one");
+    const recovered = supervisor.sync(
+      request("one", { dataRevision: 1, configGeneration: 1 }),
+    );
+    const recoveryMessage = workers[2].messages[0];
+    workers[2].respond(success(recoveryMessage));
+    await recovered;
+    assert.equal(workers.length, 3);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("turns postMessage failures into a settled runtime error and terminates the worker", async () => {
+  const workers = [];
+  const supervisor = createIndicatorWorkerSupervisor({
+    workerFactory(instanceId) {
+      const worker = new FakeWorker(instanceId);
+      worker.autoRespond = false;
+      worker.postMessage = () => {
+        throw new Error("post failed");
+      };
+      workers.push(worker);
+      return worker;
+    },
+    startupTimeoutMs: 30,
+    updateTimeoutMs: 20,
+  });
+  try {
+    await assert.rejects(
+      supervisor.sync(request("one")),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_POST_FAILED",
+    );
+    assert.equal(workers[0].terminated, true);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
+test("settles disposal even when worker termination throws", async () => {
+  const workers = [];
+  const supervisor = createIndicatorWorkerSupervisor({
+    workerFactory(instanceId) {
+      const worker = new FakeWorker(instanceId);
+      worker.autoRespond = false;
+      worker.terminate = () => {
+        worker.terminated = true;
+        throw new Error("terminate failed");
+      };
+      workers.push(worker);
+      return worker;
+    },
+    startupTimeoutMs: 30,
+    updateTimeoutMs: 20,
+  });
+  const pending = supervisor.sync(request("one"));
+  assert.doesNotThrow(() => supervisor.disposeInstance("one"));
+  await assert.rejects(
+    pending,
+    (error) =>
+      error instanceof IndicatorWorkerRuntimeError &&
+      error.code === "INDICATOR_WORKER_DISPOSED",
+  );
+  assert.equal(workers[0].terminated, true);
+});
