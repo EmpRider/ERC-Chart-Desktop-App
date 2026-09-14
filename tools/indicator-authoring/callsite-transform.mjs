@@ -27,6 +27,9 @@ const builtInSeriesNames = new Set([
   "hlc3",
   "ohlc4",
 ]);
+const priceValueSeriesNames = Object.freeze(
+  [...builtInSeriesNames].filter((name) => name !== "volume"),
+);
 const sdkConstantValues = Object.freeze({
   shape: Object.freeze({
     circle: "circle",
@@ -768,6 +771,17 @@ function signalIndicatorSeriesSources(identifier, bindings) {
           const wholeBarSource = wholeBarSeriesAccess(identifier.parent);
           if (wholeBarSource?.identifier === identifier)
             return [wholeBarSource.sourceName];
+          if (
+            ts.isPropertyAccessExpression(identifier.parent) &&
+            identifier.parent.expression === identifier
+          )
+            return [];
+          if (
+            ts.isElementAccessExpression(identifier.parent) &&
+            identifier.parent.expression === identifier &&
+            ts.isStringLiteral(identifier.parent.argumentExpression)
+          )
+            return [];
           return [...builtInSeriesNames];
         }
         if (!ts.isObjectBindingPattern(parameter.name)) return [];
@@ -794,6 +808,140 @@ function signalIndicatorSeriesSources(identifier, bindings) {
     current = current.parent;
   }
   return [];
+}
+
+function signalReferenceResolvesToParameter(identifier, functionLike, name) {
+  let current = identifier.parent;
+  while (current !== undefined && current !== functionLike) {
+    if (scopedNames(current)?.has(name)) return false;
+    current = current.parent;
+  }
+  return current === functionLike;
+}
+
+function signalHelperParameterSeriesSources(
+  functionLike,
+  parameterIndex,
+  bindings,
+  resolving = new Set(),
+) {
+  if (resolving.has(functionLike)) return undefined;
+  resolving.add(functionLike);
+  const parameter = functionLike.parameters[parameterIndex];
+  if (parameter === undefined || !ts.isIdentifier(parameter.name)) {
+    resolving.delete(functionLike);
+    return undefined;
+  }
+  const parameterName = parameter.name.text;
+  const sources = [];
+  const sourceNames = new Set();
+  let precise = true;
+
+  const visit = (node) => {
+    if (!precise) return;
+    if (
+      ts.isIdentifier(node) &&
+      node.text === parameterName &&
+      signalIdentifierIsValueReference(node) &&
+      signalReferenceResolvesToParameter(node, functionLike, parameterName)
+    ) {
+      const access = wholeBarSeriesAccess(node.parent);
+      if (access?.identifier === node) {
+        if (!sourceNames.has(access.sourceName)) {
+          sourceNames.add(access.sourceName);
+          sources.push(access.sourceName);
+        }
+        return;
+      }
+      if (
+        (ts.isPropertyAccessExpression(node.parent) &&
+          node.parent.expression === node) ||
+        (ts.isElementAccessExpression(node.parent) &&
+          node.parent.expression === node &&
+          ts.isStringLiteral(node.parent.argumentExpression))
+      )
+        return;
+      if (
+        ts.isCallExpression(node.parent) &&
+        node.parent.arguments[0] === node &&
+        ts.isIdentifier(node.parent.expression) &&
+        bindings.get(node.parent.expression.text) === "priceValue"
+      ) {
+        const source = node.parent.arguments[1];
+        const choices =
+          source !== undefined &&
+          ts.isStringLiteral(source) &&
+          priceValueSeriesNames.includes(source.text)
+            ? [source.text]
+            : priceValueSeriesNames;
+        for (const choice of choices) {
+          if (!sourceNames.has(choice)) {
+            sourceNames.add(choice);
+            sources.push(choice);
+          }
+        }
+        return;
+      }
+      if (ts.isCallExpression(node.parent)) {
+        const argumentIndex = node.parent.arguments.findIndex(
+          (argument) => argument === node,
+        );
+        if (argumentIndex >= 0) {
+          const analysis = signalCallableAnalysis(
+            node.parent.expression,
+            bindings,
+          );
+          if (analysis.kind === "helper") {
+            const nestedSources = signalHelperParameterSeriesSources(
+              analysis.helper,
+              argumentIndex,
+              bindings,
+              resolving,
+            );
+            if (nestedSources !== undefined) {
+              for (const source of nestedSources) {
+                if (!sourceNames.has(source)) {
+                  sourceNames.add(source);
+                  sources.push(source);
+                }
+              }
+              return;
+            }
+          }
+        }
+      }
+      precise = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  if (functionLike.body !== undefined) visit(functionLike.body);
+  resolving.delete(functionLike);
+  return precise ? sources : undefined;
+}
+
+function signalPriceValueSeriesSources(call, bindings) {
+  if (
+    !ts.isIdentifier(call.expression) ||
+    bindings.get(call.expression.text) !== "priceValue"
+  )
+    return undefined;
+  const candle = call.arguments[0];
+  if (
+    !ts.isIdentifier(candle) ||
+    signalIndicatorSeriesSources(candle, bindings).length !==
+      builtInSeriesNames.size
+  )
+    return undefined;
+  const source = call.arguments[1];
+  if (
+    source !== undefined &&
+    ts.isStringLiteral(source) &&
+    priceValueSeriesNames.includes(source.text)
+  )
+    return [source.text];
+  return priceValueSeriesNames;
 }
 
 function signalIdentifierIsValueReference(identifier) {
@@ -1540,10 +1688,12 @@ function signalDependencyMetadata(
     }
     if (ts.isCallExpression(node)) {
       const metadata = callsiteByNode.get(node)?.metadata;
+      const priceValueSources = signalPriceValueSeriesSources(node, bindings);
       if (metadata?.kind === "ta" && !dependencyIds.has(metadata.id)) {
         dependencyIds.add(metadata.id);
         dependencies.push(metadata.id);
       }
+      let helper;
       if (metadata === undefined) {
         const analysis = signalCallableAnalysis(node.expression, bindings);
         if (analysis.kind === "unresolved")
@@ -1552,7 +1702,7 @@ function signalDependencyMetadata(
             node,
             `signal condition callable ${signalCallableLabel(node.expression)} cannot be resolved; use a statically traceable local helper or hoist runtime dependencies into the indicator calculation`,
           );
-        const helper = analysis.kind === "helper" ? analysis.helper : undefined;
+        helper = analysis.kind === "helper" ? analysis.helper : undefined;
         if (
           helper !== undefined &&
           helperIsNestedInIndicatorCalculation(helper, bindings)
@@ -1585,7 +1735,38 @@ function signalDependencyMetadata(
           metadata.seriesSource !== undefined
         )
           continue;
-        visit(node.arguments[index]);
+        const argument = node.arguments[index];
+        if (index === 0 && priceValueSources !== undefined) {
+          for (const source of priceValueSources) {
+            if (!chartSeriesNames.has(source)) {
+              chartSeriesNames.add(source);
+              chartSeries.push(source);
+            }
+          }
+          continue;
+        }
+        if (
+          helper !== undefined &&
+          ts.isIdentifier(argument) &&
+          signalIndicatorSeriesSources(argument, bindings).length ===
+            builtInSeriesNames.size
+        ) {
+          const helperSources = signalHelperParameterSeriesSources(
+            helper,
+            index,
+            bindings,
+          );
+          if (helperSources !== undefined) {
+            for (const source of helperSources) {
+              if (!chartSeriesNames.has(source)) {
+                chartSeriesNames.add(source);
+                chartSeries.push(source);
+              }
+            }
+            continue;
+          }
+        }
+        visit(argument);
       }
       return;
     }
