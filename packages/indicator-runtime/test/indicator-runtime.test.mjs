@@ -210,6 +210,37 @@ test("rejects malformed source provenance before creating a worker", async () =>
   }
 });
 
+test("rejects null active source timeframe before creating a worker", async () => {
+  const { supervisor, workers } = harness();
+  try {
+    await assert.rejects(
+      supervisor.sync(
+        request("invalid-active-source-timeframe", {
+          sources: [
+            {
+              providerProfileId: "fixture.provider",
+              instrumentId: "fixture.instrument",
+              timeframeId: "1h",
+              activeTimeframeId: null,
+              snapshot: createIndicatorWorkerCandleSnapshot([]),
+              provenance: { kind: "market", candleType: "standard" },
+              generation: 1,
+              revision: 1,
+              finalizedCount: 0,
+            },
+          ],
+        }),
+      ),
+      (error) =>
+        error instanceof IndicatorWorkerRuntimeError &&
+        error.code === "INDICATOR_WORKER_PROTOCOL_INVALID",
+    );
+    assert.equal(workers.length, 0);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
 test("terminates a worker that exceeds the startup budget", async () => {
   const { supervisor, workers } = harness({ autoRespond: false });
   const pending = supervisor.sync(request("slow"));

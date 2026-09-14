@@ -289,7 +289,10 @@ function isWorkerSourceSnapshot(
   value: unknown,
 ): value is IndicatorWorkerSourceSnapshot {
   if (!isRecord(value)) return false;
-  const activeTimeframeId = value.activeTimeframeId ?? value.timeframeId;
+  const activeTimeframeId =
+    value.activeTimeframeId === undefined
+      ? value.timeframeId
+      : value.activeTimeframeId;
   return (
     isNonEmptyText(value.providerProfileId) &&
     isNonEmptyText(value.instrumentId) &&
