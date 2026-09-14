@@ -136,6 +136,36 @@ test("source inputs consume host-bound indicator output by declared input identi
   fallback.dispose();
 });
 
+test("source inputs preindex dependency history instead of scanning it once per bar", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.indexed", name: "Indexed bound source" },
+    () => {
+      plot.line(input.source("close", "Source"), { title: "Bound" });
+    },
+  );
+  const dependency = [
+    { openTimeMs: 0, values: { upstream: 42 } },
+    { openTimeMs: 60_000, values: { upstream: 43 } },
+  ];
+  dependency.find = () => {
+    throw new Error("dependency history was scanned");
+  };
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: { input_0: dependency },
+    },
+  );
+
+  assert.doesNotThrow(() => instance.onHistory([candle(0, 10), candle(1, 11)]));
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [42, 43],
+  );
+  instance.dispose();
+});
+
 test("timeframe authoring declares dynamic host metadata without static provider options", () => {
   const plugin = defineIndicator(
     { id: "erc.indicator.timeframe.main", name: "Timeframe" },

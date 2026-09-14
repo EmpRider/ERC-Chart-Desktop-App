@@ -236,6 +236,12 @@ export function defineIndicator(
       let building: Candle | undefined;
       let disposed = false;
       let failed = false;
+      const dependencyInputs = Object.fromEntries(
+        Object.entries(context.dependencyInputs ?? {}).map(([key, points]) => [
+          key,
+          new Map(points.map((point) => [point.openTimeMs, point])),
+        ]),
+      );
       const validate = (candle: Candle): void => {
         if (disposed) throw new Error("Indicator instance was disposed.");
         if (failed)
@@ -265,7 +271,7 @@ export function defineIndicator(
           candle,
           sourceCandles: context.sourceCandles ?? {},
           sourceMetadata: context.sourceMetadata ?? {},
-          dependencyInputs: context.dependencyInputs ?? {},
+          dependencyInputs,
           phase,
           historyReplay,
           historyFinalizedTail,
