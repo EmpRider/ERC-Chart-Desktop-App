@@ -158,7 +158,7 @@ Validation completed on Delivery #1047:
 
 ## ECDD-145 worker resilience and TA complexity gate
 
-ECDD-145 adds an enforced steady-state complexity fixture at
+ECDD-145 adds an enforced finalized steady-state complexity fixture at
 `tools/indicator-ta-complexity-performance.mjs`. It runs 100,000 updates per
 kernel and uses a 50,000-period adversarial window for SMA, EMA, highest and
 lowest. Each kernel has a deliberately loose 1,000 ms regression budget so CI
@@ -176,13 +176,13 @@ measurement after that change was:
 
 | Kernel    | 100,000-update time | Gate budget |
 | --------- | ------------------: | ----------: |
-| SMA       |             3.64 ms |    1,000 ms |
-| EMA       |             3.33 ms |    1,000 ms |
-| RSI       |             7.86 ms |    1,000 ms |
-| ATR       |             4.70 ms |    1,000 ms |
-| Crossover |             2.28 ms |    1,000 ms |
-| Highest   |             8.91 ms |    1,000 ms |
-| Lowest    |             8.14 ms |    1,000 ms |
+| SMA       |             7.17 ms |    1,000 ms |
+| EMA       |             5.82 ms |    1,000 ms |
+| RSI       |            12.06 ms |    1,000 ms |
+| ATR       |             4.46 ms |    1,000 ms |
+| Crossover |             3.33 ms |    1,000 ms |
+| Highest   |             8.53 ms |    1,000 ms |
+| Lowest    |             9.83 ms |    1,000 ms |
 
 Worker supervision now also enforces the existing product/resource limits at
 the runtime boundary: at most 20 active indicator workers for the four-chart,

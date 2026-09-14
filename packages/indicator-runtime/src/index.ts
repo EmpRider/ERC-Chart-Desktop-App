@@ -497,6 +497,7 @@ export function createIndicatorWorkerSupervisor(
       initialized: false,
     };
     worker.onerror = (event): void => {
+      if (states.get(instanceId) !== state) return;
       failState(
         instanceId,
         new IndicatorWorkerRuntimeError(
@@ -506,6 +507,7 @@ export function createIndicatorWorkerSupervisor(
       );
     };
     worker.onmessage = (event): void => {
+      if (states.get(instanceId) !== state) return;
       if (!isWorkerResponse(event.data)) {
         failState(
           instanceId,

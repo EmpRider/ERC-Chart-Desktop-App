@@ -561,6 +561,31 @@ test("bounds consecutive worker restarts until explicit disposal resets the inst
   }
 });
 
+test("ignores late lifecycle events from a terminated worker after replacement", async () => {
+  const { supervisor, workers } = harness({ autoRespond: false });
+  try {
+    const first = supervisor.sync(request("one", { dataRevision: 1 }));
+    workers[0].crash("first crash");
+    await assert.rejects(
+      first,
+      (error) => error.code === "INDICATOR_WORKER_CRASHED",
+    );
+
+    const second = supervisor.sync(request("one", { dataRevision: 2 }));
+    const secondMessage = workers[1].messages[0];
+
+    workers[0].crash("late crash from replaced worker");
+    workers[0].respond(success(workers[0].messages[0]));
+    assert.equal(workers[1].terminated, false);
+
+    workers[1].respond(success(secondMessage));
+    const result = await second;
+    assert.equal(result.dataRevision, 2);
+  } finally {
+    supervisor.dispose();
+  }
+});
+
 test("turns postMessage failures into a settled runtime error and terminates the worker", async () => {
   const workers = [];
   const supervisor = createIndicatorWorkerSupervisor({

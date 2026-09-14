@@ -35,7 +35,7 @@ const sma = createMovingAverageKernel("sma", largePeriod);
 seedNumeric(sma, largePeriod, (index) => index + 1);
 const smaMs = measure("SMA", () => {
   for (let index = 0; index < steadyStateUpdates; index += 1) {
-    sma.update(index, "building");
+    sma.update(index, "finalized");
   }
 });
 
@@ -43,7 +43,7 @@ const ema = createMovingAverageKernel("ema", largePeriod);
 seedNumeric(ema, largePeriod, (index) => index + 1);
 const emaMs = measure("EMA", () => {
   for (let index = 0; index < steadyStateUpdates; index += 1) {
-    ema.update(index, "building");
+    ema.update(index, "finalized");
   }
 });
 
@@ -51,7 +51,7 @@ const rsi = createRsiKernel(14);
 seedNumeric(rsi, 20, (index) => 100 + index);
 const rsiMs = measure("RSI", () => {
   for (let index = 0; index < steadyStateUpdates; index += 1) {
-    rsi.update(120 + (index % 3), "building");
+    rsi.update(120 + (index % 3), "finalized");
   }
 });
 
@@ -82,7 +82,7 @@ const atrMs = measure("ATR", () => {
         low: 100,
         close: 102,
       },
-      "building",
+      "finalized",
     );
   }
 });
@@ -91,7 +91,7 @@ const crossover = createCrossoverKernel();
 crossover.update(1, 2, "finalized");
 const crossoverMs = measure("crossover", () => {
   for (let index = 0; index < steadyStateUpdates; index += 1) {
-    crossover.update(index % 2, (index + 1) % 2, "building");
+    crossover.update(index % 2, (index + 1) % 2, "finalized");
   }
 });
 
