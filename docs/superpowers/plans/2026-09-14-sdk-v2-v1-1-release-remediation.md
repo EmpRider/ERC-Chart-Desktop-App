@@ -24,11 +24,13 @@
 ### Task 1: Fail early on reused release versions
 
 **Files:**
+
 - Modify: `tools/packaging/packaging-contract.mjs`
 - Modify: `tools/packaging/packaging-contract.test.mjs`
 - Modify: `.github/workflows/release.yml`
 
 **Interfaces:**
+
 - Consumes: `applicationVersion`, release tags reachable from git history.
 - Produces: `assertReleaseVersionAdvances(version, releasedVersions)` that rejects equal/older released versions and accepts a strictly newer SemVer version.
 
@@ -59,6 +61,7 @@ Before dependency installation, collect version tags from git history and invoke
 ### Task 2: Promote the SDK v2 delivery to v1.1.0
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Modify: `tools/packaging/packaging-contract.test.mjs`
@@ -67,6 +70,7 @@ Before dependency installation, collect version tags from git history and invoke
 - Modify: `docs/development/MONOREPO.md`
 
 **Interfaces:**
+
 - Produces: application version `1.1.0`, tag `v1.1.0`, installer `ERC-Chart-Setup-1.1.0.exe`.
 
 - [ ] **Step 1: Update release identity fixtures to `1.1.0`**
@@ -97,6 +101,7 @@ Expected: PASS.
 ### Task 3: Reassess SDK v2 completion evidence
 
 **Files:**
+
 - Modify only if evidence is stale: `docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md`
 - Modify only if evidence is stale: `docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md`
 
@@ -128,4 +133,4 @@ Do not publish or retarget `v1.0.0`. The successful release must create `v1.1.0`
 
 ## Execution evidence
 
-The first CI attempt for the RED commit stopped at PR metadata validation before application tests. The PR body was corrected without changing the RED test; this documentation-only commit exists solely to trigger a fresh pull-request event that sees the corrected contract.
+The first CI attempt for the RED commit stopped at PR metadata validation before application tests. The PR body was corrected without changing the RED test; this documentation-only commit exists solely to trigger a fresh pull-request event that sees the corrected contract. A second fresh event reached Markdown lint and exposed only MD032 blank-line errors in this plan; this commit fixes those formatting errors without changing the RED test.
