@@ -2020,6 +2020,54 @@ function validateRecursiveInputHelpers(sourceFile, callsiteByNode, bindings) {
   visit(sourceFile);
 }
 
+function directHelperCalls(container, bindings) {
+  const result = [];
+  const visit = (node) => {
+    if (node !== container && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node)) {
+      const analysis = signalCallableAnalysis(node.expression, bindings);
+      if (analysis.kind === "helper") {
+        result.push({ call: node, helper: analysis.helper });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(container);
+  return result;
+}
+
+function validateInputHelperExecutionCardinality(
+  sourceFile,
+  callsiteByNode,
+  bindings,
+) {
+  const executionCounts = new Map();
+  const active = new Set();
+  const containsInput = new Map();
+  const helperHasInput = (helper) => {
+    if (containsInput.has(helper)) return containsInput.get(helper);
+    const result = helperContainsInputCall(helper, callsiteByNode, bindings);
+    containsInput.set(helper, result);
+    return result;
+  };
+  const execute = ({ call, helper }) => {
+    if (!helperHasInput(helper)) return;
+    const count = (executionCounts.get(helper) ?? 0) + 1;
+    executionCounts.set(helper, count);
+    if (count > 1)
+      throw syntaxError(
+        sourceFile,
+        call,
+        "input helpers cannot execute more than once; declare each input once from a statically single-execution path",
+      );
+    if (active.has(helper)) return;
+    active.add(helper);
+    for (const nested of directHelperCalls(helper, bindings)) execute(nested);
+    active.delete(helper);
+  };
+  for (const rootCall of directHelperCalls(sourceFile, bindings)) execute(rootCall);
+}
+
 function canonicalText(node, sourceFile, printer) {
   return printer
     .printNode(ts.EmitHint.Unspecified, node, sourceFile)
@@ -2524,6 +2572,11 @@ export function transformIndicatorCallsites(
     rootBindings.named,
   );
   validateRecursiveInputHelpers(
+    sourceFile,
+    callsiteByNode,
+    rootBindings.named,
+  );
+  validateInputHelperExecutionCardinality(
     sourceFile,
     callsiteByNode,
     rootBindings.named,

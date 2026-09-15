@@ -163,6 +163,23 @@ void length;
   );
 });
 
+test("rejects an input helper that is reachable more than once", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+const first = readLength();
+const second = readLength();
+void first;
+void second;
+`),
+    /input helpers cannot execute more than once/u,
+  );
+});
+
 test("rejects helpers containing inputs when the helper executes from a loop", async () => {
   await assert.rejects(
     () =>

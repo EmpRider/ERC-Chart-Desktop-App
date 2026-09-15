@@ -50,6 +50,59 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /const ordinary = values\[1\];/u);
 });
 
+test("keeps scalar conditionals series-capable when their condition depends on series", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const direction = close > open ? 1 : -1;
+  const previousDirection = direction[1];
+  return previousDirection;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "scalar-conditional.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(direction, 1\)/u);
+});
+
+test("preserves element indexing for conditional array values", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const values = close > open ? [10, 20, 30] : [40, 50, 60];
+  const ordinary = values[1];
+  return ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(source, "array-conditional.ts");
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
+test("preserves element indexing for conditional named array values", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const risingValues = [10, 20, 30];
+  const fallingValues = [40, 50, 60];
+  const values = close > open ? risingValues : fallingValues;
+  const ordinary = values[1];
+  return ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "named-array-conditional.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
 test("lowers history access for input source and explicit history derived locals", () => {
   const source = `
 import { defineIndicator, history, input } from "@erc-chart/indicator-sdk";

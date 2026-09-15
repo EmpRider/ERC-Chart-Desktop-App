@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the current scalar runtime and worker lifecycle as the execution engine. Add a compiler-only top-level script lowering pass before the existing call-site and history transforms so authored top-level statements become the hidden per-bar evaluator that the current runtime already knows how to execute. Follow with compiler-managed persistent state and persistent drawing-handle semantics, migrate ATR Rope + UT Bot, remove the superseded public compatibility surface, then close with documentation/performance/compliance evidence.
 
-**Tech Stack:** Node.js `26.8.1`; npm `12.0.2`; TypeScript `7.0.2`; TypeScript compiler AST transforms; esbuild; Node built-in test runner; existing `@erc-chart/indicator-sdk` and indicator runtime/worker packages. No new dependency is required.
+**Tech Stack:** Node.js `26.8.1`; npm `12.0.2`; `typescript` aliased to `@typescript/typescript6@6.0.2` for the imported TypeScript compiler/AST API; `@typescript/native@7.0.2` for native project builds; esbuild; Node built-in test runner; existing `@erc-chart/indicator-sdk` and indicator runtime/worker packages. No new dependency is required.
 
 **Spec:** `docs/superpowers/specs/2026-09-15-indicator-sdk-v2-pine-semantics-correction-design.md`
 

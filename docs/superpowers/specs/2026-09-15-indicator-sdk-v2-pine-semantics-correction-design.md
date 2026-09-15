@@ -1,7 +1,7 @@
 # Indicator SDK v2 Pine-Semantics Correction Design
 
 **Date:** 2026-09-15
-**Status:** Approved direction; design awaiting final user review
+**Status:** Approved architecture; implementation in progress
 **Supersedes:** Any SDK-v2 implementation/documentation behavior that conflicts with the author-experience rules in `2026-09-09-indicator-sdk-v2-redesign-design.md`
 
 ## 1. Purpose

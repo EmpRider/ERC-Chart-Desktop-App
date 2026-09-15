@@ -99,9 +99,28 @@ function isRootPropertyCall(node, roots, propertyNames) {
   );
 }
 
+function isArrayValuedExpression(node, arrayBindings) {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node)
+  )
+    return isArrayValuedExpression(node.expression, arrayBindings);
+  if (ts.isIdentifier(node)) return arrayBindings.has(node.text);
+  if (ts.isArrayLiteralExpression(node)) return true;
+  if (ts.isConditionalExpression(node))
+    return (
+      isArrayValuedExpression(node.whenTrue, arrayBindings) &&
+      isArrayValuedExpression(node.whenFalse, arrayBindings)
+    );
+  return false;
+}
+
 function expressionDependsOnSeries(
   node,
   active,
+  arrayBindings,
   historyHelpers,
   inputHelpers,
   taHelpers,
@@ -116,6 +135,7 @@ function expressionDependsOnSeries(
     return expressionDependsOnSeries(
       node.expression,
       active,
+      arrayBindings,
       historyHelpers,
       inputHelpers,
       taHelpers,
@@ -124,6 +144,7 @@ function expressionDependsOnSeries(
     return expressionDependsOnSeries(
       node.operand,
       active,
+      arrayBindings,
       historyHelpers,
       inputHelpers,
       taHelpers,
@@ -133,6 +154,7 @@ function expressionDependsOnSeries(
       expressionDependsOnSeries(
         node.left,
         active,
+        arrayBindings,
         historyHelpers,
         inputHelpers,
         taHelpers,
@@ -140,23 +162,18 @@ function expressionDependsOnSeries(
       expressionDependsOnSeries(
         node.right,
         active,
+        arrayBindings,
         historyHelpers,
         inputHelpers,
         taHelpers,
       )
     );
-  if (ts.isConditionalExpression(node))
-    return (
-      expressionDependsOnSeries(
-        node.condition,
-        active,
-        historyHelpers,
-        inputHelpers,
-        taHelpers,
-      ) ||
+  if (ts.isConditionalExpression(node)) {
+    const branchDependsOnSeries =
       expressionDependsOnSeries(
         node.whenTrue,
         active,
+        arrayBindings,
         historyHelpers,
         inputHelpers,
         taHelpers,
@@ -164,11 +181,26 @@ function expressionDependsOnSeries(
       expressionDependsOnSeries(
         node.whenFalse,
         active,
+        arrayBindings,
         historyHelpers,
         inputHelpers,
         taHelpers,
-      )
+      );
+    if (branchDependsOnSeries) return true;
+    if (
+      isArrayValuedExpression(node.whenTrue, arrayBindings) &&
+      isArrayValuedExpression(node.whenFalse, arrayBindings)
+    )
+      return false;
+    return expressionDependsOnSeries(
+      node.condition,
+      active,
+      arrayBindings,
+      historyHelpers,
+      inputHelpers,
+      taHelpers,
     );
+  }
   if (
     ts.isCallExpression(node) &&
     ts.isIdentifier(node.expression) &&
@@ -181,9 +213,43 @@ function expressionDependsOnSeries(
   );
 }
 
+function directArrayDeclarations(scope, outerArrayBindings) {
+  if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
+  const statements = ts.isCaseBlock(scope)
+    ? scope.clauses.flatMap((clause) => [...clause.statements])
+    : scope.statements;
+  const declarations = [];
+  for (const statement of statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer !== undefined
+      )
+        declarations.push(declaration);
+    }
+  }
+  const active = new Set(outerArrayBindings);
+  const result = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      const name = declaration.name.text;
+      if (result.has(name)) continue;
+      if (!isArrayValuedExpression(declaration.initializer, active)) continue;
+      result.add(name);
+      active.add(name);
+      changed = true;
+    }
+  }
+  return result;
+}
+
 function directSeriesDeclarations(
   scope,
   outerActive,
+  arrayBindings,
   historyHelpers,
   inputHelpers,
   taHelpers,
@@ -215,6 +281,7 @@ function directSeriesDeclarations(
         !expressionDependsOnSeries(
           declaration.initializer,
           active,
+          arrayBindings,
           historyHelpers,
           inputHelpers,
           taHelpers,
@@ -515,6 +582,7 @@ export function transformIndicatorHistory(
       node,
       names,
       active,
+      arrayBindings,
       historyHelpers,
       inputHelpers,
       taHelpers,
@@ -523,6 +591,7 @@ export function transformIndicatorHistory(
     ) {
       let scopedActive =
         activeOverride ?? withoutBindings(active, names);
+      let scopedArrayBindings = withoutBindings(arrayBindings, names);
       const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
       const scopedInputHelpers = withoutBindings(inputHelpers, names);
       const scopedTaHelpers = withoutBindings(taHelpers, names);
@@ -530,9 +599,15 @@ export function transformIndicatorHistory(
         defineIndicatorHelpers,
         names,
       );
+      const localArrays = directArrayDeclarations(node, scopedArrayBindings);
+      if (localArrays.size > 0) {
+        scopedArrayBindings = new Set(scopedArrayBindings);
+        for (const name of localArrays) scopedArrayBindings.add(name);
+      }
       const localSeries = directSeriesDeclarations(
         node,
         scopedActive,
+        scopedArrayBindings,
         scopedHistoryHelpers,
         scopedInputHelpers,
         scopedTaHelpers,
@@ -547,6 +622,7 @@ export function transformIndicatorHistory(
           visitWithBindings(
             child,
             scopedActive,
+            scopedArrayBindings,
             scopedHistoryHelpers,
             scopedInputHelpers,
             scopedTaHelpers,
@@ -559,6 +635,7 @@ export function transformIndicatorHistory(
     const visitWithBindings = (
       node,
       active,
+      arrayBindings,
       historyHelpers,
       inputHelpers,
       taHelpers,
@@ -589,6 +666,7 @@ export function transformIndicatorHistory(
               visitWithBindings(
                 child,
                 active,
+                arrayBindings,
                 historyHelpers,
                 inputHelpers,
                 taHelpers,
@@ -623,6 +701,7 @@ export function transformIndicatorHistory(
               visitWithBindings(
                 child,
                 active,
+                arrayBindings,
                 historyHelpers,
                 inputHelpers,
                 taHelpers,
@@ -653,6 +732,7 @@ export function transformIndicatorHistory(
           node,
           functionBindings(node),
           active,
+          arrayBindings,
           historyHelpers,
           inputHelpers,
           taHelpers,
@@ -667,6 +747,7 @@ export function transformIndicatorHistory(
           node,
           names,
           active,
+          arrayBindings,
           historyHelpers,
           inputHelpers,
           taHelpers,
@@ -680,6 +761,7 @@ export function transformIndicatorHistory(
           visitWithBindings(
             child,
             active,
+            arrayBindings,
             historyHelpers,
             inputHelpers,
             taHelpers,
@@ -692,6 +774,7 @@ export function transformIndicatorHistory(
     return (root) =>
       visitWithBindings(
         root,
+        new Set(),
         new Set(),
         rootHistoryBindings,
         rootInputBindings,
