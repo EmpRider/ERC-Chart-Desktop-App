@@ -73,7 +73,7 @@ jobs:
         id: release
         shell: pwsh
         run: |
-          $metadataJson = node --input-type=module -e 'import { applicationVersion, installerArtifactName, releaseTag } from "./tools/packaging/packaging-contract.mjs"; console.log(JSON.stringify({ version: applicationVersion, tag: releaseTag(applicationVersion), installer: installerArtifactName(applicationVersion) }));'
+          $metadataJson = node --input-type=module -e 'import { execFileSync } from "node:child_process"; import { applicationVersion, assertReleaseVersionAdvances, installerArtifactName, releaseTag } from "./tools/packaging/packaging-contract.mjs"; const releasedVersions = execFileSync("git", ["tag", "--merged", "HEAD", "--list", "v*"], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean).map((tag) => tag.slice(1)); assertReleaseVersionAdvances(applicationVersion, releasedVersions); console.log(JSON.stringify({ version: applicationVersion, tag: releaseTag(applicationVersion), installer: installerArtifactName(applicationVersion) }));'
           if ($LASTEXITCODE -ne 0) {
             throw "Release identity validation failed."
           }
