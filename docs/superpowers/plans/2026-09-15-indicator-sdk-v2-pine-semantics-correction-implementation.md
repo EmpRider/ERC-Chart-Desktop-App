@@ -39,6 +39,7 @@ Each later task starts from the updated epic branch only after its predecessor h
 ### Task 1: ECDD-236 — Lower top-level script authoring into the existing per-bar runtime
 
 **Files:**
+
 - Create: `tools/indicator-authoring/script-transform.mjs`
 - Create: `tools/indicator-top-level-authoring-transform.test.mjs`
 - Modify: `tools/indicator-authoring-transform.mjs`
@@ -46,6 +47,7 @@ Each later task starts from the updated epic branch only after its predecessor h
 - Test: `tools/indicator-authoring-transform.test.mjs`
 
 **Interfaces:**
+
 - Consumes: authored modules importing named SDK roots from `@erc-chart/indicator-sdk` and containing exactly one exported metadata declaration `defineIndicator({...})`.
 - Produces: source containing the same metadata call with a compiler-generated second argument `(__ercBar) => { ...script... }`, suitable for the existing call-site and history transforms.
 - Produces: script-local bindings `open`, `high`, `low`, `close`, `volume`, `hl2`, `hlc3`, `ohlc4`, and `bar` (`index`, `time`, `confirmed`) from the hidden runtime bar.
@@ -125,6 +127,7 @@ Expected: PASS.
 ### Task 2: ECDD-236 — Make input declarations/source selection match the authored API
 
 **Files:**
+
 - Modify: `packages/indicator-sdk/src/input.ts`
 - Modify: `packages/indicator-sdk/src/index.ts`
 - Modify: `packages/indicator-sdk/test/authoring.test.mjs`
@@ -132,6 +135,7 @@ Expected: PASS.
 - Test: `tools/indicator-top-level-authoring-transform.test.mjs`
 
 **Interfaces:**
+
 - Consumes author syntax: `input.int(14, "Length")`, `input.float(1.5, "Multiplier")`, `input.bool(true, "Enabled")`, `input.color("#fff", "Color")`, `input.source(close, "Source")`.
 - Runtime continues storing source input metadata as private `PriceSource` strings and returns the selected *current numeric value* to authored code.
 
@@ -175,6 +179,7 @@ Run the focused SDK/transform tests and `npm run typecheck`.
 ### Task 3: ECDD-236 — Support direct price/bar globals and derived-value history
 
 **Files:**
+
 - Modify: `tools/indicator-authoring/history-transform.mjs`
 - Modify: `tools/indicator-authoring/callsite-transform.mjs` only where direct generated bindings change provenance recognition
 - Create/Modify: `tools/indicator-top-level-authoring-transform.test.mjs`
@@ -183,6 +188,7 @@ Run the focused SDK/transform tests and `npm run typecheck`.
 - Modify: `packages/indicator-sdk/test/indicator-sdk.types.ts`
 
 **Interfaces:**
+
 - Direct current values: `open`, `high`, `low`, `close`, `volume`, `hl2`, `hlc3`, `ohlc4`.
 - Bar metadata: `bar.index`, `bar.time`, `bar.confirmed`.
 - History: `close[1]` and derived `fast[1]` lower to the existing `history(currentValue, barsBack)` runtime primitive.
@@ -230,12 +236,14 @@ Run the focused history/package tests plus `node tools/indicator-history-perform
 ### Task 4: ECDD-236 — Prove static input identity and reject dynamic multiplicity
 
 **Files:**
+
 - Modify: `tools/indicator-authoring/script-transform.mjs`
 - Modify: `tools/indicator-authoring/callsite-transform.mjs` if the static analysis belongs with call classification
 - Test: `tools/indicator-top-level-authoring-transform.test.mjs`
 - Test: `tools/indicator-input-label-identity-package.test.mjs`
 
 **Interfaces:**
+
 - A statically reachable helper may contain `input.*` and receives compiler call-site identity.
 - Input declarations inside loops or otherwise provably multi-executed dynamic constructs fail at package build with authored file/line/column.
 
@@ -273,11 +281,13 @@ Run focused transform/package tests twice with unrelated declaration reordering 
 ### Task 5: ECDD-236 — Package-level acceptance and task verification
 
 **Files:**
+
 - Create: `tools/indicator-top-level-authoring-package.test.mjs`
 - Modify: `tools/indicator-v2-contract-fixtures.test.mjs` as needed for the corrected canonical fixture
 - Modify: `tools/indicator-authoring-performance.mjs` to benchmark the corrected canonical source shape without changing the existing performance threshold unless measured evidence requires it
 
 **Interfaces:**
+
 - Input: a standalone top-level authored indicator package.
 - Output: installed indicator metadata and runtime numeric rows through the unchanged worker/runtime contract.
 
@@ -316,6 +326,7 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 ### Task 6: ECDD-237 — Compiler-managed persistent `var` and recurrence
 
 **Files:**
+
 - Create: `tools/indicator-authoring/state-transform.mjs`
 - Modify: `tools/indicator-authoring-transform.mjs`
 - Modify: `packages/indicator-sdk/src/series.ts` to expose only private state primitives needed by lowered code
@@ -323,6 +334,7 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 - Create: focused state-transform/package tests
 
 **Interfaces:**
+
 - Author syntax: scalar history recurrence plus compiler-recognized persistent `var` object/array declarations.
 - Private runtime primitive: committed value + provisional clone/rollback keyed by compiler identity.
 
@@ -337,12 +349,14 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 ### Task 7: ECDD-238 — Persistent drawing handles
 
 **Files:**
+
 - Modify: `packages/indicator-sdk/src/plot.ts`
 - Modify: `packages/indicator-sdk/src/internal/drawings.ts`
 - Modify: runtime overlay reconciliation only where required by handle identity
 - Modify/Create: `packages/indicator-sdk/test/drawing-handles.test.mjs` and stress fixtures
 
 **Interfaces:**
+
 - `const box = plot.box({...})`; `box.set({...})`; `box.delete()`.
 - Handle carries no author-visible persistence ID and never crosses the worker transport boundary.
 
@@ -357,11 +371,13 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 ### Task 8: ECDD-239 — Rewrite ATR Rope + UT Bot as the flagship corrected indicator
 
 **Files:**
+
 - Rewrite: `packages/indicator-examples/src/atr-rope-utbot.ts`
 - Modify: `packages/indicator-examples/test/*.test.mjs`
 - Modify/Create: package/runtime regression fixtures for accepted signal and POC semantics
 
 **Interfaces:**
+
 - Authored source uses metadata-only `defineIndicator`, direct top-level `input.*`, `input.source(close)`, direct price/bar globals, history/persistent `var`, `ta.*`, persistent drawing handles, plots, and signals.
 - No `readInputs`, `priceSources`, `priceValue`, public `series`, empty recurrence state objects, `previous => step...`, flattened drawing sync, or worker lifecycle bookkeeping remains.
 
@@ -376,6 +392,7 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 ### Task 9: ECDD-240 — Delete legacy public authoring APIs and compatibility paths
 
 **Files:**
+
 - Modify: `packages/indicator-sdk/src/index.ts`
 - Modify: `packages/indicator-sdk/src/series.ts`
 - Modify: `tools/indicator-authoring/callsite-transform.mjs`
@@ -383,6 +400,7 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 - Modify: public-surface type contract tests
 
 **Interfaces:**
+
 - Public root no longer exports `series`, `priceSources`, or `priceValue`.
 - Metadata-only `defineIndicator` is the one public declaration shape.
 - Private equivalents may remain only behind compiler/runtime internals.
@@ -398,12 +416,14 @@ Use task-branch commits prefixed `ECDD-236:`. Mark ready only after local determ
 ### Task 10: ECDD-241 — Documentation, performance, and final design compliance
 
 **Files:**
+
 - Modify: `docs/development/INDICATOR-AUTHORING.md`
 - Modify: `docs/development/INDICATOR-SDK-V2-CURRENT-STATE.md`
 - Modify: SDK-related `README.md` sections if present
 - Modify/Create: acceptance/performance fixtures required by the correction design
 
 **Interfaces:**
+
 - Documentation teaches only the corrected top-level Pine-style SDK-v2 model.
 - Compliance evidence maps each normative design requirement to code and a fresh test/performance result.
 
