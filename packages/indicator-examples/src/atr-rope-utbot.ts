@@ -1122,7 +1122,7 @@ function stepPoc(
   const bars = [...previous.bars, pocBar].filter(
     (item) => item.index >= bar.index - params.profilePeriod + 1,
   );
-  let zones = [...previous.zones];
+  const zones = [...previous.zones];
   advanceSegmentEnds(zones, bar, dirtyZones);
   let current = previous.currentZoneId
     ? zones.find((zone) => zone.id === previous.currentZoneId)
@@ -1539,6 +1539,7 @@ const indicator: IndicatorModule = defineIndicator(
     );
 
     const dmi = ta.dmi(params.dmiLength);
+    // eslint-disable-next-line no-var -- Authoring var is lowered to worker-persistent state.
     var pocState: { value: PocState } = { value: emptyPocState };
     const previousPoc = pocState.value;
     const pocTransition = stepPoc(previousPoc, bar, dmi, params);
