@@ -211,8 +211,14 @@ test("same-callsite insert, reorder, update and delete preserve unrelated handle
   instance.onFinalizedBar(candle(1));
   const second = instance.snapshot().overlays;
   assert.equal(second.length, 3);
-  assert.equal(second.find((overlay) => overlay.top === 30)?.id, firstIds.get(30));
-  assert.equal(second.find((overlay) => overlay.top === 41)?.id, firstIds.get(40));
+  assert.equal(
+    second.find((overlay) => overlay.top === 30)?.id,
+    firstIds.get(30),
+  );
+  assert.equal(
+    second.find((overlay) => overlay.top === 41)?.id,
+    firstIds.get(40),
+  );
   const inserted = second.find((overlay) => overlay.top === 20);
   assert.ok(inserted);
   assert.equal([...firstIds.values()].includes(inserted.id), false);
@@ -220,7 +226,10 @@ test("same-callsite insert, reorder, update and delete preserve unrelated handle
   instance.onFinalizedBar(candle(2));
   const third = instance.snapshot().overlays;
   assert.equal(third.length, 2);
-  assert.equal(third.find((overlay) => overlay.top === 41)?.id, firstIds.get(40));
+  assert.equal(
+    third.find((overlay) => overlay.top === 41)?.id,
+    firstIds.get(40),
+  );
   assert.equal(third.find((overlay) => overlay.top === 20)?.id, inserted.id);
   instance.dispose();
 });
@@ -457,9 +466,11 @@ test("evicted drawing handles cannot delete a later same-callsite drawing", () =
 
   instance.onFinalizedBar(candle(1, 21));
   instance.onFinalizedBar(candle(2, 22));
-  const replacementBefore = instance.snapshot().overlays.find(
-    (overlay) => overlay.startTimeMs === 120_000 && overlay.top === 22,
-  );
+  const replacementBefore = instance
+    .snapshot()
+    .overlays.find(
+      (overlay) => overlay.startTimeMs === 120_000 && overlay.top === 22,
+    );
   assert.ok(replacementBefore);
   assert.notEqual(replacementBefore.id, staleId);
 

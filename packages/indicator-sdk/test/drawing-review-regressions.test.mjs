@@ -315,7 +315,8 @@ test("recreated drawings get fresh identity and refresh registry retention order
 
   assert.doesNotThrow(() => instance.onFinalizedBar(candle(4, 24)));
   assert.equal(
-    instance.snapshot().overlays.find((overlay) => overlay.id === recreatedId)?.top,
+    instance.snapshot().overlays.find((overlay) => overlay.id === recreatedId)
+      ?.top,
     777,
   );
   instance.dispose();
