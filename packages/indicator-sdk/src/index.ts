@@ -217,13 +217,12 @@ export type IndicatorBar = Omit<
 >;
 export type IndicatorCalculation = (bar: IndicatorBar) => void;
 export type { IndicatorOptions } from "./indicator.js";
-export const defineIndicator: (
+export type DefineIndicator = (
   options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-) => IndicatorModule = runtimeDefineIndicator as (
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
+  calculate?: IndicatorCalculation,
 ) => IndicatorModule;
+export const defineIndicator: DefineIndicator =
+  runtimeDefineIndicator as unknown as DefineIndicator;
 
 export interface InputOptions {
   readonly title?: string;
@@ -247,29 +246,54 @@ type StringOptionValue<T> = T extends string
 export interface InputApi {
   readonly float: (
     defaultValue: number,
+    titleOrOptions?: string | NumberInputOptions,
     options?: NumberInputOptions,
   ) => number;
-  readonly int: (defaultValue: number, options?: NumberInputOptions) => number;
-  readonly bool: (defaultValue: boolean, options?: InputOptions) => boolean;
+  readonly int: (
+    defaultValue: number,
+    titleOrOptions?: string | NumberInputOptions,
+    options?: NumberInputOptions,
+  ) => number;
+  readonly bool: (
+    defaultValue: boolean,
+    titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
+  ) => boolean;
   readonly string: {
     <const O extends readonly (string | IndicatorInputOption)[]>(
       defaultValue: StringOptionValue<O[number]>,
       options: StringInputOptions & { readonly options: O },
     ): StringOptionValue<O[number]>;
-    (defaultValue: string, options?: StringInputOptions): string;
+    <const O extends readonly (string | IndicatorInputOption)[]>(
+      defaultValue: StringOptionValue<O[number]>,
+      title: string,
+      options: StringInputOptions & { readonly options: O },
+    ): StringOptionValue<O[number]>;
+    (
+      defaultValue: string,
+      titleOrOptions?: string | StringInputOptions,
+      options?: StringInputOptions,
+    ): string;
   };
-  readonly color: (defaultValue: string, options?: InputOptions) => string;
-  readonly source: (
-    defaultValue: import("./series.js").PriceSource,
+  readonly color: (
+    defaultValue: string,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
+  ) => string;
+  readonly source: (
+    defaultValue: import("./series.js").PriceSource | number,
+    titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => number;
   readonly timeframe: (
     defaultValue: string,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => string;
   readonly candleType: (
     defaultValue: import("./constants.js").CandleTypeSelection,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => import("./constants.js").CandleTypeSelection;
 }
 export const input: InputApi = runtimeInput as InputApi;

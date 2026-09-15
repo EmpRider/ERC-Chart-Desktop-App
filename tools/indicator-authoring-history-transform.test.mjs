@@ -29,6 +29,102 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, high: sourceHigh }
   assert.match(transformed.code, /values\.at\(0\)/u);
 });
 
+test("lowers history access for derived series locals without touching arrays", () => {
+  const source = `
+import { defineIndicator, ta } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const fast = ta.ema(close, 9);
+  const previousFast = fast[1];
+  const doubled = fast * 2;
+  const previousDoubled = doubled[2];
+  const values = [10, 20, 30];
+  const ordinary = values[1];
+  return previousFast + previousDoubled + ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(source, "derived-series.ts");
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(fast, 1\)/u);
+  assert.match(transformed.code, /__ercHistory\(doubled, 2\)/u);
+  assert.match(transformed.code, /const ordinary = values\[1\];/u);
+});
+
+test("keeps scalar conditionals series-capable when their condition depends on series", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const direction = close > open ? 1 : -1;
+  const previousDirection = direction[1];
+  return previousDirection;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "scalar-conditional.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(direction, 1\)/u);
+});
+
+test("preserves element indexing for conditional array values", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const values = close > open ? [10, 20, 30] : [40, 50, 60];
+  const ordinary = values[1];
+  return ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(source, "array-conditional.ts");
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
+test("preserves element indexing for conditional named array values", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const risingValues = [10, 20, 30];
+  const fallingValues = [40, 50, 60];
+  const values = close > open ? risingValues : fallingValues;
+  const ordinary = values[1];
+  return ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "named-array-conditional.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
+test("lowers history access for input source and explicit history derived locals", () => {
+  const source = `
+import { defineIndicator, history, input } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const selected = input.source(close, "Source");
+  const previousSelected = selected[1];
+  const priorClose = history(close, 1);
+  const doubledPrior = priorClose * 2;
+  const previousDoubledPrior = doubledPrior[1];
+  return previousSelected + previousDoubledPrior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "input-history-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(selected, 1\)/u);
+  assert.match(transformed.code, /__ercHistory\(doubledPrior, 1\)/u);
+});
+
 test("resolves SDK defineIndicator aliases before lowering source history", () => {
   const source = `
 import { defineIndicator as define } from "@erc-chart/indicator-sdk";

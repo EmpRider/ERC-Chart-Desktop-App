@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 
 async function loadTransform() {
@@ -17,6 +18,199 @@ async function loadTransform() {
 function cleanup(t, directory) {
   t.after(() => rm(directory, { recursive: true, force: true }));
 }
+
+function defineIndicatorCall(sourceText) {
+  const sourceFile = ts.createSourceFile(
+    "src/index.ts",
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let result;
+  const visit = (node) => {
+    if (
+      result === undefined &&
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "defineIndicator"
+    )
+      result = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return { sourceFile, call: result };
+}
+
+test("lowers top-level Pine-style authoring into the hidden runtime callback", async () => {
+  const module = await loadTransform();
+  assert.equal(typeof module?.transformIndicatorAuthoring, "function");
+  const source = `
+import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+
+const length = input.int(14, "Length");
+const source = input.source(close, "Source");
+const average = ta.ema(source, length);
+plot.line(average, { title: "Average" });
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/index.ts",
+    sourceFileId: "src/index.ts",
+  });
+  const parsed = defineIndicatorCall(result.code);
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(
+    result.callsites.map((value) => value.callee),
+    ["input.int", "input.source", "ta.ema", "plot.line"],
+  );
+  assert.equal(
+    result.callsites.find((value) => value.callee === "input.source")
+      ?.seriesSource,
+    "close",
+  );
+  assert.ok(parsed.call, "compiled source must retain defineIndicator");
+  assert.equal(
+    parsed.call.arguments.length,
+    2,
+    "metadata-only authoring must gain one hidden calculation callback",
+  );
+  const callback = parsed.call.arguments[1];
+  assert.ok(ts.isArrowFunction(callback) || ts.isFunctionExpression(callback));
+  const callbackText = callback.getText(parsed.sourceFile);
+  assert.match(callbackText, /\binput\.int\(14,\s*"Length"/u);
+  assert.match(callbackText, /\binput\.source\(close,\s*"Source"/u);
+  assert.match(callbackText, /\bta\.ema\(source,\s*length/u);
+  assert.match(callbackText, /\bplot\.line\(average/u);
+  assert.match(callbackText, /\bclose\b/u);
+  assert.match(callbackText, /\bbar\b/u);
+});
+
+test("moves price-dependent prelude helpers into the hidden runtime callback", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function midpoint() {
+  return (high + low) / 2;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+plot.line(midpoint(), { title: "Midpoint" });
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/helper.ts",
+    sourceFileId: "src/helper.ts",
+  });
+  const parsed = defineIndicatorCall(result.code);
+  assert.ok(parsed.call);
+  const callback = parsed.call.arguments[1];
+  assert.ok(ts.isArrowFunction(callback) || ts.isFunctionExpression(callback));
+  assert.match(callback.getText(parsed.sourceFile), /function midpoint\(\)/u);
+});
+
+test("preserves direct source provenance inside a top-level script helper", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+function readSource() {
+  return input.source(close, "Source");
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+plot.line(readSource(), { title: "Source" });
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/source-helper.ts",
+    sourceFileId: "src/source-helper.ts",
+  });
+  assert.equal(
+    result.callsites.find((value) => value.callee === "input.source")
+      ?.seriesSource,
+    "close",
+  );
+});
+
+test("preserves authored source columns for same-line top-level script calls", async () => {
+  const module = await loadTransform();
+  const source = `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" }); const source = input.source(close, "Source"); plot.line(source);`;
+  const inputOffset = source.indexOf("input.source");
+  const previousLineBreak = source.lastIndexOf("\n", inputOffset);
+  const authoredColumn = inputOffset - previousLineBreak;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/same-line.ts",
+    sourceFileId: "src/same-line.ts",
+  });
+  const inputCallsite = result.callsites.find(
+    (value) => value.callee === "input.source",
+  );
+  assert.ok(inputCallsite);
+  assert.equal(inputCallsite.source.line, 2);
+  assert.equal(inputCallsite.source.column, authoredColumn);
+});
+
+test("preserves authored coordinates for top-level history diagnostics", async () => {
+  const module = await loadTransform();
+  const source = `import { defineIndicator } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" }); const prior = close[-1];`;
+  const offset = source.indexOf("-1");
+  const previousLineBreak = source.lastIndexOf("\n", offset);
+  const authoredColumn = offset - previousLineBreak;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/history-coordinate.ts",
+        sourceFileId: "src/history-coordinate.ts",
+      }),
+    new RegExp(
+      `src[\\\\/]history-coordinate\\.ts:2:${authoredColumn} history offsets must be non-negative safe integers`,
+      "u",
+    ),
+  );
+});
+
+test("type-checks top-level price and bar globals through the generated evaluator context", async () => {
+  const module = await loadTransform();
+  assert.equal(typeof module?.validateIndicatorAuthoringTypes, "function");
+  const source = `
+import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+const selected = input.source(close, "Source");
+plot.line(open + high + low + close + volume + hl2 + hlc3 + ohlc4 + selected);
+plot.line(bar.index + bar.time + (bar.confirmed ? 1 : 0));
+`;
+
+  assert.doesNotThrow(() =>
+    module.validateIndicatorAuthoringTypes(source, {
+      fileName: path.join(
+        import.meta.dirname,
+        "_virtual-top-level-authoring.ts",
+      ),
+    }),
+  );
+});
+
+test("maps top-level TypeScript diagnostics back to authored coordinates", async () => {
+  const module = await loadTransform();
+  const source = `import { defineIndicator } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" });\nconst invalid: string = close;`;
+  const offset = source.indexOf("invalid");
+  const previousLineBreak = source.lastIndexOf("\n", offset);
+  const authoredColumn = offset - previousLineBreak;
+
+  assert.throws(
+    () =>
+      module.validateIndicatorAuthoringTypes(source, {
+        fileName: path.join(import.meta.dirname, "_virtual-type-error.ts"),
+      }),
+    new RegExp(
+      `_virtual-type-error\\.ts:3:${authoredColumn} Type 'SeriesNumber' is not assignable to type 'string'`,
+      "u",
+    ),
+  );
+});
 
 test("composes call-site identity before source-history lowering", async () => {
   const module = await loadTransform();

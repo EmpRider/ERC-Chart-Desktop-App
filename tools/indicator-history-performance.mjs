@@ -30,15 +30,16 @@ try {
     source,
     `import { defineIndicator, history, plot } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  { id: "erc.indicator.history-performance.main", name: "History performance" },
-  ({ close }) => {
-    plot.line(close[1], { key: "indexed" });
-    plot.line(close.at(1), { key: "at" });
-    plot.line(history(close, 1), { key: "explicit" });
-    plot.line(history(close * 2, 1), { key: "derived" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.history-performance.main",
+  name: "History performance",
+});
+
+const doubled = close * 2;
+plot.line(close[1]);
+plot.line(close.at(1));
+plot.line(history(close, 1));
+plot.line(doubled[1]);
 `,
     "utf8",
   );
