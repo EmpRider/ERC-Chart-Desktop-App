@@ -423,6 +423,47 @@ plot.line(value, { title: "Value" });
   }
 });
 
+test("persistent drawing handle vars typecheck and update across bars", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, type BoxHandle } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.drawing-handle-state",
+  name: "Persistent drawing handle state",
+});
+
+var box: BoxHandle | undefined = undefined;
+const drawing = {
+  left: bar.time,
+  right: bar.time + 60_000,
+  top: close,
+  bottom: close - 1,
+  color: "#008800",
+};
+if (box === undefined) box = plot.box(drawing);
+else box.set(drawing);
+`);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 20)]);
+    const first = instance.snapshot().overlays;
+    assert.equal(first.length, 1);
+    assert.equal(first[0].top, 20);
+    const drawingId = first[0].id;
+
+    instance.onBuildingBar(candle(1, 30));
+    assert.equal(instance.snapshot().overlays[0].id, drawingId);
+    assert.equal(instance.snapshot().overlays[0].top, 30);
+
+    instance.onBuildingBar(candle(1, 20));
+    assert.equal(instance.snapshot().overlays[0].id, drawingId);
+    assert.equal(instance.snapshot().overlays[0].top, 20);
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("scalar recurrence uses ordinary script values and commits the final value for history", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";

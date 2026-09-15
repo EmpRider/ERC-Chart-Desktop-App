@@ -105,11 +105,15 @@ test("persistent state cloning preserves opaque drawing handle identity", () => 
   assert.strictEqual(cloned.handles[0], handle);
 });
 
-test("compiler-stable drawing identities reuse one opaque public handle", () => {
+test("compiled drawing creation allocates independent opaque handles at one callsite", () => {
   const handles = [];
   const plugin = defineIndicator(
-    { id: "erc.indicator.handle-identity.main", name: "Handle identity" },
+    {
+      id: "erc.indicator.handle-allocation.main",
+      name: "Handle allocation",
+    },
     (bar) => {
+      if (!bar.isConfirmed) return;
       handles.push(
         plot.box(
           {
@@ -127,10 +131,97 @@ test("compiler-stable drawing identities reuse one opaque public handle", () => 
   handles.length = 0;
 
   const instance = plugin.createInstance({}, context);
-  instance.onHistory([candle(0), candle(1)]);
+  instance.onFinalizedBar(candle(0));
+  instance.onFinalizedBar(candle(1));
 
   assert.equal(handles.length, 2);
-  assert.strictEqual(handles[1], handles[0]);
+  assert.notStrictEqual(handles[1], handles[0]);
+  assert.equal(instance.snapshot().overlays.length, 2);
+  assert.notEqual(
+    instance.snapshot().overlays[1].id,
+    instance.snapshot().overlays[0].id,
+  );
+  instance.dispose();
+});
+
+test("same-callsite insert, reorder, update and delete preserve unrelated handle identity", () => {
+  const handles = [];
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.handle-reorder.main",
+      name: "Handle reorder",
+    },
+    (bar) => {
+      if (!bar.isConfirmed) return;
+      if (bar.index === 0) {
+        handles.push(
+          plot.box(
+            {
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: 30,
+              bottom: 29,
+              color: "#008800",
+            },
+            boxCallsite,
+          ),
+        );
+        handles.push(
+          plot.box(
+            {
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: 40,
+              bottom: 39,
+              color: "#004488",
+            },
+            boxCallsite,
+          ),
+        );
+        return;
+      }
+      if (bar.index === 1) {
+        handles.unshift(
+          plot.box(
+            {
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: 20,
+              bottom: 19,
+              color: "#880000",
+            },
+            boxCallsite,
+          ),
+        );
+        handles.push(handles.splice(1, 1)[0]);
+        handles[1].set({ top: 41 });
+        return;
+      }
+      if (bar.index === 2) handles[2].delete();
+    },
+  );
+  handles.length = 0;
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0));
+  const first = instance.snapshot().overlays;
+  assert.equal(first.length, 2);
+  const firstIds = new Map(first.map((overlay) => [overlay.top, overlay.id]));
+
+  instance.onFinalizedBar(candle(1));
+  const second = instance.snapshot().overlays;
+  assert.equal(second.length, 3);
+  assert.equal(second.find((overlay) => overlay.top === 30)?.id, firstIds.get(30));
+  assert.equal(second.find((overlay) => overlay.top === 41)?.id, firstIds.get(40));
+  const inserted = second.find((overlay) => overlay.top === 20);
+  assert.ok(inserted);
+  assert.equal([...firstIds.values()].includes(inserted.id), false);
+
+  instance.onFinalizedBar(candle(2));
+  const third = instance.snapshot().overlays;
+  assert.equal(third.length, 2);
+  assert.equal(third.find((overlay) => overlay.top === 41)?.id, firstIds.get(40));
+  assert.equal(third.find((overlay) => overlay.top === 20)?.id, inserted.id);
   instance.dispose();
 });
 
@@ -305,7 +396,7 @@ test("drawing handles cannot mutate another indicator instance", () => {
   other.dispose();
 });
 
-test("evicted drawing handles cannot delete a replacement drawing", () => {
+test("evicted drawing handles cannot delete a later same-callsite drawing", () => {
   let staleHandle;
   const plugin = defineIndicator(
     { id: "erc.indicator.handle-eviction.main", name: "Handle eviction" },
@@ -366,18 +457,17 @@ test("evicted drawing handles cannot delete a replacement drawing", () => {
 
   instance.onFinalizedBar(candle(1, 21));
   instance.onFinalizedBar(candle(2, 22));
-  const replacementBefore = instance
-    .snapshot()
-    .overlays.find((overlay) => overlay.id === staleId);
-  assert.equal(replacementBefore?.startTimeMs, 120_000);
-  assert.equal(replacementBefore?.top, 22);
-
-  assert.throws(
-    () => instance.onFinalizedBar(candle(3, 23)),
-    /Drawing handle is not active/u,
+  const replacementBefore = instance.snapshot().overlays.find(
+    (overlay) => overlay.startTimeMs === 120_000 && overlay.top === 22,
   );
+  assert.ok(replacementBefore);
+  assert.notEqual(replacementBefore.id, staleId);
+
+  assert.doesNotThrow(() => instance.onFinalizedBar(candle(3, 23)));
   assert.deepEqual(
-    instance.snapshot().overlays.find((overlay) => overlay.id === staleId),
+    instance
+      .snapshot()
+      .overlays.find((overlay) => overlay.id === replacementBefore.id),
     replacementBefore,
   );
   instance.dispose();

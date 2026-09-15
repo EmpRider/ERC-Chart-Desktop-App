@@ -16,9 +16,6 @@ interface FrameDrawingUsage {
   devSegmentOccurrence: number;
   readonly devBoxSources: string[];
   readonly devSegmentSources: string[];
-  lastCompilerCallsiteId?: string;
-  lastCompilerOccurrence: number;
-  readonly occurrences: Map<string, number>;
 }
 
 interface ExpectedDevDrawingUsage {
@@ -30,6 +27,7 @@ interface ExpectedDevDrawingUsage {
 
 interface DrawingRegistryEntry {
   committed?: IndicatorOverlay;
+  evicted?: boolean;
   readonly controller: DrawingController;
 }
 
@@ -55,6 +53,10 @@ const drawingRegistries = new WeakMap<
   Map<string, DrawingRegistryEntry>
 >();
 const drawingIdCache = new WeakMap<KernelSlot[], Map<string, string[]>>();
+const drawingCreationCounters = new WeakMap<
+  KernelSlot[],
+  Map<string, number>
+>();
 
 function invalidDevDrawingUsage(): Error {
   return new Error(devDrawingUsageError);
@@ -68,8 +70,6 @@ function drawingUsage(frame: AuthoringFrame): FrameDrawingUsage {
       devSegmentOccurrence: 0,
       devBoxSources: [],
       devSegmentSources: [],
-      lastCompilerOccurrence: 0,
-      occurrences: new Map(),
     };
     frameDrawingUsage.set(frame, usage);
   }
@@ -107,7 +107,10 @@ function rollbackBuildingDrawingEntries(frame: AuthoringFrame): void {
   const registry = drawingRegistries.get(frame.kernels);
   if (registry !== undefined) {
     for (const [id, entry] of entries) {
-      if (registry.get(id) === entry) registry.delete(id);
+      if (registry.get(id) === entry) {
+        registry.delete(id);
+        if (entry.committed !== undefined) entry.evicted = true;
+      }
     }
   }
   buildingDrawingEntries.delete(frame);
@@ -189,20 +192,14 @@ function nextDrawingId(
     return cachedDrawingId(frame.kernels, `dev:${callee}`, occurrence);
   }
 
-  let occurrence: number;
-  if (usage.lastCompilerCallsiteId === callsite.id) {
-    occurrence = usage.lastCompilerOccurrence++;
-  } else {
-    if (usage.lastCompilerCallsiteId !== undefined)
-      usage.occurrences.set(
-        usage.lastCompilerCallsiteId,
-        usage.lastCompilerOccurrence,
-      );
-    occurrence = usage.occurrences.get(callsite.id) ?? 0;
-    usage.lastCompilerCallsiteId = callsite.id;
-    usage.lastCompilerOccurrence = occurrence + 1;
+  let counters = drawingCreationCounters.get(frame.kernels);
+  if (counters === undefined) {
+    counters = new Map();
+    drawingCreationCounters.set(frame.kernels, counters);
   }
-  return cachedDrawingId(frame.kernels, callsite.id, occurrence);
+  const sequence = counters.get(callsite.id) ?? 0;
+  counters.set(callsite.id, sequence + 1);
+  return `${callsite.id}:${sequence}`;
 }
 
 function developmentDrawingSource(
@@ -240,14 +237,8 @@ function writeDrawing(frame: AuthoringFrame, value: IndicatorOverlay): void {
 function assertHandleOwner(
   active: AuthoringFrame,
   ownerKernels: KernelSlot[],
-  registry: Map<string, DrawingRegistryEntry>,
-  id: string,
-  controller: DrawingController,
 ): void {
-  if (
-    active.kernels !== ownerKernels ||
-    registry.get(id)?.controller !== controller
-  )
+  if (active.kernels !== ownerKernels)
     throw new Error("Drawing handle is not active.");
 }
 
@@ -271,7 +262,7 @@ function registerDrawingEntry(
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
     const evicted = registry.get(oldest);
-    if (evicted !== undefined) delete evicted.committed;
+    if (evicted !== undefined) evicted.evicted = true;
     registry.delete(oldest);
   }
 }
@@ -328,8 +319,25 @@ export function drawingController(
     },
     update(update: (current: IndicatorOverlay) => IndicatorOverlay): void {
       const active = authoringFrame();
-      assertHandleOwner(active, ownerKernels, registry, id, controller);
+      assertHandleOwner(active, ownerKernels);
       if (active.discovery) return;
+      const registeredHere = registry.get(id)?.controller === controller;
+      if (!registeredHere) {
+        if (!entry.evicted || entry.committed === undefined)
+          throw new Error("Drawing handle is not active.");
+        const current = entry.committed;
+        const next = update(current);
+        if (next.id !== id || next.kind !== kind)
+          throw new Error(
+            "Drawing handles cannot change hidden identity or kind.",
+          );
+        if (sameDrawing(current, next)) return;
+        writeDrawing(active, next);
+        entry.evicted = false;
+        registerDrawingEntry(active, registry, id, entry);
+        if (active.phase === "finalized") entry.committed = Object.freeze(next);
+        return;
+      }
       const current = pendingDrawing(active, id, entry);
       if (current === undefined)
         throw new Error("Drawing handle is not active.");
@@ -344,8 +352,14 @@ export function drawingController(
     },
     delete(): void {
       const active = authoringFrame();
-      assertHandleOwner(active, ownerKernels, registry, id, controller);
+      assertHandleOwner(active, ownerKernels);
       if (active.discovery) return;
+      if (registry.get(id)?.controller !== controller) {
+        if (!entry.evicted || entry.committed === undefined)
+          throw new Error("Drawing handle is not active.");
+        if (active.phase === "finalized") delete entry.committed;
+        return;
+      }
       if (pendingDrawing(active, id, entry) === undefined) return;
       assertDrawingChangeCapacity(active, id);
       active.overlayUpdates.set(id, null);

@@ -27,15 +27,25 @@ const drawingCallsite = Object.freeze({
     column: 1,
   }),
 });
+const handles = [];
 const plugin = defineIndicator(
   {
     id: "erc.indicator.drawings-performance.main",
     name: "Drawing performance",
   },
   () => {
-    for (const drawing of drawings) plot.box(drawing, drawingCallsite);
+    if (handles.length === 0) {
+      for (const drawing of drawings)
+        handles.push(plot.box(drawing, drawingCallsite));
+      return;
+    }
+    for (let index = 0; index < handles.length; index += 1)
+      handles[index].set(drawings[index]);
   },
 );
+// defineIndicator executes one metadata-discovery pass with an isolated kernel
+// set. Do not carry those discovery-only handles into the runtime instance.
+handles.length = 0;
 const candle = (index) => ({
   instrumentId: "PERF",
   timeframeId: "1m",

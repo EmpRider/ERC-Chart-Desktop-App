@@ -12,9 +12,11 @@ import {
   signal,
   ta,
   textSize,
+  type BoxHandle,
   type DmiPoint,
   type IndicatorBar,
   type IndicatorModule,
+  type SegmentHandle,
 } from "@erc-chart/indicator-sdk";
 
 const ropeModes = [
@@ -106,6 +108,8 @@ interface PocSegment {
   center: number;
   bandLow: number;
   bandHigh: number;
+  box?: BoxHandle;
+  line?: SegmentHandle;
 }
 
 interface PocZone {
@@ -136,6 +140,12 @@ interface PocState {
     readonly candidate: PocCandidate;
     readonly hitCount: number;
   };
+}
+
+interface PocTransition {
+  readonly state: PocState;
+  readonly dirtyZones: readonly PocZone[];
+  readonly removedZones: readonly PocZone[];
 }
 
 interface SignalOutcome {
@@ -839,11 +849,17 @@ function createZone(candidate: PocCandidate): PocZone {
   };
 }
 
+function markZoneDirty(dirtyZones: PocZone[], zone: PocZone): void {
+  if (!dirtyZones.includes(zone)) dirtyZones.push(zone);
+}
+
 function updateZone(
   zone: PocZone,
   candidate: PocCandidate,
   params: Params,
+  dirtyZones: PocZone[],
 ): void {
+  markZoneDirty(dirtyZones, zone);
   const center =
     zone.center * params.migrationCenterSmoothing +
     candidate.center * (1 - params.migrationCenterSmoothing);
@@ -904,6 +920,7 @@ function rankZones(
   current: PocZone,
   barIndex: number,
   historicalCount: number,
+  dirtyZones: PocZone[],
 ): void {
   const maxOrder = zones.reduce(
     (max, zone) => Math.max(max, zone.lastActiveOrder),
@@ -914,6 +931,9 @@ function rankZones(
     (left, right) => right.lastActiveOrder - left.lastActiveOrder,
   );
   ranked.forEach((zone, index) => {
+    const previousRank = zone.activeRank;
+    const previousFrozen = zone.frozen;
+    const previousEndIndex = zone.segments.at(-1)?.endIndex;
     zone.activeRank = index;
     if (index > historicalCount) {
       zone.frozen = true;
@@ -924,6 +944,12 @@ function rankZones(
         segment.endIndex = Math.min(segment.endIndex, barIndex);
       }
     } else if (zone === current || index > 0) zone.frozen = false;
+    if (
+      previousRank !== zone.activeRank ||
+      previousFrozen !== zone.frozen ||
+      previousEndIndex !== zone.segments.at(-1)?.endIndex
+    )
+      markZoneDirty(dirtyZones, zone);
   });
 }
 
@@ -933,6 +959,7 @@ function extendZones(
   barIndex: number,
   openTimeMs: number,
   historicalCount: number,
+  dirtyZones: PocZone[],
 ): void {
   for (const zone of zones) {
     if (
@@ -962,18 +989,21 @@ function extendZones(
     segment.center = zone.center;
     segment.bandLow = zone.bandLow;
     segment.bandHigh = zone.bandHigh;
+    markZoneDirty(dirtyZones, zone);
   }
 }
 
 function advanceSegmentEnds(
   zones: readonly PocZone[],
   bar: IndicatorBar,
+  dirtyZones: PocZone[],
 ): void {
   for (const zone of zones) {
     const priorSegment = zone.segments.at(-1);
     if (priorSegment?.endIndex !== bar.index - 1) continue;
     const segment = { ...priorSegment, endTimeMs: bar.openTimeMs };
     zone.segments[zone.segments.length - 1] = segment;
+    markZoneDirty(dirtyZones, zone);
   }
 }
 
@@ -989,104 +1019,86 @@ function zoneIsRenderable(
   );
 }
 
-interface ZoneBoxDrawing {
-  readonly left: number;
-  readonly right: number;
-  readonly top: number;
-  readonly bottom: number;
-  readonly color: string;
-}
-
-interface ZoneSegmentDrawing {
-  readonly left: number;
-  readonly right: number;
-  readonly startValue: number;
-  readonly endValue: number;
-  readonly color: string;
-  readonly width: number;
-  readonly style: "solid" | "dashed" | "dotted";
-}
-
-interface ZoneDrawings {
-  readonly boxes: readonly ZoneBoxDrawing[];
-  readonly segments: readonly ZoneSegmentDrawing[];
-}
-
-function collectZoneDrawings(
-  zones: readonly PocZone[],
-  params: Params,
-  bar: IndicatorBar,
-): ZoneDrawings {
-  const boxes: ZoneBoxDrawing[] = [];
-  const segments: ZoneSegmentDrawing[] = [];
+function deleteZoneDrawings(zones: readonly PocZone[]): void {
   for (const zone of zones) {
     for (const segment of zone.segments) {
-      if (!zoneIsRenderable(zone, segment, params)) continue;
-      const endTimeMs =
-        segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
-      const color = zoneColor(zone, params);
-      if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
-        boxes.push({
-          left: segment.startTimeMs,
-          right: endTimeMs,
-          top: segment.bandHigh,
-          bottom: segment.bandLow,
-          color: rgbaWithAlpha(color, params.bandOpacity),
-        });
-      }
-      if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
-        segments.push({
-          left: segment.startTimeMs,
-          right: endTimeMs,
-          startValue: segment.center,
-          endValue: segment.center,
-          color: rgbaWithAlpha(color, params.lineOpacity),
-          width: params.lineWidth,
-          style:
-            zone.activeRank === 0 && !zone.frozen
-              ? "solid"
-              : zone.frozen
-                ? "dotted"
-                : "dashed",
-        });
-      }
+      segment.box?.delete();
+      segment.line?.delete();
     }
   }
-  return { boxes, segments };
 }
 
-function syncZoneDrawings(previous: ZoneDrawings, current: ZoneDrawings): void {
-  const boxCount = Math.max(previous.boxes.length, current.boxes.length);
-  for (let index = 0; index < boxCount; index += 1) {
-    const currentDrawing = current.boxes[index];
-    const drawing = currentDrawing ?? previous.boxes[index];
-    if (drawing === undefined) continue;
-    const handle = plot.box(drawing);
-    if (currentDrawing === undefined) handle.delete();
+function renderZoneSegment(
+  zone: PocZone,
+  segment: PocSegment,
+  params: Params,
+  bar: IndicatorBar,
+): void {
+  const renderable = zoneIsRenderable(zone, segment, params);
+  const drawBand =
+    renderable &&
+    (params.drawMode === "Band" || params.drawMode === "Line + Band");
+  const drawLine =
+    renderable &&
+    (params.drawMode === "Line" || params.drawMode === "Line + Band");
+  const endTimeMs =
+    segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
+  const color = zoneColor(zone, params);
+
+  if (drawBand) {
+    const drawing = {
+      left: segment.startTimeMs,
+      right: endTimeMs,
+      top: segment.bandHigh,
+      bottom: segment.bandLow,
+      color: rgbaWithAlpha(color, params.bandOpacity),
+    };
+    if (segment.box === undefined) segment.box = plot.box(drawing);
+    else segment.box.set(drawing);
+  } else if (segment.box !== undefined) {
+    segment.box.delete();
+    delete segment.box;
   }
 
-  const segmentCount = Math.max(
-    previous.segments.length,
-    current.segments.length,
-  );
-  for (let index = 0; index < segmentCount; index += 1) {
-    const currentDrawing = current.segments[index];
-    const drawing = currentDrawing ?? previous.segments[index];
-    if (drawing === undefined) continue;
-    const handle = plot.segment(drawing);
-    if (currentDrawing === undefined) handle.delete();
+  if (drawLine) {
+    const drawing = {
+      left: segment.startTimeMs,
+      right: endTimeMs,
+      startValue: segment.center,
+      endValue: segment.center,
+      color: rgbaWithAlpha(color, params.lineOpacity),
+      width: params.lineWidth,
+      style:
+        zone.activeRank === 0 && !zone.frozen
+          ? ("solid" as const)
+          : zone.frozen
+            ? ("dotted" as const)
+            : ("dashed" as const),
+    };
+    if (segment.line === undefined) segment.line = plot.segment(drawing);
+    else segment.line.set(drawing);
+  } else if (segment.line !== undefined) {
+    segment.line.delete();
+    delete segment.line;
   }
 }
 
-function trimZones(zones: readonly PocZone[], params: Params): PocZone[] {
+function trimZones(
+  zones: readonly PocZone[],
+  params: Params,
+): { readonly zones: PocZone[]; readonly removed: readonly PocZone[] } {
   const active = zones.filter((zone) => !zone.frozen);
   const frozen = zones
     .filter((zone) => zone.frozen)
     .sort((left, right) => left.lastSeenIndex - right.lastSeenIndex);
   const keepFrozen = Math.max(0, params.maxStoredZones - active.length);
-  return [...frozen.slice(-keepFrozen), ...active].sort(
-    (left, right) => left.createdAt - right.createdAt,
-  );
+  const removedCount = Math.max(0, frozen.length - keepFrozen);
+  return {
+    zones: [...frozen.slice(removedCount), ...active].sort(
+      (left, right) => left.createdAt - right.createdAt,
+    ),
+    removed: frozen.slice(0, removedCount),
+  };
 }
 
 function stepPoc(
@@ -1094,8 +1106,10 @@ function stepPoc(
   bar: IndicatorBar,
   dmi: DmiPoint,
   params: Params,
-): PocState {
-  if (!bar.isConfirmed) return { ...previous };
+): PocTransition {
+  if (!bar.isConfirmed)
+    return { state: { ...previous }, dirtyZones: [], removedZones: [] };
+  const dirtyZones: PocZone[] = [];
   const pocBar: PocBar = {
     index: bar.index,
     openTimeMs: bar.openTimeMs,
@@ -1108,10 +1122,8 @@ function stepPoc(
   const bars = [...previous.bars, pocBar].filter(
     (item) => item.index >= bar.index - params.profilePeriod + 1,
   );
-  // series() supplies an isolated candidate state for every update and only
-  // commits finalized values, so author code does not need replay-mode flags.
   let zones = [...previous.zones];
-  advanceSegmentEnds(zones, bar);
+  advanceSegmentEnds(zones, bar, dirtyZones);
   let current = previous.currentZoneId
     ? zones.find((zone) => zone.id === previous.currentZoneId)
     : undefined;
@@ -1133,17 +1145,31 @@ function stepPoc(
       if (current === undefined) {
         current = createZone(candidate);
         zones.push(current);
-        rankZones(zones, current, bar.index, params.activeHistoricalPocCount);
+        markZoneDirty(dirtyZones, current);
+        rankZones(
+          zones,
+          current,
+          bar.index,
+          params.activeHistoricalPocCount,
+          dirtyZones,
+        );
       } else if (zoneMatches(candidate, current, params.bandMergeMode)) {
-        updateZone(current, candidate, params);
+        updateZone(current, candidate, params, dirtyZones);
         pendingMigration = undefined;
-        rankZones(zones, current, bar.index, params.activeHistoricalPocCount);
+        rankZones(
+          zones,
+          current,
+          bar.index,
+          params.activeHistoricalPocCount,
+          dirtyZones,
+        );
         extendZones(
           zones,
           current,
           bar.index,
           bar.openTimeMs,
           params.activeHistoricalPocCount,
+          dirtyZones,
         );
       } else {
         const activeScore = nearestProjectedScore(candidate, current.center);
@@ -1182,6 +1208,7 @@ function stepPoc(
           pendingMigration = nextPendingMigration;
           if (nextPendingMigration.hitCount >= params.migrationConfirmBars) {
             current.frozen = true;
+            markZoneDirty(dirtyZones, current);
             const matching = findMatchingZone(
               candidate,
               zones,
@@ -1191,9 +1218,10 @@ function stepPoc(
             if (matching === undefined) {
               current = createZone(candidate);
               zones.push(current);
+              markZoneDirty(dirtyZones, current);
             } else {
               current = matching;
-              updateZone(current, candidate, params);
+              updateZone(current, candidate, params, dirtyZones);
             }
             pendingMigration = undefined;
             rankZones(
@@ -1201,6 +1229,7 @@ function stepPoc(
               current,
               bar.index,
               params.activeHistoricalPocCount,
+              dirtyZones,
             );
           }
         } else pendingMigration = undefined;
@@ -1210,18 +1239,24 @@ function stepPoc(
           bar.index,
           bar.openTimeMs,
           params.activeHistoricalPocCount,
+          dirtyZones,
         );
       }
     }
   }
 
-  zones = trimZones(zones, params);
-  return {
+  const trimmed = trimZones(zones, params);
+  const state: PocState = {
     bars,
-    zones,
+    zones: trimmed.zones,
     ...(current === undefined ? {} : { currentZoneId: current.id }),
     previousScores,
     ...(pendingMigration === undefined ? {} : { pendingMigration }),
+  };
+  return {
+    state,
+    dirtyZones: dirtyZones.filter((zone) => !trimmed.removed.includes(zone)),
+    removedZones: trimmed.removed,
   };
 }
 
@@ -1435,15 +1470,14 @@ function zoneColor(zone: PocZone, params: Params): string {
 }
 
 function renderZones(
-  previous: Readonly<PocState>,
-  state: PocState,
+  transition: PocTransition,
   bar: IndicatorBar,
   params: Params,
 ): void {
-  syncZoneDrawings(
-    collectZoneDrawings(previous.zones, params, bar),
-    collectZoneDrawings(state.zones, params, bar),
-  );
+  deleteZoneDrawings(transition.removedZones);
+  for (const zone of transition.dirtyZones)
+    for (const segment of zone.segments)
+      renderZoneSegment(zone, segment, params, bar);
 }
 
 const indicator: IndicatorModule = defineIndicator(
@@ -1505,11 +1539,11 @@ const indicator: IndicatorModule = defineIndicator(
     );
 
     const dmi = ta.dmi(params.dmiLength);
-    let previousPoc: Readonly<PocState> = emptyPocState;
-    const poc = series(emptyPocState, (previous) => {
-      previousPoc = previous;
-      return stepPoc(previous, bar, dmi, params);
-    });
+    var pocState: { value: PocState } = { value: emptyPocState };
+    const previousPoc = pocState.value;
+    const pocTransition = stepPoc(previousPoc, bar, dmi, params);
+    const poc = pocTransition.state;
+    pocState.value = poc;
     const unified: Direction =
       ropeDirection.direction === ut.position ? ropeDirection.direction : 0;
     const blocked = signalBlocked(
@@ -1572,7 +1606,7 @@ const indicator: IndicatorModule = defineIndicator(
       textSize: textSize.small,
       color: params.sellSignalColor,
     });
-    renderZones(previousPoc, poc, bar, params);
+    renderZones(pocTransition, bar, params);
     signal(signalState.buy, "long");
     signal(signalState.sell, "short");
   },
