@@ -23,6 +23,16 @@ const builtInSeriesNames = new Set([
   "hlc3",
   "ohlc4",
 ]);
+const scalarTaMethods = new Set([
+  "sma",
+  "ema",
+  "movingAverage",
+  "atr",
+  "rsi",
+  "highest",
+  "lowest",
+]);
+const scalarInputMethods = new Set(["source"]);
 const nonFunctionBinding = Symbol("non-function-binding");
 
 function literalOffset(node) {
@@ -39,13 +49,14 @@ function literalOffset(node) {
   return undefined;
 }
 
-function validateLiteralOffset(node, sourceFile) {
+function validateLiteralOffset(node, sourceFile, sourceLocationForPosition) {
   const value = literalOffset(node);
   if (value === undefined) return;
   if (Number.isSafeInteger(value) && value >= 0) return;
-  const location = sourceFile.getLineAndCharacterOfPosition(
-    node.getStart(sourceFile),
-  );
+  const position = node.getStart(sourceFile);
+  const location =
+    sourceLocationForPosition?.(position) ??
+    sourceFile.getLineAndCharacterOfPosition(position);
   throw new SyntaxError(
     `${sourceFile.fileName}:${location.line + 1}:${location.character + 1} history offsets must be non-negative safe integers`,
   );
@@ -73,6 +84,146 @@ function seriesBindings(callback) {
           : undefined;
     if (sourceName !== undefined && builtInSeriesNames.has(sourceName)) {
       result.add(element.name.text);
+    }
+  }
+  return result;
+}
+
+function isRootPropertyCall(node, roots, propertyNames) {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    roots.has(node.expression.expression.text) &&
+    propertyNames.has(node.expression.name.text)
+  );
+}
+
+function expressionDependsOnSeries(
+  node,
+  active,
+  historyHelpers,
+  inputHelpers,
+  taHelpers,
+) {
+  if (ts.isIdentifier(node)) return active.has(node.text);
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node)
+  )
+    return expressionDependsOnSeries(
+      node.expression,
+      active,
+      historyHelpers,
+      inputHelpers,
+      taHelpers,
+    );
+  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
+    return expressionDependsOnSeries(
+      node.operand,
+      active,
+      historyHelpers,
+      inputHelpers,
+      taHelpers,
+    );
+  if (ts.isBinaryExpression(node))
+    return (
+      expressionDependsOnSeries(
+        node.left,
+        active,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+      ) ||
+      expressionDependsOnSeries(
+        node.right,
+        active,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+      )
+    );
+  if (ts.isConditionalExpression(node))
+    return (
+      expressionDependsOnSeries(
+        node.condition,
+        active,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+      ) ||
+      expressionDependsOnSeries(
+        node.whenTrue,
+        active,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+      ) ||
+      expressionDependsOnSeries(
+        node.whenFalse,
+        active,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+      )
+    );
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    historyHelpers.has(node.expression.text)
+  )
+    return true;
+  return (
+    isRootPropertyCall(node, inputHelpers, scalarInputMethods) ||
+    isRootPropertyCall(node, taHelpers, scalarTaMethods)
+  );
+}
+
+function directSeriesDeclarations(
+  scope,
+  outerActive,
+  historyHelpers,
+  inputHelpers,
+  taHelpers,
+) {
+  if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
+  const statements = ts.isCaseBlock(scope)
+    ? scope.clauses.flatMap((clause) => [...clause.statements])
+    : scope.statements;
+  const declarations = [];
+  for (const statement of statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer !== undefined
+      )
+        declarations.push(declaration);
+    }
+  }
+  const active = new Set(outerActive);
+  const result = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      const name = declaration.name.text;
+      if (result.has(name)) continue;
+      if (
+        !expressionDependsOnSeries(
+          declaration.initializer,
+          active,
+          historyHelpers,
+          inputHelpers,
+          taHelpers,
+        )
+      )
+        continue;
+      result.add(name);
+      active.add(name);
+      changed = true;
     }
   }
   return result;
@@ -330,7 +481,11 @@ function uniqueHelperName(sourceText) {
   return candidate;
 }
 
-export function transformIndicatorHistory(sourceText, fileName = "indicator.ts") {
+export function transformIndicatorHistory(
+  sourceText,
+  fileName = "indicator.ts",
+  { sourceLocationForPosition, typecheckMask = false } = {},
+) {
   const sourceFile = ts.createSourceFile(
     fileName,
     sourceText,
@@ -340,6 +495,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
   );
   const helperName = uniqueHelperName(sourceText);
   const rootHistoryBindings = sdkNamedBindings(sourceFile, "history");
+  const rootInputBindings = sdkNamedBindings(sourceFile, "input");
+  const rootTaBindings = sdkNamedBindings(sourceFile, "ta");
   const rootDefineIndicatorBindings = sdkNamedBindings(
     sourceFile,
     "defineIndicator",
@@ -349,6 +506,7 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
     rootDefineIndicatorBindings,
   );
   let changed = false;
+  const typecheckMaskRanges = [];
 
   const transformer = (context) => {
     const { factory } = context;
@@ -358,16 +516,31 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
       names,
       active,
       historyHelpers,
+      inputHelpers,
+      taHelpers,
       defineIndicatorHelpers,
       activeOverride,
     ) {
-      const scopedActive =
+      let scopedActive =
         activeOverride ?? withoutBindings(active, names);
       const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
+      const scopedInputHelpers = withoutBindings(inputHelpers, names);
+      const scopedTaHelpers = withoutBindings(taHelpers, names);
       const scopedDefineIndicatorHelpers = withoutBindings(
         defineIndicatorHelpers,
         names,
       );
+      const localSeries = directSeriesDeclarations(
+        node,
+        scopedActive,
+        scopedHistoryHelpers,
+        scopedInputHelpers,
+        scopedTaHelpers,
+      );
+      if (localSeries.size > 0) {
+        scopedActive = new Set(scopedActive);
+        for (const name of localSeries) scopedActive.add(name);
+      }
       return ts.visitEachChild(
         node,
         (child) =>
@@ -375,6 +548,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
             child,
             scopedActive,
             scopedHistoryHelpers,
+            scopedInputHelpers,
+            scopedTaHelpers,
             scopedDefineIndicatorHelpers,
           ),
         context,
@@ -385,6 +560,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
       node,
       active,
       historyHelpers,
+      inputHelpers,
+      taHelpers,
       defineIndicatorHelpers,
     ) => {
       if (
@@ -393,8 +570,16 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         active.has(node.expression.text) &&
         node.argumentExpression !== undefined
       ) {
-        validateLiteralOffset(node.argumentExpression, sourceFile);
+        validateLiteralOffset(
+          node.argumentExpression,
+          sourceFile,
+          sourceLocationForPosition,
+        );
         changed = true;
+        if (typecheckMask) {
+          typecheckMaskRanges.push([node.expression.end, node.end]);
+          return node;
+        }
         return factory.createCallExpression(
           factory.createIdentifier(helperName),
           undefined,
@@ -405,6 +590,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
                 child,
                 active,
                 historyHelpers,
+                inputHelpers,
+                taHelpers,
                 defineIndicatorHelpers,
               ),
             ),
@@ -421,8 +608,12 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
       ) {
         const offset = node.arguments[0];
         if (offset === undefined) return node;
-        validateLiteralOffset(offset, sourceFile);
+        validateLiteralOffset(offset, sourceFile, sourceLocationForPosition);
         changed = true;
+        if (typecheckMask) {
+          typecheckMaskRanges.push([node.expression.expression.end, node.end]);
+          return node;
+        }
         return factory.createCallExpression(
           factory.createIdentifier(helperName),
           undefined,
@@ -433,6 +624,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
                 child,
                 active,
                 historyHelpers,
+                inputHelpers,
+                taHelpers,
                 defineIndicatorHelpers,
               ),
             ),
@@ -446,7 +639,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         node.arguments.length >= 2
       ) {
         const offset = node.arguments[1];
-        if (offset !== undefined) validateLiteralOffset(offset, sourceFile);
+        if (offset !== undefined)
+          validateLiteralOffset(offset, sourceFile, sourceLocationForPosition);
       }
 
       if (
@@ -460,6 +654,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
           functionBindings(node),
           active,
           historyHelpers,
+          inputHelpers,
+          taHelpers,
           defineIndicatorHelpers,
           seriesBindings(node),
         );
@@ -472,6 +668,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
           names,
           active,
           historyHelpers,
+          inputHelpers,
+          taHelpers,
           defineIndicatorHelpers,
         );
       }
@@ -483,6 +681,8 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
             child,
             active,
             historyHelpers,
+            inputHelpers,
+            taHelpers,
             defineIndicatorHelpers,
           ),
         context,
@@ -494,11 +694,29 @@ export function transformIndicatorHistory(sourceText, fileName = "indicator.ts")
         root,
         new Set(),
         rootHistoryBindings,
+        rootInputBindings,
+        rootTaBindings,
         rootDefineIndicatorBindings,
       );
   };
 
   const result = ts.transform(sourceFile, [transformer]);
+  if (typecheckMask) {
+    result.dispose();
+    if (typecheckMaskRanges.length === 0)
+      return { code: sourceText, changed: false };
+    let cursor = 0;
+    let code = "";
+    for (const [start, end] of typecheckMaskRanges.sort(
+      (left, right) => left[0] - right[0],
+    )) {
+      code += sourceText.slice(cursor, start);
+      code += sourceText.slice(start, end).replace(/[^\r\n]/gu, " ");
+      cursor = end;
+    }
+    code += sourceText.slice(cursor);
+    return { code, changed: true };
+  }
   let transformed = result.transformed[0];
   if (changed) {
     const helperImport = ts.factory.createImportDeclaration(

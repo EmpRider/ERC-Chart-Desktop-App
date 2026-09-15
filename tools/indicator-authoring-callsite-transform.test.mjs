@@ -98,6 +98,106 @@ void period;
   );
 });
 
+test("rejects input declarations inside statically repeated loops", async () => {
+  const fixtures = [
+    `for (const length of [9, 14]) { input.int(length, "Length"); }`,
+    `for (const index in { a: 1, b: 2 }) { input.int(Number(index), "Length"); }`,
+    `for (let index = 0; index < 2; index += 1) { input.int(index, "Length"); }`,
+    `let index = 0; while (index < 2) { input.int(index++, "Length"); }`,
+    `let index = 0; do { input.int(index++, "Length"); } while (index < 2);`,
+  ];
+  for (const [index, statement] of fixtures.entries()) {
+    await assert.rejects(
+      () =>
+        transform(
+          `import { input } from "@erc-chart/indicator-sdk";\n${statement}\n`,
+          `src/loop-input-${index}.ts`,
+        ),
+      /input declarations cannot execute inside loops/u,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+for (const length of [9, 14]) {
+  input.int(length, "Length");
+}
+`,
+        "src/loop-input.ts",
+      ),
+    /src\/loop-input\.ts:3:3 input declarations cannot execute inside loops/u,
+  );
+});
+
+test("allows a statically single-execution helper to declare an input", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+const length = readLength();
+void length;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
+test("rejects helpers containing inputs when the helper executes from a loop", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+for (let index = 0; index < 2; index += 1) {
+  readLength();
+}
+`),
+    /input declarations cannot execute inside loops/u,
+  );
+});
+
+test("rejects recursive helpers that can repeat input declarations", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { input } from "@erc-chart/indicator-sdk";
+function readLength(remaining) {
+  const length = input.int(14, "Length");
+  return remaining > 0 ? readLength(remaining - 1) : length;
+}
+const length = readLength(2);
+void length;
+`),
+    /input declarations cannot execute through recursion/u,
+  );
+});
+
+test("rejects mutually recursive input helper paths", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { input } from "@erc-chart/indicator-sdk";
+function first(remaining) {
+  const length = input.int(14, "Length");
+  return remaining > 0 ? second(remaining - 1) : length;
+}
+function second(remaining) {
+  return first(remaining);
+}
+const length = first(2);
+void length;
+`),
+    /input declarations cannot execute through recursion/u,
+  );
+});
+
 test("keeps identities stable across unrelated insertion and declaration reordering", async () => {
   const before = await transform(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";

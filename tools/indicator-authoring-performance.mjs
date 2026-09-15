@@ -21,21 +21,21 @@ const outputDirectory = await mkdtemp(
 const repeatedCalls = Array.from(
   { length: 24 },
   (_, index) => `
-    const trend${index} = ta.ema(close[1], ${index + 2});
-    plot.line(trend${index}, { key: "trend-${index}" });`,
+const trend${index} = ta.ema(close[1], ${index + 2});
+plot.line(trend${index});`,
 ).join("");
 const sourceText = `import { defineIndicator, input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  { id: "erc.indicator.authoring-performance.main", name: "Authoring performance" },
-  ({ close }) => {
-    const length = input.int(14, { key: "length" });${repeatedCalls}
-    const fast = ta.sma(close, length);
-    const slow = ta.sma(close, 28);
-    plot.histogram(fast - slow, { key: "spread" });
-    signal(fast > slow, "long", { key: "cross" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.authoring-performance.main",
+  name: "Authoring performance",
+});
+
+const length = input.int(14, "Length");${repeatedCalls}
+const fast = ta.sma(close, length);
+const slow = ta.sma(close, 28);
+plot.histogram(fast - slow);
+signal(fast > slow, "long");
 `;
 
 function averageTransformMs(transform) {

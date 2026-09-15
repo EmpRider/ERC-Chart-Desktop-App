@@ -217,13 +217,12 @@ export type IndicatorBar = Omit<
 >;
 export type IndicatorCalculation = (bar: IndicatorBar) => void;
 export type { IndicatorOptions } from "./indicator.js";
-export const defineIndicator: (
+export type DefineIndicator = (
   options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-) => IndicatorModule = runtimeDefineIndicator as (
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
+  calculate?: IndicatorCalculation,
 ) => IndicatorModule;
+export const defineIndicator: DefineIndicator =
+  runtimeDefineIndicator as unknown as DefineIndicator;
 
 export interface InputOptions {
   readonly title?: string;
@@ -247,20 +246,29 @@ type StringOptionValue<T> = T extends string
 export interface InputApi {
   readonly float: (
     defaultValue: number,
-    options?: NumberInputOptions,
+    options?: string | NumberInputOptions,
   ) => number;
-  readonly int: (defaultValue: number, options?: NumberInputOptions) => number;
-  readonly bool: (defaultValue: boolean, options?: InputOptions) => boolean;
+  readonly int: (
+    defaultValue: number,
+    options?: string | NumberInputOptions,
+  ) => number;
+  readonly bool: (
+    defaultValue: boolean,
+    options?: string | InputOptions,
+  ) => boolean;
   readonly string: {
     <const O extends readonly (string | IndicatorInputOption)[]>(
       defaultValue: StringOptionValue<O[number]>,
       options: StringInputOptions & { readonly options: O },
     ): StringOptionValue<O[number]>;
-    (defaultValue: string, options?: StringInputOptions): string;
+    (defaultValue: string, options?: string | StringInputOptions): string;
   };
-  readonly color: (defaultValue: string, options?: InputOptions) => string;
+  readonly color: (
+    defaultValue: string,
+    options?: string | InputOptions,
+  ) => string;
   readonly source: (
-    defaultValue: import("./series.js").PriceSource,
+    defaultValue: import("./series.js").PriceSource | number,
     titleOrOptions?: string | InputOptions,
   ) => number;
   readonly timeframe: (

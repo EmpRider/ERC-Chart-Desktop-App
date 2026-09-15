@@ -4,7 +4,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
-import { indicatorAuthoringTransformPlugin } from "./indicator-authoring-transform.mjs";
+import {
+  indicatorAuthoringTransformPlugin,
+  validateIndicatorAuthoringTypes,
+} from "./indicator-authoring-transform.mjs";
 import { writePluginPackageArchive } from "./plugin-package-archive.mjs";
 
 const indicatorCompilerBaseDefine = {
@@ -174,6 +177,10 @@ export async function buildIndicatorPackage({
   )
     throw new Error("Build output must not contain the indicator source.");
   const authoringRoot = await findAuthoringRoot(sourcePath);
+  if (/\.[cm]?tsx?$/u.test(sourcePath)) {
+    const sourceText = await readFile(sourcePath, "utf8");
+    validateIndicatorAuthoringTypes(sourceText, { fileName: sourcePath });
+  }
   const entryTransform = authoringTransformContext(authoringRoot);
   const metadataTransform = authoringTransformContext(authoringRoot);
   const plotDeclarations = await collectCompilerPlotDeclarations(

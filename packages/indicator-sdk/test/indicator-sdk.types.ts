@@ -22,10 +22,19 @@ const canonicalVolume: SeriesNumber = canonicalBar.volume;
 void canonicalClose;
 void canonicalVolume;
 
+export const topLevelAuthored = defineIndicator({
+  id: "fixture.top-level-authored",
+  name: "Top-level authored",
+});
+
 export const authored = defineIndicator(
   { id: "fixture.authored", name: "Authored" },
   ({ close, volume }) => {
-    const length: number = input.int(14, { title: "Length" });
+    const length: number = input.int(14, "Length");
+    const multiplier: number = input.float(1.5, "Multiplier");
+    const enabled: boolean = input.bool(true, "Enabled");
+    const lineColor: string = input.color("#00ff00", "Color");
+    const selectedSource: number = input.source(close, "Source");
     const selectedTimeframe: string = input.timeframe(
       timeframe.chart,
       "Timeframe",
@@ -50,6 +59,8 @@ export const authored = defineIndicator(
     void previousVolumeByIndex;
     plot.line(
       value +
+        selectedSource * multiplier +
+        (enabled ? 1 : 0) +
         atr +
         previousByAt +
         previousByFunction +
@@ -59,7 +70,7 @@ export const authored = defineIndicator(
         currentVolume +
         previousVolumeByAt +
         previousVolumeByFunction,
-      { title: "Band", color: "#00ff00" },
+      { title: "Band", color: lineColor },
     );
     plot.histogram(rsi);
     plot.shape(value > 0, {

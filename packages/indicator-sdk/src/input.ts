@@ -27,6 +27,8 @@ export interface StringInputOptions extends InputOptions {
   readonly options?: readonly (string | IndicatorInputOption)[];
 }
 
+type InputOptionsArgument<T extends InputOptions = InputOptions> = string | T;
+
 type StringOptionValue<T> = T extends string
   ? T
   : T extends IndicatorInputOption
@@ -241,6 +243,12 @@ function hasExplicitLabel(options: InputOptions): boolean {
   return options.title !== undefined || options.key !== undefined;
 }
 
+function normalizeInputOptions<T extends InputOptions>(
+  value: InputOptionsArgument<T> | undefined,
+): T {
+  return (typeof value === "string" ? { title: value } : (value ?? {})) as T;
+}
+
 function stringOptions(
   options: readonly (string | IndicatorInputOption)[] | undefined,
 ): readonly IndicatorInputOption[] | undefined {
@@ -251,10 +259,11 @@ function stringOptions(
 
 function number(
   defaultValue: number,
-  options: NumberInputOptions = {},
+  optionsArgument: InputOptionsArgument<NumberInputOptions> = {},
   hiddenCallsite?: unknown,
   callee = "input.float",
 ): number {
+  const options = normalizeInputOptions(optionsArgument);
   if (
     !Number.isFinite(defaultValue) ||
     (options.min !== undefined && !Number.isFinite(options.min)) ||
@@ -292,13 +301,14 @@ function stringInput<
 ): StringOptionValue<O[number]>;
 function stringInput(
   defaultValue: string,
-  options?: StringInputOptions,
+  options?: InputOptionsArgument<StringInputOptions>,
 ): string;
 function stringInput(
   defaultValue: string,
-  options: StringInputOptions = {},
+  optionsArgument: InputOptionsArgument<StringInputOptions> = {},
   hiddenCallsite?: unknown,
 ): string {
+  const options = normalizeInputOptions(optionsArgument);
   const choices = stringOptions(options.options);
   if (
     choices !== undefined &&
@@ -324,13 +334,10 @@ function stringInput(
 
 function timeframeInput(
   defaultValue: string,
-  titleOrOptions: string | InputOptions = {},
+  titleOrOptions: InputOptionsArgument = {},
   hiddenCallsite?: unknown,
 ): string {
-  const options =
-    typeof titleOrOptions === "string"
-      ? { title: titleOrOptions }
-      : titleOrOptions;
+  const options = normalizeInputOptions(titleOrOptions);
   if (
     defaultValue.length === 0 ||
     defaultValue.length > 64 ||
@@ -364,13 +371,10 @@ function timeframeInput(
 
 function candleTypeInput(
   defaultValue: CandleTypeSelection,
-  titleOrOptions: string | InputOptions = {},
+  titleOrOptions: InputOptionsArgument = {},
   hiddenCallsite?: unknown,
 ): CandleTypeSelection {
-  const options =
-    typeof titleOrOptions === "string"
-      ? { title: titleOrOptions }
-      : titleOrOptions;
+  const options = normalizeInputOptions(titleOrOptions);
   if (defaultValue !== candle.standard && defaultValue !== candle.heikinAshi)
     throw new RangeError("Candle type input default is invalid.");
   const callsite = readCompilerCallsite(
@@ -400,25 +404,30 @@ function candleTypeInput(
 }
 
 function sourceInput(
-  defaultValue: PriceSource,
-  titleOrOptions: string | InputOptions = {},
+  defaultValue: PriceSource | number,
+  titleOrOptions: InputOptionsArgument = {},
   hiddenCallsite?: unknown,
 ): number {
-  if (!priceSources.includes(defaultValue))
-    throw new RangeError("Source input default is invalid.");
-  const options =
-    typeof titleOrOptions === "string"
-      ? { title: titleOrOptions }
-      : titleOrOptions;
   const callsite = readCompilerCallsite(
     hiddenCallsite,
     "input",
     "input.source",
   );
+  const compilerSource = callsite?.seriesSource;
+  const defaultSource =
+    compilerSource !== undefined &&
+    priceSources.includes(compilerSource as PriceSource)
+      ? (compilerSource as PriceSource)
+      : typeof defaultValue === "string" && priceSources.includes(defaultValue)
+        ? defaultValue
+        : undefined;
+  if (defaultSource === undefined)
+    throw new RangeError("Source input default is invalid.");
+  const options = normalizeInputOptions(titleOrOptions);
   const definition: IndicatorInputDefinition = {
     ...metadata(options, callsite),
     type: "source",
-    defaultValue,
+    defaultValue: defaultSource,
   };
   const selectedSource = readInput(
     definition,
@@ -437,29 +446,41 @@ function sourceInput(
 export interface InputApi {
   readonly float: (
     defaultValue: number,
-    options?: NumberInputOptions,
+    options?: InputOptionsArgument<NumberInputOptions>,
   ) => number;
-  readonly int: (defaultValue: number, options?: NumberInputOptions) => number;
-  readonly bool: (defaultValue: boolean, options?: InputOptions) => boolean;
+  readonly int: (
+    defaultValue: number,
+    options?: InputOptionsArgument<NumberInputOptions>,
+  ) => number;
+  readonly bool: (
+    defaultValue: boolean,
+    options?: InputOptionsArgument,
+  ) => boolean;
   readonly string: {
     <const O extends readonly (string | IndicatorInputOption)[]>(
       defaultValue: StringOptionValue<O[number]>,
       options: StringInputOptions & { readonly options: O },
     ): StringOptionValue<O[number]>;
-    (defaultValue: string, options?: StringInputOptions): string;
+    (
+      defaultValue: string,
+      options?: InputOptionsArgument<StringInputOptions>,
+    ): string;
   };
-  readonly color: (defaultValue: string, options?: InputOptions) => string;
+  readonly color: (
+    defaultValue: string,
+    options?: InputOptionsArgument,
+  ) => string;
   readonly source: (
-    defaultValue: PriceSource,
-    titleOrOptions?: string | InputOptions,
+    defaultValue: PriceSource | number,
+    titleOrOptions?: InputOptionsArgument,
   ) => number;
   readonly timeframe: (
     defaultValue: string,
-    titleOrOptions?: string | InputOptions,
+    titleOrOptions?: InputOptionsArgument,
   ) => string;
   readonly candleType: (
     defaultValue: CandleTypeSelection,
-    titleOrOptions?: string | InputOptions,
+    titleOrOptions?: InputOptionsArgument,
   ) => CandleTypeSelection;
 }
 
@@ -467,14 +488,14 @@ export const input: InputApi = Object.freeze({
   float: number,
   int(
     defaultValue: number,
-    options: NumberInputOptions = {},
+    optionsArgument: InputOptionsArgument<NumberInputOptions> = {},
     hiddenCallsite?: unknown,
   ): number {
     if (!Number.isSafeInteger(defaultValue))
       throw new RangeError("Integer input default must be a safe integer.");
     const value = number(
       defaultValue,
-      { ...options, step: 1 },
+      { ...normalizeInputOptions(optionsArgument), step: 1 },
       hiddenCallsite,
       "input.int",
     );
@@ -483,9 +504,10 @@ export const input: InputApi = Object.freeze({
   },
   bool: (
     defaultValue: boolean,
-    options: InputOptions = {},
+    optionsArgument: InputOptionsArgument = {},
     hiddenCallsite?: unknown,
   ): boolean => {
+    const options = normalizeInputOptions(optionsArgument);
     const callsite = readCompilerCallsite(
       hiddenCallsite,
       "input",
@@ -505,9 +527,10 @@ export const input: InputApi = Object.freeze({
   source: sourceInput,
   color: (
     defaultValue: string,
-    options: InputOptions = {},
+    optionsArgument: InputOptionsArgument = {},
     hiddenCallsite?: unknown,
   ): string => {
+    const options = normalizeInputOptions(optionsArgument);
     const callsite = readCompilerCallsite(
       hiddenCallsite,
       "input",
