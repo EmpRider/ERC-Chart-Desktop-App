@@ -40,12 +40,6 @@ const scalarSeriesStores = new WeakMap<
   Map<string, ScalarSeriesState>
 >();
 
-function valueKind(value: unknown): string {
-  if (Array.isArray(value)) return "array";
-  if (value === null) return "null";
-  return typeof value;
-}
-
 function scopedRuntimeIdentity(
   frame: AuthoringFrame,
   callsite: CompilerCallsite | undefined,
@@ -76,7 +70,7 @@ function normalizeHistoryOffset(barsBack: number): number {
 
 /** Compiler-only entry point for Pine-style persistent `var` declarations. */
 export function persistentVar<T>(
-  initial: T,
+  initialize: () => T,
   readCurrent: () => T,
   hiddenCallsite?: unknown,
 ): T {
@@ -87,10 +81,10 @@ export function persistentVar<T>(
     "persistent-var",
   );
   const runtimeIdentity = scopedRuntimeIdentity(frame, callsite);
-  const kind = valueKind(initial);
   const state = useKernel<PersistentStateSlot<T>>(
-    `persistent-var-${kind}`,
+    "persistent-var",
     () => {
+      const initial = initialize();
       assertBoundedSeriesCollections(initial);
       return { committed: cloneSeriesState(initial) };
     },

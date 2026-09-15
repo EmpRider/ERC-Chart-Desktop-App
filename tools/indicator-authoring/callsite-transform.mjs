@@ -2981,7 +2981,14 @@ export function transformIndicatorCallsites(
               factory.createIdentifier(persistentVarName),
               undefined,
               [
-                initializer,
+                factory.createArrowFunction(
+                  undefined,
+                  undefined,
+                  [],
+                  undefined,
+                  factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                  initializer,
+                ),
                 getter,
                 factory.createIdentifier(tokenNames.get(metadata)),
               ],

@@ -206,6 +206,58 @@ plot.line(state.values.length, { title: "Count" });
   }
 });
 
+test("persistent var initializers run once per indicator state lifetime", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+let initializationCount = 0;
+function createState() {
+  initializationCount += 1;
+  return { firstClose: close };
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.lazy-state",
+  name: "Lazy persistent state",
+});
+
+var state = createState();
+plot.line(initializationCount, { title: "Initializations" });
+plot.line(state.firstClose, { title: "First close" });
+`);
+
+  const initializationKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Initializations",
+  )?.outputKey;
+  const firstCloseKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "First close",
+  )?.outputKey;
+  assert.ok(initializationKey);
+  assert.ok(firstCloseKey);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 11), candle(2, 12)]);
+    const initializations = instance
+      .snapshot()
+      .points.map((point) => point.values[initializationKey]);
+    assert.equal(new Set(initializations).size, 1);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[firstCloseKey]),
+      [10, 10, 10],
+    );
+
+    const initializationCountAfterHistory = initializations.at(-1);
+    instance.onBuildingBar(candle(2, 30));
+    assert.equal(
+      instance.snapshot().points.at(-1).values[initializationKey],
+      initializationCountAfterHistory,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("persistent var state inside a helper is independent at each authored call site", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";

@@ -339,7 +339,6 @@ export function defineIndicator(
         };
         try {
           run(frame, finalizedCount);
-          finalizePersistentState(frame);
           validateDrawingUsage(frame);
           if (
             frame.kernelIndex !== discovery.kernelIndex ||
@@ -399,6 +398,7 @@ export function defineIndicator(
             throw new RangeError(
               "Reload retained history at the 100,000-candle limit.",
             );
+          finalizePersistentState(frame);
           points[finalizedCount] = frame.point;
           if (overlays !== previousOverlays || emitted.length > 0)
             visualRevision += 1;
