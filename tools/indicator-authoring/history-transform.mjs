@@ -502,6 +502,69 @@ function resolveLocalFunctionReference(identifier) {
   return undefined;
 }
 
+function directMutableLetDeclaration(scope, requestedName) {
+  if (!ts.isSourceFile(scope) && !ts.isBlock(scope) && !ts.isCaseBlock(scope))
+    return undefined;
+  const statements = ts.isCaseBlock(scope)
+    ? scope.clauses.flatMap((clause) => [...clause.statements])
+    : scope.statements;
+  for (const statement of statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!bindingNameIncludes(declaration.name, requestedName)) continue;
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.name.text === requestedName &&
+        (statement.declarationList.flags & ts.NodeFlags.Let) !== 0
+      )
+        return declaration;
+      return null;
+    }
+  }
+  return scopedNames(scope)?.has(requestedName) ? null : undefined;
+}
+
+function loopMutableLetDeclaration(scope, requestedName) {
+  if (
+    !ts.isForStatement(scope) &&
+    !ts.isForInStatement(scope) &&
+    !ts.isForOfStatement(scope)
+  )
+    return undefined;
+  const initializer = scope.initializer;
+  if (initializer === undefined || !ts.isVariableDeclarationList(initializer))
+    return undefined;
+  for (const declaration of initializer.declarations) {
+    if (!bindingNameIncludes(declaration.name, requestedName)) continue;
+    if (
+      ts.isIdentifier(declaration.name) &&
+      declaration.name.text === requestedName &&
+      (initializer.flags & ts.NodeFlags.Let) !== 0
+    )
+      return declaration;
+    return null;
+  }
+  return undefined;
+}
+
+function resolveMutableLetReference(identifier) {
+  const requestedName = identifier.text;
+  let current = identifier.parent;
+  while (current !== undefined) {
+    const direct = directMutableLetDeclaration(current, requestedName);
+    if (direct !== undefined) return direct;
+    const loop = loopMutableLetDeclaration(current, requestedName);
+    if (loop !== undefined) return loop;
+    if (
+      (ts.isFunctionLike(current) || ts.isCatchClause(current)) &&
+      scopedNames(current)?.has(requestedName)
+    )
+      return null;
+    current = current.parent;
+  }
+  return undefined;
+}
+
 function referencedIndicatorCallbacks(
   sourceFile,
   rootDefineIndicatorBindings,
@@ -574,6 +637,34 @@ export function transformIndicatorHistory(
   );
   let changed = false;
   const typecheckMaskRanges = [];
+  const mutableSeriesHistoryByDeclaration = new Map();
+
+  const recordMutableSeriesHistory = (identifier, access) => {
+    const declaration = resolveMutableLetReference(identifier);
+    if (declaration === undefined || declaration === null) return;
+    const declarationStart = declaration.getStart(sourceFile);
+    let entry = mutableSeriesHistoryByDeclaration.get(declarationStart);
+    if (entry === undefined) {
+      entry = {
+        declarationStart,
+        nameEnd: declaration.name.end,
+        hasType: declaration.type !== undefined,
+        name: identifier.text,
+        accessStarts: new Set(),
+      };
+      mutableSeriesHistoryByDeclaration.set(declarationStart, entry);
+    }
+    entry.accessStarts.add(access.getStart(sourceFile));
+  };
+
+  const mutableSeriesHistories = () =>
+    [...mutableSeriesHistoryByDeclaration.values()].map((entry) => ({
+      declarationStart: entry.declarationStart,
+      nameEnd: entry.nameEnd,
+      hasType: entry.hasType,
+      name: entry.name,
+      accessStarts: [...entry.accessStarts],
+    }));
 
   const transformer = (context) => {
     const { factory } = context;
@@ -647,6 +738,7 @@ export function transformIndicatorHistory(
         active.has(node.expression.text) &&
         node.argumentExpression !== undefined
       ) {
+        recordMutableSeriesHistory(node.expression, node);
         validateLiteralOffset(
           node.argumentExpression,
           sourceFile,
@@ -684,6 +776,7 @@ export function transformIndicatorHistory(
         active.has(node.expression.expression.text) &&
         node.arguments.length === 1
       ) {
+        recordMutableSeriesHistory(node.expression.expression, node);
         const offset = node.arguments[0];
         if (offset === undefined) return node;
         validateLiteralOffset(offset, sourceFile, sourceLocationForPosition);
@@ -787,7 +880,11 @@ export function transformIndicatorHistory(
   if (typecheckMask) {
     result.dispose();
     if (typecheckMaskRanges.length === 0)
-      return { code: sourceText, changed: false };
+      return {
+        code: sourceText,
+        changed: false,
+        mutableSeriesHistories: mutableSeriesHistories(),
+      };
     let cursor = 0;
     let code = "";
     for (const [start, end] of typecheckMaskRanges.sort(
@@ -798,7 +895,11 @@ export function transformIndicatorHistory(
       cursor = end;
     }
     code += sourceText.slice(cursor);
-    return { code, changed: true };
+    return {
+      code,
+      changed: true,
+      mutableSeriesHistories: mutableSeriesHistories(),
+    };
   }
   let transformed = result.transformed[0];
   if (changed) {
@@ -827,7 +928,7 @@ export function transformIndicatorHistory(
     ? ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(transformed)
     : sourceText;
   result.dispose();
-  return { code, changed };
+  return { code, changed, mutableSeriesHistories: mutableSeriesHistories() };
 }
 
 export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {

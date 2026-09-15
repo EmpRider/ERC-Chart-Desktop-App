@@ -193,6 +193,46 @@ plot.line(bar.index + bar.time + (bar.confirmed ? 1 : 0));
   );
 });
 
+test("type-checks inferred mutable scalar recurrence as ordinary numeric state", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+let total = close;
+const previous = total[1];
+if (Number.isFinite(previous)) total += previous;
+plot.line(total);
+`;
+
+  assert.doesNotThrow(() =>
+    module.validateIndicatorAuthoringTypes(source, {
+      fileName: path.join(import.meta.dirname, "_virtual-scalar-recurrence.ts"),
+    }),
+  );
+});
+
+test("mutable recurrence normalization keeps unrelated type diagnostics", async () => {
+  const module = await loadTransform();
+  const source = `import { defineIndicator } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" });\nlet total = close;\nconst previous = total[1];\nif (Number.isFinite(previous)) total += previous;\nconst invalid: string = total;`;
+  const offset = source.indexOf("invalid");
+  const previousLineBreak = source.lastIndexOf("\n", offset);
+  const authoredColumn = offset - previousLineBreak;
+
+  assert.throws(
+    () =>
+      module.validateIndicatorAuthoringTypes(source, {
+        fileName: path.join(
+          import.meta.dirname,
+          "_virtual-scalar-recurrence-type-error.ts",
+        ),
+      }),
+    new RegExp(
+      `_virtual-scalar-recurrence-type-error\\.ts:6:${authoredColumn} Type 'number' is not assignable to type 'string'`,
+      "u",
+    ),
+  );
+});
+
 test("maps top-level TypeScript diagnostics back to authored coordinates", async () => {
   const module = await loadTransform();
   const source = `import { defineIndicator } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" });\nconst invalid: string = close;`;

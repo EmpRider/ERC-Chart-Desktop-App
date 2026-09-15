@@ -1,12 +1,9 @@
 import ts from "typescript";
-import {
-  collectBindingNames,
-  scopedNames,
-  scriptKind,
-} from "./ast-scope.mjs";
+import { collectBindingNames, scopedNames, scriptKind } from "./ast-scope.mjs";
 import { semanticCallsiteKey, stableCallsiteId } from "./identity.mjs";
 
 const sdkModule = "@erc-chart/indicator-sdk";
+const sdkPersistentStateModule = "erc-chart:indicator-persistent-state";
 const sdkRoots = new Set([
   "defineIndicator",
   "history",
@@ -1924,11 +1921,7 @@ function validateLoopInvokedInputHelpers(sourceFile, callsiteByNode, bindings) {
       const analysis = signalCallableAnalysis(node.expression, bindings);
       if (
         analysis.kind === "helper" &&
-        helperContainsInputCall(
-          analysis.helper,
-          callsiteByNode,
-          bindings,
-        )
+        helperContainsInputCall(analysis.helper, callsiteByNode, bindings)
       )
         throw syntaxError(
           sourceFile,
@@ -2065,7 +2058,8 @@ function validateInputHelperExecutionCardinality(
     for (const nested of directHelperCalls(helper, bindings)) execute(nested);
     active.delete(helper);
   };
-  for (const rootCall of directHelperCalls(sourceFile, bindings)) execute(rootCall);
+  for (const rootCall of directHelperCalls(sourceFile, bindings))
+    execute(rootCall);
 }
 
 function canonicalText(node, sourceFile, printer) {
@@ -2332,6 +2326,46 @@ function uniqueTokenPrefix(sourceText) {
   return prefix;
 }
 
+function isWithinIndicatorCallback(node, bindings) {
+  let current = node.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (
+      (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) &&
+      ts.isCallExpression(current.parent) &&
+      current.parent.arguments[1] === current &&
+      ts.isIdentifier(current.parent.expression) &&
+      bindings.get(current.parent.expression.text) === "defineIndicator"
+    )
+      return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function persistentVarDeclaration(node, bindings, sourceFile) {
+  if (!ts.isVariableDeclaration(node)) return false;
+  const declarationList = node.parent;
+  if (
+    !ts.isVariableDeclarationList(declarationList) ||
+    (declarationList.flags & ts.NodeFlags.BlockScoped) !== 0 ||
+    !isWithinIndicatorCallback(node, bindings)
+  )
+    return false;
+  if (!ts.isVariableStatement(declarationList.parent))
+    throw syntaxError(
+      sourceFile,
+      node,
+      "persistent var declarations must be ordinary statements; use let/const for loop bindings",
+    );
+  if (!ts.isIdentifier(node.name))
+    throw syntaxError(
+      sourceFile,
+      node,
+      "persistent var declarations require a simple variable name",
+    );
+  return true;
+}
+
 function callsiteDeclaration(factory, name, metadata) {
   const source = factory.createObjectLiteralExpression(
     [
@@ -2435,6 +2469,7 @@ export function transformIndicatorCallsites(
     fileName = "indicator.ts",
     sourceFileId = fileName,
     sourceLocationForPosition,
+    mutableSeriesHistories = [],
   } = {},
 ) {
   const sourceFile = ts.createSourceFile(
@@ -2449,15 +2484,205 @@ export function transformIndicatorCallsites(
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   const rootBindings = sdkBindings(sourceFile);
   const callsiteByNode = new Map();
+  const persistentVarByDeclaration = new Map();
+  const persistentScopeByCall = new Map();
+  const mutableSeriesByDeclarationStart = new Map(
+    mutableSeriesHistories.map((entry) => [entry.declarationStart, entry]),
+  );
+  const mutableSeriesAccessToDeclarationStart = new Map();
+  for (const entry of mutableSeriesHistories) {
+    for (const accessStart of entry.accessStarts)
+      mutableSeriesAccessToDeclarationStart.set(
+        accessStart,
+        entry.declarationStart,
+      );
+  }
+  const mutableSeriesByDeclaration = new Map();
+  const mutableSeriesByAccess = new Map();
   const callsBySemanticKey = new Map();
   const callsById = new Map();
   const callsites = [];
   const plotDeclarations = [];
   const indicatorTimeframeCalls = [];
   const indicatorCandleTypeCalls = [];
+  const statefulHelperCache = new Map();
+
+  const helperUsesPersistentState = (helper, resolving = new Set()) => {
+    const cached = statefulHelperCache.get(helper);
+    if (cached !== undefined) return cached;
+    if (resolving.has(helper)) return false;
+    resolving.add(helper);
+    let stateful = false;
+    const visit = (node) => {
+      if (stateful) return;
+      if (node !== helper && ts.isFunctionLike(node)) return;
+      if (
+        ts.isVariableDeclarationList(node) &&
+        (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        ts.isVariableStatement(node.parent)
+      ) {
+        stateful = true;
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        mutableSeriesByDeclarationStart.has(node.getStart(sourceFile))
+      ) {
+        stateful = true;
+        return;
+      }
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const nested = localFunctionForReference(node.expression);
+        if (
+          nested !== undefined &&
+          helperUsesPersistentState(nested, resolving)
+        ) {
+          stateful = true;
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    for (const parameter of helper.parameters) {
+      if (parameter.initializer !== undefined) visit(parameter.initializer);
+    }
+    if (helper.body !== undefined) visit(helper.body);
+    resolving.delete(helper);
+    statefulHelperCache.set(helper, stateful);
+    return stateful;
+  };
 
   const collect = (node, bindings, namespaceLike) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      mutableSeriesByDeclarationStart.has(node.getStart(sourceFile))
+    ) {
+      if (!ts.isIdentifier(node.name))
+        throw syntaxError(
+          sourceFile,
+          node,
+          "scalar recurrence requires a simple variable name",
+        );
+      const parts = {
+        sourceFileId: sourceFileId.replaceAll("\\", "/"),
+        kind: "state",
+        callee: "scalar-series",
+        scope: semanticScope(node, sourceFile, printer),
+        anchor: `binding:${canonicalText(node.name, sourceFile, printer)}`,
+      };
+      const semanticKey = semanticCallsiteKey(parts);
+      const existingSemantic = callsBySemanticKey.get(semanticKey);
+      if (existingSemantic !== undefined)
+        throw syntaxError(
+          sourceFile,
+          node,
+          `ambiguous stable call-site identity for scalar recurrence; use a distinct semantic binding (first occurrence at ${existingSemantic.source.file}:${existingSemantic.source.line}:${existingSemantic.source.column})`,
+        );
+      const id = stableCallsiteId(parts);
+      const existingId = callsById.get(id);
+      if (existingId !== undefined && existingId.semanticKey !== semanticKey)
+        throw syntaxError(
+          sourceFile,
+          node,
+          "stable call-site identity collision for scalar recurrence; change the semantic binding and rebuild",
+        );
+      const metadata = {
+        id,
+        kind: "state",
+        callee: "scalar-series",
+        source: sourceLocation(node, sourceFile, sourceFileId),
+      };
+      mutableSeriesByDeclaration.set(node, metadata);
+      callsBySemanticKey.set(semanticKey, metadata);
+      callsById.set(id, { semanticKey, metadata });
+      callsites.push(metadata);
+    }
+    const mutableDeclarationStart = mutableSeriesAccessToDeclarationStart.get(
+      node.getStart(sourceFile),
+    );
+    if (mutableDeclarationStart !== undefined)
+      mutableSeriesByAccess.set(node, mutableDeclarationStart);
+    if (persistentVarDeclaration(node, rootBindings.named, sourceFile)) {
+      const parts = {
+        sourceFileId: sourceFileId.replaceAll("\\", "/"),
+        kind: "state",
+        callee: "persistent-var",
+        scope: semanticScope(node, sourceFile, printer),
+        anchor: `binding:${canonicalText(node.name, sourceFile, printer)}`,
+      };
+      const semanticKey = semanticCallsiteKey(parts);
+      const existingSemantic = callsBySemanticKey.get(semanticKey);
+      if (existingSemantic !== undefined) {
+        throw syntaxError(
+          sourceFile,
+          node,
+          `ambiguous stable call-site identity for persistent var; use a distinct semantic binding (first occurrence at ${existingSemantic.source.file}:${existingSemantic.source.line}:${existingSemantic.source.column})`,
+        );
+      }
+      const id = stableCallsiteId(parts);
+      const existingId = callsById.get(id);
+      if (existingId !== undefined && existingId.semanticKey !== semanticKey) {
+        throw syntaxError(
+          sourceFile,
+          node,
+          "stable call-site identity collision for persistent var; change the semantic binding and rebuild",
+        );
+      }
+      const metadata = {
+        id,
+        kind: "state",
+        callee: "persistent-var",
+        source: sourceLocation(node, sourceFile, sourceFileId),
+      };
+      persistentVarByDeclaration.set(node, metadata);
+      callsBySemanticKey.set(semanticKey, metadata);
+      callsById.set(id, { semanticKey, metadata });
+      callsites.push(metadata);
+    }
     if (ts.isCallExpression(node)) {
+      if (ts.isIdentifier(node.expression)) {
+        const helper = localFunctionForReference(node.expression);
+        if (helper !== undefined && helperUsesPersistentState(helper)) {
+          const parts = {
+            sourceFileId: sourceFileId.replaceAll("\\", "/"),
+            kind: "state",
+            callee: "persistent-scope",
+            scope: semanticScope(node, sourceFile, printer),
+            anchor: semanticAnchor(node, sourceFile, printer),
+          };
+          const semanticKey = semanticCallsiteKey(parts);
+          const existingSemantic = callsBySemanticKey.get(semanticKey);
+          if (existingSemantic !== undefined) {
+            throw syntaxError(
+              sourceFile,
+              node,
+              `ambiguous stable call-site identity for persistent helper invocation; use a distinct semantic binding (first occurrence at ${existingSemantic.source.file}:${existingSemantic.source.line}:${existingSemantic.source.column})`,
+            );
+          }
+          const id = stableCallsiteId(parts);
+          const existingId = callsById.get(id);
+          if (
+            existingId !== undefined &&
+            existingId.semanticKey !== semanticKey
+          ) {
+            throw syntaxError(
+              sourceFile,
+              node,
+              "stable call-site identity collision for persistent helper invocation; change the semantic binding and rebuild",
+            );
+          }
+          const metadata = {
+            id,
+            kind: "state",
+            callee: "persistent-scope",
+            source: sourceLocation(node, sourceFile, sourceFileId),
+          };
+          persistentScopeByCall.set(node, metadata);
+          callsBySemanticKey.set(semanticKey, metadata);
+          callsById.set(id, { semanticKey, metadata });
+          callsites.push(metadata);
+        }
+      }
       const namespacePath = propertyPath(node.expression);
       if (
         namespacePath !== undefined &&
@@ -2487,7 +2712,10 @@ export function transformIndicatorCallsites(
       )
         indicatorCandleTypeCalls.push(node);
       if (classified !== undefined) {
-        if (classified.kind === "input" && inputLoopAncestor(node) !== undefined)
+        if (
+          classified.kind === "input" &&
+          inputLoopAncestor(node) !== undefined
+        )
           throw syntaxError(
             sourceFile,
             node,
@@ -2566,16 +2794,24 @@ export function transformIndicatorCallsites(
   };
 
   collect(sourceFile, rootBindings.named, rootBindings.namespaceLike);
+  for (const [access, declarationStart] of mutableSeriesByAccess) {
+    const declaration = [...mutableSeriesByDeclaration.entries()].find(
+      ([candidate]) => candidate.getStart(sourceFile) === declarationStart,
+    );
+    if (declaration === undefined)
+      throw syntaxError(
+        sourceFile,
+        access,
+        "scalar recurrence history could not resolve its declaration identity",
+      );
+    mutableSeriesByAccess.set(access, declaration[1]);
+  }
   validateLoopInvokedInputHelpers(
     sourceFile,
     callsiteByNode,
     rootBindings.named,
   );
-  validateRecursiveInputHelpers(
-    sourceFile,
-    callsiteByNode,
-    rootBindings.named,
-  );
+  validateRecursiveInputHelpers(sourceFile, callsiteByNode, rootBindings.named);
   validateInputHelperExecutionCardinality(
     sourceFile,
     callsiteByNode,
@@ -2634,12 +2870,154 @@ export function transformIndicatorCallsites(
     };
 
   const prefix = uniqueTokenPrefix(sourceText);
+  const persistentVarName = `${prefix}persistentVar`;
+  const persistentScopeName = `${prefix}persistentScope`;
+  const scalarSeriesName = `${prefix}scalarSeries`;
+  const scalarHistoryName = `${prefix}scalarHistory`;
   const tokenNames = new Map(
     callsites.map((metadata, index) => [metadata, `${prefix}${index}`]),
   );
   const transformer = (context) => {
     const { factory } = context;
     const visit = (node) => {
+      if (ts.isVariableDeclaration(node)) {
+        const metadata = mutableSeriesByDeclaration.get(node);
+        if (metadata !== undefined && ts.isIdentifier(node.name)) {
+          const initializer =
+            node.initializer === undefined
+              ? factory.createIdentifier("undefined")
+              : ts.visitNode(node.initializer, visit);
+          const getter = factory.createArrowFunction(
+            undefined,
+            undefined,
+            [],
+            undefined,
+            factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+            factory.createIdentifier(node.name.text),
+          );
+          return factory.updateVariableDeclaration(
+            node,
+            node.name,
+            node.exclamationToken,
+            node.type,
+            factory.createCallExpression(
+              factory.createIdentifier(scalarSeriesName),
+              undefined,
+              [
+                initializer,
+                getter,
+                factory.createIdentifier(tokenNames.get(metadata)),
+              ],
+            ),
+          );
+        }
+      }
+      const scalarHistoryMetadata = mutableSeriesByAccess.get(node);
+      if (scalarHistoryMetadata !== undefined) {
+        if (
+          ts.isElementAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.argumentExpression !== undefined
+        ) {
+          return factory.createCallExpression(
+            factory.createIdentifier(scalarHistoryName),
+            undefined,
+            [
+              factory.createIdentifier(node.expression.text),
+              ts.visitNode(node.argumentExpression, visit),
+              factory.createIdentifier(tokenNames.get(scalarHistoryMetadata)),
+            ],
+          );
+        }
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.name.text === "at" &&
+          node.arguments.length === 1
+        ) {
+          const offset = node.arguments[0];
+          if (offset !== undefined)
+            return factory.createCallExpression(
+              factory.createIdentifier(scalarHistoryName),
+              undefined,
+              [
+                factory.createIdentifier(node.expression.expression.text),
+                ts.visitNode(offset, visit),
+                factory.createIdentifier(tokenNames.get(scalarHistoryMetadata)),
+              ],
+            );
+        }
+      }
+      if (
+        ts.isVariableDeclarationList(node) &&
+        (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        node.declarations.some((declaration) =>
+          persistentVarByDeclaration.has(declaration),
+        )
+      ) {
+        const declarations = node.declarations.map((declaration) => {
+          const metadata = persistentVarByDeclaration.get(declaration);
+          if (metadata === undefined || !ts.isIdentifier(declaration.name))
+            return ts.visitEachChild(declaration, visit, context);
+          const initializer =
+            declaration.initializer === undefined
+              ? factory.createIdentifier("undefined")
+              : ts.visitNode(declaration.initializer, visit);
+          const getter = factory.createArrowFunction(
+            undefined,
+            undefined,
+            [],
+            undefined,
+            factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+            factory.createIdentifier(declaration.name.text),
+          );
+          return factory.updateVariableDeclaration(
+            declaration,
+            declaration.name,
+            declaration.exclamationToken,
+            declaration.type,
+            factory.createCallExpression(
+              factory.createIdentifier(persistentVarName),
+              undefined,
+              [
+                initializer,
+                getter,
+                factory.createIdentifier(tokenNames.get(metadata)),
+              ],
+            ),
+          );
+        });
+        return factory.updateVariableDeclarationList(
+          node,
+          declarations,
+          ts.NodeFlags.Let,
+        );
+      }
+      const persistentScope = persistentScopeByCall.get(node);
+      if (persistentScope !== undefined && ts.isCallExpression(node)) {
+        const invocation = factory.updateCallExpression(
+          node,
+          ts.visitNode(node.expression, visit),
+          node.typeArguments,
+          node.arguments.map((argument) => ts.visitNode(argument, visit)),
+        );
+        return factory.createCallExpression(
+          factory.createIdentifier(persistentScopeName),
+          undefined,
+          [
+            factory.createIdentifier(tokenNames.get(persistentScope)),
+            factory.createArrowFunction(
+              undefined,
+              undefined,
+              [],
+              undefined,
+              factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+              invocation,
+            ),
+          ],
+        );
+      }
       const candleTypeInputKey = candleTypeInputKeyByCall.get(node);
       if (candleTypeInputKey !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);
@@ -2707,8 +3085,59 @@ export function transformIndicatorCallsites(
   const declarations = callsites.map((metadata) =>
     callsiteDeclaration(ts.factory, tokenNames.get(metadata), metadata),
   );
+  const persistentStateImport =
+    persistentVarByDeclaration.size === 0 &&
+    persistentScopeByCall.size === 0 &&
+    mutableSeriesByDeclaration.size === 0
+      ? []
+      : [
+          ts.factory.createImportDeclaration(
+            undefined,
+            ts.factory.createImportClause(
+              false,
+              undefined,
+              ts.factory.createNamedImports([
+                ...(persistentVarByDeclaration.size === 0
+                  ? []
+                  : [
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("persistentVar"),
+                        ts.factory.createIdentifier(persistentVarName),
+                      ),
+                    ]),
+                ...(persistentScopeByCall.size === 0
+                  ? []
+                  : [
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("withPersistentStateScope"),
+                        ts.factory.createIdentifier(persistentScopeName),
+                      ),
+                    ]),
+                ...(mutableSeriesByDeclaration.size === 0
+                  ? []
+                  : [
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("scalarSeries"),
+                        ts.factory.createIdentifier(scalarSeriesName),
+                      ),
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("scalarSeriesHistory"),
+                        ts.factory.createIdentifier(scalarHistoryName),
+                      ),
+                    ]),
+              ]),
+            ),
+            ts.factory.createStringLiteral(sdkPersistentStateModule),
+            undefined,
+          ),
+        ];
   const withMetadata = ts.factory.updateSourceFile(transformed, [
     ...statements.slice(0, insertionIndex),
+    ...persistentStateImport,
     ...declarations,
     ...statements.slice(insertionIndex),
   ]);

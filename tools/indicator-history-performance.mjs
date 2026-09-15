@@ -36,10 +36,14 @@ export default defineIndicator({
 });
 
 const doubled = close * 2;
+let recurrent = close;
+const previousRecurrent = recurrent[1];
+if (Number.isFinite(previousRecurrent)) recurrent += previousRecurrent;
 plot.line(close[1]);
 plot.line(close.at(1));
 plot.line(history(close, 1));
 plot.line(doubled[1]);
+plot.line(recurrent);
 `,
     "utf8",
   );

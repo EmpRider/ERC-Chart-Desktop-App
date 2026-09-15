@@ -190,6 +190,25 @@ function referencesRuntime(node, runtimeNames) {
   return found;
 }
 
+function containsPersistentVar(functionLike) {
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (node !== functionLike && ts.isFunctionLike(node)) return;
+    if (
+      ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      ts.isVariableStatement(node.parent)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(functionLike);
+  return found;
+}
+
 function dynamicPreludeHelpers(sourceFile, metadataIndex) {
   const functions = [];
   for (let index = 0; index < metadataIndex; index += 1) {
@@ -215,7 +234,11 @@ function dynamicPreludeHelpers(sourceFile, metadataIndex) {
       if (helper.name !== undefined) active.add(helper.name.text);
     }
     for (const helper of functions) {
-      if (dynamic.has(helper) || !referencesRuntime(helper, active)) continue;
+      if (
+        dynamic.has(helper) ||
+        (!containsPersistentVar(helper) && !referencesRuntime(helper, active))
+      )
+        continue;
       dynamic.add(helper);
       changed = true;
     }

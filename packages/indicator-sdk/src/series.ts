@@ -1,6 +1,7 @@
 import type { Candle } from "@erc-chart/contracts";
 import { authoringFrame, useKernel } from "./authoring-context.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
+import { isOpaqueStateValue } from "./internal/opaque-state.js";
 import { historyValue } from "./internal/series-history.js";
 
 export const maxSeriesCollectionItems = 4_096;
@@ -26,10 +27,12 @@ export function history(source: number | undefined, barsBack: number): number {
   return historyValue(source ?? Number.NaN, barsBack);
 }
 
-function cloneSeriesState<T>(value: T): T {
+/** @internal Shared by compiler-lowered persistent state. */
+export function cloneSeriesState<T>(value: T): T {
   const seen = new Map<object, unknown>();
   const clone = (current: unknown): unknown => {
     if (current === null || typeof current !== "object") return current;
+    if (isOpaqueStateValue(current)) return current;
     const existing = seen.get(current);
     if (existing !== undefined) return existing;
     if (Array.isArray(current)) {
@@ -86,7 +89,8 @@ function cloneSeriesState<T>(value: T): T {
   return clone(value) as T;
 }
 
-function assertBoundedSeriesCollections(value: unknown): void {
+/** @internal Shared by compiler-lowered persistent state. */
+export function assertBoundedSeriesCollections(value: unknown): void {
   if (value === null || typeof value !== "object") return;
   const pending: object[] = [value];
   const visited = new Set<object>();

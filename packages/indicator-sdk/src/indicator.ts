@@ -27,6 +27,7 @@ import type {
   SignalCandidate,
 } from "./internal/runtime-contracts.js";
 import { validateDrawingUsage } from "./internal/drawings.js";
+import { finalizePersistentState } from "./internal/persistent-state.js";
 import {
   commitSignalEvents,
   createSignalState,
@@ -338,6 +339,7 @@ export function defineIndicator(
         };
         try {
           run(frame, finalizedCount);
+          finalizePersistentState(frame);
           validateDrawingUsage(frame);
           if (
             frame.kernelIndex !== discovery.kernelIndex ||
