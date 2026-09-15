@@ -86,7 +86,10 @@ signal(trend > 0, "long");
 void period;
 `);
 
-  assert.match(result.code, /input\.int\(14, undefined, __ercCallsite_\d+\)/u);
+  assert.match(
+    result.code,
+    /input\.int\(14, undefined, undefined, __ercCallsite_\d+\)/u,
+  );
   assert.match(result.code, /ta\.ema\(14, undefined, __ercCallsite_\d+\)/u);
   assert.match(
     result.code,
@@ -95,6 +98,19 @@ void period;
   assert.match(
     result.code,
     /signal\(trend > 0, "long", undefined, __ercCallsite_\d+\)/u,
+  );
+});
+
+test("preserves titled input options before the compiler-only callsite slot", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const period = input.int(14, "Period", { min: 1, max: 500, group: "ATR Rope" });
+void period;
+`);
+
+  assert.match(
+    result.code,
+    /input\.int\(14, "Period", \{[\s\S]*?min: 1[\s\S]*?max: 500[\s\S]*?group: "ATR Rope"[\s\S]*?\}, __ercCallsite_\d+\)/u,
   );
 });
 

@@ -52,8 +52,8 @@ export default defineIndicator({
   name: "Top-level authoring",
 });
 
-const length = input.int(2, "Length");
-const source = input.source(close, "Source");
+const length = input.int(2, "Length", { min: 1, max: 10, group: "Core" });
+const source = input.source(close, "Source", { group: "Core" });
 const fast = ta.ema(source, length);
 const priorClose = close[1];
 const priorFast = fast[1];
@@ -69,14 +69,31 @@ plot.line(bar.confirmed ? 1 : 0, { title: "Bar confirmed" });
 `);
 
   assert.deepEqual(
-    plugin.definition.inputs.map(({ label, type, defaultValue }) => ({
-      label,
-      type,
-      defaultValue,
-    })),
+    plugin.definition.inputs.map(
+      ({ label, type, defaultValue, min, max, group }) => ({
+        label,
+        type,
+        defaultValue,
+        ...(min === undefined ? {} : { min }),
+        ...(max === undefined ? {} : { max }),
+        ...(group === undefined ? {} : { group }),
+      }),
+    ),
     [
-      { label: "Length", type: "number", defaultValue: 2 },
-      { label: "Source", type: "source", defaultValue: "close" },
+      {
+        label: "Length",
+        type: "number",
+        defaultValue: 2,
+        min: 1,
+        max: 10,
+        group: "Core",
+      },
+      {
+        label: "Source",
+        type: "source",
+        defaultValue: "close",
+        group: "Core",
+      },
     ],
   );
 

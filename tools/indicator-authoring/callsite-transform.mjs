@@ -1833,7 +1833,7 @@ function classifyCall(node, bindings) {
   if (imported === undefined) return undefined;
   const method = node.expression.name.text;
   if (imported === "input")
-    return { kind: "input", callee: `input.${method}`, authorArity: 2 };
+    return { kind: "input", callee: `input.${method}`, authorArity: 3 };
   if (imported === "ta")
     return statefulTaMethods.has(method)
       ? {

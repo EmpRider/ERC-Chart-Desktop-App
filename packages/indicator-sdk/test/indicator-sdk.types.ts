@@ -31,10 +31,22 @@ export const authored = defineIndicator(
   { id: "fixture.authored", name: "Authored" },
   ({ close, volume }) => {
     const length: number = input.int(14, "Length");
+    const boundedLength: number = input.int(14, "Bounded length", {
+      min: 1,
+      max: 500,
+      group: "Core",
+    });
     const multiplier: number = input.float(1.5, "Multiplier");
+    const groupedMultiplier: number = input.float(1.5, "Grouped multiplier", {
+      min: 0,
+      group: "Core",
+    });
     const enabled: boolean = input.bool(true, "Enabled");
     const lineColor: string = input.color("#00ff00", "Color");
     const selectedSource: number = input.source(close, "Source");
+    const groupedSource: number = input.source(close, "Grouped source", {
+      group: "Core",
+    });
     const selectedTimeframe: string = input.timeframe(
       timeframe.chart,
       "Timeframe",
@@ -60,6 +72,8 @@ export const authored = defineIndicator(
     plot.line(
       value +
         selectedSource * multiplier +
+        groupedSource * groupedMultiplier +
+        boundedLength +
         (enabled ? 1 : 0) +
         atr +
         previousByAt +

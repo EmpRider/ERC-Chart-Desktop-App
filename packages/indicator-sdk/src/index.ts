@@ -246,38 +246,54 @@ type StringOptionValue<T> = T extends string
 export interface InputApi {
   readonly float: (
     defaultValue: number,
-    options?: string | NumberInputOptions,
+    titleOrOptions?: string | NumberInputOptions,
+    options?: NumberInputOptions,
   ) => number;
   readonly int: (
     defaultValue: number,
-    options?: string | NumberInputOptions,
+    titleOrOptions?: string | NumberInputOptions,
+    options?: NumberInputOptions,
   ) => number;
   readonly bool: (
     defaultValue: boolean,
-    options?: string | InputOptions,
+    titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => boolean;
   readonly string: {
     <const O extends readonly (string | IndicatorInputOption)[]>(
       defaultValue: StringOptionValue<O[number]>,
       options: StringInputOptions & { readonly options: O },
     ): StringOptionValue<O[number]>;
-    (defaultValue: string, options?: string | StringInputOptions): string;
+    <const O extends readonly (string | IndicatorInputOption)[]>(
+      defaultValue: StringOptionValue<O[number]>,
+      title: string,
+      options: StringInputOptions & { readonly options: O },
+    ): StringOptionValue<O[number]>;
+    (
+      defaultValue: string,
+      titleOrOptions?: string | StringInputOptions,
+      options?: StringInputOptions,
+    ): string;
   };
   readonly color: (
     defaultValue: string,
-    options?: string | InputOptions,
+    titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => string;
   readonly source: (
     defaultValue: import("./series.js").PriceSource | number,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => number;
   readonly timeframe: (
     defaultValue: string,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => string;
   readonly candleType: (
     defaultValue: import("./constants.js").CandleTypeSelection,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => import("./constants.js").CandleTypeSelection;
 }
 export const input: InputApi = runtimeInput as InputApi;
