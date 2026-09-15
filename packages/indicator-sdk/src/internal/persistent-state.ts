@@ -9,7 +9,8 @@ import { readCompilerCallsite } from "./callsite.js";
 import type { CompilerCallsite } from "./callsite.js";
 
 interface PersistentStateSlot<T> {
-  committed: T;
+  initialized: boolean;
+  committed: T | undefined;
 }
 
 interface PendingPersistentState<T> {
@@ -83,15 +84,18 @@ export function persistentVar<T>(
   const runtimeIdentity = scopedRuntimeIdentity(frame, callsite);
   const state = useKernel<PersistentStateSlot<T>>(
     "persistent-var",
-    () => {
-      const initial = initialize();
-      assertBoundedSeriesCollections(initial);
-      return { committed: cloneSeriesState(initial) };
-    },
+    () => ({ initialized: false, committed: undefined }),
     callsite,
     runtimeIdentity,
   );
-  const value = cloneSeriesState(state.committed);
+  let value: T;
+  if (state.initialized) {
+    value = cloneSeriesState(state.committed as T);
+  } else {
+    const initial = initialize();
+    assertBoundedSeriesCollections(initial);
+    value = cloneSeriesState(initial);
+  }
   let pending = pendingPersistentState.get(frame);
   if (pending === undefined) {
     pending = [];
@@ -200,6 +204,7 @@ export function finalizePersistentState(frame: AuthoringFrame): void {
       assertBoundedSeriesCollections(value);
       if (frame.phase === "finalized") {
         entry.state.committed = cloneSeriesState(value);
+        entry.state.initialized = true;
       }
     }
   }

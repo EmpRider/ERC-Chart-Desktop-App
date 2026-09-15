@@ -258,6 +258,51 @@ plot.line(state.firstClose, { title: "First close" });
   }
 });
 
+test("persistent var first-use initialization rolls back with an abandoned building path", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function firstSeenClose() {
+  var state = { firstClose: close };
+  return state.firstClose;
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.provisional-initialization",
+  name: "Provisional persistent initialization",
+});
+
+const value = close > 0 ? firstSeenClose() : -1;
+plot.line(value, { title: "Value" });
+`);
+
+  const valueKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Value",
+  )?.outputKey;
+  assert.ok(valueKey);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, -1), candle(1, -1)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[valueKey]),
+      [-1, -1],
+    );
+
+    instance.onBuildingBar(candle(1, 100));
+    assert.equal(instance.snapshot().points.at(-1).values[valueKey], 100);
+
+    instance.onBuildingBar(candle(1, -1));
+    assert.equal(instance.snapshot().points.at(-1).values[valueKey], -1);
+    instance.onFinalizedBar(candle(1, -1));
+
+    instance.onBuildingBar(candle(2, 5));
+    assert.equal(instance.snapshot().points.at(-1).values[valueKey], 5);
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("persistent var state inside a helper is independent at each authored call site", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
