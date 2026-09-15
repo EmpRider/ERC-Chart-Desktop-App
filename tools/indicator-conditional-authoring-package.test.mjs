@@ -293,34 +293,40 @@ export default defineIndicator(
 
 test("conditional drawing handles preserve committed geometry while omitted and update on return", async () => {
   const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+    `import { defineIndicator, plot, type BoxHandle } from "@erc-chart/indicator-sdk";
 
-function optionalDrawing(value, openTimeMs) {
-  plot.box({
+function optionalDrawing(value: number, openTimeMs: number) {
+  var handle: BoxHandle | undefined = undefined;
+  const drawing = {
     left: openTimeMs,
     right: openTimeMs + 60_000,
     top: value,
     bottom: value - 1,
     color: "#008800",
-  });
+  };
+  if (handle === undefined) handle = plot.box(drawing);
+  else handle.set(drawing);
 }
-function alwaysDrawing(value, openTimeMs) {
-  plot.box({
+function alwaysDrawing(value: number, openTimeMs: number) {
+  var handle: BoxHandle | undefined = undefined;
+  const drawing = {
     left: openTimeMs,
     right: openTimeMs + 60_000,
     top: value * 10,
     bottom: value * 10 - 1,
     color: "#880000",
-  });
+  };
+  if (handle === undefined) handle = plot.box(drawing);
+  else handle.set(drawing);
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.conditional-drawings.main", name: "Conditional drawings" },
-  ({ close, openTimeMs }) => {
-    if (close < 15) optionalDrawing(close, openTimeMs);
-    alwaysDrawing(close, openTimeMs);
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.conditional-drawings.main",
+  name: "Conditional drawings",
+});
+
+if (close < 15) optionalDrawing(close, bar.time);
+alwaysDrawing(close, bar.time);
 `,
     "erc.indicator.conditional-drawings",
   );

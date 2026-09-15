@@ -247,7 +247,7 @@ test("uncompiled drawing callsite switches fail closed", () => {
   instance.dispose();
 });
 
-test("recreated drawings refresh registry retention order", () => {
+test("recreated drawings get fresh identity and refresh registry retention order", () => {
   let firstHandle;
   let recreatedHandle;
   const plugin = defineIndicator(
@@ -292,15 +292,20 @@ test("recreated drawings refresh registry retention order", () => {
   );
 
   instance.onFinalizedBar(candle(2, 22));
+  const recreatedId = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.startTimeMs === 120_000)?.id;
+  assert.equal(typeof recreatedId, "string");
+  assert.notEqual(recreatedId, firstId);
   assert.equal(
-    instance.snapshot().overlays.some((overlay) => overlay.id === firstId),
+    instance.snapshot().overlays.some((overlay) => overlay.id === recreatedId),
     true,
   );
 
   instance.onFinalizedBar(candle(3, 23));
   assert.equal(instance.snapshot().overlays.length, 2_000);
   assert.equal(
-    instance.snapshot().overlays.some((overlay) => overlay.id === firstId),
+    instance.snapshot().overlays.some((overlay) => overlay.id === recreatedId),
     true,
   );
   assert.equal(
@@ -310,7 +315,8 @@ test("recreated drawings refresh registry retention order", () => {
 
   assert.doesNotThrow(() => instance.onFinalizedBar(candle(4, 24)));
   assert.equal(
-    instance.snapshot().overlays.find((overlay) => overlay.id === firstId)?.top,
+    instance.snapshot().overlays.find((overlay) => overlay.id === recreatedId)
+      ?.top,
     777,
   );
   instance.dispose();

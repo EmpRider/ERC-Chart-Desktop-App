@@ -68,6 +68,93 @@ function normalizeMutableSeriesTypecheck(sourceText, mutableSeriesHistories) {
   return { code, originalPositionForPosition };
 }
 
+function typeIncludesUndefined(node) {
+  if (node.kind === ts.SyntaxKind.UndefinedKeyword) return true;
+  if (ts.isUnionTypeNode(node))
+    return node.types.some((member) => typeIncludesUndefined(member));
+  if (ts.isParenthesizedTypeNode(node)) return typeIncludesUndefined(node.type);
+  return false;
+}
+
+function normalizePersistentVarTypecheck(sourceText, fileName) {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(fileName),
+  );
+  let indicatorCallback;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportAssignment(statement) || statement.isExportEquals) continue;
+    const expression = statement.expression;
+    if (!ts.isCallExpression(expression)) continue;
+    const callback = expression.arguments[1];
+    if (
+      callback !== undefined &&
+      (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+    ) {
+      indicatorCallback = callback;
+      break;
+    }
+  }
+  if (indicatorCallback === undefined)
+    return {
+      code: sourceText,
+      originalPositionForPosition: (position) => position,
+    };
+
+  const insertions = [];
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      ts.isVariableStatement(node.parent.parent) &&
+      node.type !== undefined &&
+      typeIncludesUndefined(node.type) &&
+      node.initializer !== undefined &&
+      ts.isIdentifier(node.initializer) &&
+      node.initializer.text === "undefined"
+    ) {
+      insertions.push({
+        position: node.initializer.end,
+        text: ` as ${sourceText.slice(node.type.getStart(sourceFile), node.type.end)}`,
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(indicatorCallback);
+  if (insertions.length === 0)
+    return {
+      code: sourceText,
+      originalPositionForPosition: (position) => position,
+    };
+
+  insertions.sort((left, right) => left.position - right.position);
+  let cursor = 0;
+  let code = "";
+  for (const insertion of insertions) {
+    code += sourceText.slice(cursor, insertion.position);
+    code += insertion.text;
+    cursor = insertion.position;
+  }
+  code += sourceText.slice(cursor);
+
+  const originalPositionForPosition = (position) => {
+    let added = 0;
+    for (const insertion of insertions) {
+      const generatedStart = insertion.position + added;
+      const generatedEnd = generatedStart + insertion.text.length;
+      if (position < generatedStart) break;
+      if (position < generatedEnd) return insertion.position;
+      added += insertion.text.length;
+    }
+    return position - added;
+  };
+  return { code, originalPositionForPosition };
+}
+
 export function validateIndicatorAuthoringTypes(
   sourceText,
   { fileName = "indicator.ts" } = {},
@@ -86,7 +173,11 @@ export function validateIndicatorAuthoringTypes(
     typecheckHistoryResult.code,
     typecheckHistoryResult.mutableSeriesHistories,
   );
-  const typecheckSource = normalizedTypecheck.code;
+  const persistentTypecheck = normalizePersistentVarTypecheck(
+    normalizedTypecheck.code,
+    fileName,
+  );
+  const typecheckSource = persistentTypecheck.code;
   const sourcePath = path.resolve(fileName);
   const options = {
     strict: true,
@@ -148,7 +239,9 @@ export function validateIndicatorAuthoringTypes(
     throw new TypeError(
       authoringTypeDiagnosticMessage(diagnostic, sourceFile, (position) =>
         scriptResult.sourceLocationForPosition(
-          normalizedTypecheck.originalPositionForPosition(position),
+          normalizedTypecheck.originalPositionForPosition(
+            persistentTypecheck.originalPositionForPosition(position),
+          ),
         ),
       ),
     );

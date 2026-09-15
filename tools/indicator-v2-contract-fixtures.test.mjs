@@ -189,20 +189,24 @@ test("composed v2 contract survives replay, provisional rollback, and finalizati
   series,
   signal,
   ta,
+  type BoxHandle,
 } from "@erc-chart/indicator-sdk";
 
-function optionalBranch(value, openTimeMs) {
+function optionalBranch(value: number, openTimeMs: number) {
   const executions = series(0, (previous) => previous + 1);
   const average = ta.ema(value, 2);
+  var box: BoxHandle | undefined = undefined;
   plot.line(executions, { title: "Optional state" });
   plot.line(average, { title: "Optional average" });
-  plot.box({
+  const drawing = {
     left: openTimeMs,
     right: openTimeMs + 60_000,
     top: value,
     bottom: value - 1,
     color: "#008800",
-  });
+  };
+  if (box === undefined) box = plot.box(drawing);
+  else box.set(drawing);
   signal(true, "long");
 }
 
@@ -211,16 +215,16 @@ function alwaysBranch() {
   plot.line(executions, { title: "Always state" });
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.v2-contract.main", name: "SDK v2 contract fixture" },
-  ({ close, openTimeMs }) => {
-    if (close > 15) optionalBranch(close, openTimeMs);
-    alwaysBranch();
-    plot.line(close[1], { title: "Indexed history" });
-    plot.line(close.at(1), { title: "At history" });
-    plot.line(history(close, 1), { title: "Function history" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.v2-contract.main",
+  name: "SDK v2 contract fixture",
+});
+
+if (close > 15) optionalBranch(close, bar.time);
+alwaysBranch();
+plot.line(close[1], { title: "Indexed history" });
+plot.line(close.at(1), { title: "At history" });
+plot.line(history(close, 1), { title: "Function history" });
 `,
     "erc.indicator.v2-contract",
   );

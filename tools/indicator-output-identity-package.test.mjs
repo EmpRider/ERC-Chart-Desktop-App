@@ -171,20 +171,20 @@ export default defineIndicator(
 
 test("drawing identity survives reordering", async () => {
   const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-function fast(value, openTimeMs) {
-  plot.box({ left: openTimeMs, right: openTimeMs + 60_000, top: value, bottom: value - 1, color: "#008800" });
-}
-function slow(value, openTimeMs) {
-  plot.box({ left: openTimeMs, right: openTimeMs + 60_000, top: value * 10, bottom: value * 10 - 1, color: "#880000" });
-}
-export default defineIndicator(
-  { id: "erc.indicator.drawing-identity.main", name: "Drawing identity" },
-  ({ close, openTimeMs }) => {
-    if (close > 15) { slow(close, openTimeMs); fast(close, openTimeMs); }
-    else { fast(close, openTimeMs); slow(close, openTimeMs); }
-  },
-);
+    `import { defineIndicator, plot, type BoxHandle } from "@erc-chart/indicator-sdk";
+export default defineIndicator({
+  id: "erc.indicator.drawing-identity.main",
+  name: "Drawing identity",
+});
+
+var fast: BoxHandle | undefined = undefined;
+var slow: BoxHandle | undefined = undefined;
+const fastDrawing = { left: bar.time, right: bar.time + 60_000, top: close, bottom: close - 1, color: "#008800" };
+const slowDrawing = { left: bar.time, right: bar.time + 60_000, top: close * 10, bottom: close * 10 - 1, color: "#880000" };
+if (fast === undefined) fast = plot.box(fastDrawing);
+if (slow === undefined) slow = plot.box(slowDrawing);
+if (close > 15) { slow.set(slowDrawing); fast.set(fastDrawing); }
+else { fast.set(fastDrawing); slow.set(slowDrawing); }
 `,
     "erc.indicator.drawing-identity",
   );
