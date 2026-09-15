@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { defineIndicator, plot } from "../dist/index.js";
+import { cloneSeriesState } from "../dist/series.js";
 
 const context = { instrumentId: "TEST", timeframeId: "1m" };
 const candle = (index, close = 20 + index) => ({
@@ -77,6 +78,61 @@ const evictionBoxCallsite = (index) =>
 const evictionBoxCallsites = Array.from({ length: 2_001 }, (_, index) =>
   evictionBoxCallsite(index),
 );
+
+test("persistent state cloning preserves opaque drawing handle identity", () => {
+  let handle;
+  defineIndicator(
+    { id: "erc.indicator.handle-state-clone.main", name: "Handle state clone" },
+    (bar) => {
+      handle = plot.box(
+        {
+          left: bar.openTimeMs,
+          right: bar.openTimeMs + 60_000,
+          top: bar.close,
+          bottom: bar.close - 1,
+          color: "#008800",
+        },
+        boxCallsite,
+      );
+    },
+  );
+
+  assert.ok(handle);
+  const state = { handles: [handle] };
+  const cloned = cloneSeriesState(state);
+  assert.notStrictEqual(cloned, state);
+  assert.notStrictEqual(cloned.handles, state.handles);
+  assert.strictEqual(cloned.handles[0], handle);
+});
+
+test("compiler-stable drawing identities reuse one opaque public handle", () => {
+  const handles = [];
+  const plugin = defineIndicator(
+    { id: "erc.indicator.handle-identity.main", name: "Handle identity" },
+    (bar) => {
+      handles.push(
+        plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: bar.close,
+            bottom: bar.close - 1,
+            color: "#008800",
+          },
+          boxCallsite,
+        ),
+      );
+    },
+  );
+  handles.length = 0;
+
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0), candle(1)]);
+
+  assert.equal(handles.length, 2);
+  assert.strictEqual(handles[1], handles[0]);
+  instance.dispose();
+});
 
 test("finalized drawing handles persist until updated or deleted", () => {
   let box;

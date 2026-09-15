@@ -8,7 +8,11 @@ import {
   type TextSize,
 } from "./constants.js";
 import { readCompilerCallsite } from "./internal/callsite.js";
-import { drawingController } from "./internal/drawings.js";
+import {
+  drawingController,
+  type DrawingController,
+} from "./internal/drawings.js";
+import { markOpaqueStateValue } from "./internal/opaque-state.js";
 import type {
   IndicatorBox,
   IndicatorLineSegment,
@@ -57,6 +61,9 @@ export interface DrawingHandle<T> {
 
 export type BoxHandle = DrawingHandle<BoxDrawing>;
 export type SegmentHandle = DrawingHandle<SegmentDrawing>;
+
+const boxHandles = new WeakMap<DrawingController, BoxHandle>();
+const segmentHandles = new WeakMap<DrawingController, SegmentHandle>();
 
 type ValuePlotCallee =
   "plot.line" | "plot.hline" | "plot.histogram" | "plot.shape";
@@ -509,29 +516,35 @@ function box(value: BoxDrawing, hiddenCallsite?: unknown): BoxHandle {
   assertDrawingNumber("Drawing bottom", value.bottom);
   const controller = drawingController("box", "plot.box", callsite);
   controller.write(boxOverlay(controller.id, value));
-  return Object.freeze({
-    set(patch: Partial<BoxDrawing>): void {
-      controller.update((current) => {
-        if (current.kind !== "box")
-          throw new Error("Drawing handle kind changed unexpectedly.");
-        const borderColor = Object.hasOwn(patch, "borderColor")
-          ? patch.borderColor
-          : current.borderColor;
-        const next: BoxDrawing = {
-          left: patch.left ?? current.startTimeMs,
-          right: patch.right ?? current.endTimeMs,
-          top: patch.top ?? current.top,
-          bottom: patch.bottom ?? current.bottom,
-          color: patch.color ?? current.color,
-          ...(borderColor === undefined ? {} : { borderColor }),
-        };
-        return boxOverlay(controller.id, next);
-      });
-    },
-    delete(): void {
-      controller.delete();
-    },
-  });
+  const existing = boxHandles.get(controller);
+  if (existing !== undefined) return existing;
+  const handle = markOpaqueStateValue(
+    Object.freeze({
+      set(patch: Partial<BoxDrawing>): void {
+        controller.update((current) => {
+          if (current.kind !== "box")
+            throw new Error("Drawing handle kind changed unexpectedly.");
+          const borderColor = Object.hasOwn(patch, "borderColor")
+            ? patch.borderColor
+            : current.borderColor;
+          const next: BoxDrawing = {
+            left: patch.left ?? current.startTimeMs,
+            right: patch.right ?? current.endTimeMs,
+            top: patch.top ?? current.top,
+            bottom: patch.bottom ?? current.bottom,
+            color: patch.color ?? current.color,
+            ...(borderColor === undefined ? {} : { borderColor }),
+          };
+          return boxOverlay(controller.id, next);
+        });
+      },
+      delete(): void {
+        controller.delete();
+      },
+    }),
+  );
+  boxHandles.set(controller, handle);
+  return handle;
 }
 
 function segment(
@@ -554,26 +567,32 @@ function segment(
     callsite,
   );
   controller.write(segmentOverlay(controller.id, value));
-  return Object.freeze({
-    set(patch: Partial<SegmentDrawing>): void {
-      controller.update((current) => {
-        if (current.kind !== "line-segment")
-          throw new Error("Drawing handle kind changed unexpectedly.");
-        return segmentOverlay(controller.id, {
-          left: patch.left ?? current.startTimeMs,
-          right: patch.right ?? current.endTimeMs,
-          startValue: patch.startValue ?? current.startValue,
-          endValue: patch.endValue ?? current.endValue,
-          color: patch.color ?? current.color,
-          width: patch.width ?? current.width,
-          style: patch.style ?? current.style,
+  const existing = segmentHandles.get(controller);
+  if (existing !== undefined) return existing;
+  const handle = markOpaqueStateValue(
+    Object.freeze({
+      set(patch: Partial<SegmentDrawing>): void {
+        controller.update((current) => {
+          if (current.kind !== "line-segment")
+            throw new Error("Drawing handle kind changed unexpectedly.");
+          return segmentOverlay(controller.id, {
+            left: patch.left ?? current.startTimeMs,
+            right: patch.right ?? current.endTimeMs,
+            startValue: patch.startValue ?? current.startValue,
+            endValue: patch.endValue ?? current.endValue,
+            color: patch.color ?? current.color,
+            width: patch.width ?? current.width,
+            style: patch.style ?? current.style,
+          });
         });
-      });
-    },
-    delete(): void {
-      controller.delete();
-    },
-  });
+      },
+      delete(): void {
+        controller.delete();
+      },
+    }),
+  );
+  segmentHandles.set(controller, handle);
+  return handle;
 }
 
 export interface ShapePlot {

@@ -123,19 +123,21 @@ export function useKernel<T>(
   signature: string,
   create: () => T,
   callsite?: CompilerCallsite,
+  runtimeIdentity?: string,
 ): T {
   const frame = authoringFrame();
   const usage = kernelUsage(frame);
   const store = identityKernelStore(frame.kernels);
 
   if (callsite !== undefined) {
-    if (usage.identities.has(callsite.id))
+    const identity = runtimeIdentity ?? callsite.id;
+    if (usage.identities.has(identity))
       throw new Error(
         `Compiler call-site identity ${callsite.id} for ${callsite.callee} executed more than once in one bar.`,
       );
-    const existing = store.get(callsite.id);
+    const existing = store.get(identity);
     if (existing !== undefined) {
-      usage.identities.add(callsite.id);
+      usage.identities.add(identity);
       if (existing.signature !== signature)
         throw new Error(
           `Runtime state for ${callsite.callee} at compiler call-site ${callsite.id} changed shape; change inputs to rebuild.`,
@@ -145,8 +147,8 @@ export function useKernel<T>(
     if (frame.kernels.length + store.size >= 256)
       throw new RangeError("An indicator may use at most 256 TA calls.");
     const value = create();
-    usage.identities.add(callsite.id);
-    store.set(callsite.id, { signature, value });
+    usage.identities.add(identity);
+    store.set(identity, { signature, value });
     return value;
   }
 

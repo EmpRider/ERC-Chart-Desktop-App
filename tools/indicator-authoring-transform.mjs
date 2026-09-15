@@ -11,6 +11,11 @@ import {
 import { transformIndicatorHistory } from "./indicator-authoring/history-transform.mjs";
 import { transformIndicatorScript } from "./indicator-authoring/script-transform.mjs";
 
+const persistentStateRuntimePath = path.resolve(
+  import.meta.dirname,
+  "../packages/indicator-sdk/dist/internal/persistent-state.js",
+);
+
 function stableSourceFileId(root, fileName) {
   return path.relative(root, fileName).replaceAll(path.sep, "/");
 }
@@ -28,6 +33,41 @@ function authoringTypeDiagnosticMessage(
   return `${sourceFile.fileName}:${location.line + 1}:${location.character + 1} ${message}`;
 }
 
+function normalizeMutableSeriesTypecheck(sourceText, mutableSeriesHistories) {
+  const annotation = ": number";
+  const insertions = mutableSeriesHistories
+    .filter((entry) => entry.hasType !== true)
+    .map((entry) => entry.nameEnd)
+    .sort((left, right) => left - right);
+  if (insertions.length === 0)
+    return {
+      code: sourceText,
+      originalPositionForPosition: (position) => position,
+    };
+
+  let cursor = 0;
+  let code = "";
+  for (const position of insertions) {
+    code += sourceText.slice(cursor, position);
+    code += annotation;
+    cursor = position;
+  }
+  code += sourceText.slice(cursor);
+
+  const originalPositionForPosition = (position) => {
+    let added = 0;
+    for (const insertion of insertions) {
+      const generatedStart = insertion + added;
+      const generatedEnd = generatedStart + annotation.length;
+      if (position < generatedStart) break;
+      if (position < generatedEnd) return insertion;
+      added += annotation.length;
+    }
+    return position - added;
+  };
+  return { code, originalPositionForPosition };
+}
+
 export function validateIndicatorAuthoringTypes(
   sourceText,
   { fileName = "indicator.ts" } = {},
@@ -42,7 +82,11 @@ export function validateIndicatorAuthoringTypes(
       typecheckMask: true,
     },
   );
-  const typecheckSource = typecheckHistoryResult.code;
+  const normalizedTypecheck = normalizeMutableSeriesTypecheck(
+    typecheckHistoryResult.code,
+    typecheckHistoryResult.mutableSeriesHistories,
+  );
+  const typecheckSource = normalizedTypecheck.code;
   const sourcePath = path.resolve(fileName);
   const options = {
     strict: true,
@@ -102,10 +146,10 @@ export function validateIndicatorAuthoringTypes(
     );
   if (diagnostic !== undefined)
     throw new TypeError(
-      authoringTypeDiagnosticMessage(
-        diagnostic,
-        sourceFile,
-        scriptResult.sourceLocationForPosition,
+      authoringTypeDiagnosticMessage(diagnostic, sourceFile, (position) =>
+        scriptResult.sourceLocationForPosition(
+          normalizedTypecheck.originalPositionForPosition(position),
+        ),
       ),
     );
 }
@@ -115,14 +159,18 @@ export function transformIndicatorAuthoring(
   { fileName = "indicator.ts", sourceFileId = fileName } = {},
 ) {
   const scriptResult = transformIndicatorScript(sourceText, { fileName });
-  if (scriptResult.changed)
-    transformIndicatorHistory(scriptResult.code, fileName, {
+  const historyAnalysis = transformIndicatorHistory(
+    scriptResult.code,
+    fileName,
+    {
       sourceLocationForPosition: scriptResult.sourceLocationForPosition,
-    });
+    },
+  );
   const callsiteResult = transformIndicatorCallsites(scriptResult.code, {
     fileName,
     sourceFileId,
     sourceLocationForPosition: scriptResult.sourceLocationForPosition,
+    mutableSeriesHistories: historyAnalysis.mutableSeriesHistories,
   });
   const historyResult = transformIndicatorHistory(
     callsiteResult.code,
@@ -153,6 +201,10 @@ export function indicatorAuthoringTransformPlugin({
   return {
     name: "indicator-authoring-transform",
     setup(build) {
+      build.onResolve(
+        { filter: /^erc-chart:indicator-persistent-state$/ },
+        () => ({ path: persistentStateRuntimePath }),
+      );
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
         if (!isWithinRoot(root, args.path)) return undefined;
         if (isDependencyPath(args.path)) return undefined;

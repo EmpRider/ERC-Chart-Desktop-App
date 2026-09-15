@@ -140,6 +140,18 @@ stable-drawing/100,000-bar gate in about 28.78 seconds. The authored transform
 overhead measured about 5.80 ms against its 100 ms budget and package generation
 about 111.05 ms against its 5,000 ms budget.
 
+ECDD-237 extends the `indicator-history` gate with one compiler-managed
+persistent object containing an opaque `plot.box()` handle. This exercises both
+persistent-state reads and finalized commits through `cloneSeriesState()` while
+retaining the SDK-owned handle by identity. Review-fix validation on Windows /
+Node 26.8.1 measured the following against the existing worker budgets:
+
+| ECDD-237 opaque persistent-state workload | Observed time | CI budget |
+| ----------------------------------------- | ------------: | --------: |
+| 100,000-bar history replay                |     769.25 ms |      60 s |
+| Slowest of 1,000 building updates         |       0.05 ms |    100 ms |
+| Finalized update                          |       0.01 ms |    100 ms |
+
 This is a real multi-chart authored **runtime/orchestration** acceptance gate and
 is suitable for CI/release regression detection. It is deliberately not a claim
 about renderer FPS, pixel-paint latency, provider/network latency or end-to-end

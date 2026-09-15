@@ -133,6 +133,37 @@ plot.line(readSource(), { title: "Source" });
   );
 });
 
+test("does not wrap module-scope calls to helpers that use native var state", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function bootstrapCounter() {
+  var calls = 0;
+  calls += 1;
+  return calls;
+}
+const initial = bootstrapCounter();
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  () => {
+    plot.line(initial);
+  },
+);
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/module-scope-helper.ts",
+    sourceFileId: "src/module-scope-helper.ts",
+  });
+
+  assert.match(result.code, /const initial = bootstrapCounter\(\);/u);
+  assert.equal(
+    result.callsites.filter((value) => value.callee === "persistent-scope")
+      .length,
+    0,
+  );
+});
+
 test("preserves authored source columns for same-line top-level script calls", async () => {
   const module = await loadTransform();
   const source = `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" }); const source = input.source(close, "Source"); plot.line(source);`;
@@ -190,6 +221,46 @@ plot.line(bar.index + bar.time + (bar.confirmed ? 1 : 0));
         "_virtual-top-level-authoring.ts",
       ),
     }),
+  );
+});
+
+test("type-checks inferred mutable scalar recurrence as ordinary numeric state", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+let total = close;
+const previous = total[1];
+if (Number.isFinite(previous)) total += previous;
+plot.line(total);
+`;
+
+  assert.doesNotThrow(() =>
+    module.validateIndicatorAuthoringTypes(source, {
+      fileName: path.join(import.meta.dirname, "_virtual-scalar-recurrence.ts"),
+    }),
+  );
+});
+
+test("mutable recurrence normalization keeps unrelated type diagnostics", async () => {
+  const module = await loadTransform();
+  const source = `import { defineIndicator } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" });\nlet total = close;\nconst previous = total[1];\nif (Number.isFinite(previous)) total += previous;\nconst invalid: string = total;`;
+  const offset = source.indexOf("invalid");
+  const previousLineBreak = source.lastIndexOf("\n", offset);
+  const authoredColumn = offset - previousLineBreak;
+
+  assert.throws(
+    () =>
+      module.validateIndicatorAuthoringTypes(source, {
+        fileName: path.join(
+          import.meta.dirname,
+          "_virtual-scalar-recurrence-type-error.ts",
+        ),
+      }),
+    new RegExp(
+      `_virtual-scalar-recurrence-type-error\\.ts:6:${authoredColumn} Type 'number' is not assignable to type 'string'`,
+      "u",
+    ),
   );
 });
 
