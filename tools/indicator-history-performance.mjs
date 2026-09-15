@@ -39,6 +39,20 @@ const doubled = close * 2;
 let recurrent = close;
 const previousRecurrent = recurrent[1];
 if (Number.isFinite(previousRecurrent)) recurrent += previousRecurrent;
+var zoneState = {
+  handle: plot.box({
+    left: bar.time,
+    right: bar.time,
+    top: close + 1,
+    bottom: close - 1,
+    color: "#4477aa",
+  }),
+};
+zoneState.handle.set({
+  right: bar.time,
+  top: close + 1,
+  bottom: close - 1,
+});
 plot.line(close[1]);
 plot.line(close.at(1));
 plot.line(history(close, 1));
@@ -112,6 +126,7 @@ plot.line(recurrent);
           buildingElapsedMs,
           maximumBuildingMs,
           finalizedElapsedMs,
+          persistentOpaqueDrawingHandles: 1,
         }),
       );
     } finally {

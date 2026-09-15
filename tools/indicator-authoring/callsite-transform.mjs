@@ -2642,7 +2642,11 @@ export function transformIndicatorCallsites(
     if (ts.isCallExpression(node)) {
       if (ts.isIdentifier(node.expression)) {
         const helper = localFunctionForReference(node.expression);
-        if (helper !== undefined && helperUsesPersistentState(helper)) {
+        if (
+          helper !== undefined &&
+          isWithinIndicatorCallback(node, rootBindings.named) &&
+          helperUsesPersistentState(helper)
+        ) {
           const parts = {
             sourceFileId: sourceFileId.replaceAll("\\", "/"),
             kind: "state",

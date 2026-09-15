@@ -133,6 +133,37 @@ plot.line(readSource(), { title: "Source" });
   );
 });
 
+test("does not wrap module-scope calls to helpers that use native var state", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function bootstrapCounter() {
+  var calls = 0;
+  calls += 1;
+  return calls;
+}
+const initial = bootstrapCounter();
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  () => {
+    plot.line(initial);
+  },
+);
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/module-scope-helper.ts",
+    sourceFileId: "src/module-scope-helper.ts",
+  });
+
+  assert.match(result.code, /const initial = bootstrapCounter\(\);/u);
+  assert.equal(
+    result.callsites.filter((value) => value.callee === "persistent-scope")
+      .length,
+    0,
+  );
+});
+
 test("preserves authored source columns for same-line top-level script calls", async () => {
   const module = await loadTransform();
   const source = `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "fixture", name: "Fixture" }); const source = input.source(close, "Source"); plot.line(source);`;
