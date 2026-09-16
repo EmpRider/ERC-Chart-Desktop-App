@@ -2,15 +2,16 @@
 
 ERC Chart supports one indicator authoring model: **Indicator SDK v2**.
 
-SDK v2 is a Pine-inspired, per-bar TypeScript/JavaScript API. It is not a Pine
-Script parser, a TradingView compatibility layer, or a compatibility wrapper for
-the previous ERC indicator API. Existing indicators should be rewritten around
-the v2 semantics in this guide rather than preserving old call shapes.
+SDK v2 is a Pine-inspired TypeScript/JavaScript authoring model. Indicator source
+describes indicator mathematics: inputs, calculations, history, persistent
+domain state, plots, drawings, and signals. The authoring compiler and runtime
+own execution context, persistence identity, replay, provisional rollback,
+drawing reconciliation, signal commitment, worker transport, provider source
+acquisition, and settings normalization.
 
-The author should focus on inputs, calculations, conditions, plots/drawings, and
-signals. ERC Chart owns persistence identity, replay/finalization bookkeeping,
-provisional rollback, drawing reconciliation, signal deduplication, worker
-transport, and settings normalization.
+SDK v2 is not a Pine Script parser and does not preserve a legacy ERC indicator
+authoring surface. New and maintained indicators should use only the model in
+this guide.
 
 ## Quick start
 
@@ -26,153 +27,95 @@ import {
   textSize,
 } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  {
-    id: "erc.indicator.ema-cross.main",
-    name: "EMA Cross",
-    placement: "overlay",
-  },
-  ({ close }) => {
-    const fastLength = input.int(9, {
-      title: "Fast length",
-      min: 1,
-      max: 500,
-    });
-    const slowLength = input.int(21, {
-      title: "Slow length",
-      min: 1,
-      max: 500,
-    });
+export default defineIndicator({
+  id: "erc.indicator.ema-cross.main",
+  name: "EMA Cross",
+  placement: "overlay",
+});
 
-    const fast = ta.ema(close, fastLength);
-    const slow = ta.ema(close, slowLength);
-    const buy = ta.crossover(fast, slow);
-    const sell = ta.crossunder(fast, slow);
+const fastLength = input.int(9, "Fast length", { min: 1, max: 500 });
+const slowLength = input.int(21, "Slow length", { min: 1, max: 500 });
+const source = input.source(close, "Source");
 
-    plot.line(fast, { title: "Fast EMA", color: "#089981", width: 2 });
-    plot.line(slow, { title: "Slow EMA", color: "#f23645", width: 2 });
+const fast = ta.ema(fastLength, source);
+const slow = ta.ema(slowLength, source);
+const buy = ta.crossover(fast, slow);
+const sell = ta.crossunder(fast, slow);
 
-    plot.shape(buy, {
-      shape: shape.labelUp,
-      location: location.belowBar,
-      text: "BUY",
-      textSize: textSize.small,
-      color: "#089981",
-      textColor: "#ffffff",
-    });
-    plot.shape(sell, {
-      shape: shape.labelDown,
-      location: location.aboveBar,
-      text: "SELL",
-      textSize: textSize.small,
-      color: "#f23645",
-      textColor: "#ffffff",
-    });
+plot.line(fast, { title: "Fast EMA", color: "#089981", width: 2 });
+plot.line(slow, { title: "Slow EMA", color: "#f23645", width: 2 });
+plot.shape(buy, {
+  shape: shape.labelUp,
+  location: location.belowBar,
+  text: "BUY",
+  textSize: textSize.small,
+  color: "#089981",
+  textColor: "#ffffff",
+});
+plot.shape(sell, {
+  shape: shape.labelDown,
+  location: location.aboveBar,
+  text: "SELL",
+  textSize: textSize.small,
+  color: "#f23645",
+  textColor: "#ffffff",
+});
 
-    signal(buy, "long");
-    signal(sell, "short");
-  },
-);
+signal(buy, "long");
+signal(sell, "short");
 ```
 
-Authors do not declare worker messages, runtime instances, output keys,
-persistence IDs, replay hooks, or lifecycle handlers. `defineIndicator()` and the
-authoring compiler generate the metadata and hidden identity required by the
-runtime. The package builder generates the distributable manifest and integrity
-hashes.
+`defineIndicator()` is metadata-only in authored source. The compiler moves the
+script statements into the hidden per-bar execution function and injects stable
+identity for stateful/declarative calls. Authors do not create a runtime callback
+or pass an ERC context object.
 
-## The per-bar callback
+## Script model
 
-The second argument to `defineIndicator()` runs once for each bar evaluation. The
-public callback exposes market values and author-relevant context, including:
+After the exported metadata declaration, write normal top-level script
+statements. The following current-bar values are directly available:
 
-- `instrumentId`, `timeframeId`, and `openTimeMs`;
-- `open`, `high`, `low`, `close`, and `volume`;
-- `hl2`, `hlc3`, and `ohlc4`;
-- `index`;
-- `isConfirmed`.
+- `open`, `high`, `low`, `close`, `volume`;
+- `hl2`, `hlc3`, `ohlc4`;
+- `bar.index`;
+- `bar.time` (the candle open time in milliseconds);
+- `bar.confirmed`.
 
-The OHLCV/source values behave like ordinary numbers for current-bar arithmetic.
-History syntax is added by the authoring compiler, described in the next section.
-Runtime replay flags such as `isHistory` and `isHistoryFinalizedTail` are not part
-of the public v2 callback. Indicator mathematics should not depend on host replay
-bookkeeping.
-
-Object destructuring keeps calculations concise:
+For example:
 
 ```ts
-export default defineIndicator(
-  { id: "erc.indicator.range.main", name: "Range" },
-  ({ high, low }) => {
-    plot.line(high - low, { title: "Range" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.range.main",
+  name: "Range",
+  placement: "pane",
+});
+
+const range = high - low;
+plot.line(range, { title: "Range" });
 ```
 
-Use `placement: "pane"` for an oscillator. Placement defaults to `"overlay"`.
-
-## History and state
-
-### Source history
-
-Use v2 history syntax instead of maintaining an array just to read earlier source
-values:
-
-```ts
-const previousClose = close[1];
-const twoBarsBack = close.at(2);
-const previousLow = history(low, 1);
-```
-
-For authored packages, the compiler lowers `close[n]` and `close.at(n)` to the
-same canonical history operation as `history(close, n)`. `0` means the current
-value; unavailable history returns `NaN`.
-
-The history syntax is a compile-time authoring feature. Package indicator source
-through the ERC authoring/build pipeline; do not treat direct uncompiled
-`defineIndicator()` execution as the canonical author runtime.
-
-### Indicator state with `series()`
-
-Use `series()` when the mathematics require state from the previous committed
-bar:
-
-```ts
-const atr = ta.atr(14);
-const trailingStop = series(close - atr, (previous) =>
-  Math.max(previous, close - atr),
-);
-
-plot.line(trailingStop, { title: "Trailing stop" });
-```
-
-Every building-bar re-evaluation starts from the previous committed state.
-Finalized evaluation advances the committed value. This gives recurrences the
-same provisional rollback semantics as the rest of the SDK without author replay
-flags.
-
-`series()` may hold primitive values or genuine domain state such as small plain
-objects, arrays, maps, sets, typed arrays, and buffers. Structured state is
-bounded to 4,096 retained collection items in aggregate. Custom class instances
-are unsupported. Keep large historical data in the platform history/source
-model rather than recreating chart history inside `series()`.
-
-Legacy bounded-history helpers such as `appendSeries()` and `laggedValue()` are
-not part of the public v2 authoring surface.
+Normal helper functions are allowed. Pass their mathematical inputs as ordinary
+arguments; do not add an ERC runtime/context parameter. Stateful authoring calls
+inside supported helpers receive compiler-owned identity. Inputs must still have
+statically bounded declaration multiplicity: input declarations in loops or
+recursive execution paths are rejected at build time.
 
 ## Inputs
 
-Available input helpers are:
+Common concise forms are:
 
 ```ts
-input.int(defaultValue, options?);
-input.float(defaultValue, options?);
-input.bool(defaultValue, options?);
-input.string(defaultValue, options?);
-input.color(defaultValue, options?);
+const length = input.int(14, "Length");
+const multiplier = input.float(1.5, "Multiplier");
+const enabled = input.bool(true, "Enabled");
+const color = input.color("#3daa45", "Color");
+const mode = input.string("fast", "Mode", {
+  options: ["fast", "slow"] as const,
+});
+const source = input.source(close, "Source");
 ```
 
-Example:
+Advanced metadata can be supplied with an options object:
 
 ```ts
 const length = input.int(14, {
@@ -183,102 +126,135 @@ const length = input.int(14, {
   max: 500,
   step: 1,
 });
-
-const showSignals = input.bool(true, {
-  title: "Show signals",
-  group: "Display",
-  effect: "presentation",
-});
-
-const mode = input.string("fast", {
-  title: "Mode",
-  options: ["fast", "slow"] as const,
-});
 ```
 
-Do not supply persistence keys. Stable input identity is generated by the
-compiler/SDK. The host normalizes persisted settings against the current input
-declarations, including defaults, numeric bounds/steps, booleans, strings, and
-option lists.
+`effect: "presentation"` marks a setting that changes presentation only. Other
+inputs use calculation semantics.
 
-Use `effect: "presentation"` for settings that only change presentation. Other
-inputs default to calculation semantics.
+Input identity is generated by the compiler. Do not provide persistence keys or
+write settings migration/normalization code in an indicator.
 
-### Selecting a current-bar price source
+### Price-source inputs
 
-The current v2 surface exposes `priceSources` and `priceValue()` for source
-selection:
+`input.source()` owns price-source selection and returns the selected current
+numeric value directly:
 
 ```ts
-import {
-  defineIndicator,
-  input,
-  plot,
-  priceSources,
-  priceValue,
-} from "@erc-chart/indicator-sdk";
-
-export default defineIndicator(
-  { id: "erc.indicator.source.main", name: "Source" },
-  (bar) => {
-    const source = input.string("close", {
-      title: "Source",
-      options: priceSources,
-    });
-
-    plot.line(priceValue(bar, source), { title: "Selected source" });
-  },
-);
+const ropeSource = input.source(close, "ATR Rope source");
+const utSource = input.source(close, "UT Bot source");
 ```
+
+The built-in selectable price sources are `open`, `high`, `low`, `close`, `hl2`,
+`hlc3`, and `ohlc4`. The host may also bind a declared source input to an allowed
+indicator-output dependency. The author does not maintain source-option tokens or
+switch over candle fields.
+
+## History and recurrence
+
+Any bar-derived script value is series-capable from the author's point of view.
+Use Pine-style history indexing:
+
+```ts
+const previousClose = close[1];
+const twoBarsBack = close[2];
+const previousFast = fast[1];
+```
+
+The compiler lowers those reads to hidden history slots. Missing/warm-up history
+is represented as an unavailable numeric value (`NaN` internally), which the SDK
+TA/plot/signal paths handle safely.
+
+`history(value, barsBack)` remains available as an explicit advanced spelling:
+
+```ts
+const previousLow = history(low, 1);
+```
+
+Do not retain candle arrays merely to read earlier values.
+
+### Scalar recurrence
+
+Write scalar recurrence as ordinary script values plus history:
+
+```ts
+let total = close;
+const previous = total[1];
+if (Number.isFinite(previous)) total += previous;
+
+plot.line(total, { title: "Total" });
+```
+
+Finalized bars advance committed history once. Repeated building-bar evaluations
+read from the same committed predecessor, so provisional updates do not compound.
+
+### Persistent mutable domain state
+
+Use `var` when the indicator genuinely needs an object/collection to persist
+across bars:
+
+```ts
+interface Zone {
+  startTime: number;
+  high: number;
+  low: number;
+}
+
+var zones: Zone[] = [];
+```
+
+For authored indicator scripts, a stateful `var` initializer runs once per
+indicator-state lifetime. The compiler/runtime owns committed state,
+building-bar copy-on-write rollback, finalized commit, corrected-history reset,
+and stable declaration identity. Persistent state inside a helper is isolated by
+the helper state declaration plus authored invocation call site.
+
+Structured persistent state is bounded to 4,096 retained collection items in
+aggregate. Store domain state, not duplicate market history or host bookkeeping.
 
 ## Technical analysis
 
-SDK v2 exposes scalar, per-bar TA calls:
+TA lives under `ta.*`; authors never allocate kernels or kernel IDs. Core scalar
+forms include:
 
-| API                                                | Use                         |
-| -------------------------------------------------- | --------------------------- |
-| `ta.sma(length)` / `ta.sma(value, length)`         | Simple moving average       |
-| `ta.ema(length)` / `ta.ema(value, length)`         | Exponential moving average  |
-| `ta.rsi(length)` / `ta.rsi(value, length)`         | RSI                         |
-| `ta.atr(length)`                                   | ATR from the current candle |
-| `ta.dmi(length)`                                   | DMI/ADX point               |
-| `ta.highest(length)` / `ta.highest(value, length)` | Rolling high                |
-| `ta.lowest(length)` / `ta.lowest(value, length)`   | Rolling low                 |
-| `ta.crossover(left, right)`                        | Upward crossing condition   |
-| `ta.crossunder(left, right)`                       | Downward crossing condition |
-| `ta.movingAverage(value, type, length)`            | Moving-average catalogue    |
+| API                                                       | Meaning                   |
+| --------------------------------------------------------- | ------------------------- |
+| `ta.sma(length)`                                          | SMA of close              |
+| `ta.sma(value, length)` / `ta.sma(length, value)`         | SMA of an explicit series |
+| `ta.ema(length)`                                          | EMA of close              |
+| `ta.ema(value, length)` / `ta.ema(length, value)`         | EMA of an explicit series |
+| `ta.rsi(length)`                                          | RSI of close              |
+| `ta.rsi(value, length)` / `ta.rsi(length, value)`         | RSI of an explicit series |
+| `ta.atr(length)`                                          | ATR from current OHLC     |
+| `ta.dmi(length)`                                          | DMI/ADX point             |
+| `ta.highest(length)`                                      | Rolling high              |
+| `ta.highest(value, length)` / `ta.highest(length, value)` | Rolling maximum           |
+| `ta.lowest(length)`                                       | Rolling low               |
+| `ta.lowest(value, length)` / `ta.lowest(length, value)`   | Rolling minimum           |
+| `ta.crossover(left, right)`                               | Upward cross condition    |
+| `ta.crossunder(left, right)`                              | Downward cross condition  |
+| `ta.movingAverage(value, type, length)`                   | Moving-average catalogue  |
 
-When a one-argument source form exists, it uses the documented default price
-source (`close` for SMA/EMA/RSI and the natural high/low source for extrema).
-Low-level kernel constructors and array-oriented compatibility functions are not
-public author APIs.
+The authoring compiler canonicalizes ambiguous numeric length-first forms such as
+`ta.ema(20, open)` and `ta.rsi(14, open)` before runtime execution. These are
+equivalent to `ta.ema(open, 20)` and `ta.rsi(open, 14)`.
 
-Stateful TA identity is compiler-owned. Authors do not allocate kernel IDs or
-manage committed/provisional kernel state.
+Stateful TA uses committed/provisional kernel state internally and remains
+incremental during live updates.
 
 ## Plots and markers
 
 Numeric plots accept a number or `null`:
 
 ```ts
-plot.line(value, {
-  title: "Value",
-  color: "#2962ff",
-  width: 2,
-  style: "solid",
-});
-
+plot.line(value, { title: "Value", color: "#2962ff", width: 2 });
 plot.hline(50, { title: "Midpoint", color: "#787b86" });
 plot.histogram(delta, { title: "Delta", color: "#7e57c2" });
 ```
 
-Use `null` when a value should be hidden for a bar. Plot identity and output keys
-are hidden implementation details; authors do not provide keys.
+Use `null` to hide a numeric plot for one bar. Plot/output identity is hidden; do
+not provide output keys or call-order counters.
 
-### Shape markers
-
-`plot.shape()` accepts a boolean condition or numeric value. Boolean conditions
-combine naturally with semantic locations:
+`plot.shape()` supports boolean conditions or numeric values:
 
 ```ts
 plot.shape(buy, {
@@ -291,70 +267,64 @@ plot.shape(buy, {
 });
 ```
 
-Available shape constants are `circle`, `triangleUp`, `triangleDown`, `labelUp`,
-and `labelDown`. Locations are `aboveBar`, `belowBar`, and `absolute`. Text sizes
-are `tiny`, `small`, `normal`, `large`, and `xlarge`.
+Shape constants are `circle`, `triangleUp`, `triangleDown`, `labelUp`, and
+`labelDown`. Locations are `aboveBar`, `belowBar`, and `absolute`. Text sizes are
+`tiny`, `small`, `normal`, `large`, and `xlarge`.
 
-For `location.absolute`, provide a numeric value because the SDK must not invent
-a price coordinate. For `aboveBar`/`belowBar`, a boolean condition lets the host
-place the marker relative to the candle.
-
-The concise overloads are also valid:
+The concise shape forms are also supported:
 
 ```ts
 plot.shape(buy, "BUY");
 plot.shape(buy, shape.labelUp, "BUY");
 ```
 
-Use the options object when location, colors, or semantic text size matter.
-
 ## Persistent drawings
 
-`plot.box()` and `plot.segment()` return persistent SDK-owned handles. Authors
-provide geometry; the compiler/runtime provides identity.
+`plot.box()` and `plot.segment()` return opaque SDK-owned handles. Keep a handle
+in persistent domain state when the same logical drawing must be updated later:
 
 ```ts
-const zone = plot.box({
-  left: startTimeMs,
-  right: openTimeMs,
-  top: upper,
-  bottom: lower,
+import {
+  defineIndicator,
+  plot,
+  type BoxHandle,
+} from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.zone.main",
+  name: "Zone",
+});
+
+var zone: BoxHandle | undefined = undefined;
+const geometry = {
+  left: bar.time,
+  right: bar.time + 60_000,
+  top: high,
+  bottom: low,
   color: "rgba(41, 98, 255, 0.15)",
-  borderColor: "#2962ff",
-});
+};
 
-zone.set({ right: openTimeMs, top: nextUpper, bottom: nextLower });
-if (expired) zone.delete();
+if (zone === undefined) zone = plot.box(geometry);
+else zone.set(geometry);
+
+if (expired) {
+  zone.delete();
+  zone = undefined;
+}
 ```
 
-A segment uses `startValue`/`endValue` instead of box `top`/`bottom`:
+A segment uses `startValue` and `endValue` plus `left`/`right` time coordinates.
+Creation assigns hidden identity once; `.set()` mutates that handle's geometry and
+`.delete()` removes that logical drawing. Reordering/pruning domain objects does
+not rebind unrelated handles.
 
-```ts
-const level = plot.segment({
-  left: startTimeMs,
-  right: openTimeMs,
-  startValue: price,
-  endValue: price,
-  color: "#ffb300",
-  width: 2,
-  style: "solid",
-});
-
-level.set({ right: openTimeMs });
-```
-
-Re-executing the same compiled source call revisits the same hidden drawing
-occurrence. Building updates are provisional and start from the last finalized
-drawing state. Omitted finalized calls do not implicitly delete committed
-drawings; call `handle.delete()` when the indicator mathematics say the drawing
-has expired.
-
-Do not create drawing IDs, reconciliation scope keys, or arrays of platform IDs.
-Keep only genuine domain state needed to decide what should be drawn.
+Building mutations are provisional and roll back to the committed handle state.
+The platform retains the 2,000-drawing/change safety bounds; authors should avoid
+unnecessary drawing churn rather than creating IDs or reconciliation arrays.
 
 ## Signals
 
-Signals are conditions, not manually managed events:
+Signals are conditions:
 
 ```ts
 const buy = ta.crossover(fast, slow);
@@ -364,23 +334,22 @@ signal(buy, "long", { confidence: 0.9 });
 signal(sell, "short");
 ```
 
-Directions are `"long"`, `"short"`, and `"neutral"`. Optional confidence must be
-between `0` and `1`.
+Directions are `"long"`, `"short"`, and `"neutral"`. Confidence, when supplied,
+must be between `0` and `1`.
 
-The signal engine emits committed events only for finalized bars. Provisional
-building-bar conditions do not become committed events, and identity/deduplication
-is SDK/compiler-owned. When a condition depends on TA or a higher-timeframe
-source, the runtime waits until every compiler-traced dependency is ready and the
-actual source candle is confirmed; closing a lower-timeframe chart candle does not
-prematurely confirm a higher-timeframe signal. Runtime signal provenance carries
-the confirmed source candle identity/revision internally, and a corrected-history
-rebuild replaces downstream signal results. Do not add signal IDs, source-revision
-bookkeeping, or manual finalized-tail checks.
+Committed events are emitted only for finalized bars whose compiler-traced chart,
+TA, and MTF dependencies are ready and source-confirmed. Repeated building
+recalculation does not duplicate committed signals. Higher-timeframe conditions
+wait for the actual higher-timeframe source candle to confirm, and corrected
+history rebuilds replace stale downstream results.
+
+Signal IDs, deduplication keys, source revisions, and finalized-tail replay flags
+are runtime concerns and do not belong in author code.
 
 ## Conditional execution
 
-Compiled SDK v2 calls have stable hidden call-site identity, so normal conditions
-do not need execution-order bookkeeping in author code.
+Compiled stateful/declarative calls use stable hidden call-site identity. Natural
+conditions therefore do not require author counters or order-preservation hacks:
 
 ```ts
 if (showSignals) {
@@ -394,171 +363,160 @@ if (showSignals) {
 if (buy) signal(true, "long");
 ```
 
-The same principle applies to stateful TA/series/plot/drawing/signal call sites:
-identity comes from the compiled source location rather than from an author-owned
-counter or string ID. A single call site must still represent one semantic
-declaration; do not deliberately execute the same source call multiple times in
-one bar through a loop when the API expects one occurrence.
+A single authored call site still represents one semantic declaration. Do not
+execute an input declaration repeatedly through a loop/recursive path, and avoid
+using one stateful call site as an unbounded dynamic factory.
 
-For simple visibility, passing `null` to a numeric plot is often clearer than
-wrapping the call in a branch:
+## Multi-timeframe and provider-aware sources
 
-```ts
-plot.line(showAverage ? average : null, { title: "Average" });
-```
+The host resolves selectable timeframes from the active provider's effective
+native/derived capabilities. Indicator code does not implement provider
+pagination, aggregation, subscription, fallback, or resampling.
 
-## Execution and lifecycle
-
-The runtime discovers declarations, replays retained history, applies building
-updates provisionally, commits finalized bars, and handles rebuilds/corrections.
-Those phases are platform concerns.
-
-Author code should follow these rules:
-
-- keep calculations synchronous and free of external side effects;
-- use `series()` for mathematical recurrence instead of module-global mutation;
-- use source history for prior source values instead of author history buffers;
-- use compiler-owned inputs/TA/plots/drawings/signals without persistence IDs;
-- use drawing handles for explicit drawing updates/deletion;
-- use `signal()` for finalized event emission instead of lifecycle flags;
-- use `isConfirmed` only when the indicator's actual calculation intentionally
-  distinguishes the current finalized candle from a building candle.
-
-The runtime bounds instances to 100,000 result points, 128 input/value-plot
-declarations, 256 TA/recurrence calls, 4,096 structured-series collection items,
-2,000 retained drawings, and 10,000 retained signals. Signal calls themselves are
-also limited per bar. Treat those as platform safety limits, not storage targets.
-
-## Multi-timeframe, provider-aware, and synthetic candle sources
-
-ECDD-142 supplies the operational provider-aware MTF path. Timeframe choices are
-resolved by the host from the active provider's effective native/derived
-capabilities; indicator packages do not embed a universal selectable timeframe
-list.
-
-Use a host-managed timeframe input for the whole indicator:
+For a whole-indicator timeframe:
 
 ```ts
+import {
+  defineIndicator,
+  indicator,
+  input,
+  timeframe,
+} from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.mtf.main",
+  name: "MTF",
+});
+
 const tf = input.timeframe(timeframe.chart, "Timeframe");
 indicator.timeframe(tf);
 ```
 
-Use a timeframe argument on a TA call when only that calculation needs another
-source:
+For a single TA calculation:
 
 ```ts
 const local = ta.ema(9);
 const trend = ta.ema(200, "1h");
 const explicitTrend = ta.ema(close, 200, "1h");
+const explicitLengthFirst = ta.ema(200, open, "1h");
 ```
 
-The runtime acquires and shares the required provider sources, aligns completed
-foreign bars without finalized lookahead, and keeps the indicator attached to the
-current chart. If a saved timeframe is no longer available after provider
-capabilities change, the requested preference is preserved while the active
-source falls back safely to the chart timeframe. Do not add author-side provider
-aggregation, resampling, fallback, or source-subscription code.
+Foreign source candles are aligned without finalized lookahead. Equal source
+requirements are shared by the host/source engine.
 
-Use a host-managed candle-type input when the whole indicator should calculate
-from a synthetic candle representation:
+## Standard and Heikin Ashi candles
+
+Whole-indicator candle type is host-managed:
 
 ```ts
-const candleMode = input.candleType(candle.standard, "Candle Type");
-indicator.candleType(candleMode);
+import {
+  candle,
+  defineIndicator,
+  indicator,
+  input,
+} from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.ha.main",
+  name: "HA example",
+});
+
+const candleType = input.candleType(candle.standard, "Candle type");
+indicator.candleType(candleType);
 ```
 
-The available v2 candle types are `candle.standard` and `candle.heikinAshi`.
-For Heikin Ashi, ERC Chart first constructs the requested provider timeframe as
-standard OHLC candles and only then applies the Heikin Ashi transform. Repeated
-building-bar updates always derive from the last finalized HA state instead of
-compounding provisional output. The runtime also retains synthetic-source
-provenance internally so downstream host logic can distinguish an HA close from
-the market's traded close. Indicator authors should not implement their own HA
-state, resampling, rollback, or source subscription.
+Available types are `candle.standard` and `candle.heikinAshi`. ERC Chart first
+constructs the requested timeframe as standard OHLC candles and then applies the
+Heikin Ashi transform. Repeated building updates derive from finalized HA state,
+bounded windows retain the recursive seed, and synthetic provenance stays in the
+host/runtime boundary.
 
-## Rewriting an older indicator to v2
+Do not maintain author-side HA buffers or transform rollback state.
 
-Rewrite the indicator from its trading/math semantics rather than preserving old
-framework plumbing.
+## Execution, bounds, and recovery
 
-| Older concern                                       | SDK v2 rewrite                                                                                                    |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Explicit input/plot/signal persistence key          | Remove it; identity is compiler/SDK-owned                                                                         |
-| Kernel/plot/input index or call-order counter       | Remove it; call-site identity is hidden                                                                           |
-| `appendSeries()` / `laggedValue()` source history   | Use `close[n]`, `source.at(n)`, or `history(source, n)`                                                           |
-| Genuine recurrence/domain state                     | Keep the mathematics in `series()`                                                                                |
-| Array-oriented TA compatibility call                | Rewrite as scalar per-bar `ta.*`                                                                                  |
-| Conditional call workaround to preserve order       | Write the natural condition on the compiled v2 call site                                                          |
-| Drawing ID/scope/reconciliation array               | Use `plot.box()` / `plot.segment()` handles and `delete()`                                                        |
-| Manual signal ID/dedup/finalized-tail logic         | Use `signal(condition, direction, options?)`                                                                      |
-| Author-side persisted-settings migration/validation | Declare `input.*`; host normalization owns stale/invalid settings                                                 |
-| `isHistory` / `isHistoryFinalizedTail` branches     | Remove replay plumbing; use v2 history/state/signal lifecycle                                                     |
-| Custom provider/timeframe aggregation               | Use `input.timeframe`, `indicator.timeframe`, or a `ta.*` timeframe override; the host owns acquisition/alignment |
-| Author-managed Heikin Ashi state/rollback           | Use `input.candleType` + `indicator.candleType`; the host owns transform order, recursive state, and provenance   |
+History replay, building updates, finalized rollover, corrected-history rebuild,
+worker generations/revisions, source leases, dependency snapshots, and renderer
+recovery are platform responsibilities.
 
-A rewrite is successful when the remaining state and branches exist because the
-indicator mathematics require them, not because ERC Chart's runtime requires
-them.
+Author code should:
 
-The maintained ATR Rope + UT Bot implementation is the flagship example. It uses
-hidden input/plot identity, canonical history reads, `series()` for genuine Rope,
-UT Bot, POC/profile/follow/MG domain state, semantic BUY/SELL shapes, finalized
-signals, and SDK-owned drawing handles while preserving its trading semantics.
-See `packages/indicator-examples/src/atr-rope-utbot.ts` for the full source.
+- remain synchronous and deterministic for the supplied market/domain inputs;
+- use history indexing for prior values;
+- use `var` only for genuine persistent domain state;
+- use `input.*`, `ta.*`, `plot.*`, and `signal()` without persistence IDs;
+- store opaque drawing handles when logical drawings persist;
+- avoid duplicate market-history caches and host lifecycle state.
+
+Important platform bounds include 100,000 retained candles/result points, 4,096
+persistent collection items, 2,000 drawings/changes, and bounded signal/worker
+resources. These are safeguards, not storage targets.
+
+## Maintained examples
+
+`packages/indicator-examples/src/atr-bands.ts` is the compact example.
+
+`packages/indicator-examples/src/atr-rope-utbot.ts` is the flagship complex
+example. Its remaining state exists for ATR Rope, UT Bot, POC-zone migration,
+follow/MG behavior, and drawing handles. It does not carry ERC runtime IDs,
+replay state, source-option tables, or positional drawing reconciliation.
+
+The flagship regression suite includes a production-like 10,000-bar POC
+migration replay and verifies that persistent drawing churn remains within the
+2,000-drawing bound.
 
 ## Build and import
 
-Build all registered distributable plugins:
+Build all registered plugins:
 
 ```powershell
 npm run build:plugins
 ```
 
-Build the workspace and package one indicator source explicitly:
+Build one indicator explicitly:
 
 ```powershell
 npm run build
 node tools/build-indicator-package.mjs packages/indicator-examples/src/atr-bands.ts erc.indicator.atr-bands 0.1.0
 ```
 
-The package builder runs the authoring transform that injects stable hidden
-call-site metadata and history lowering. It writes the plugin under
-`out/indicator-plugins/<package-id>/` for import through Plugin Manager.
+The package builder applies script lowering, hidden call-site identity, TA
+overload canonicalization, persistent-state lowering, and history transforms
+before bundling the plugin. Installed packages therefore execute the compiled
+authoring contract, not raw top-level source.
 
-The definition ID must start with the package ID followed by a dot. Use a new
-package version when changing installed runtime code; rebuilding source does not
-replace an already installed plugin.
+The definition ID must begin with the package ID followed by a dot. Publish a new
+package version when installed runtime code changes.
 
-Registered plugins are listed explicitly by the repository build tooling; the
-bulk build does not discover arbitrary source files automatically.
+## Repository verification
 
-## Verification
-
-For repository development, use the normal delivery gates. Focused commands
-include:
+Focused development normally starts with the relevant compiler/SDK/example tests,
+then the delivery gates:
 
 ```powershell
+npm run format:check
+npm run lint
+npm run typecheck
 npm run build
 npm run test:unit
+npm run test:legacy-indicators
 npm run test:integration
 npm run test:performance
-npm run build:plugins
+npm run audit:ci
+npm run version:check
 ```
 
-The maintained-indicator suites run compiled packages so the tests exercise the
-same hidden identity/history transform used by installed plugins. Performance
-coverage exercises large history, structured state, drawings, authored
-indicators, and worker budgets. See
-`docs/development/INDICATOR-PERFORMANCE-ASSESSMENT.md` for measured workloads and
-limits; component benchmarks are not a whole-application FPS guarantee.
+See `docs/development/INDICATOR-PERFORMANCE-ASSESSMENT.md` for the measured
+performance/resource workloads.
 
 ## Public authoring boundary
 
-Normal indicator source should import from `@erc-chart/indicator-sdk` only.
-Runtime snapshots, worker lifecycle ports, host parameter normalizers, low-level
-TA kernels, array-history compatibility helpers, persistence IDs, and lifecycle
-replay flags are not authoring APIs.
+Normal indicator code imports only from `@erc-chart/indicator-sdk`. Runtime
+instances/snapshots, worker protocols, host normalization, low-level kernels,
+source tokens, persistence IDs, replay flags, and compatibility helpers are not
+public authoring APIs.
 
-If a piece of code exists primarily to satisfy ERC Chart runtime architecture
-rather than the indicator mathematics, it belongs in the SDK/host instead of the
+The governing rule is simple: if code exists because of ERC Chart runtime
+architecture rather than the indicator's mathematics, it belongs in the
+compiler, SDK, runtime, source engine, worker, renderer, or host—not in the
 indicator source.

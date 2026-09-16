@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import { defineIndicator, plot } from "../packages/indicator-sdk/dist/index.js";
+import { plot } from "../packages/indicator-sdk/dist/index.js";
+import { defineIndicator } from "../packages/indicator-sdk/dist/indicator.js";
 
 // SDK-only fixture. The enforced budget matches the worker's maximum history timeout.
 const historyBars = 100_000;

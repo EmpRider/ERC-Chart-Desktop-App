@@ -4,11 +4,7 @@ export function scriptKind(fileName) {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".tsx")) return ts.ScriptKind.TSX;
   if (lower.endsWith(".jsx")) return ts.ScriptKind.JSX;
-  if (
-    lower.endsWith(".js") ||
-    lower.endsWith(".mjs") ||
-    lower.endsWith(".cjs")
-  )
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs"))
     return ts.ScriptKind.JS;
   return ts.ScriptKind.TS;
 }
@@ -19,7 +15,8 @@ export function collectBindingNames(name, target) {
     return;
   }
   for (const element of name.elements) {
-    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, target);
+    if (!ts.isOmittedExpression(element))
+      collectBindingNames(element.name, target);
   }
 }
 
@@ -48,8 +45,10 @@ function collectFunctionScopedVarBindings(node, names) {
 
 export function functionBindings(node) {
   const names = new Set();
-  for (const parameter of node.parameters) collectBindingNames(parameter.name, names);
-  if (node.name !== undefined && ts.isIdentifier(node.name)) names.add(node.name.text);
+  for (const parameter of node.parameters)
+    collectBindingNames(parameter.name, names);
+  if (node.name !== undefined && ts.isIdentifier(node.name))
+    names.add(node.name.text);
   collectFunctionScopedVarBindings(node, names);
   return names;
 }
@@ -72,6 +71,7 @@ function directBlockBindings(block) {
       statement.name !== undefined
     )
       names.add(statement.name.text);
+    if (ts.isImportEqualsDeclaration(statement)) names.add(statement.name.text);
   }
   return names;
 }
@@ -88,7 +88,12 @@ function loopBindings(node) {
 
 export function scopedNames(node) {
   if (ts.isFunctionLike(node)) return functionBindings(node);
-  if (ts.isSourceFile(node) || ts.isBlock(node) || ts.isCaseBlock(node))
+  if (
+    ts.isSourceFile(node) ||
+    ts.isBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isModuleBlock(node)
+  )
     return directBlockBindings(node);
   if (
     ts.isForStatement(node) ||

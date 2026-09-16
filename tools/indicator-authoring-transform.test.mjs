@@ -111,6 +111,194 @@ export default defineIndicator(
   );
 });
 
+test("rejects callback-shaped defineIndicator assigned before default export", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+const indicator = defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+export default indicator;
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-assigned-callback.ts",
+        sourceFileId: "src/legacy-assigned-callback.ts",
+      }),
+    /metadata-only defineIndicator declaration/u,
+  );
+});
+
+test("rejects callback-shaped defineIndicator reached through a local alias", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+const define = defineIndicator;
+export default define(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-local-alias-callback.ts",
+        sourceFileId: "src/legacy-local-alias-callback.ts",
+      }),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("rejects defineIndicator escaped through an object before destructuring", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+const holder = { define: defineIndicator };
+const { define } = holder;
+export default define(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-object-alias-callback.ts",
+        sourceFileId: "src/legacy-object-alias-callback.ts",
+      }),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("rejects CommonJS access to the indicator SDK authoring surface", async () => {
+  const module = await loadTransform();
+  const source = `
+const { defineIndicator } = require("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => close,
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-commonjs-callback.ts",
+        sourceFileId: "src/legacy-commonjs-callback.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("rejects dynamic imports of the indicator SDK authoring surface", async () => {
+  const module = await loadTransform();
+  const source = `
+const { defineIndicator } = await import("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => close,
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-dynamic-import-callback.ts",
+        sourceFileId: "src/legacy-dynamic-import-callback.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("rejects direct re-exports of the indicator SDK authoring surface", async () => {
+  const module = await loadTransform();
+  const source = `
+export { defineIndicator } from "@erc-chart/indicator-sdk";
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/sdk-reexport.ts",
+        sourceFileId: "src/sdk-reexport.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("rejects runtime namespace imports of the indicator SDK", async () => {
+  const module = await loadTransform();
+  const source = `
+import * as sdk from "@erc-chart/indicator-sdk";
+function legacy(runtime) {
+  return runtime.defineIndicator(
+    { id: "fixture", name: "Fixture" },
+    ({ close }) => close,
+  );
+}
+export default legacy(sdk);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-namespace-callback.ts",
+        sourceFileId: "src/legacy-namespace-callback.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("does not treat a lexically shadowed local defineIndicator call as SDK authoring", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function invokeLocal(defineIndicator) {
+  return defineIndicator({ id: "local", name: "Local" }, () => undefined);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+void invokeLocal;
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/shadowed-define-indicator.ts",
+    sourceFileId: "src/shadowed-define-indicator.ts",
+  });
+  assert.equal(result.changed, true);
+});
+
+test("does not treat a namespace-local defineIndicator call as SDK authoring", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+namespace Local {
+  export function defineIndicator(value: number) {
+    return value;
+  }
+  export const value = defineIndicator(1);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+plot.line(close);
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/namespace-shadowed-define-indicator.ts",
+    sourceFileId: "src/namespace-shadowed-define-indicator.ts",
+  });
+  assert.equal(result.changed, true);
+});
+
 test("moves price-dependent prelude helpers into the hidden runtime callback", async () => {
   const module = await loadTransform();
   const source = `

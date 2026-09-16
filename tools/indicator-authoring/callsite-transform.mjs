@@ -60,6 +60,13 @@ const statefulTaMethods = new Set([
   "rsi",
   "sma",
 ]);
+const lengthFirstTaMethods = new Set([
+  "ema",
+  "highest",
+  "lowest",
+  "rsi",
+  "sma",
+]);
 const drawingMethods = new Set(["box", "drawings", "remove", "segment"]);
 const signalSafeBuiltinCallRoots = new Set([
   "Array",
@@ -338,8 +345,12 @@ function directIndicatorSeriesSource(expression, bindings) {
 function variableInitializerForReference(identifier) {
   const requestedName = identifier.text;
   let current = identifier.parent;
-  while (current !== undefined && !ts.isSourceFile(current)) {
-    if (ts.isBlock(current) || ts.isCaseBlock(current)) {
+  while (current !== undefined) {
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isSourceFile(current)
+    ) {
       const statements = ts.isCaseBlock(current)
         ? current.clauses.flatMap((clause) => [...clause.statements])
         : current.statements;
@@ -354,10 +365,176 @@ function variableInitializerForReference(identifier) {
         }
       }
     }
-    if (ts.isFunctionLike(current)) return undefined;
+    if (ts.isFunctionLike(current) && scopedNames(current)?.has(requestedName))
+      return undefined;
+    if (ts.isSourceFile(current)) return undefined;
     current = current.parent;
   }
   return undefined;
+}
+
+function sdkMemberCall(expression, bindings, root, method) {
+  if (
+    !ts.isCallExpression(expression) ||
+    !ts.isPropertyAccessExpression(expression.expression) ||
+    !ts.isIdentifier(expression.expression.expression)
+  )
+    return false;
+  return (
+    bindings.get(expression.expression.expression.text) === root &&
+    expression.expression.name.text === method
+  );
+}
+
+function taLengthExpression(expression, bindings, resolving = new Set()) {
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
+    return taLengthExpression(expression.expression, bindings, resolving);
+  if (ts.isNumericLiteral(expression)) {
+    const value = Number(expression.text);
+    return Number.isSafeInteger(value) && value >= 1 && value <= 100_000;
+  }
+  if (sdkMemberCall(expression, bindings, "input", "int")) return true;
+  if (!ts.isIdentifier(expression)) return false;
+  const initializer = variableInitializerForReference(expression);
+  if (initializer === undefined || resolving.has(initializer)) return false;
+  resolving.add(initializer);
+  const result = taLengthExpression(initializer, bindings, resolving);
+  resolving.delete(initializer);
+  return result;
+}
+
+function taHelperReturnsSeries(helper, bindings, resolving) {
+  if (resolving.has(helper)) return false;
+  resolving.add(helper);
+  let result = false;
+  const visit = (node) => {
+    if (result) return;
+    if (node !== helper && ts.isFunctionLike(node)) return;
+    if (
+      ts.isReturnStatement(node) &&
+      node.expression !== undefined &&
+      taSeriesExpression(node.expression, bindings, resolving)
+    ) {
+      result = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (
+    ts.isArrowFunction(helper) &&
+    helper.body !== undefined &&
+    !ts.isBlock(helper.body)
+  )
+    result = taSeriesExpression(helper.body, bindings, resolving);
+  else if (helper.body !== undefined) visit(helper.body);
+  resolving.delete(helper);
+  return result;
+}
+
+function taSeriesExpression(expression, bindings, resolving = new Set()) {
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
+    return taSeriesExpression(expression.expression, bindings, resolving);
+  if (ts.isElementAccessExpression(expression))
+    return taSeriesExpression(expression.expression, bindings, resolving);
+  if (directIndicatorSeriesSource(expression, bindings) !== undefined)
+    return true;
+  if (sdkMemberCall(expression, bindings, "input", "source")) return true;
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    bindings.get(expression.expression.expression.text) === "ta" &&
+    statefulTaMethods.has(expression.expression.name.text)
+  )
+    return true;
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    bindings.get(expression.expression.text) === "history"
+  )
+    return true;
+  if (ts.isCallExpression(expression)) {
+    if (
+      expression.arguments.some((argument) =>
+        taSeriesExpression(argument, bindings, resolving),
+      )
+    )
+      return true;
+    const callable = expression.expression;
+    if (ts.isIdentifier(callable)) {
+      const helper = localFunctionForReference(callable);
+      if (
+        helper !== undefined &&
+        taHelperReturnsSeries(helper, bindings, resolving)
+      )
+        return true;
+    }
+    if (
+      (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable)) &&
+      taHelperReturnsSeries(callable, bindings, resolving)
+    )
+      return true;
+  }
+  if (ts.isIdentifier(expression)) {
+    const initializer = variableInitializerForReference(expression);
+    if (initializer === undefined || resolving.has(initializer)) return false;
+    resolving.add(initializer);
+    const result = taSeriesExpression(initializer, bindings, resolving);
+    resolving.delete(initializer);
+    return result;
+  }
+  if (ts.isBinaryExpression(expression))
+    return (
+      taSeriesExpression(expression.left, bindings, resolving) ||
+      taSeriesExpression(expression.right, bindings, resolving)
+    );
+  if (ts.isConditionalExpression(expression))
+    return (
+      taSeriesExpression(expression.condition, bindings, resolving) ||
+      taSeriesExpression(expression.whenTrue, bindings, resolving) ||
+      taSeriesExpression(expression.whenFalse, bindings, resolving)
+    );
+  if (
+    ts.isPrefixUnaryExpression(expression) ||
+    ts.isPostfixUnaryExpression(expression)
+  )
+    return taSeriesExpression(expression.operand, bindings, resolving);
+  return false;
+}
+
+function lengthFirstTaCall(node, classified, bindings) {
+  if (
+    classified?.kind !== "ta" ||
+    !lengthFirstTaMethods.has(classified.callee.slice("ta.".length)) ||
+    node.arguments.length < 2
+  )
+    return false;
+  const length = node.arguments[0];
+  const source = node.arguments[1];
+  return (
+    length !== undefined &&
+    source !== undefined &&
+    taLengthExpression(length, bindings) &&
+    taSeriesExpression(source, bindings)
+  );
+}
+
+function canonicalTaSourceArgument(node, classified, bindings) {
+  return lengthFirstTaCall(node, classified, bindings)
+    ? node.arguments[1]
+    : node.arguments[0];
 }
 
 function signalVariableInitializerForReference(identifier) {
@@ -1185,7 +1362,8 @@ function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
     current.getSourceFile(),
     current.typeName.text,
   );
-  if (imported !== undefined && signalDrawingHandleTypes.has(imported)) return true;
+  if (imported !== undefined && signalDrawingHandleTypes.has(imported))
+    return true;
   const declaration = signalNamedTypeDeclaration(
     current.getSourceFile(),
     current.typeName.text,
@@ -1752,7 +1930,8 @@ function helperIsNestedInIndicatorCalculation(functionLike, bindings) {
 function helperWasCompilerRelocated(functionLike, sourceFile, ranges) {
   const start = functionLike.getStart(sourceFile);
   return ranges.some(
-    (range) => start >= range.generatedStart && functionLike.end <= range.generatedEnd,
+    (range) =>
+      start >= range.generatedStart && functionLike.end <= range.generatedEnd,
   );
 }
 
@@ -1822,7 +2001,8 @@ function signalDependencyMetadata(
       return;
     }
     if (ts.isCallExpression(node)) {
-      const metadata = callsiteByNode.get(node)?.metadata;
+      const callsite = callsiteByNode.get(node);
+      const metadata = callsite?.metadata;
       if (metadata?.kind === "ta" && !dependencyIds.has(metadata.id)) {
         dependencyIds.add(metadata.id);
         dependencies.push(metadata.id);
@@ -1867,13 +2047,20 @@ function signalDependencyMetadata(
             );
         }
       }
+      const explicitTaSeriesIndex =
+        metadata?.kind === "ta" &&
+        metadata.seriesSource !== undefined &&
+        callsite !== undefined
+          ? lengthFirstTaCall(
+              node,
+              { kind: metadata.kind, callee: metadata.callee },
+              callsite.bindings,
+            )
+            ? 1
+            : 0
+          : -1;
       for (let index = 0; index < node.arguments.length; index += 1) {
-        if (
-          metadata?.kind === "ta" &&
-          index === 0 &&
-          metadata.seriesSource !== undefined
-        )
-          continue;
+        if (index === explicitTaSeriesIndex) continue;
         const argument = node.arguments[index];
         if (
           helper !== undefined &&
@@ -2847,11 +3034,16 @@ export function transformIndicatorCallsites(
             `stable call-site identity collision for ${classified.callee}; change the semantic binding and rebuild`,
           );
         }
+        const seriesArgument = canonicalTaSourceArgument(
+          node,
+          classified,
+          bindings,
+        );
         const seriesSource =
-          node.arguments[0] === undefined ||
+          seriesArgument === undefined ||
           (classified.kind !== "ta" && classified.callee !== "input.source")
             ? undefined
-            : directIndicatorSeriesSource(node.arguments[0], bindings);
+            : directIndicatorSeriesSource(seriesArgument, bindings);
         const metadata = {
           id,
           kind: classified.kind,
@@ -3159,7 +3351,23 @@ export function transformIndicatorCallsites(
       const callsite = callsiteByNode.get(node);
       if (callsite !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);
-        const argumentsWithCallsite = node.arguments.map((argument) =>
+        let authorArguments = [...node.arguments];
+        if (
+          lengthFirstTaCall(
+            node,
+            {
+              kind: callsite.metadata.kind,
+              callee: callsite.metadata.callee,
+            },
+            callsite.bindings,
+          )
+        )
+          authorArguments = [
+            authorArguments[1],
+            authorArguments[0],
+            ...authorArguments.slice(2),
+          ];
+        const argumentsWithCallsite = authorArguments.map((argument) =>
           ts.visitNode(argument, visit),
         );
         while (argumentsWithCallsite.length < callsite.authorArity)

@@ -99,6 +99,56 @@ void period;
   );
 });
 
+test("canonicalizes length-first TA overloads before appending hidden callsite identity", async () => {
+  const result = await transform(`
+import { defineIndicator, input, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ open, close }) => {
+  const length = input.int(14, "Length");
+  const source = input.source(close, "Source");
+  const direct = ta.ema(length, open);
+  const higher = ta.ema(length, open, "1h");
+  const selected = ta.ema(length, source);
+  const strength = ta.rsi(length, open);
+  void direct;
+  void higher;
+  void selected;
+  void strength;
+});
+`);
+
+  assert.match(result.code, /ta\.ema\(open, length, __ercCallsite_\d+\)/u);
+  assert.match(
+    result.code,
+    /ta\.ema\(open, length, "1h", __ercCallsite_\d+\)/u,
+  );
+  assert.match(result.code, /ta\.ema\(source, length, __ercCallsite_\d+\)/u);
+  assert.match(result.code, /ta\.rsi\(open, length, __ercCallsite_\d+\)/u);
+  const higher = result.callsites.find(
+    (callsite) =>
+      callsite.callee === "ta.ema" && callsite.seriesSource === "open",
+  );
+  assert.ok(higher);
+});
+
+test("canonicalizes wrapped TA lengths and history-indexed series", async () => {
+  const result = await transform(`
+import { defineIndicator, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ open, close }) => {
+  const wrappedLength = 14 as const;
+  const wrapped = ta.ema(wrappedLength, open);
+  const historical = ta.ema(14, close[1]);
+  void wrapped;
+  void historical;
+});
+`);
+
+  assert.match(
+    result.code,
+    /ta\.ema\(open, wrappedLength, __ercCallsite_\d+\)/u,
+  );
+  assert.match(result.code, /ta\.ema\(close\[1\], 14, __ercCallsite_\d+\)/u);
+});
+
 test("preserves titled input options before the compiler-only callsite slot", async () => {
   const result = await transform(`
 import { input } from "@erc-chart/indicator-sdk";
@@ -754,6 +804,28 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
   assert.ok(signalCallsite);
   assert.ok(higherCallsite);
+  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
+  assert.deepEqual(signalCallsite.chartSeries, []);
+});
+
+test("length-first explicit-series higher-timeframe TA does not add a chart-candle signal dependency", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ open }) => {
+  const higher = ta.ema(1, open, "1h");
+  signal(higher > 0, "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  const higherCallsite = result.callsites.find(
+    (value) => value.callee === "ta.ema",
+  );
+  assert.ok(signalCallsite);
+  assert.ok(higherCallsite);
+  assert.equal(higherCallsite.seriesSource, "open");
   assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
   assert.deepEqual(signalCallsite.chartSeries, []);
 });

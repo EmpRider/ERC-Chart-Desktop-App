@@ -1,107 +1,168 @@
 # Indicator SDK v2 current-state inventory
 
-**Jira:** ECDD-217  
-**Parent:** ECDD-135 / ECDD-216  
-**Baseline:** `main` at the start of the SDK v2 optimization work on 2026-09-09  
-**Target design:** `docs/superpowers/specs/2026-09-09-indicator-sdk-v2-redesign-design.md`  
-**Implementation plan:** `docs/superpowers/plans/2026-09-09-indicator-sdk-v2-redesign-implementation.md`
+**Original redesign:** ECDD-216 / ECDD-217 and follow-up tasks
 
-## Decision
+**Pine-semantics correction:** ECDD-236 through ECDD-241 under ECDD-135
 
-The final SDK v2 authoring/runtime model is implemented and accepted. The worker, incremental execution, provisional/finalized state handling, bounded state, drawing reconciliation, validation, and recovery foundations were retained where their contracts remained valid, while execution-order authoring identity, manual persistence identity, manual lag-only history plumbing, and the legacy public authoring surface were replaced.
+**Original design:** `docs/superpowers/specs/2026-09-09-indicator-sdk-v2-redesign-design.md`
 
-There is no legacy indicator source compatibility requirement. Maintained indicator examples use the final v2 API, and compatibility shims do not constrain the v2 design. Any future legacy-indicator expansion is product/example work on top of the completed SDK rather than unfinished SDK v2 migration work.
+**Correction design:** `docs/superpowers/specs/2026-09-15-indicator-sdk-v2-pine-semantics-correction-design.md`
 
-Provider-aware MTF acquisition and per-TA timeframe overrides are owned by ECDD-142. That work now supplies the operational whole-indicator/per-TA source path without adding legacy compatibility constraints to the optimization workstream.
+**Correction plan:** `docs/superpowers/plans/2026-09-15-indicator-sdk-v2-pine-semantics-correction-implementation.md`
 
-ECDD-232 now supplies the synthetic-candle boundary on top of that source engine: standard and Heikin Ashi are distinct source identities, timeframe construction occurs before transformation, recursive HA state survives provisional replacement and bounded retention, and synthetic provenance remains host-owned.
+## Current decision
 
-ECDD-143 supplies the explicit cross-indicator dependency boundary. Indicator instances bind declared `source` inputs to named outputs from other instances, the host validates the complete dependency set before activation, and a deterministic runtime-owned DAG orders upstream instances before their consumers. Missing instances/outputs, self-reference, duplicate instance identities, circular dependencies, undeclared consumer inputs, non-`source` consumer bindings, and duplicate dependency snapshot `inputKey`s are rejected before calculation. Dependency history is preindexed for O(1) authored source lookup, and dependency payloads are bounded by a 400,000-point aggregate budget. ECDD-149 closes the dependency acceptance slice by proving missing-instance, missing-output, and circular-dependency failures occur before chart activation or worker synchronization. The final global Phase 16 verification gate was completed on 2026-09-14 with fresh correctness, performance, maintained-indicator, authoring-guide, and resource-lifecycle evidence.
+Indicator SDK v2 has one public authoring model: metadata-only
+`defineIndicator(...)` followed by Pine-style top-level TypeScript/JavaScript
+statements using direct price globals, `bar`, `input.*`, `ta.*`, `plot.*`,
+`signal()`, history indexing, and compiler-managed persistent `var` state.
 
-### MTF ownership boundary
+Authors do not create a per-bar runtime callback/context, persistence IDs,
+execution-order counters, source-option tables, replay/finalization plumbing,
+worker messages, provider subscriptions, or positional drawing reconciliation.
+Those mechanics remain in the compiler/SDK/runtime/host layers.
 
-The approved SDK v2 design and implementation plan describe the complete target architecture, so they intentionally include provider-driven timeframe resolution, shared MTF sources, whole-indicator/per-TA timeframe APIs, and their acceptance coverage. ECDD-216 is the narrower optimization workstream that closes the authoring/runtime gaps identified on 2026-09-09. Its Jira definition explicitly places provider-aware multi-timeframe data acquisition and per-TA timeframe overrides under ECDD-142, which now implements that operational boundary.
+There is no legacy indicator authoring compatibility requirement. The public SDK
+root intentionally exposes only the v2 authoring facade and author-relevant
+metadata/result types. Internal runtime helpers may continue to exist when the
+worker/runtime requires them; they are not compatibility promises.
 
-For ECDD-216/ECDD-217 through ECDD-229, the SDK v2 work preserves clean source/timeframe integration seams and does not introduce an incompatible API that would block ECDD-142. ECDD-142 now acquires provider-aware MTF data, resolves native/derived provider capabilities, shares MTF sources, and makes whole-indicator/per-TA timeframe controls operational. ECDD-216 owns the v2 authoring/runtime primitives that those source capabilities plug into. The real multi-chart performance gate in ECDD-229 remains separate because it validates authored-indicator runtime scalability rather than provider/network capability resolution.
+### Correction chronology
+
+The September 14 Phase 16 acceptance was valid evidence for the implementation
+that existed at that time, but it is **not** the final acceptance evidence for the
+Pine-semantics correction discovered on September 15. The correction work keeps
+that historical evidence visible while superseding its author-experience claims.
+
+- **ECDD-236** restored metadata-only top-level authoring, direct bar globals,
+  concise inputs, source inputs, and compiler lowering.
+- **ECDD-237** added compiler-managed scalar recurrence and Pine-style persistent
+  `var` state with committed/provisional semantics and bounded collections.
+- **ECDD-238** replaced positional dynamic-drawing reconciliation with opaque
+  persistent box/segment handles.
+- **ECDD-239** rewrote ATR Rope + UT Bot so remaining complexity is indicator
+  domain logic rather than ERC runtime plumbing.
+- **ECDD-240** removed legacy public authoring compatibility and kept authored
+  packages behind the v2 compiler boundary.
+- **ECDD-241** is the final design-to-code compliance, documentation, regression,
+  performance, and delivery-governance acceptance task for the correction epic.
+
+No correction task rewrites the historical design documents to hide the
+chronology. This file describes the current implementation instead.
 
 ## Current implementation map
 
-| Area                        | Current SDK v2 state                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | v2 assessment                                                                                                                                                                                                                                                                                                               | Follow-up                                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Public SDK exports          | `packages/indicator-sdk/src/index.ts` exports only the SDK v2 authoring facade. Runtime snapshots/instances, host normalization, array-history compatibility helpers, flat TA/kernel APIs, and author lifecycle bookkeeping are absent from the public root.                                                                                                                                                                                                                                     | ECDD-225 completed the v2-only public boundary; ECDD-226 now documents that final authoring model without a compatibility export path.                                                                                                                                                                                      | Complete (ECDD-225, ECDD-226)                                             |
-| Authoring execution context | Compiler-generated hidden call-site identities key input, recurrence, TA, plot, drawing, and signal state. Runtime bookkeeping remains internal; authors do not provide positional persistence keys or context objects.                                                                                                                                                                                                                                                                          | Stable identity is independent from unrelated source reordering and supports conditional execution while retaining committed/provisional rollback.                                                                                                                                                                          | Complete (ECDD-219, ECDD-220, ECDD-221)                                   |
-| Indicator execution         | `indicator.ts` separates discovery, historical replay, building bars, finalized bars, committed drawings, signals, and bounded snapshots while resolving stateful/declarative calls by hidden identity rather than author execution position.                                                                                                                                                                                                                                                    | Conditional/reordered v2 authoring composes with the existing committed/provisional lifecycle and bounded snapshots.                                                                                                                                                                                                        | Complete (ECDD-220, ECDD-221, final Phase 16 verification)                |
-| Inputs                      | `input.ts` uses compiler-generated hidden identity for author inputs; public input options no longer expose persistence keys. Host parameter normalization remains runtime-owned and handles missing/stale/invalid values safely.                                                                                                                                                                                                                                                                | ECDD-225 complete for the public boundary: persistence identity is compiler/SDK-owned and normalization is host/runtime-owned.                                                                                                                                                                                              | ECDD-219, ECDD-220, ECDD-225                                              |
-| Source/history model        | `series.ts` exposes the v2 recurrence/history facade (`series`, `history`, compiler-lowered series history) while legacy `appendSeries`/`laggedValue` helpers are no longer available from the author-facing root. ECDD-142 adds provider-backed whole-indicator/per-TA acquisition, and ECDD-232 adds distinct standard/Heikin-Ashi source identities with post-timeframe transformation.                                                                                                       | The canonical committed/provisional history path and compiler lowering remain intact while provider/MTF acquisition and synthetic candle transformation are resolved through the shared source engine and worker source snapshots.                                                                                          | Complete through ECDD-232 Task 12                                         |
-| Synthetic candle transforms | `candle.standard` / `candle.heikinAshi`, `input.candleType(...)`, and `indicator.candleType(...)` resolve the whole-indicator source type. Heikin Ashi is calculated after target-timeframe construction; repeated building updates derive from finalized HA state, bounded-window advancement carries the prior finalized transform seed, and source snapshots carry market/synthetic provenance.                                                                                               | Task 12's transform ordering, recursive rollback semantics, bounded retention continuity, compiler-owned input binding, renderer acquisition, and provenance boundary are implemented without author-managed HA buffers or legacy compatibility.                                                                            | Complete (ECDD-232, PR #145 / `198cd4c64a763841e4d42a8aed510655ec308436`) |
-| Stateful TA                 | Stateful scalar TA kernels execute incrementally with committed/provisional state and are keyed by compiler-owned hidden identity. Conditional calls preserve state, and steady-state SMA/EMA/RSI/ATR/crossover remain O(1) while extrema are amortized O(1).                                                                                                                                                                                                                                    | Final v2 behavior is identity-backed, conditional-safe, replay-equivalent, and bounded.                                                                                                                                                                                                                                     | Complete (ECDD-219, ECDD-220, ECDD-221, ECDD-145)                         |
-| Scalar plots                | Compiler declarations provide stable hidden plot identity and output metadata. Conditional plot omission preserves declaration/settings identity without requiring author keys.                                                                                                                                                                                                                                                                                                                  | Reordering and conditional execution no longer depend on positional plot indices.                                                                                                                                                                                                                                           | Complete (ECDD-219, ECDD-221)                                             |
-| Shapes                      | `plot.shape` supports semantic marker shape/location/text/textColor/textSize behavior, boolean/location placement, compiler metadata, contracts, and renderer mapping.                                                                                                                                                                                                                                                                                                                           | Final v2 shape semantics are implemented and covered at SDK/compiler/renderer boundaries.                                                                                                                                                                                                                                   | Complete (ECDD-223, final Phase 16 verification)                          |
-| Persistent drawings         | `plot.box` and `plot.segment` return SDK-owned handles backed by hidden call-site/object identity. Updates/deletes reconcile committed/provisional geometry with bounded retention and ownership checks; normal author code does not create persistence IDs or scopes.                                                                                                                                                                                                                           | Final v2 drawing lifecycle keeps reconciliation internals while removing author-managed persistence identity.                                                                                                                                                                                                               | Complete (ECDD-219, ECDD-222, final Phase 16 verification)                |
-| Signals                     | `signal.ts` now commits only finalized events whose compiler-traced chart/TA/MTF dependencies are ready and source-confirmed. Event identity is keyed to the actual confirmed source candle, and runtime events can retain source timeframe/revision/synthetic provenance without exposing persistence plumbing to authors.                                                                                                                                                                      | ECDD-233 closes the source-confirmation/no-lookahead gap: provisional updates do not commit events, higher-timeframe conditions wait for their source candle, replay/live sequences agree, corrected-history rebuilds replace stale downstream signals, and callsite-owned commitment state prevents duplicate re-emission. | Complete (ECDD-233, PR #147 / `eb4b9b78b47d79f72c354abc436b78eed42ab374`) |
-| Worker runtime              | ECDD-140 encodes full history/rebuild payloads as validated columnar `Float64Array` snapshots and keeps building/rollover updates as bounded candle deltas. ECDD-145 adds monotonic generation/revision request rejection, bounded worker/request quotas and restart behavior. ECDD-143 adds validated dependency snapshots, aggregate dependency payload limits, duplicate `inputKey` rejection at both host/worker protocol boundaries, and deterministic dependency ordering before dispatch. | Detailed Task 14 remains complete and the ECDD-143 dependency transport now composes with it without exposing SDK authoring objects or runtime revision plumbing. Missing/invalid/circular dependencies fail before activation and bound historical-output changes trigger the required downstream rebuild.                 | Complete through ECDD-149 dependency acceptance                           |
-| Renderer orchestration      | `packages/renderer/src/indicator-worker-runtime.ts` converts full candle/source histories to worker snapshots, keeps live building/rollover traffic incremental, retries `SNAPSHOT_REQUIRED` with regenerated full dependency snapshots, and rejects stale data/config generations. `plugin-indicators.ts` validates cross-indicator bindings and executes the runtime-owned dependency DAG in deterministic upstream-first order.                                                               | Recovery/generation safety, marker/drawing mapping, MTF alignment, source lifecycle, and dependency ordering are covered by the final renderer acceptance set.                                                                                                                                                              | Complete through Phase 16                                                 |
-| Maintained examples         | `atr-rope-utbot.ts` uses SDK v2 hidden input/plot identity, canonical history, semantic BUY/SELL shapes, and SDK-owned drawing handles while preserving genuine POC/profile/follow/MG domain state. `atr-bands.ts` uses the concise v2 input/TA/plot/signal surface.                                                                                                                                                                                                                             | ATR Rope/UT Bot migration/regression coverage proves replay and incremental semantics; the final acceptance pass adds an ATR Bands semantic fixture for symmetric ATR envelopes and finalized crossover signaling.                                                                                                          | Complete (ECDD-224, ECDD-228, final Phase 16 verification)                |
-| Authoring docs              | `INDICATOR-AUTHORING.md` documents the v2-only authoring model, provider-aware timeframe controls, host-managed standard/Heikin-Ashi candle selection, and source-confirmed signal semantics. Worker transport, source-revision bookkeeping, snapshots, budgets, and lifecycle recovery remain platform concerns rather than author APIs.                                                                                                                                                        | The final acceptance pass compiled the guide's EMA-cross quick-start through the production package builder, yielding two inputs and four plots with no API drift.                                                                                                                                                          | Complete (ECDD-226, final Phase 16 verification)                          |
-| Contract tests              | SDK/runtime/compiler coverage includes typed snapshot/delta validation, worker resilience, dependency-graph/binding/snapshot regressions, hidden identity/history/conditional authoring, source-confirmed signals, synthetic candles, renderer integration, and maintained-indicator semantics.                                                                                                                                                                                                  | The final focused and repository-wide suites exercise the v2 contract from authoring compilation through worker and renderer boundaries.                                                                                                                                                                                    | Complete through Phase 16                                                 |
-| Performance gates           | `npm run test:performance` includes production four-chart orchestration, worker snapshot materialization, TA complexity measurements, 400,000-point dependency payload acceptance, 100,000-bar series/drawings/history, MTF alignment, and maintained ATR Rope/UT Bot execution.                                                                                                                                                                                                                 | Fresh final-head Phase 16 measurements remained inside every enforced budget; the four-chart authored path processed 100,000 aggregate history bars in about 23.9 s and kept the maximum building update near 1.3 ms against the 100 ms incremental budget.                                                                 | Complete through Phase 16                                                 |
+| Area                          | Current SDK v2 state                                                                                                                                                                                                                                                                                                                                            | Acceptance requirement                                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Public authoring surface      | `packages/indicator-sdk/src/index.ts` exposes metadata-only `defineIndicator`, `input`, scalar `ta`, plots/drawing handles, signals, history, constants, whole-indicator controls, and author-relevant types. Runtime instance/snapshot contracts, source tokens, old history helpers, flat TA aliases, and low-level kernels are not public authoring exports. | Public-surface negative type tests must remain green; no compatibility facade may be reintroduced.                                      |
+| Script execution model        | `script-transform.mjs` lowers one exported metadata-only declaration plus top-level script statements into the hidden runtime calculation callback. Direct `open/high/low/close/volume/hl2/hlc3/ohlc4` and `bar.index/time/confirmed` are compiler supplied.                                                                                                    | Maintained indicator source must not contain host/runtime context plumbing.                                                             |
+| Inputs                        | Input declarations use compiler-generated stable identity. Concise titled overloads and advanced options are supported. Dynamic input multiplicity through loops/recursion fails at build time.                                                                                                                                                                 | `input.source(close, ...)` must own source selection without author source-token tables/switches.                                       |
+| History and scalar recurrence | `close[n]` and derived-value history are compiler-lowered to hidden history state. Ordinary scalar recurrence commits finalized values and rolls building updates back to the same committed predecessor. `history(value, n)` remains an advanced explicit spelling.                                                                                            | Replay, building replacement, finalization, corrected-history reset, and unavailable-history behavior must agree.                       |
+| Persistent domain state       | Authored `var` declarations lower to hidden persistent slots with stable declaration/invocation identity, initialize-once semantics, copy-on-write building rollback, finalized commit, rebuild reset, and the existing 4,096 collection-item bound.                                                                                                            | State must exist only for indicator/domain needs; SDK-owned opaque handles must preserve reference identity through state cloning.      |
+| Stateful TA                   | Scalar TA kernels remain incremental with committed/provisional state. The authoring compiler canonicalizes ambiguous length-first source overloads such as `ta.ema(20, open)` and `ta.rsi(14, open)` before runtime execution while retaining direct-series provenance for MTF/signal semantics.                                                               | Source-first and approved length-first forms must be execution-equivalent; TA complexity gates remain bounded.                          |
+| Plots and shapes              | Compiler-generated plot declarations provide hidden stable output identity. Shape location/text/text-size semantics flow through SDK, contracts, worker results, and renderer mapping.                                                                                                                                                                          | Conditional execution must not depend on unrelated call order.                                                                          |
+| Persistent drawings           | `plot.box()` / `plot.segment()` return opaque handles. Creation assigns hidden logical identity once; `.set()` mutates geometry and `.delete()` removes it. Handle identity survives persistent-state cloning, insert/reorder/prune operations, and building rollback.                                                                                          | Keep the 2,000 drawing/change safeguards; do not solve churn by raising limits or exposing drawing IDs.                                 |
+| Maintained examples           | `atr-bands.ts` is the compact canonical example. `atr-rope-utbot.ts` uses top-level inputs/globals, compiler-managed `var`, natural TA/history, finalized signals, and zone-owned drawing handles; its remaining state is Rope/UT Bot/POC/follow/MG domain state.                                                                                               | The production-like 10,000-bar POC migration regression must complete within the 2,000 drawing retention/change bounds.                 |
+| Provider/MTF source engine    | ECDD-142 supplies provider-aware native/derived timeframe resolution, shared source acquisition, whole-indicator timeframe selection, and per-TA timeframe acquisition/alignment.                                                                                                                                                                               | No finalized lookahead; source leases/subscriptions and fallback remain host-owned.                                                     |
+| Synthetic candles             | ECDD-232 keeps standard and Heikin Ashi as distinct source identities. Target timeframe construction occurs before HA transformation; repeated building revisions derive from finalized HA state and bounded-window advancement carries recursive seed/provenance.                                                                                              | Authors do not maintain HA buffers, rollback state, or synthetic provenance.                                                            |
+| Signals                       | ECDD-233 commits only finalized events whose compiler-traced chart/TA/MTF dependencies are ready and source-confirmed. Commitment identity follows the confirmed source candle; corrected-history replay replaces stale downstream results.                                                                                                                     | No building-bar commitment, duplicate replay/live events, or lower-timeframe confirmation of an open higher-timeframe source candle.    |
+| Cross-indicator dependencies  | ECDD-143/ECDD-149 validate explicit instance/output bindings before activation, reject missing/self/duplicate/circular/invalid bindings, order a runtime-owned DAG deterministically, preindex dependency history, and bound aggregate dependency payload to 400,000 points.                                                                                    | Dependency plumbing and transport keys stay outside normal indicator authoring.                                                         |
+| Worker/runtime boundary       | ECDD-140/ECDD-145 retain validated columnar history/rebuild snapshots, bounded candle deltas, generation/revision rejection, quotas, deterministic failure settlement, restart behavior, output caps, and typed validation.                                                                                                                                     | Full-history/rebuild traffic and live deltas must remain bounded and stale work must not mutate current state.                          |
+| Renderer orchestration        | Renderer code materializes source/dependency snapshots, keeps live updates incremental, rebuilds when required, rejects stale generations, maps outputs/drawings, and executes the dependency DAG upstream-first.                                                                                                                                               | Four-chart/four-worker acceptance and recovery/resource cleanup remain required.                                                        |
+| Documentation                 | `INDICATOR-AUTHORING.md` now documents only metadata-only top-level v2 authoring, direct globals/history, `var`, source inputs, approved TA overloads, persistent drawing handles, source-confirmed signals, MTF, and HA.                                                                                                                                       | Example code in current docs must compile through the production authoring pipeline and must not teach removed author/runtime plumbing. |
+| Performance/resource gates    | Existing gates cover large history, provisional/finalized updates, TA complexity, drawing workloads, worker materialization, MTF, renderer alignment, 400,000-point dependency payloads, and four-chart orchestration.                                                                                                                                          | ECDD-241 must rerun the complete exact-head gate plus the 10,000-bar flagship drawing stress before promotion.                          |
 
-## Keep versus replace
+## Public/private boundary
 
-### Keep and adapt
+The following are normal author concerns:
 
-- Incremental history/building/rollover execution instead of full-history work on every live update.
-- Committed/provisional rollback semantics for state and drawings.
-- Bounded series, points, drawings, and signals.
-- Runtime snapshot validation and dense timeline validation.
-- Worker snapshot/rebuild recovery and stale-generation checks.
-- Stateful O(1) or amortized O(1) TA kernels where already implemented correctly.
-- Host-side input normalization for stale, missing, invalid, bounded, and stepped values.
-- Finalized-only committed signal emission.
+- indicator metadata;
+- input declarations and settings metadata;
+- direct current-bar prices and derived values;
+- indicator mathematics and helper functions;
+- history indexing and genuine persistent domain state;
+- TA, plots, drawing handles, and signal conditions;
+- requested whole-indicator/per-TA timeframe and candle type.
 
-### Replaced for final v2
+The following remain platform concerns:
 
-- Execution-order identity for inputs, TA kernels, recurrence, plots, drawings, and signals.
-- `input_<index>`, `plot_<index>`, `signal_<index>`, and normal author-written persistence keys/IDs.
-- The rule that stateful calls must be unconditional and execute in identical order on every bar.
-- Author-maintained history arrays as the normal way to read prior source values.
-- Normal author-facing `plot.drawings(key, ...)`, `plot.remove(id)`, and drawing IDs.
-- Legacy/array authoring exports that would force compatibility constraints onto v2 (public-surface cleanup completed by ECDD-225 and the v2-only authoring-guide rewrite completed by ECDD-226).
+- hidden call-site/persistence identity;
+- discovery/replay/building/finalized execution phases;
+- committed/provisional snapshots and corrected-history rebuilds;
+- source-option tokens and provider acquisition/subscriptions;
+- MTF aggregation/alignment and HA recursive transform state;
+- worker generations/revisions, quotas, restart/recovery, and transport encoding;
+- drawing registries/reconciliation/retention;
+- signal event keys, deduplication, source revisions, and provenance;
+- dependency graph scheduling and snapshot transport;
+- host settings normalization.
 
-## Gap classification and implementation order
+If code is necessary only because ERC Chart has those runtime mechanics, it must
+not be moved back into maintained indicator source.
 
-1. **Source/history contract — ECDD-218 (complete).** Canonical source/history semantics and equivalent history access forms are implemented and accepted.
-2. **Compiler identity — ECDD-219 (complete).** Stable hidden identities cover every stateful/declarative authoring call.
-3. **Runtime identity storage — ECDD-220 (complete).** Settings/state/output persistence uses generated identities while retaining committed/provisional execution.
-4. **Conditional execution — ECDD-221 (complete).** Stateful/declarative authoring no longer depends on identical execution order.
-5. **Drawing/signal identity — ECDD-222 (complete).** Normal author persistence IDs are removed in favor of SDK-owned lifecycle identity.
-6. **Shape text — ECDD-223 (complete).** Marker text/text-size behavior now flows through the SDK, compiler metadata, runtime/contracts, and renderer; preserve this semantic contract during later cleanup.
-7. **Example migration — ECDD-224 (complete).** ATR Rope and UT Bot now use the v2 history, hidden identity, semantic marker, and drawing-handle model while preserving approved trading semantics; ECDD-228 retains the broader migration-regression matrix.
-8. **Public export cleanup — ECDD-225 (complete).** PR #133 / squash merge `8b9fd709070bb884295813a07a6fdfa11c4efaf0` leaves the package root v2-only, keeps host/runtime mechanisms internal, and adds no compatibility layer.
-9. **Documentation — ECDD-226 (complete).** PR #135 / squash merge `a4ece67f7b9aa077108fd27e777b6c1b92374ae3` publishes the final v2-only authoring model and records that provider-aware MTF acquisition/per-TA overrides remain operationally owned by ECDD-142.
-10. **Contract fixtures — ECDD-227 (complete).** PR #137 / squash merge `8bdbb38b98b1f74220966a26c170f88476e54cce` locks hidden identity, conditional execution, history parity, provisional rollback, finalized advancement, and drawing reconciliation through the packaged authoring path; provider/MTF source acceptance stays with ECDD-142.
-11. **Migration regressions — ECDD-228 (complete).** PR #139 / squash merge `cdd7db5568fb89f9415b7db526340d265aada5d0` proves the approved ATR Rope/UT Bot semantics across historical replay, provisional replacement, finalized advancement, and unrelated authoring source reorder.
-12. **Performance gates — ECDD-229 (complete).** PR #141 / squash merge `5bc8b1f23cb7a82c04c7620dbe414dc3f4c8bafe` retains the existing component budgets and adds production chart-scoped, four-worker large-history, provisional, finalized-rollover, and real multi-chart runtime/orchestration acceptance without duplicating provider-aware MTF acquisition.
-13. **Synthetic candle sources — ECDD-232 (complete).** PR #145 / squash merge `198cd4c64a763841e4d42a8aed510655ec308436` adds the host-managed candle transform registry, standard/Heikin-Ashi source identity, compiler-bound candle-type inputs, recursive provisional/bounded-window HA state, renderer integration, and synthetic provenance. Source-confirmed signal semantics remain Task 13 rather than being folded into this completion claim.
-14. **Source-confirmed signal semantics — ECDD-233 (complete).** PR #147 / squash merge `eb4b9b78b47d79f72c354abc436b78eed42ab374` makes signal commitment compiler/runtime-owned across TA warm-up, provisional replacement, higher-timeframe confirmation, replay/live execution, corrected-history rebuilds, and source revision/synthetic provenance. Detailed Task 14 remains responsible for the broader validated worker/runtime v2 transport and delta contract rather than duplicating these signal semantics.
-15. **Worker snapshot/delta transport — ECDD-140 (complete).** PR #149 / squash merge `bdb66d5d10ff5c49ec8869faf6a51a58224cc5a2` moves full worker history/rebuild traffic to validated columnar typed-array snapshots, keeps building/rollover traffic incremental, retains source provenance and stale-generation fences, rejects malformed source metadata before worker creation, preserves bounded output, and adds reproducible maximum-history/source materialization measurements.
-16. **Worker resilience — ECDD-145 (complete).** PR #151 / squash merge `5a77a2338633af7642a90e506794dfc207dbe5bf` completes detailed Task 14 with stale generation/revision rejection, worker/request quotas, deterministic lifecycle failure settlement, bounded restart behavior, replaced-worker late-event isolation, and the required 100,000-update TA complexity gate. CodeRabbit's review finding on worker `type: "error"` settlement was fixed before merge and covered by regression. Exact-head Delivery `34805954899`, Semgrep scan `226863189`, and the required CodeRabbit status passed with zero unresolved review threads.
-17. **Cross-indicator dependencies — ECDD-143 and ECDD-149 complete.** PR #153 / squash merge `74ed2ca9305d0d5003c19a247929bfb3a9b211a6` implements explicit instance/output bindings, deterministic runtime-owned dependency DAG ordering, pre-activation missing/self/duplicate/circular/consumer-input validation, bounded dependency snapshots, and O(1) authored dependency-history lookup without exposing runtime dependency keys as public persistence APIs. PR #155 / squash merge `f03925a8c94ae7ee6896a3f549283c181eaa6d36` adds the renderer-boundary acceptance regression that proves missing instance, missing output, and circular dependency errors occur with `createIndicator=0` and worker `sync=0`.
-18. **Global SDK v2 acceptance — Phase 16 complete (2026-09-14).** PR #157 was squash-merged as `990353bc8ad2022504c367f1baaee52caa4d8c90` from final task head `474f1273291333464d579813c67b808eb0a079d5`. Fresh repository-wide and focused correctness suites, maintained-indicator semantics, author-surface searches, source/resource cleanup tests, no-lookahead/replay checks, guide compilation, plugin packaging, and measured performance gates all pass. The final review round also closed lexical shadowing for imported SDK helper recognition and default-parameter initializer tracing for signal dependencies, hidden TA execution, and mutation analysis.
+## Preserved runtime foundations
 
-## ECDD-217 acceptance check
+The correction intentionally preserves runtime mechanisms that already satisfy
+the approved design:
 
-- A current implementation map exists above for SDK, runtime, worker, renderer, examples, docs, tests, and performance tooling.
-- Gaps are classified into public API, compiler/transform, runtime/state, examples, documentation, tests, and performance work with explicit Jira ownership.
-- Already-complete runtime foundations are identified so later tasks change only what final v2 requires.
-- The complete SDK v2 architecture includes MTF/timeframe capabilities; ECDD-142 now implements the provider-aware source acquisition and whole-indicator/per-TA timeframe boundary that ECDD-216 intentionally left to it.
-- ECDD-143 and ECDD-149 complete the explicit cross-indicator dependency implementation and acceptance on top of the existing source/worker contracts without changing the no-legacy-compatibility decision or exposing runtime plumbing to authors.
-- Phase 16 is complete: the final end-to-end verification closes the SDK v2 migration plan. Further legacy-indicator/example work can proceed on top of this accepted v2 foundation without reopening compatibility requirements.
-- Post-merge direction review found no public authoring API drift from the final review fixes, so `INDICATOR-AUTHORING.md` remains correct without an API rewrite. The fixes are compiler-analysis hardening behind the existing v2 surface.
+- incremental history/building/finalized execution;
+- committed/provisional rollback semantics;
+- 100,000-candle/result retention bounds and bounded state/drawings/signals;
+- O(1) or amortized-O(1) steady-state TA kernels where applicable;
+- provider-aware MTF source sharing/alignment;
+- post-timeframe Heikin Ashi transformation and provenance;
+- source-confirmed/no-lookahead signals;
+- validated dependency DAG/bounded dependency payloads;
+- typed worker snapshots/deltas, stale-generation rejection, quotas, and restart;
+- renderer recovery and resource cleanup.
 
-## Release promotion status
+These mechanisms may be refactored behind their boundaries when required by the
+corrected authoring model; they are not removed merely because authors no longer
+see them.
 
-- PR #161 merged the accepted SDK v2 promotion into `main` as `ec58a0d890455a654415c49768ee7a32b9a99abd`.
-- The exact merged commit passed the Windows release build plus install/launch/uninstall smoke on rerun. The subsequent publication failure was release-identity reuse: the already-published `v1.0.0` release targets an older commit, so it must not be retargeted.
-- ECDD-235 therefore promotes this delivery as application version `1.1.0`, tag `v1.1.0`, and installer `ERC-Chart-Setup-1.1.0.exe`, with an early release preflight that rejects non-advancing release versions.
-- This release remediation does not change the accepted SDK v2 architecture or reopen legacy compatibility. The detailed implementation plan remains complete; publication proceeds through the existing `task` -> `epic` -> `main` delivery path.
+## Correction acceptance checklist
+
+ECDD-241 is complete only when fresh exact-head evidence marks every row below
+PASS (or records an explicitly approved exception):
+
+1. one public metadata-only top-level authoring model;
+2. direct globals/helpers with compiler-owned hidden identity;
+3. static input identity, source inputs, and dynamic-multiplicity rejection;
+4. history, scalar recurrence, persistent `var`, rollback, and bounds;
+5. approved `ta.*` overloads, replay behavior, MTF provenance, and complexity;
+6. opaque persistent drawing handles with stable identity and unchanged bounds;
+7. ATR Rope + UT Bot domain-only source and semantic parity;
+8. no public legacy authoring compatibility;
+9. provider/MTF acquisition and source lifecycle;
+10. Heikin Ashi transform order, recursive rollback, and provenance;
+11. finalized/source-confirmed signals, replay equivalence, and no-lookahead;
+12. dependency DAG validation/order/history/bounds;
+13. worker/runtime/renderer validation, quotas, recovery, and cleanup;
+14. 100,000-bar/update, 400,000-dependency-point, four-chart/four-worker, MTF,
+    drawing, and 10,000-bar flagship performance/resource coverage;
+15. maintained examples and current public docs match the corrected surface;
+16. current-state documentation supersedes the September 14 author-experience
+    acceptance claim without falsifying its historical chronology;
+17. repository-wide exact-head correctness/audit/version/format gates pass;
+18. task-to-epic and epic-to-main delivery governance is satisfied.
+
+After those checks, the correction task must repeat the design review with these
+anti-drift questions: does source match the approved design, expose runtime
+details, add ERC architecture to indicator code, weaken Pine-like authoring,
+restore compatibility, place abstractions in the wrong layer, preserve
+committed/provisional semantics, preserve no-lookahead, preserve MTF/provider and
+HA behavior, preserve dependencies, preserve worker/resource bounds, make author
+code simpler, and leave the flagship ATR Rope + UT Bot source cleaner rather than
+more framework-aware?
+
+## Historical acceptance and release notes
+
+The original redesign sequence (ECDD-218 through ECDD-229 plus ECDD-232,
+ECDD-233, ECDD-140, ECDD-145, ECDD-143/ECDD-149) established the runtime/source
+foundations listed above. PR #157 / merge `990353bc8ad2022504c367f1baaee52caa4d8c90`
+recorded the September 14 Phase 16 acceptance of that then-current model.
+
+PR #161 later promoted that accepted state to `main`, followed by the `1.1.0`
+release remediation. Those events remain valid history. They do not override the
+September 15 correction design or substitute for ECDD-241's fresh final
+design-to-code acceptance.

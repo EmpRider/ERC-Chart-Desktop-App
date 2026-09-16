@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,7 +17,7 @@ const candle = (index, close) => ({
   volume: index + 1,
 });
 
-async function packagedPlugin(sourceText) {
+async function packagedPlugin(sourceText, extraFiles = {}) {
   const sourceDirectory = await mkdtemp(
     path.join(import.meta.dirname, ".top-level-authoring-source-"),
   );
@@ -27,6 +27,11 @@ async function packagedPlugin(sourceText) {
   try {
     const source = path.join(sourceDirectory, "indicator.ts");
     await writeFile(source, sourceText, "utf8");
+    for (const [relativePath, contents] of Object.entries(extraFiles)) {
+      const target = path.join(sourceDirectory, relativePath);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, contents, "utf8");
+    }
     const { manifest, packageRoot } = await buildIndicatorPackage({
       source,
       outputRoot: path.join(outputDirectory, "package"),
@@ -42,6 +47,291 @@ async function packagedPlugin(sourceText) {
     await rm(outputDirectory, { recursive: true, force: true });
   }
 }
+
+test("package build rejects callback-shaped defineIndicator assigned before default export", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const indicator = defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-assigned", name: "Legacy assigned" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+
+export default indicator;
+`),
+    /metadata-only defineIndicator declaration/u,
+  );
+});
+
+test("package build rejects callback-shaped defineIndicator reached through a local alias", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const define = defineIndicator;
+export default define(
+  { id: "erc.indicator.top-level-authoring.legacy-local-alias", name: "Legacy local alias" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("package build rejects defineIndicator escaped through an object and destructuring", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const holder = { define: defineIndicator };
+const { define } = holder;
+export default define(
+  { id: "erc.indicator.top-level-authoring.legacy-object-alias", name: "Legacy object alias" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("package build allows type-only defineIndicator references", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+type DefineIndicatorType = typeof defineIndicator;
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.type-only-define",
+  name: "Type-only defineIndicator",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
+test("package build allows namespace-local defineIndicator shadowing", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+namespace Local {
+  export function defineIndicator(value: number) {
+    return value;
+  }
+  export const value = defineIndicator(1);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.namespace-shadow",
+  name: "Namespace shadow",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
+test("package build allows namespace-local import-equals defineIndicator shadowing", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+namespace Helpers {
+  export function defineIndicator(value: number) {
+    return value;
+  }
+}
+
+namespace Local {
+  import defineIndicator = Helpers.defineIndicator;
+  export const value = defineIndicator(1);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.namespace-import-equals-shadow",
+  name: "Namespace import-equals shadow",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
+test("package build rejects CommonJS access to the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const { defineIndicator } = require("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-commonjs", name: "Legacy CommonJS" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects constant-derived CommonJS access to the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const sdkName = "@erc-chart/indicator-sdk";
+const { defineIndicator } = require(sdkName);
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-commonjs-const", name: "Legacy CommonJS const" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects shadowed constant-derived CommonJS SDK access", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const sdkName = "./unrelated-module.js";
+function loadSdk() {
+  const sdkName = "@erc-chart/indicator-sdk";
+  return require(sdkName);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.shadowed-commonjs-const",
+  name: "Shadowed CommonJS const",
+});
+plot.line(close);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build allows a lexically shadowed local require function", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function loadLocal(require: (name: string) => unknown) {
+  const sdkName = "@erc-chart/indicator-sdk";
+  return require(sdkName);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.shadowed-require",
+  name: "Shadowed require",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
+test("package build allows unresolved dynamic imports unrelated to the indicator SDK", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function loadOptional(moduleName: string) {
+  return import(moduleName);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.dynamic-unrelated",
+  name: "Dynamic unrelated",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
+test("package build rejects dynamic imports of the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const { defineIndicator } = await import("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-dynamic", name: "Legacy dynamic import" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects constant-derived dynamic imports of the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const sdkName = "@erc-chart/indicator-sdk";
+const { defineIndicator } = await import(sdkName);
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-dynamic-const", name: "Legacy dynamic const" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects runtime namespace imports of the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import * as sdk from "@erc-chart/indicator-sdk";
+function legacy(runtime) {
+  return runtime.defineIndicator(
+    { id: "erc.indicator.top-level-authoring.legacy-namespace", name: "Legacy namespace" },
+    ({ close }) => close,
+  );
+}
+export default legacy(sdk);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build cannot receive the hidden callback constructor through a dependency", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(
+        `
+import legacyIndicator from "legacy-indicator-helper";
+export default legacyIndicator;
+`,
+        {
+          "node_modules/legacy-indicator-helper/package.json": JSON.stringify({
+            name: "legacy-indicator-helper",
+            version: "1.0.0",
+            type: "module",
+            exports: "./index.js",
+          }),
+          "node_modules/legacy-indicator-helper/index.js": `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-dependency", name: "Legacy dependency" },
+  () => undefined,
+);
+`,
+        },
+      ),
+    /indicator source must be compiled/u,
+  );
+});
 
 test("canonical top-level Pine-style package executes the ECDD-236 authoring contract", async () => {
   const { default: plugin } = await packagedPlugin(`
@@ -136,6 +426,237 @@ plot.line(bar.confirmed ? 1 : 0, { title: "Bar confirmed" });
     assert.deepEqual(values("Bar index"), [0, 1, 2, 3]);
     assert.deepEqual(values("Bar time"), [0, 60_000, 120_000, 180_000]);
     assert.deepEqual(values("Bar confirmed"), [1, 1, 1, 0]);
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads match source-first execution for direct and selected sources", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-overloads",
+  name: "TA overloads",
+});
+
+const length = input.int(2, "Length");
+const source = input.source(open, "Source");
+const emaLengthFirst = ta.ema(length, open);
+const emaSourceFirst = ta.ema(open, length);
+const selectedLengthFirst = ta.ema(length, source);
+const selectedSourceFirst = ta.ema(source, length);
+const rsiLengthFirst = ta.rsi(length, open);
+const rsiSourceFirst = ta.rsi(open, length);
+
+plot.line(emaLengthFirst, { title: "EMA length first" });
+plot.line(emaSourceFirst, { title: "EMA source first" });
+plot.line(selectedLengthFirst, { title: "Selected length first" });
+plot.line(selectedSourceFirst, { title: "Selected source first" });
+plot.line(rsiLengthFirst, { title: "RSI length first" });
+plot.line(rsiSourceFirst, { title: "RSI source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+  const pairs = [
+    ["EMA length first", "EMA source first"],
+    ["Selected length first", "Selected source first"],
+    ["RSI length first", "RSI source first"],
+  ];
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    for (const [lengthFirst, sourceFirst] of pairs) {
+      const leftKey = outputKeyFor(lengthFirst);
+      const rightKey = outputKeyFor(sourceFirst);
+      assert.deepEqual(
+        instance.snapshot().points.map((point) => point.values[leftKey]),
+        instance.snapshot().points.map((point) => point.values[rightKey]),
+      );
+    }
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads resolve module-scope constant lengths", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+const DEFAULT_LENGTH = 2;
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-static-length",
+  name: "TA static length",
+});
+
+const emaLengthFirst = ta.ema(DEFAULT_LENGTH, open);
+const emaSourceFirst = ta.ema(open, DEFAULT_LENGTH);
+
+plot.line(emaLengthFirst, { title: "EMA length first" });
+plot.line(emaSourceFirst, { title: "EMA source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    const lengthFirstKey = outputKeyFor("EMA length first");
+    const sourceFirstKey = outputKeyFor("EMA source first");
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[lengthFirstKey]),
+      instance.snapshot().points.map((point) => point.values[sourceFirstKey]),
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads resolve wrapped constants and history-indexed series", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+const WRAPPED_LENGTH = 2 as const;
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-wrapped-history",
+  name: "TA wrapped history",
+});
+
+const wrappedLengthFirst = ta.ema(WRAPPED_LENGTH, open);
+const wrappedSourceFirst = ta.ema(open, WRAPPED_LENGTH);
+const historyLengthFirst = ta.ema(2, close[1]);
+const historySourceFirst = ta.ema(close[1], 2);
+
+plot.line(wrappedLengthFirst, { title: "Wrapped length first" });
+plot.line(wrappedSourceFirst, { title: "Wrapped source first" });
+plot.line(historyLengthFirst, { title: "History length first" });
+plot.line(historySourceFirst, { title: "History source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    for (const [lengthFirst, sourceFirst] of [
+      ["Wrapped length first", "Wrapped source first"],
+      ["History length first", "History source first"],
+    ]) {
+      const leftKey = outputKeyFor(lengthFirst);
+      const rightKey = outputKeyFor(sourceFirst);
+      assert.deepEqual(
+        instance.snapshot().points.map((point) => point.values[leftKey]),
+        instance.snapshot().points.map((point) => point.values[rightKey]),
+      );
+    }
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads recognize helper-derived and bar-derived series", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+function midpoint() {
+  return (open + close) / 2;
+}
+
+function shifted(value: number) {
+  return value + 1;
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-derived-series",
+  name: "TA derived series",
+});
+
+const helperSource = midpoint();
+const parameterSource = shifted(open);
+const expressionSource = (high + low) / 2;
+const helperLengthFirst = ta.ema(2, helperSource);
+const helperSourceFirst = ta.ema(helperSource, 2);
+const parameterLengthFirst = ta.ema(2, parameterSource);
+const parameterSourceFirst = ta.ema(parameterSource, 2);
+const expressionLengthFirst = ta.ema(2, expressionSource);
+const expressionSourceFirst = ta.ema(expressionSource, 2);
+
+plot.line(helperLengthFirst, { title: "Helper length first" });
+plot.line(helperSourceFirst, { title: "Helper source first" });
+plot.line(parameterLengthFirst, { title: "Parameter length first" });
+plot.line(parameterSourceFirst, { title: "Parameter source first" });
+plot.line(expressionLengthFirst, { title: "Expression length first" });
+plot.line(expressionSourceFirst, { title: "Expression source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    for (const [lengthFirst, sourceFirst] of [
+      ["Helper length first", "Helper source first"],
+      ["Parameter length first", "Parameter source first"],
+      ["Expression length first", "Expression source first"],
+    ]) {
+      const leftKey = outputKeyFor(lengthFirst);
+      const rightKey = outputKeyFor(sourceFirst);
+      assert.deepEqual(
+        instance.snapshot().points.map((point) => point.values[leftKey]),
+        instance.snapshot().points.map((point) => point.values[rightKey]),
+      );
+    }
   } finally {
     instance.dispose();
   }

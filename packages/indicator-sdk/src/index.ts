@@ -4,10 +4,7 @@ import {
   type CompatibilityRange,
   type ContractVersion,
 } from "@erc-chart/contracts";
-import {
-  defineIndicator as runtimeDefineIndicator,
-  type IndicatorOptions,
-} from "./indicator.js";
+import type { IndicatorOptions } from "./indicator.js";
 import { input as runtimeInput } from "./input.js";
 import {
   plot as runtimePlot,
@@ -207,8 +204,11 @@ export const ta: TechnicalAnalysisApi = runtimeTa as TechnicalAnalysisApi;
 
 export type { IndicatorOptions } from "./indicator.js";
 export type DefineIndicator = (options: IndicatorOptions) => IndicatorModule;
-export const defineIndicator: DefineIndicator =
-  runtimeDefineIndicator as unknown as DefineIndicator;
+export const defineIndicator: DefineIndicator = () => {
+  throw new Error(
+    "indicator source must be compiled before defineIndicator executes.",
+  );
+};
 
 export interface InputOptions {
   readonly title?: string;

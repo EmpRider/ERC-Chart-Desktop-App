@@ -82,7 +82,8 @@ test("a positional plot cannot extend 128 predeclared compiler plots", async () 
   }));
   const result = await build({
     stdin: {
-      contents: `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+      contents: `import { defineIndicator } from "./packages/indicator-sdk/dist/indicator.js";
+import { plot } from "./packages/indicator-sdk/dist/plot.js";
 export default defineIndicator(
   { id: "erc.indicator.plot-capacity.main", name: "Plot capacity" },
   () => { plot.line(1, { key: "positional", title: "Positional" }); },
@@ -126,7 +127,8 @@ test("positional replay resolves definitions appended after compiler plots", asy
   ];
   const result = await build({
     stdin: {
-      contents: `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+      contents: `import { defineIndicator } from "./packages/indicator-sdk/dist/indicator.js";
+import { plot } from "./packages/indicator-sdk/dist/plot.js";
 export default defineIndicator(
   { id: "erc.indicator.positional-replay.main", name: "Positional replay" },
   () => { plot.line(7, { key: "positional", title: "Positional" }); },
