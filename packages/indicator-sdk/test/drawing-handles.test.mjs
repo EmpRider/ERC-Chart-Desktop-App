@@ -485,6 +485,74 @@ test("evicted drawing handles cannot delete a later same-callsite drawing", () =
   instance.dispose();
 });
 
+test("deleting an evicted live drawing removes its rendered overlay", () => {
+  let oldestHandle;
+  let newestHandle;
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.handle-evicted-delete.main",
+      name: "Evicted handle deletion",
+    },
+    (bar) => {
+      if (!bar.isConfirmed) return;
+      if (bar.index === 0) {
+        for (let index = 0; index < 2_000; index += 1) {
+          const handle = plot.box(
+            {
+              left: bar.openTimeMs,
+              right: bar.openTimeMs + 60_000,
+              top: bar.close + index,
+              bottom: bar.close + index - 1,
+              color: "#008800",
+            },
+            evictionBoxCallsites[index],
+          );
+          if (index === 0) oldestHandle = handle;
+          if (index === 1_999) newestHandle = handle;
+        }
+        newestHandle.delete();
+        return;
+      }
+      if (bar.index === 1) {
+        plot.box(
+          {
+            left: bar.openTimeMs,
+            right: bar.openTimeMs + 60_000,
+            top: 10_000,
+            bottom: 9_999,
+            color: "#008800",
+          },
+          evictionBoxCallsites[2_000],
+        );
+        return;
+      }
+      if (bar.index === 2) oldestHandle.delete();
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  const oldestId = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.top === 20)?.id;
+  assert.equal(typeof oldestId, "string");
+  assert.equal(instance.snapshot().overlays.length, 1_999);
+
+  instance.onFinalizedBar(candle(1, 21));
+  assert.equal(instance.snapshot().overlays.length, 2_000);
+  assert.ok(
+    instance.snapshot().overlays.some((overlay) => overlay.id === oldestId),
+  );
+
+  instance.onFinalizedBar(candle(2, 22));
+  assert.equal(
+    instance.snapshot().overlays.some((overlay) => overlay.id === oldestId),
+    false,
+  );
+  assert.equal(instance.snapshot().overlays.length, 1_999);
+  instance.dispose();
+});
+
 test("building-only drawing allocation does not evict committed handles", () => {
   let oldestHandle;
   let oldestId;
