@@ -29,12 +29,6 @@ test("maintained indicator examples stay behind the authoring compiler boundary"
   );
   assert.deepEqual(tsconfig.include, ["src/index.ts"]);
 
-  const publicEntry = await readFile(
-    path.join(examplesRoot, "src/index.ts"),
-    "utf8",
-  );
-  assert.doesNotMatch(publicEntry, /atr-(?:bands|rope-utbot)/u);
-
   const authoredSources = (await readdir(path.join(examplesRoot, "src")))
     .filter((file) => file.endsWith(".ts") && file !== "index.ts")
     .sort();
@@ -42,6 +36,19 @@ test("maintained indicator examples stay behind the authoring compiler boundary"
     authoredSources.length > 0,
     "expected maintained indicator sources",
   );
+
+  const publicEntry = await readFile(
+    path.join(examplesRoot, "src/index.ts"),
+    "utf8",
+  );
+  for (const file of authoredSources) {
+    const moduleSpecifier = `./${path.parse(file).name}`;
+    assert.equal(
+      publicEntry.includes(moduleSpecifier),
+      false,
+      `${file} must stay behind the authoring compiler boundary`,
+    );
+  }
 
   for (const file of authoredSources) {
     const sourcePath = path.join(examplesRoot, "src", file);
