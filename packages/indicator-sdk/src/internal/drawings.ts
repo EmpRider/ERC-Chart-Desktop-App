@@ -357,6 +357,8 @@ export function drawingController(
       if (registry.get(id)?.controller !== controller) {
         if (!entry.evicted || entry.committed === undefined)
           throw new Error("Drawing handle is not active.");
+        assertDrawingChangeCapacity(active, id);
+        active.overlayUpdates.set(id, null);
         if (active.phase === "finalized") delete entry.committed;
         return;
       }
