@@ -181,6 +181,85 @@ export default define(
   );
 });
 
+test("rejects CommonJS access to the indicator SDK authoring surface", async () => {
+  const module = await loadTransform();
+  const source = `
+const { defineIndicator } = require("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => close,
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-commonjs-callback.ts",
+        sourceFileId: "src/legacy-commonjs-callback.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("rejects dynamic imports of the indicator SDK authoring surface", async () => {
+  const module = await loadTransform();
+  const source = `
+const { defineIndicator } = await import("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => close,
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-dynamic-import-callback.ts",
+        sourceFileId: "src/legacy-dynamic-import-callback.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("rejects direct re-exports of the indicator SDK authoring surface", async () => {
+  const module = await loadTransform();
+  const source = `
+export { defineIndicator } from "@erc-chart/indicator-sdk";
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/sdk-reexport.ts",
+        sourceFileId: "src/sdk-reexport.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("rejects runtime namespace imports of the indicator SDK", async () => {
+  const module = await loadTransform();
+  const source = `
+import * as sdk from "@erc-chart/indicator-sdk";
+function legacy(runtime) {
+  return runtime.defineIndicator(
+    { id: "fixture", name: "Fixture" },
+    ({ close }) => close,
+  );
+}
+export default legacy(sdk);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-namespace-callback.ts",
+        sourceFileId: "src/legacy-namespace-callback.ts",
+      }),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
 test("does not treat a lexically shadowed local defineIndicator call as SDK authoring", async () => {
   const module = await loadTransform();
   const source = `

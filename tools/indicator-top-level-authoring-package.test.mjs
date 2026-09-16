@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,7 +17,7 @@ const candle = (index, close) => ({
   volume: index + 1,
 });
 
-async function packagedPlugin(sourceText) {
+async function packagedPlugin(sourceText, extraFiles = {}) {
   const sourceDirectory = await mkdtemp(
     path.join(import.meta.dirname, ".top-level-authoring-source-"),
   );
@@ -27,6 +27,11 @@ async function packagedPlugin(sourceText) {
   try {
     const source = path.join(sourceDirectory, "indicator.ts");
     await writeFile(source, sourceText, "utf8");
+    for (const [relativePath, contents] of Object.entries(extraFiles)) {
+      const target = path.join(sourceDirectory, relativePath);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, contents, "utf8");
+    }
     const { manifest, packageRoot } = await buildIndicatorPackage({
       source,
       outputRoot: path.join(outputDirectory, "package"),
@@ -96,6 +101,79 @@ export default define(
 );
 `),
     /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("package build rejects CommonJS access to the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const { defineIndicator } = require("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-commonjs", name: "Legacy CommonJS" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects dynamic imports of the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const { defineIndicator } = await import("@erc-chart/indicator-sdk");
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-dynamic", name: "Legacy dynamic import" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects runtime namespace imports of the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import * as sdk from "@erc-chart/indicator-sdk";
+function legacy(runtime) {
+  return runtime.defineIndicator(
+    { id: "erc.indicator.top-level-authoring.legacy-namespace", name: "Legacy namespace" },
+    ({ close }) => close,
+  );
+}
+export default legacy(sdk);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build cannot receive the hidden callback constructor through a dependency", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(
+        `
+import legacyIndicator from "legacy-indicator-helper";
+export default legacyIndicator;
+`,
+        {
+          "node_modules/legacy-indicator-helper/package.json": JSON.stringify({
+            name: "legacy-indicator-helper",
+            version: "1.0.0",
+            type: "module",
+            exports: "./index.js",
+          }),
+          "node_modules/legacy-indicator-helper/index.js": `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-dependency", name: "Legacy dependency" },
+  () => undefined,
+);
+`,
+        },
+      ),
+    /indicator source must be compiled/u,
   );
 });
 

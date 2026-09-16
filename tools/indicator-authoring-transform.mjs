@@ -16,6 +16,10 @@ const indicatorSdkRuntimePath = path.resolve(
   repositoryRoot,
   "packages/indicator-sdk/dist/index.js",
 );
+const indicatorSdkCompilerRuntimePath = path.resolve(
+  repositoryRoot,
+  "packages/indicator-sdk/dist/internal/compiler-entry.js",
+);
 const indicatorSdkTypesPath = path.resolve(
   import.meta.dirname,
   "indicator-authoring/compiler-sdk.d.ts",
@@ -308,8 +312,13 @@ export function indicatorAuthoringTransformPlugin({
   return {
     name: "indicator-authoring-transform",
     setup(build) {
-      build.onResolve({ filter: /^@erc-chart\/indicator-sdk$/ }, () => ({
-        path: indicatorSdkRuntimePath,
+      build.onResolve({ filter: /^@erc-chart\/indicator-sdk$/ }, (args) => ({
+        path:
+          args.importer.length > 0 &&
+          isWithinRoot(root, args.importer) &&
+          !isDependencyPath(args.importer)
+            ? indicatorSdkCompilerRuntimePath
+            : indicatorSdkRuntimePath,
       }));
       build.onResolve(
         { filter: /^erc-chart:indicator-persistent-state$/ },

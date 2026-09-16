@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineIndicator, plot } from "../dist/index.js";
+import { plot } from "../dist/index.js";
+import { defineIndicator } from "../dist/indicator.js";
 import { cloneSeriesState } from "../dist/series.js";
 
 const context = { instrumentId: "TEST", timeframeId: "1m" };

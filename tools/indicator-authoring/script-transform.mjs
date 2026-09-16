@@ -30,6 +30,71 @@ function syntaxError(sourceFile, node, message) {
   );
 }
 
+function isSdkModuleSpecifier(node) {
+  return ts.isStringLiteralLike(node) && node.text === sdkModule;
+}
+
+function assertStaticNamedSdkImports(sourceFile) {
+  const reject = (node) => {
+    throw syntaxError(
+      sourceFile,
+      node,
+      "indicator SDK must use static named imports; dynamic/CommonJS/namespace/default imports and SDK re-exports are unsupported",
+    );
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      isSdkModuleSpecifier(statement.moduleSpecifier)
+    ) {
+      const importClause = statement.importClause;
+      if (importClause?.isTypeOnly === true) continue;
+      const namedBindings = importClause?.namedBindings;
+      if (
+        importClause === undefined ||
+        importClause.name !== undefined ||
+        namedBindings === undefined ||
+        !ts.isNamedImports(namedBindings)
+      )
+        reject(statement);
+      continue;
+    }
+
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.isTypeOnly !== true &&
+      statement.moduleSpecifier !== undefined &&
+      isSdkModuleSpecifier(statement.moduleSpecifier)
+    )
+      reject(statement);
+
+    if (
+      ts.isImportEqualsDeclaration(statement) &&
+      statement.isTypeOnly !== true &&
+      ts.isExternalModuleReference(statement.moduleReference) &&
+      statement.moduleReference.expression !== undefined &&
+      isSdkModuleSpecifier(statement.moduleReference.expression)
+    )
+      reject(statement);
+  }
+
+  const visit = (node) => {
+    if (ts.isCallExpression(node)) {
+      const [firstArgument] = node.arguments;
+      if (
+        firstArgument !== undefined &&
+        isSdkModuleSpecifier(firstArgument) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+      )
+        reject(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
 function sdkNamedBindings(sourceFile, requestedName) {
   const result = new Set();
   for (const statement of sourceFile.statements) {
@@ -318,6 +383,7 @@ export function transformIndicatorScript(
     true,
     scriptKind(fileName),
   );
+  assertStaticNamedSdkImports(sourceFile);
   const defineIndicatorBindings = sdkNamedBindings(sourceFile, "defineIndicator");
   if (defineIndicatorBindings.size === 0)
     return { code: sourceText, changed: false, relocatedHelperRanges: [] };
