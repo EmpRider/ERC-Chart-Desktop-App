@@ -1163,7 +1163,7 @@ function signalSdkImportedTypeName(sourceFile, localName) {
   return undefined;
 }
 
-function signalTypeReferenceHasShadowingTypeParameter(typeReference) {
+function signalTypeReferenceLexicalDeclaration(typeReference) {
   const requestedName = typeReference.typeName.text;
   let current = typeReference.parent;
   while (current !== undefined && !ts.isSourceFile(current)) {
@@ -1173,10 +1173,24 @@ function signalTypeReferenceHasShadowingTypeParameter(typeReference) {
         (typeParameter) => typeParameter.name.text === requestedName,
       )
     )
-      return true;
+      return { kind: "type-parameter" };
+    if (ts.isBlock(current) || ts.isCaseBlock(current)) {
+      const statements = ts.isCaseBlock(current)
+        ? current.clauses.flatMap((clause) => [...clause.statements])
+        : current.statements;
+      for (const statement of statements) {
+        if (
+          (ts.isInterfaceDeclaration(statement) ||
+            ts.isTypeAliasDeclaration(statement) ||
+            ts.isClassDeclaration(statement)) &&
+          statement.name?.text === requestedName
+        )
+          return { kind: "declaration", declaration: statement };
+      }
+    }
     current = current.parent;
   }
-  return false;
+  return undefined;
 }
 
 function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
@@ -1207,7 +1221,17 @@ function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
   }
   if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
     return false;
-  if (signalTypeReferenceHasShadowingTypeParameter(current)) return false;
+  const lexicalDeclaration = signalTypeReferenceLexicalDeclaration(current);
+  if (lexicalDeclaration?.kind === "type-parameter") return false;
+  if (lexicalDeclaration?.kind === "declaration") {
+    const declaration = lexicalDeclaration.declaration;
+    if (!ts.isTypeAliasDeclaration(declaration) || resolving.has(declaration))
+      return false;
+    resolving.add(declaration);
+    const result = signalTypeIsSdkDrawingHandle(declaration.type, resolving);
+    resolving.delete(declaration);
+    return result;
+  }
   const imported = signalSdkImportedTypeName(
     current.getSourceFile(),
     current.typeName.text,
