@@ -240,6 +240,12 @@ function withoutNames(active, names) {
 function isIdentifierReference(node) {
   const parent = node.parent;
   if (parent === undefined) return true;
+  let typeAncestor = parent;
+  while (typeAncestor !== undefined && !ts.isSourceFile(typeAncestor)) {
+    if (ts.isTypeNode(typeAncestor)) return false;
+    if (ts.isExpression(typeAncestor) || ts.isStatement(typeAncestor)) break;
+    typeAncestor = typeAncestor.parent;
+  }
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
   if (
     (ts.isPropertyAssignment(parent) ||

@@ -104,6 +104,23 @@ export default define(
   );
 });
 
+test("package build allows type-only defineIndicator references", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+type DefineIndicatorType = typeof defineIndicator;
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.type-only-define",
+  name: "Type-only defineIndicator",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
 test("package build rejects CommonJS access to the indicator SDK", async () => {
   await assert.rejects(
     () =>
@@ -324,6 +341,121 @@ plot.line(rsiSourceFirst, { title: "RSI source first" });
       candle(4, 13),
     ]);
     for (const [lengthFirst, sourceFirst] of pairs) {
+      const leftKey = outputKeyFor(lengthFirst);
+      const rightKey = outputKeyFor(sourceFirst);
+      assert.deepEqual(
+        instance.snapshot().points.map((point) => point.values[leftKey]),
+        instance.snapshot().points.map((point) => point.values[rightKey]),
+      );
+    }
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads resolve module-scope constant lengths", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+const DEFAULT_LENGTH = 2;
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-static-length",
+  name: "TA static length",
+});
+
+const emaLengthFirst = ta.ema(DEFAULT_LENGTH, open);
+const emaSourceFirst = ta.ema(open, DEFAULT_LENGTH);
+
+plot.line(emaLengthFirst, { title: "EMA length first" });
+plot.line(emaSourceFirst, { title: "EMA source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    const lengthFirstKey = outputKeyFor("EMA length first");
+    const sourceFirstKey = outputKeyFor("EMA source first");
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[lengthFirstKey]),
+      instance.snapshot().points.map((point) => point.values[sourceFirstKey]),
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads recognize helper-derived and bar-derived series", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+function midpoint() {
+  return (open + close) / 2;
+}
+
+function shifted(value: number) {
+  return value + 1;
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-derived-series",
+  name: "TA derived series",
+});
+
+const helperSource = midpoint();
+const parameterSource = shifted(open);
+const expressionSource = (high + low) / 2;
+const helperLengthFirst = ta.ema(2, helperSource);
+const helperSourceFirst = ta.ema(helperSource, 2);
+const parameterLengthFirst = ta.ema(2, parameterSource);
+const parameterSourceFirst = ta.ema(parameterSource, 2);
+const expressionLengthFirst = ta.ema(2, expressionSource);
+const expressionSourceFirst = ta.ema(expressionSource, 2);
+
+plot.line(helperLengthFirst, { title: "Helper length first" });
+plot.line(helperSourceFirst, { title: "Helper source first" });
+plot.line(parameterLengthFirst, { title: "Parameter length first" });
+plot.line(parameterSourceFirst, { title: "Parameter source first" });
+plot.line(expressionLengthFirst, { title: "Expression length first" });
+plot.line(expressionSourceFirst, { title: "Expression source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    for (const [lengthFirst, sourceFirst] of [
+      ["Helper length first", "Helper source first"],
+      ["Parameter length first", "Parameter source first"],
+      ["Expression length first", "Expression source first"],
+    ]) {
       const leftKey = outputKeyFor(lengthFirst);
       const rightKey = outputKeyFor(sourceFirst);
       assert.deepEqual(

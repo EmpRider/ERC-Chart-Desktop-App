@@ -345,8 +345,12 @@ function directIndicatorSeriesSource(expression, bindings) {
 function variableInitializerForReference(identifier) {
   const requestedName = identifier.text;
   let current = identifier.parent;
-  while (current !== undefined && !ts.isSourceFile(current)) {
-    if (ts.isBlock(current) || ts.isCaseBlock(current)) {
+  while (current !== undefined) {
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isSourceFile(current)
+    ) {
       const statements = ts.isCaseBlock(current)
         ? current.clauses.flatMap((clause) => [...clause.statements])
         : current.statements;
@@ -361,7 +365,9 @@ function variableInitializerForReference(identifier) {
         }
       }
     }
-    if (ts.isFunctionLike(current)) return undefined;
+    if (ts.isFunctionLike(current) && scopedNames(current)?.has(requestedName))
+      return undefined;
+    if (ts.isSourceFile(current)) return undefined;
     current = current.parent;
   }
   return undefined;
@@ -397,8 +403,42 @@ function taLengthExpression(expression, bindings, resolving = new Set()) {
   return result;
 }
 
+function taHelperReturnsSeries(helper, bindings, resolving) {
+  if (resolving.has(helper)) return false;
+  resolving.add(helper);
+  let result = false;
+  const visit = (node) => {
+    if (result) return;
+    if (node !== helper && ts.isFunctionLike(node)) return;
+    if (
+      ts.isReturnStatement(node) &&
+      node.expression !== undefined &&
+      taSeriesExpression(node.expression, bindings, resolving)
+    ) {
+      result = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (
+    ts.isArrowFunction(helper) &&
+    helper.body !== undefined &&
+    !ts.isBlock(helper.body)
+  )
+    result = taSeriesExpression(helper.body, bindings, resolving);
+  else if (helper.body !== undefined) visit(helper.body);
+  resolving.delete(helper);
+  return result;
+}
+
 function taSeriesExpression(expression, bindings, resolving = new Set()) {
-  if (ts.isParenthesizedExpression(expression))
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
     return taSeriesExpression(expression.expression, bindings, resolving);
   if (directIndicatorSeriesSource(expression, bindings) !== undefined) return true;
   if (sdkMemberCall(expression, bindings, "input", "source")) return true;
@@ -416,6 +456,25 @@ function taSeriesExpression(expression, bindings, resolving = new Set()) {
     bindings.get(expression.expression.text) === "history"
   )
     return true;
+  if (ts.isCallExpression(expression)) {
+    if (
+      expression.arguments.some((argument) =>
+        taSeriesExpression(argument, bindings, resolving),
+      )
+    )
+      return true;
+    const callable = expression.expression;
+    if (ts.isIdentifier(callable)) {
+      const helper = localFunctionForReference(callable);
+      if (helper !== undefined && taHelperReturnsSeries(helper, bindings, resolving))
+        return true;
+    }
+    if (
+      (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable)) &&
+      taHelperReturnsSeries(callable, bindings, resolving)
+    )
+      return true;
+  }
   if (ts.isIdentifier(expression)) {
     const initializer = variableInitializerForReference(expression);
     if (initializer === undefined || resolving.has(initializer)) return false;
@@ -431,9 +490,15 @@ function taSeriesExpression(expression, bindings, resolving = new Set()) {
     );
   if (ts.isConditionalExpression(expression))
     return (
+      taSeriesExpression(expression.condition, bindings, resolving) ||
       taSeriesExpression(expression.whenTrue, bindings, resolving) ||
       taSeriesExpression(expression.whenFalse, bindings, resolving)
     );
+  if (
+    ts.isPrefixUnaryExpression(expression) ||
+    ts.isPostfixUnaryExpression(expression)
+  )
+    return taSeriesExpression(expression.operand, bindings, resolving);
   return false;
 }
 
