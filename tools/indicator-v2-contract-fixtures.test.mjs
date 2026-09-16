@@ -186,14 +186,14 @@ test("composed v2 contract survives replay, provisional rollback, and finalizati
   defineIndicator,
   history,
   plot,
-  series,
   signal,
   ta,
   type BoxHandle,
 } from "@erc-chart/indicator-sdk";
 
 function optionalBranch(value: number, openTimeMs: number) {
-  const executions = series(0, (previous) => previous + 1);
+  var executions = 0;
+  executions += 1;
   const average = ta.ema(value, 2);
   var box: BoxHandle | undefined = undefined;
   plot.line(executions, { title: "Optional state" });
@@ -211,7 +211,8 @@ function optionalBranch(value: number, openTimeMs: number) {
 }
 
 function alwaysBranch() {
-  const executions = series(100, (previous) => previous + 10);
+  var executions = 100;
+  executions += 10;
   plot.line(executions, { title: "Always state" });
 }
 

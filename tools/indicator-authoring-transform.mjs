@@ -11,6 +11,15 @@ import {
 import { transformIndicatorHistory } from "./indicator-authoring/history-transform.mjs";
 import { transformIndicatorScript } from "./indicator-authoring/script-transform.mjs";
 
+const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const indicatorSdkRuntimePath = path.resolve(
+  repositoryRoot,
+  "packages/indicator-sdk/dist/index.js",
+);
+const indicatorSdkTypesPath = path.resolve(
+  import.meta.dirname,
+  "indicator-authoring/compiler-sdk.d.ts",
+);
 const persistentStateRuntimePath = path.resolve(
   import.meta.dirname,
   "../packages/indicator-sdk/dist/internal/persistent-state.js",
@@ -189,6 +198,10 @@ export function validateIndicatorAuthoringTypes(
     exactOptionalPropertyTypes: true,
     noUncheckedIndexedAccess: true,
     types: [],
+    baseUrl: repositoryRoot,
+    paths: {
+      "@erc-chart/indicator-sdk": [indicatorSdkTypesPath],
+    },
   };
   const host = ts.createCompilerHost(options, true);
   const originalFileExists = host.fileExists.bind(host);
@@ -295,6 +308,9 @@ export function indicatorAuthoringTransformPlugin({
   return {
     name: "indicator-authoring-transform",
     setup(build) {
+      build.onResolve({ filter: /^@erc-chart\/indicator-sdk$/ }, () => ({
+        path: indicatorSdkRuntimePath,
+      }));
       build.onResolve(
         { filter: /^erc-chart:indicator-persistent-state$/ },
         () => ({ path: persistentStateRuntimePath }),

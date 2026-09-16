@@ -1,6 +1,4 @@
 import type { Candle } from "@erc-chart/contracts";
-import { authoringFrame, useKernel } from "./authoring-context.js";
-import { readCompilerCallsite } from "./internal/callsite.js";
 import { isOpaqueStateValue } from "./internal/opaque-state.js";
 import { historyValue } from "./internal/series-history.js";
 
@@ -145,58 +143,6 @@ export function assertBoundedSeriesCollections(value: unknown): void {
   }
 }
 
-/** Recurrence: every building update starts from the previous committed bar. */
-export function series<T>(
-  initial: T,
-  update: (previous: Readonly<T>) => T,
-  hiddenCallsite?: unknown,
-): T {
-  const frame = authoringFrame();
-  const callsite = readCompilerCallsite(hiddenCallsite, "state", "series");
-  const kind = Array.isArray(initial) ? "array" : typeof initial;
-  const structured = initial !== null && typeof initial === "object";
-  const state = useKernel(
-    `series-${kind}`,
-    () => {
-      assertBoundedSeriesCollections(initial);
-      return {
-        committed: structured ? cloneSeriesState(initial) : initial,
-      };
-    },
-    callsite,
-  );
-  const value = update(cloneSeriesState(state.committed));
-  const valueKind = Array.isArray(value) ? "array" : typeof value;
-  if (valueKind !== kind)
-    throw new TypeError("Series state must preserve its value kind.");
-  assertBoundedSeriesCollections(value);
-  if (frame.phase === "finalized") state.committed = cloneSeriesState(value);
-  return value;
-}
-
-/** Append one value while retaining only the newest bounded history. */
-export function appendSeries<T>(
-  history: readonly T[],
-  value: T,
-  keep: number,
-): readonly T[] {
-  const limit = Math.max(1, Math.floor(keep));
-  if (limit === 1) return [value];
-  if (history.length < limit) return [...history, value];
-  return [...history.slice(history.length - limit + 1), value];
-}
-
-/** Read a prior retained value, falling back to the current value when unavailable. */
-export function laggedValue<T>(
-  history: readonly T[],
-  current: T,
-  lag: number,
-): T {
-  const offset = Math.floor(lag);
-  if (offset <= 0) return current;
-  return history.at(-offset) ?? current;
-}
-
 export const priceSources = [
   "close",
   "open",
@@ -244,9 +190,4 @@ export function candlesWithPriceSource(
     ...candle,
     close: priceValue(candle, source),
   }));
-}
-export function inputOptions<T extends string>(
-  values: readonly T[],
-): readonly { readonly value: T; readonly label: T }[] {
-  return values.map((value) => ({ value, label: value }));
 }

@@ -30,8 +30,8 @@ test("package declarations match the shipped runtime resolution graph", async ()
     await writeFile(
       path.join(sourceDirectory, "default.ts"),
       `import { plot } from "@erc-chart/indicator-sdk";
-export function renderBranch(value) {
-  plot.line(value, { key: "default-plot", title: "Default plot" });
+export function renderBranch(value: number) {
+  plot.line(value, { title: "Default plot" });
 }
 `,
       "utf8",
@@ -39,8 +39,8 @@ export function renderBranch(value) {
     await writeFile(
       path.join(sourceDirectory, "node.ts"),
       `import { plot } from "@erc-chart/indicator-sdk";
-export function renderBranch(value) {
-  plot.line(value, { key: "node-plot", title: "Node plot" });
+export function renderBranch(value: number) {
+  plot.line(value, { title: "Node plot" });
 }
 `,
       "utf8",
@@ -52,8 +52,8 @@ export function renderBranch(value) {
 import { renderBranch } from "#plot-branch";
 export default defineIndicator(
   { id: "erc.indicator.conditional-resolution.main", name: "Conditional resolution" },
-  ({ close }) => { renderBranch(close); },
 );
+renderBranch(close);
 `,
       "utf8",
     );
@@ -66,8 +66,8 @@ export default defineIndicator(
     });
     const plots = result.manifest.capabilities.indicatorDefinition.plots;
     assert.equal(plots.length, 1);
-    assert.equal(plots[0]?.outputKey, "default-plot");
     assert.equal(plots[0]?.label, "Default plot");
+    assert.match(plots[0]?.key ?? "", /^erc-v2-plot-[0-9a-f]{24}$/u);
 
     const entryUrl = pathToFileURL(
       path.join(result.packageRoot, "dist", "index.js"),

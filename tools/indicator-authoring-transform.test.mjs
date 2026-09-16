@@ -89,6 +89,28 @@ plot.line(average, { title: "Average" });
   assert.match(callbackText, /\bbar\b/u);
 });
 
+test("rejects callback-shaped authored defineIndicator declarations", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-callback.ts",
+        sourceFileId: "src/legacy-callback.ts",
+      }),
+    /metadata-only defineIndicator declaration/u,
+  );
+});
+
 test("moves price-dependent prelude helpers into the hidden runtime callback", async () => {
   const module = await loadTransform();
   const source = `
@@ -154,37 +176,6 @@ plot.line(readSource(), { title: "Source" });
     result.callsites.find((value) => value.callee === "input.source")
       ?.seriesSource,
     "close",
-  );
-});
-
-test("does not wrap module-scope calls to helpers that use native var state", async () => {
-  const module = await loadTransform();
-  const source = `
-import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-function bootstrapCounter() {
-  var calls = 0;
-  calls += 1;
-  return calls;
-}
-const initial = bootstrapCounter();
-export default defineIndicator(
-  { id: "fixture", name: "Fixture" },
-  () => {
-    plot.line(initial);
-  },
-);
-`;
-
-  const result = module.transformIndicatorAuthoring(source, {
-    fileName: "src/module-scope-helper.ts",
-    sourceFileId: "src/module-scope-helper.ts",
-  });
-
-  assert.match(result.code, /const initial = bootstrapCounter\(\);/u);
-  assert.equal(
-    result.callsites.filter((value) => value.callee === "persistent-scope")
-      .length,
-    0,
   );
 });
 
@@ -316,11 +307,10 @@ test("composes call-site identity before source-history lowering", async () => {
   );
   const source = `
 import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
-export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
-  const prior = close[1];
-  const trend = ta.ema(prior, 14);
-  plot.line(trend, { key: "trend" });
-});
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+const prior = close[1];
+const trend = ta.ema(prior, 14);
+plot.line(trend, { title: "Trend" });
 `;
   const result = module.transformIndicatorAuthoring(source, {
     fileName: "src/index.ts",
@@ -364,13 +354,12 @@ test("package build applies the composed authoring transform", async (t) => {
     source,
     `
 import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.callsite-build.main", name: "Callsite build" },
-  ({ close }) => {
-    const trend = ta.ema(close[1], 14);
-    plot.line(trend, { key: "trend" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.callsite-build.main",
+  name: "Callsite build",
+});
+const trend = ta.ema(close[1], 14);
+plot.line(trend, { title: "Trend" });
 `,
     "utf8",
   );
