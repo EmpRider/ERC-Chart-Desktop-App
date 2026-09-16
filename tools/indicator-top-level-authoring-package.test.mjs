@@ -43,6 +43,25 @@ async function packagedPlugin(sourceText) {
   }
 }
 
+test("package build rejects callback-shaped defineIndicator assigned before default export", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const indicator = defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-assigned", name: "Legacy assigned" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+
+export default indicator;
+`),
+    /metadata-only defineIndicator declaration/u,
+  );
+});
+
 test("canonical top-level Pine-style package executes the ECDD-236 authoring contract", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";

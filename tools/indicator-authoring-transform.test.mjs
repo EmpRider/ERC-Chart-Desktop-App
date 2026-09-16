@@ -111,6 +111,47 @@ export default defineIndicator(
   );
 });
 
+test("rejects callback-shaped defineIndicator assigned before default export", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+const indicator = defineIndicator(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+export default indicator;
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-assigned-callback.ts",
+        sourceFileId: "src/legacy-assigned-callback.ts",
+      }),
+    /metadata-only defineIndicator declaration/u,
+  );
+});
+
+test("does not treat a lexically shadowed local defineIndicator call as SDK authoring", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function invokeLocal(defineIndicator) {
+  return defineIndicator({ id: "local", name: "Local" }, () => undefined);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+void invokeLocal;
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/shadowed-define-indicator.ts",
+    sourceFileId: "src/shadowed-define-indicator.ts",
+  });
+  assert.equal(result.changed, true);
+});
+
 test("moves price-dependent prelude helpers into the hidden runtime callback", async () => {
   const module = await loadTransform();
   const source = `

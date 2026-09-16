@@ -73,6 +73,27 @@ function metadataExport(statement, defineIndicatorBindings) {
   return expression;
 }
 
+function sdkDefineIndicatorCalls(sourceFile, defineIndicatorBindings) {
+  const result = [];
+  const visit = (node, activeBindings) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      activeBindings.has(node.expression.text)
+    )
+      result.push(node);
+
+    const names = node === sourceFile ? undefined : scopedNames(node);
+    const scoped =
+      names === undefined
+        ? activeBindings
+        : withoutNames(activeBindings, names);
+    ts.forEachChild(node, (child) => visit(child, scoped));
+  };
+  visit(sourceFile, defineIndicatorBindings);
+  return result;
+}
+
 function statementHasExportModifier(statement) {
   return (
     ts.canHaveModifiers(statement) &&
@@ -295,6 +316,11 @@ export function transformIndicatorScript(
   if (defineIndicatorBindings.size === 0)
     return { code: sourceText, changed: false, relocatedHelperRanges: [] };
 
+  const defineIndicatorCalls = sdkDefineIndicatorCalls(
+    sourceFile,
+    defineIndicatorBindings,
+  );
+
   const metadataDeclarations = [];
   for (const statement of sourceFile.statements) {
     const call = metadataExport(statement, defineIndicatorBindings);
@@ -303,12 +329,17 @@ export function transformIndicatorScript(
   const metadataOnly = metadataDeclarations.filter(
     ({ call }) => call.arguments.length === 1,
   );
-  if (metadataDeclarations.length === 0)
+  if (metadataDeclarations.length === 0 && defineIndicatorCalls.length === 0)
     return { code: sourceText, changed: false, relocatedHelperRanges: [] };
-  if (metadataOnly.length !== 1 || metadataDeclarations.length !== 1)
+  if (
+    metadataOnly.length !== 1 ||
+    metadataDeclarations.length !== 1 ||
+    defineIndicatorCalls.length !== 1 ||
+    defineIndicatorCalls[0] !== metadataDeclarations[0]?.call
+  )
     throw syntaxError(
       sourceFile,
-      metadataDeclarations[0]?.call ?? sourceFile,
+      metadataDeclarations[0]?.call ?? defineIndicatorCalls[0] ?? sourceFile,
       "top-level indicator authoring requires exactly one exported metadata-only defineIndicator declaration",
     );
 
