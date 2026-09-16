@@ -141,6 +141,67 @@ plot.line(bar.confirmed ? 1 : 0, { title: "Bar confirmed" });
   }
 });
 
+test("length-first TA overloads match source-first execution for direct and selected sources", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-overloads",
+  name: "TA overloads",
+});
+
+const length = input.int(2, "Length");
+const source = input.source(open, "Source");
+const emaLengthFirst = ta.ema(length, open);
+const emaSourceFirst = ta.ema(open, length);
+const selectedLengthFirst = ta.ema(length, source);
+const selectedSourceFirst = ta.ema(source, length);
+const rsiLengthFirst = ta.rsi(length, open);
+const rsiSourceFirst = ta.rsi(open, length);
+
+plot.line(emaLengthFirst, { title: "EMA length first" });
+plot.line(emaSourceFirst, { title: "EMA source first" });
+plot.line(selectedLengthFirst, { title: "Selected length first" });
+plot.line(selectedSourceFirst, { title: "Selected source first" });
+plot.line(rsiLengthFirst, { title: "RSI length first" });
+plot.line(rsiSourceFirst, { title: "RSI source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+  const pairs = [
+    ["EMA length first", "EMA source first"],
+    ["Selected length first", "Selected source first"],
+    ["RSI length first", "RSI source first"],
+  ];
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    for (const [lengthFirst, sourceFirst] of pairs) {
+      const leftKey = outputKeyFor(lengthFirst);
+      const rightKey = outputKeyFor(sourceFirst);
+      assert.deepEqual(
+        instance.snapshot().points.map((point) => point.values[leftKey]),
+        instance.snapshot().points.map((point) => point.values[rightKey]),
+      );
+    }
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("persistent var objects commit finalized state, roll back building replacements, and reset on rebuild", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
