@@ -143,6 +143,32 @@ plot.line(close);
   assert.equal(typeof plugin.createInstance, "function");
 });
 
+test("package build allows namespace-local import-equals defineIndicator shadowing", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+namespace Helpers {
+  export function defineIndicator(value: number) {
+    return value;
+  }
+}
+
+namespace Local {
+  import defineIndicator = Helpers.defineIndicator;
+  export const value = defineIndicator(1);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.namespace-import-equals-shadow",
+  name: "Namespace import-equals shadow",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
 test("package build rejects CommonJS access to the indicator SDK", async () => {
   await assert.rejects(
     () =>
@@ -157,6 +183,82 @@ export default defineIndicator(
   );
 });
 
+test("package build rejects constant-derived CommonJS access to the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const sdkName = "@erc-chart/indicator-sdk";
+const { defineIndicator } = require(sdkName);
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-commonjs-const", name: "Legacy CommonJS const" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects shadowed constant-derived CommonJS SDK access", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const sdkName = "./unrelated-module.js";
+function loadSdk() {
+  const sdkName = "@erc-chart/indicator-sdk";
+  return require(sdkName);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.shadowed-commonjs-const",
+  name: "Shadowed CommonJS const",
+});
+plot.line(close);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build allows a lexically shadowed local require function", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function loadLocal(require: (name: string) => unknown) {
+  const sdkName = "@erc-chart/indicator-sdk";
+  return require(sdkName);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.shadowed-require",
+  name: "Shadowed require",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
+test("package build allows unresolved dynamic imports unrelated to the indicator SDK", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function loadOptional(moduleName: string) {
+  return import(moduleName);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.dynamic-unrelated",
+  name: "Dynamic unrelated",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
 test("package build rejects dynamic imports of the indicator SDK", async () => {
   await assert.rejects(
     () =>
@@ -164,6 +266,21 @@ test("package build rejects dynamic imports of the indicator SDK", async () => {
 const { defineIndicator } = await import("@erc-chart/indicator-sdk");
 export default defineIndicator(
   { id: "erc.indicator.top-level-authoring.legacy-dynamic", name: "Legacy dynamic import" },
+  ({ close }) => close,
+);
+`),
+    /indicator SDK must use static named imports/u,
+  );
+});
+
+test("package build rejects constant-derived dynamic imports of the indicator SDK", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+const sdkName = "@erc-chart/indicator-sdk";
+const { defineIndicator } = await import(sdkName);
+export default defineIndicator(
+  { id: "erc.indicator.top-level-authoring.legacy-dynamic-const", name: "Legacy dynamic const" },
   ({ close }) => close,
 );
 `),
@@ -416,6 +533,61 @@ plot.line(emaSourceFirst, { title: "EMA source first" });
       instance.snapshot().points.map((point) => point.values[lengthFirstKey]),
       instance.snapshot().points.map((point) => point.values[sourceFirstKey]),
     );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("length-first TA overloads resolve wrapped constants and history-indexed series", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
+
+const WRAPPED_LENGTH = 2 as const;
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.ta-wrapped-history",
+  name: "TA wrapped history",
+});
+
+const wrappedLengthFirst = ta.ema(WRAPPED_LENGTH, open);
+const wrappedSourceFirst = ta.ema(open, WRAPPED_LENGTH);
+const historyLengthFirst = ta.ema(2, close[1]);
+const historySourceFirst = ta.ema(close[1], 2);
+
+plot.line(wrappedLengthFirst, { title: "Wrapped length first" });
+plot.line(wrappedSourceFirst, { title: "Wrapped source first" });
+plot.line(historyLengthFirst, { title: "History length first" });
+plot.line(historySourceFirst, { title: "History source first" });
+`);
+
+  const outputKeyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([
+      candle(0, 10),
+      candle(1, 12),
+      candle(2, 11),
+      candle(3, 14),
+      candle(4, 13),
+    ]);
+    for (const [lengthFirst, sourceFirst] of [
+      ["Wrapped length first", "Wrapped source first"],
+      ["History length first", "History source first"],
+    ]) {
+      const leftKey = outputKeyFor(lengthFirst);
+      const rightKey = outputKeyFor(sourceFirst);
+      assert.deepEqual(
+        instance.snapshot().points.map((point) => point.values[leftKey]),
+        instance.snapshot().points.map((point) => point.values[rightKey]),
+      );
+    }
   } finally {
     instance.dispose();
   }

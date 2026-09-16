@@ -35,6 +35,70 @@ function isSdkModuleSpecifier(node) {
 }
 
 function assertStaticNamedSdkImports(sourceFile) {
+  const isLexicallyShadowed = (identifier) => {
+    let current = identifier.parent;
+    while (current !== undefined) {
+      if (scopedNames(current)?.has(identifier.text)) return true;
+      current = current.parent;
+    }
+    return false;
+  };
+
+  const staticStringValue = (node, resolving = new Set()) => {
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isSatisfiesExpression(node)
+    )
+      return staticStringValue(node.expression, resolving);
+    if (ts.isStringLiteralLike(node)) return node.text;
+    if (!ts.isIdentifier(node) || resolving.has(node.text)) return undefined;
+
+    const requestedName = node.text;
+    let current = node.parent;
+    let initializer;
+    while (current !== undefined) {
+      if (
+        ts.isBlock(current) ||
+        ts.isCaseBlock(current) ||
+        ts.isModuleBlock(current) ||
+        ts.isSourceFile(current)
+      ) {
+        const statements = ts.isCaseBlock(current)
+          ? current.clauses.flatMap((clause) => [...clause.statements])
+          : current.statements;
+        for (const statement of statements) {
+          if (!ts.isVariableStatement(statement)) continue;
+          for (const declaration of statement.declarationList.declarations) {
+            if (
+              !ts.isIdentifier(declaration.name) ||
+              declaration.name.text !== requestedName
+            )
+              continue;
+            if (
+              (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+              declaration.initializer === undefined
+            )
+              return undefined;
+            initializer = declaration.initializer;
+            break;
+          }
+          if (initializer !== undefined) break;
+        }
+        if (initializer !== undefined) break;
+      }
+      if (scopedNames(current)?.has(requestedName)) return undefined;
+      current = current.parent;
+    }
+    if (initializer === undefined) return undefined;
+
+    const nextResolving = new Set(resolving);
+    nextResolving.add(requestedName);
+    return staticStringValue(initializer, nextResolving);
+  };
+
   const reject = (node) => {
     throw syntaxError(
       sourceFile,
@@ -82,13 +146,16 @@ function assertStaticNamedSdkImports(sourceFile) {
   const visit = (node) => {
     if (ts.isCallExpression(node)) {
       const [firstArgument] = node.arguments;
-      if (
-        firstArgument !== undefined &&
-        isSdkModuleSpecifier(firstArgument) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-      )
-        reject(node);
+      const commonJsRequire =
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "require" &&
+        !isLexicallyShadowed(node.expression);
+      const dynamicModuleLoad =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword || commonJsRequire;
+      if (firstArgument !== undefined && dynamicModuleLoad) {
+        const moduleName = staticStringValue(firstArgument);
+        if (moduleName === sdkModule) reject(node);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -127,7 +194,8 @@ function runtimeSdkBindings(sourceFile) {
 }
 
 function metadataExport(statement, defineIndicatorBindings) {
-  if (!ts.isExportAssignment(statement) || statement.isExportEquals) return undefined;
+  if (!ts.isExportAssignment(statement) || statement.isExportEquals)
+    return undefined;
   const expression = statement.expression;
   if (
     !ts.isCallExpression(expression) ||
@@ -150,7 +218,8 @@ function sdkDefineIndicatorUsage(sourceFile, defineIndicatorBindings) {
       isIdentifierReference(node)
     ) {
       const parent = node.parent;
-      if (ts.isCallExpression(parent) && parent.expression === node) calls.push(parent);
+      if (ts.isCallExpression(parent) && parent.expression === node)
+        calls.push(parent);
       else escapedBindings.push(node);
     }
 
@@ -176,6 +245,14 @@ function statementHasExportModifier(statement) {
 
 function isStaticLiteralExpression(node) {
   if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  )
+    return isStaticLiteralExpression(node.expression);
+  if (
     ts.isStringLiteral(node) ||
     ts.isNoSubstitutionTemplateLiteral(node) ||
     ts.isNumericLiteral(node) ||
@@ -191,8 +268,6 @@ function isStaticLiteralExpression(node) {
     ts.isNumericLiteral(node.operand)
   )
     return true;
-  if (ts.isParenthesizedExpression(node))
-    return isStaticLiteralExpression(node.expression);
   if (ts.isArrayLiteralExpression(node))
     return node.elements.every(
       (element) =>
@@ -246,7 +321,8 @@ function isIdentifierReference(node) {
     if (ts.isExpression(typeAncestor) || ts.isStatement(typeAncestor)) break;
     typeAncestor = typeAncestor.parent;
   }
-  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node)
+    return false;
   if (
     (ts.isPropertyAssignment(parent) ||
       ts.isMethodDeclaration(parent) ||
@@ -279,7 +355,8 @@ function referencesRuntime(node, runtimeNames) {
   )
     return true;
   const names = scopedNames(node);
-  const scoped = names === undefined ? runtimeNames : withoutNames(runtimeNames, names);
+  const scoped =
+    names === undefined ? runtimeNames : withoutNames(runtimeNames, names);
   let found = false;
   ts.forEachChild(node, (child) => {
     if (!found && referencesRuntime(child, scoped)) found = true;
@@ -352,9 +429,7 @@ function blankStatements(sourceText, sourceFile, statements) {
   let result = "";
   for (const [start, end] of ranges) {
     result += sourceText.slice(cursor, start);
-    result += sourceText
-      .slice(start, end)
-      .replace(/[^\r\n]/gu, " ");
+    result += sourceText.slice(start, end).replace(/[^\r\n]/gu, " ");
     cursor = end;
   }
   return result + sourceText.slice(cursor);
@@ -390,17 +465,17 @@ export function transformIndicatorScript(
     scriptKind(fileName),
   );
   assertStaticNamedSdkImports(sourceFile);
-  const defineIndicatorBindings = sdkNamedBindings(sourceFile, "defineIndicator");
+  const defineIndicatorBindings = sdkNamedBindings(
+    sourceFile,
+    "defineIndicator",
+  );
   if (defineIndicatorBindings.size === 0)
     return { code: sourceText, changed: false, relocatedHelperRanges: [] };
 
   const {
     calls: defineIndicatorCalls,
     escapedBindings: escapedDefineIndicatorBindings,
-  } = sdkDefineIndicatorUsage(
-    sourceFile,
-    defineIndicatorBindings,
-  );
+  } = sdkDefineIndicatorUsage(sourceFile, defineIndicatorBindings);
 
   if (escapedDefineIndicatorBindings.length > 0)
     throw syntaxError(
@@ -455,7 +530,11 @@ export function transformIndicatorScript(
         "per-bar indicator statements must follow the exported defineIndicator metadata declaration",
       );
   }
-  for (let index = metadataIndex + 1; index < sourceFile.statements.length; index += 1) {
+  for (
+    let index = metadataIndex + 1;
+    index < sourceFile.statements.length;
+    index += 1
+  ) {
     const statement = sourceFile.statements[index];
     if (statement !== undefined && statementHasExportModifier(statement))
       throw syntaxError(
@@ -475,7 +554,10 @@ export function transformIndicatorScript(
   const barTime = uniqueIdentifier(sourceText, "__ercBarTime");
   const barConfirmed = uniqueIdentifier(sourceText, "__ercBarConfirmed");
   const metadataArgument = metadataCall.arguments[0];
-  const removedSuffix = sourceText.slice(metadataArgument.end, metadataStatement.end);
+  const removedSuffix = sourceText.slice(
+    metadataArgument.end,
+    metadataStatement.end,
+  );
   const preservedNewlines = "\n".repeat(newlineCount(removedSuffix));
   const seriesBinding = builtInSeriesNames.join(", ");
   const callbackPrefix =
@@ -523,7 +605,8 @@ export function transformIndicatorScript(
           position < candidate.generatedEnd,
       );
       if (range === undefined) return undefined;
-      originalPosition = range.originalStart + (position - range.generatedStart);
+      originalPosition =
+        range.originalStart + (position - range.generatedStart);
     }
     const location = sourceFile.getLineAndCharacterOfPosition(originalPosition);
     return { line: location.line, character: location.character };

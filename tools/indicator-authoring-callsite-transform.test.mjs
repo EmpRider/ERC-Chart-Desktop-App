@@ -130,6 +130,25 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ open, clos
   assert.ok(higher);
 });
 
+test("canonicalizes wrapped TA lengths and history-indexed series", async () => {
+  const result = await transform(`
+import { defineIndicator, ta } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ open, close }) => {
+  const wrappedLength = 14 as const;
+  const wrapped = ta.ema(wrappedLength, open);
+  const historical = ta.ema(14, close[1]);
+  void wrapped;
+  void historical;
+});
+`);
+
+  assert.match(
+    result.code,
+    /ta\.ema\(open, wrappedLength, __ercCallsite_\d+\)/u,
+  );
+  assert.match(result.code, /ta\.ema\(close\[1\], 14, __ercCallsite_\d+\)/u);
+});
+
 test("preserves titled input options before the compiler-only callsite slot", async () => {
   const result = await transform(`
 import { input } from "@erc-chart/indicator-sdk";

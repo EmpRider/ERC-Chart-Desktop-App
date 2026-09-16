@@ -387,7 +387,13 @@ function sdkMemberCall(expression, bindings, root, method) {
 }
 
 function taLengthExpression(expression, bindings, resolving = new Set()) {
-  if (ts.isParenthesizedExpression(expression))
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
     return taLengthExpression(expression.expression, bindings, resolving);
   if (ts.isNumericLiteral(expression)) {
     const value = Number(expression.text);
@@ -440,7 +446,10 @@ function taSeriesExpression(expression, bindings, resolving = new Set()) {
     ts.isSatisfiesExpression(expression)
   )
     return taSeriesExpression(expression.expression, bindings, resolving);
-  if (directIndicatorSeriesSource(expression, bindings) !== undefined) return true;
+  if (ts.isElementAccessExpression(expression))
+    return taSeriesExpression(expression.expression, bindings, resolving);
+  if (directIndicatorSeriesSource(expression, bindings) !== undefined)
+    return true;
   if (sdkMemberCall(expression, bindings, "input", "source")) return true;
   if (
     ts.isCallExpression(expression) &&
@@ -466,7 +475,10 @@ function taSeriesExpression(expression, bindings, resolving = new Set()) {
     const callable = expression.expression;
     if (ts.isIdentifier(callable)) {
       const helper = localFunctionForReference(callable);
-      if (helper !== undefined && taHelperReturnsSeries(helper, bindings, resolving))
+      if (
+        helper !== undefined &&
+        taHelperReturnsSeries(helper, bindings, resolving)
+      )
         return true;
     }
     if (
@@ -1350,7 +1362,8 @@ function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
     current.getSourceFile(),
     current.typeName.text,
   );
-  if (imported !== undefined && signalDrawingHandleTypes.has(imported)) return true;
+  if (imported !== undefined && signalDrawingHandleTypes.has(imported))
+    return true;
   const declaration = signalNamedTypeDeclaration(
     current.getSourceFile(),
     current.typeName.text,
@@ -1917,7 +1930,8 @@ function helperIsNestedInIndicatorCalculation(functionLike, bindings) {
 function helperWasCompilerRelocated(functionLike, sourceFile, ranges) {
   const start = functionLike.getStart(sourceFile);
   return ranges.some(
-    (range) => start >= range.generatedStart && functionLike.end <= range.generatedEnd,
+    (range) =>
+      start >= range.generatedStart && functionLike.end <= range.generatedEnd,
   );
 }
 
