@@ -235,9 +235,25 @@ function reorderUnrelatedTopLevelDeclarations(source) {
     source.slice(ut.start, ut.end) +
     "\n" +
     source.slice(rope.start, rope.end) +
+    source.slice(rope.end, ut.start) +
     source.slice(ut.end)
   );
 }
+
+test("unrelated declaration reorder preserves intervening source", () => {
+  const source = `const ropeModes = ["rope"] as const;
+// keep this unrelated source in the reordered fixture
+const utModes = ["ut"] as const;
+`;
+
+  const reordered = reorderUnrelatedTopLevelDeclarations(source);
+
+  assert.match(
+    reordered,
+    /\/\/ keep this unrelated source in the reordered fixture/u,
+  );
+  assert.ok(reordered.indexOf("utModes") < reordered.indexOf("ropeModes"));
+});
 
 test("approved ATR Rope + UT Bot semantics survive provisional replacement and finalized advancement", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-ecdd228-lifecycle-"));

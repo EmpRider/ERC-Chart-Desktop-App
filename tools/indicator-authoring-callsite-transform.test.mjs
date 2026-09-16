@@ -1193,6 +1193,23 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   );
 });
 
+test("signal dependency tracing does not trust SDK handle names shadowed by type parameters", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, type BoxHandle } from "@erc-chart/indicator-sdk";
+function updateDrawing<BoxHandle extends { set(value: unknown): void }>(handle: BoxHandle, value: number) {
+  handle.set({ top: value });
+  return value > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(updateDrawing({ set() {} }, close), "long");
+});
+`),
+    /signal condition helper updateDrawing invokes a callable that cannot be resolved/u,
+  );
+});
+
 test("signal dependency tracing allows literal RegExp parsing inside module helpers", async () => {
   const result = await transform(`
 import { defineIndicator, signal } from "@erc-chart/indicator-sdk";

@@ -1163,6 +1163,22 @@ function signalSdkImportedTypeName(sourceFile, localName) {
   return undefined;
 }
 
+function signalTypeReferenceHasShadowingTypeParameter(typeReference) {
+  const requestedName = typeReference.typeName.text;
+  let current = typeReference.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    const typeParameters = current.typeParameters;
+    if (
+      typeParameters?.some(
+        (typeParameter) => typeParameter.name.text === requestedName,
+      )
+    )
+      return true;
+    current = current.parent;
+  }
+  return false;
+}
+
 function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
   let current = type;
   while (
@@ -1191,6 +1207,7 @@ function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
   }
   if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
     return false;
+  if (signalTypeReferenceHasShadowingTypeParameter(current)) return false;
   const imported = signalSdkImportedTypeName(
     current.getSourceFile(),
     current.typeName.text,
