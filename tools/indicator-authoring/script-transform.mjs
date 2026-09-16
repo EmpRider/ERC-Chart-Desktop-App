@@ -73,15 +73,21 @@ function metadataExport(statement, defineIndicatorBindings) {
   return expression;
 }
 
-function sdkDefineIndicatorCalls(sourceFile, defineIndicatorBindings) {
-  const result = [];
+function sdkDefineIndicatorUsage(sourceFile, defineIndicatorBindings) {
+  const calls = [];
+  const escapedBindings = [];
   const visit = (node, activeBindings) => {
+    if (ts.isImportDeclaration(node)) return;
+
     if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      activeBindings.has(node.expression.text)
-    )
-      result.push(node);
+      ts.isIdentifier(node) &&
+      activeBindings.has(node.text) &&
+      isIdentifierReference(node)
+    ) {
+      const parent = node.parent;
+      if (ts.isCallExpression(parent) && parent.expression === node) calls.push(parent);
+      else escapedBindings.push(node);
+    }
 
     const names = node === sourceFile ? undefined : scopedNames(node);
     const scoped =
@@ -91,7 +97,7 @@ function sdkDefineIndicatorCalls(sourceFile, defineIndicatorBindings) {
     ts.forEachChild(node, (child) => visit(child, scoped));
   };
   visit(sourceFile, defineIndicatorBindings);
-  return result;
+  return { calls, escapedBindings };
 }
 
 function statementHasExportModifier(statement) {
@@ -316,10 +322,20 @@ export function transformIndicatorScript(
   if (defineIndicatorBindings.size === 0)
     return { code: sourceText, changed: false, relocatedHelperRanges: [] };
 
-  const defineIndicatorCalls = sdkDefineIndicatorCalls(
+  const {
+    calls: defineIndicatorCalls,
+    escapedBindings: escapedDefineIndicatorBindings,
+  } = sdkDefineIndicatorUsage(
     sourceFile,
     defineIndicatorBindings,
   );
+
+  if (escapedDefineIndicatorBindings.length > 0)
+    throw syntaxError(
+      sourceFile,
+      escapedDefineIndicatorBindings[0],
+      "defineIndicator binding cannot be aliased or escaped; use it only as the direct exported metadata-only declaration",
+    );
 
   const metadataDeclarations = [];
   for (const statement of sourceFile.statements) {

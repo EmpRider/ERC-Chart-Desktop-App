@@ -134,6 +134,53 @@ export default indicator;
   );
 });
 
+test("rejects callback-shaped defineIndicator reached through a local alias", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+const define = defineIndicator;
+export default define(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-local-alias-callback.ts",
+        sourceFileId: "src/legacy-local-alias-callback.ts",
+      }),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("rejects defineIndicator escaped through an object before destructuring", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+const holder = { define: defineIndicator };
+const { define } = holder;
+export default define(
+  { id: "fixture", name: "Fixture" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/legacy-object-alias-callback.ts",
+        sourceFileId: "src/legacy-object-alias-callback.ts",
+      }),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
 test("does not treat a lexically shadowed local defineIndicator call as SDK authoring", async () => {
   const module = await loadTransform();
   const source = `

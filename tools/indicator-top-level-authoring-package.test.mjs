@@ -62,6 +62,43 @@ export default indicator;
   );
 });
 
+test("package build rejects callback-shaped defineIndicator reached through a local alias", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const define = defineIndicator;
+export default define(
+  { id: "erc.indicator.top-level-authoring.legacy-local-alias", name: "Legacy local alias" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
+test("package build rejects defineIndicator escaped through an object and destructuring", async () => {
+  await assert.rejects(
+    () =>
+      packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const holder = { define: defineIndicator };
+const { define } = holder;
+export default define(
+  { id: "erc.indicator.top-level-authoring.legacy-object-alias", name: "Legacy object alias" },
+  ({ close }) => {
+    plot.line(close);
+  },
+);
+`),
+    /defineIndicator binding cannot be aliased or escaped/u,
+  );
+});
+
 test("canonical top-level Pine-style package executes the ECDD-236 authoring contract", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, input, plot, ta } from "@erc-chart/indicator-sdk";
