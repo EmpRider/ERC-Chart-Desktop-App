@@ -74,7 +74,21 @@ const signalSafeBuiltinCallRoots = new Set([
   "Object",
   "String",
 ]);
+const signalSafeDirectBuiltinCalls = new Set([
+  "Array",
+  "Boolean",
+  "Number",
+  "Object",
+  "String",
+]);
 const signalSafeSdkFunctionRoots = new Set(["history", "priceValue"]);
+const signalSafeDrawingHandleMethods = new Set(["set", "delete"]);
+const signalSafeLiteralRegExpMethods = new Set(["exec", "test"]);
+const signalDrawingHandleTypes = new Set([
+  "DrawingHandle",
+  "BoxHandle",
+  "SegmentHandle",
+]);
 const signalSafeArrayMethods = new Set([
   "at",
   "concat",
@@ -1131,6 +1145,73 @@ function signalNamedTypeDeclaration(sourceFile, name) {
   return undefined;
 }
 
+function signalSdkImportedTypeName(sourceFile, localName) {
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== sdkModule
+    )
+      continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.name.text !== localName) continue;
+      return element.propertyName?.text ?? element.name.text;
+    }
+  }
+  return undefined;
+}
+
+function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
+  let current = type;
+  while (
+    current !== undefined &&
+    (ts.isParenthesizedTypeNode(current) ||
+      (ts.isTypeOperatorNode(current) &&
+        current.operator === ts.SyntaxKind.ReadonlyKeyword))
+  )
+    current = current.type;
+  if (current === undefined) return false;
+  if (ts.isUnionTypeNode(current)) {
+    const nonNullish = current.types.filter(
+      (member) =>
+        member.kind !== ts.SyntaxKind.UndefinedKeyword &&
+        !(
+          ts.isLiteralTypeNode(member) &&
+          member.literal.kind === ts.SyntaxKind.NullKeyword
+        ),
+    );
+    return (
+      nonNullish.length > 0 &&
+      nonNullish.every((member) =>
+        signalTypeIsSdkDrawingHandle(member, resolving),
+      )
+    );
+  }
+  if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
+    return false;
+  const imported = signalSdkImportedTypeName(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (imported !== undefined && signalDrawingHandleTypes.has(imported)) return true;
+  const declaration = signalNamedTypeDeclaration(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (
+    declaration === undefined ||
+    !ts.isTypeAliasDeclaration(declaration) ||
+    resolving.has(declaration)
+  )
+    return false;
+  resolving.add(declaration);
+  const result = signalTypeIsSdkDrawingHandle(declaration.type, resolving);
+  resolving.delete(declaration);
+  return result;
+}
+
 function signalArrayElementType(type, resolving = new Set()) {
   let current = type;
   while (
@@ -1515,6 +1596,11 @@ function signalCallableAnalysis(expression, bindings) {
     const imported = signalImportedBindingForIdentifier(callable, bindings);
     if (imported !== undefined && signalSafeSdkFunctionRoots.has(imported))
       return { kind: "safe" };
+    if (
+      signalSafeDirectBuiltinCalls.has(callable.text) &&
+      !signalNameIsLexicallyBoundAt(callable, callable.text)
+    )
+      return { kind: "safe" };
     const helper = localFunctionForReference(callable);
     return helper === undefined
       ? { kind: "unresolved" }
@@ -1546,6 +1632,19 @@ function signalCallableAnalysis(expression, bindings) {
     if (
       signalSafeArrayMethods.has(callable.name.text) &&
       signalExpressionIsProvableArray(callable.expression)
+    )
+      return { kind: "safe" };
+    if (signalSafeDrawingHandleMethods.has(callable.name.text)) {
+      const receiverType = signalExpressionDeclaredType(callable.expression);
+      if (
+        receiverType !== undefined &&
+        signalTypeIsSdkDrawingHandle(receiverType)
+      )
+        return { kind: "safe" };
+    }
+    if (
+      signalSafeLiteralRegExpMethods.has(callable.name.text) &&
+      ts.isRegularExpressionLiteral(unwrapSignalCallable(callable.expression))
     )
       return { kind: "safe" };
     return { kind: "unresolved" };
@@ -1660,6 +1759,13 @@ function helperIsNestedInIndicatorCalculation(functionLike, bindings) {
   return false;
 }
 
+function helperWasCompilerRelocated(functionLike, sourceFile, ranges) {
+  const start = functionLike.getStart(sourceFile);
+  return ranges.some(
+    (range) => start >= range.generatedStart && functionLike.end <= range.generatedEnd,
+  );
+}
+
 function timeframeInputCallForExpression(expression, callsiteByNode) {
   if (ts.isCallExpression(expression)) {
     const metadata = callsiteByNode.get(expression)?.metadata;
@@ -1687,14 +1793,18 @@ function signalDependencyMetadata(
   callsiteByNode,
   bindings,
   sourceFile,
+  compilerRelocatedHelperRanges,
 ) {
   const dependencies = [];
   const dependencyIds = new Set();
   const chartSeries = [];
   const chartSeriesNames = new Set();
   const resolving = new Set();
+  const visited = new Set();
 
   const visit = (node) => {
+    if (visited.has(node)) return;
+    visited.add(node);
     if (ts.isIdentifier(node)) {
       if (!signalIdentifierIsValueReference(node)) return;
       const seriesSources = signalIndicatorSeriesSources(node, bindings);
@@ -1740,7 +1850,12 @@ function signalDependencyMetadata(
         helper = analysis.kind === "helper" ? analysis.helper : undefined;
         if (
           helper !== undefined &&
-          helperIsNestedInIndicatorCalculation(helper, bindings)
+          helperIsNestedInIndicatorCalculation(helper, bindings) &&
+          !helperWasCompilerRelocated(
+            helper,
+            sourceFile,
+            compilerRelocatedHelperRanges,
+          )
         )
           throw syntaxError(
             sourceFile,
@@ -2470,6 +2585,7 @@ export function transformIndicatorCallsites(
     sourceFileId = fileName,
     sourceLocationForPosition,
     mutableSeriesHistories = [],
+    compilerRelocatedHelperRanges = [],
   } = {},
 ) {
   const sourceFile = ts.createSourceFile(
@@ -2833,6 +2949,7 @@ export function transformIndicatorCallsites(
             callsiteByNode,
             callsite.bindings,
             sourceFile,
+            compilerRelocatedHelperRanges,
           );
     callsite.metadata.dependencies = dependencyMetadata.dependencies;
     callsite.metadata.chartSeries = dependencyMetadata.chartSeries;

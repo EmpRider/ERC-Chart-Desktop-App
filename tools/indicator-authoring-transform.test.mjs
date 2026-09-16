@@ -111,6 +111,30 @@ plot.line(midpoint(), { title: "Midpoint" });
   assert.match(callback.getText(parsed.sourceFile), /function midpoint\(\)/u);
 });
 
+test("signal tracing accepts compiler-relocated module helpers with drawing side effects", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot, signal } from "@erc-chart/indicator-sdk";
+function step(value) {
+  plot.line(value, { title: "Value" });
+  return { buy: value > 0 };
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+const state = step(close);
+signal(state.buy, "long");
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/relocated-signal-helper.ts",
+    sourceFileId: "src/relocated-signal-helper.ts",
+  });
+  const signalCallsite = result.callsites.find(
+    (value) => value.callee === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
 test("preserves direct source provenance inside a top-level script helper", async () => {
   const module = await loadTransform();
   const source = `

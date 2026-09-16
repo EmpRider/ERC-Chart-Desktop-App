@@ -1154,6 +1154,101 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
   assert.deepEqual(signalCallsite.chartSeries, ["close"]);
 });
 
+test("signal dependency tracing treats SDK drawing-handle mutations as dependency-safe side effects", async () => {
+  const result = await transform(`
+import { defineIndicator, signal, type BoxHandle } from "@erc-chart/indicator-sdk";
+function updateDrawing(handle: BoxHandle | undefined, value: number) {
+  handle?.set({ top: value });
+  if (value < 0) handle?.delete();
+  return value > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const handle = undefined as BoxHandle | undefined;
+  signal(updateDrawing(handle, close), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing does not trust lookalike drawing-handle methods", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+interface BoxHandle { set(value: unknown): void }
+function updateDrawing(handle: BoxHandle, value: number) {
+  handle.set({ top: value });
+  return value > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(updateDrawing({ set() {} }, close), "long");
+});
+`),
+    /signal condition helper updateDrawing invokes a callable that cannot be resolved/u,
+  );
+});
+
+test("signal dependency tracing allows literal RegExp parsing inside module helpers", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function parsedPositive(value: number) {
+  const match = /^([0-9]+)$/u.exec(String(Math.abs(value)));
+  return match !== null && value > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(parsedPositive(close), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing allows direct standard builtin conversions", async () => {
+  const result = await transform(`
+import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
+function parsedPositive(value: number) {
+  return Number(String(value)) > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(parsedPositive(close), "long");
+});
+`);
+
+  const signalCallsite = result.callsites.find(
+    (value) => value.kind === "signal",
+  );
+  assert.ok(signalCallsite);
+  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
+});
+
+test("signal dependency tracing does not trust shadowed direct builtin calls", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, signal, ta } from "@erc-chart/indicator-sdk";
+function Number(value: number) {
+  return ta.ema(value, 14);
+}
+function blocked(value: number) {
+  return Number(value) > 0;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  signal(blocked(close), "long");
+});
+`),
+    /signal condition helper blocked executes ta\.\* internally/u,
+  );
+});
+
 test("signal dependency tracing proves standard array methods from parameter and property types", async () => {
   const result = await transform(`
 import { defineIndicator, signal } from "@erc-chart/indicator-sdk";

@@ -213,28 +213,29 @@ async function importBuiltIndicator(packageRoot, tag) {
 }
 
 function reorderUnrelatedTopLevelDeclarations(source) {
-  const ropeStart = source.indexOf("const ropeModes = [");
-  const ropeEndMarker = "] as const;";
-  const ropeEnd =
-    source.indexOf(ropeEndMarker, ropeStart) + ropeEndMarker.length;
-  const utStart = source.indexOf(
-    'const utModes = ["original", "0lag"] as const;',
-  );
-  const utEnd = source.indexOf(";", utStart) + 1;
+  const declaration = (name) => {
+    const match = new RegExp(
+      String.raw`const\s+${name}\s*(?::[^=;]+)?=\s*\[[\s\S]*?\]\s*(?:as\s+const)?\s*;`,
+      "u",
+    ).exec(source);
+    assert.ok(match, `Missing ${name} declaration`);
+    return {
+      start: match.index,
+      end: match.index + match[0].length,
+    };
+  };
+  const rope = declaration("ropeModes");
+  const ut = declaration("utModes");
   assert.ok(
-    ropeStart >= 0 && ropeEnd > ropeStart,
-    "Missing ropeModes declaration",
-  );
-  assert.ok(
-    utStart > ropeEnd && utEnd > utStart,
-    "Missing utModes declaration",
+    ut.start > rope.end,
+    "utModes must follow ropeModes in the fixture",
   );
   return (
-    source.slice(0, ropeStart) +
-    source.slice(utStart, utEnd) +
+    source.slice(0, rope.start) +
+    source.slice(ut.start, ut.end) +
     "\n" +
-    source.slice(ropeStart, ropeEnd) +
-    source.slice(utEnd)
+    source.slice(rope.start, rope.end) +
+    source.slice(ut.end)
   );
 }
 

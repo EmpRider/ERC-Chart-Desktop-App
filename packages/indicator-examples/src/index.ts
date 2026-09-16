@@ -1,1 +1,1 @@
-export { default as atrRopeUtBotIndicator } from "./atr-rope-utbot.js";
+export { default as atrBandsIndicator } from "./atr-bands.js";

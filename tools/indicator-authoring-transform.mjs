@@ -264,6 +264,7 @@ export function transformIndicatorAuthoring(
     sourceFileId,
     sourceLocationForPosition: scriptResult.sourceLocationForPosition,
     mutableSeriesHistories: historyAnalysis.mutableSeriesHistories,
+    compilerRelocatedHelperRanges: scriptResult.relocatedHelperRanges,
   });
   const historyResult = transformIndicatorHistory(
     callsiteResult.code,

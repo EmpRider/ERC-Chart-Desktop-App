@@ -294,7 +294,7 @@ export function transformIndicatorScript(
   );
   const defineIndicatorBindings = sdkNamedBindings(sourceFile, "defineIndicator");
   if (defineIndicatorBindings.size === 0)
-    return { code: sourceText, changed: false };
+    return { code: sourceText, changed: false, relocatedHelperRanges: [] };
 
   const metadataDeclarations = [];
   for (const statement of sourceFile.statements) {
@@ -304,7 +304,8 @@ export function transformIndicatorScript(
   const metadataOnly = metadataDeclarations.filter(
     ({ call }) => call.arguments.length === 1,
   );
-  if (metadataOnly.length === 0) return { code: sourceText, changed: false };
+  if (metadataOnly.length === 0)
+    return { code: sourceText, changed: false, relocatedHelperRanges: [] };
   if (metadataOnly.length !== 1 || metadataDeclarations.length !== 1)
     throw syntaxError(
       sourceFile,
@@ -366,6 +367,7 @@ export function transformIndicatorScript(
   const moduleSource = blankStatements(sourceText, sourceFile, dynamicHelpers);
   let code = moduleSource.slice(0, metadataArgument.end) + callbackPrefix;
   const authoredRanges = [];
+  const relocatedHelperRanges = [];
   const suffix = moduleSource.slice(metadataStatement.end);
   const suffixStart = code.length;
   code += suffix;
@@ -384,6 +386,10 @@ export function transformIndicatorScript(
       generatedStart,
       generatedEnd: generatedStart + helperText.length,
       originalStart,
+    });
+    relocatedHelperRanges.push({
+      generatedStart,
+      generatedEnd: generatedStart + helperText.length,
     });
     code += "\n";
   }
@@ -404,5 +410,10 @@ export function transformIndicatorScript(
     const location = sourceFile.getLineAndCharacterOfPosition(originalPosition);
     return { line: location.line, character: location.character };
   };
-  return { code, changed: true, sourceLocationForPosition };
+  return {
+    code,
+    changed: true,
+    sourceLocationForPosition,
+    relocatedHelperRanges,
+  };
 }
