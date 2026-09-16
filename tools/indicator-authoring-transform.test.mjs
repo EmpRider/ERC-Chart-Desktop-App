@@ -278,6 +278,27 @@ void invokeLocal;
   assert.equal(result.changed, true);
 });
 
+test("does not treat a namespace-local defineIndicator call as SDK authoring", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+namespace Local {
+  export function defineIndicator(value: number) {
+    return value;
+  }
+  export const value = defineIndicator(1);
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+plot.line(close);
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/namespace-shadowed-define-indicator.ts",
+    sourceFileId: "src/namespace-shadowed-define-indicator.ts",
+  });
+  assert.equal(result.changed, true);
+});
+
 test("moves price-dependent prelude helpers into the hidden runtime callback", async () => {
   const module = await loadTransform();
   const source = `

@@ -88,7 +88,12 @@ function loopBindings(node) {
 
 export function scopedNames(node) {
   if (ts.isFunctionLike(node)) return functionBindings(node);
-  if (ts.isSourceFile(node) || ts.isBlock(node) || ts.isCaseBlock(node))
+  if (
+    ts.isSourceFile(node) ||
+    ts.isBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isModuleBlock(node)
+  )
     return directBlockBindings(node);
   if (
     ts.isForStatement(node) ||

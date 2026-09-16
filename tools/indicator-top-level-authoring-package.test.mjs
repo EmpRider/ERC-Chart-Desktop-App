@@ -121,6 +121,28 @@ plot.line(close);
   assert.equal(typeof plugin.createInstance, "function");
 });
 
+test("package build allows namespace-local defineIndicator shadowing", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+namespace Local {
+  export function defineIndicator(value: number) {
+    return value;
+  }
+  export const value = defineIndicator(1);
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.namespace-shadow",
+  name: "Namespace shadow",
+});
+
+plot.line(close);
+`);
+
+  assert.equal(typeof plugin.createInstance, "function");
+});
+
 test("package build rejects CommonJS access to the indicator SDK", async () => {
   await assert.rejects(
     () =>
