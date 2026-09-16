@@ -45,60 +45,17 @@ async function packagedPlugin(sourceText, id) {
   }
 }
 
-test("plot identity survives reordering", async () => {
-  const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-function fast(value) { plot.line(value, { key: "fast", title: "Fast" }); }
-function slow(value) { plot.line(value * 10, { key: "slow", title: "Slow" }); }
-export default defineIndicator(
-  { id: "erc.indicator.output-identity.main", name: "Output identity" },
-  ({ close }) => {
-    if (close > 15) { slow(close); fast(close); }
-    else { fast(close); slow(close); }
-  },
-);
-`,
-    "erc.indicator.output-identity",
-  );
-
-  const fast = plugin.definition.plots.find(
-    (value) => value.outputKey === "fast",
-  );
-  const slow = plugin.definition.plots.find(
-    (value) => value.outputKey === "slow",
-  );
-  assert.match(fast.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
-  assert.match(slow.key, /^erc-v2-plot-[0-9a-f]{24}$/u);
-
-  const instance = plugin.createInstance({}, context);
-  try {
-    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
-    const points = instance.snapshot().points;
-    assert.deepEqual(
-      points.map((point) => point.values.fast),
-      [10, 20, 10],
-    );
-    assert.deepEqual(
-      points.map((point) => point.values.slow),
-      [100, 200, 100],
-    );
-  } finally {
-    instance.dispose();
-  }
-});
-
 test("unkeyed plot outputs follow compiler identity when execution order changes", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-function fast(value) { plot.line(value, { title: "Fast" }); }
-function slow(value) { plot.line(value * 10, { title: "Slow" }); }
-export default defineIndicator(
-  { id: "erc.indicator.unkeyed-output-identity.main", name: "Unkeyed output identity" },
-  ({ close }) => {
-    if (close > 15) { slow(close); fast(close); }
-    else { fast(close); slow(close); }
-  },
-);
+function fast(value: number) { plot.line(value, { title: "Fast" }); }
+function slow(value: number) { plot.line(value * 10, { title: "Slow" }); }
+export default defineIndicator({
+  id: "erc.indicator.unkeyed-output-identity.main",
+  name: "Unkeyed output identity",
+});
+if (close > 15) { slow(close); fast(close); }
+else { fast(close); slow(close); }
 `,
     "erc.indicator.unkeyed-output-identity",
   );
@@ -127,19 +84,18 @@ export default defineIndicator(
   }
 });
 
-test("compiler rejects dynamic plot options that can omit an explicit key", async () => {
+test("compiler rejects dynamic plot option objects with changing metadata", async () => {
   await assert.rejects(
     () =>
       packagedPlugin(
         `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.plot-key-contract.main", name: "Plot key contract" },
-  ({ close }) => {
-    plot.line(
-      close,
-      close > 15 ? { title: "Stable" } : { key: "stable", title: "Stable" },
-    );
-  },
+export default defineIndicator({
+  id: "erc.indicator.plot-key-contract.main",
+  name: "Plot key contract",
+});
+plot.line(
+  close,
+  close > 15 ? { title: "Fast" } : { title: "Slow" },
 );
 `,
         "erc.indicator.plot-key-contract",
@@ -148,19 +104,18 @@ export default defineIndicator(
   );
 });
 
-test("compiler rejects dynamic plot options that can omit an explicit title", async () => {
+test("compiler rejects dynamic plot option objects that can omit a title", async () => {
   await assert.rejects(
     () =>
       packagedPlugin(
         `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.plot-title-contract.main", name: "Plot title contract" },
-  ({ close }) => {
-    plot.line(
-      close,
-      close > 15 ? { key: "stable" } : { key: "stable", title: "Stable" },
-    );
-  },
+export default defineIndicator({
+  id: "erc.indicator.plot-title-contract.main",
+  name: "Plot title contract",
+});
+plot.line(
+  close,
+  close > 15 ? {} : { title: "Stable" },
 );
 `,
         "erc.indicator.plot-title-contract",
@@ -223,13 +178,12 @@ test("signal identity survives reordering", async () => {
     `import { defineIndicator, signal } from "@erc-chart/indicator-sdk";
 function fastSignal() { signal(true, "long"); }
 function slowSignal() { signal(true, "short"); }
-export default defineIndicator(
-  { id: "erc.indicator.signal-identity.main", name: "Signal identity" },
-  ({ close }) => {
-    if (close > 15) { slowSignal(); fastSignal(); }
-    else { fastSignal(); slowSignal(); }
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.signal-identity.main",
+  name: "Signal identity",
+});
+if (close > 15) { slowSignal(); fastSignal(); }
+else { fastSignal(); slowSignal(); }
 `,
     "erc.indicator.signal-identity",
   );
@@ -259,12 +213,11 @@ test("signal rejects a repeated compiler identity in one finalized bar", async (
 function emitTwice() {
   for (let index = 0; index < 2; index += 1) signal(true, "long");
 }
-export default defineIndicator(
-  { id: "erc.indicator.signal-identity-collision.main", name: "Signal identity collision" },
-  ({ isConfirmed }) => {
-    if (isConfirmed) emitTwice();
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.signal-identity-collision.main",
+  name: "Signal identity collision",
+});
+if (bar.confirmed) emitTwice();
 `,
     "erc.indicator.signal-identity-collision",
   );
@@ -285,14 +238,13 @@ test("packaged v2 runtime rejects a missing compiler identity", async () => {
     () =>
       packagedPlugin(
         `import { defineIndicator, plot, signal } from "@erc-chart/indicator-sdk";
+export default defineIndicator({
+  id: "erc.indicator.missing-identity.main",
+  name: "Missing identity",
+});
 const emit = signal;
-export default defineIndicator(
-  { id: "erc.indicator.missing-identity.main", name: "Missing identity" },
-  ({ close }) => {
-    plot.line(close);
-    emit(close > 0, "long");
-  },
-);
+plot.line(close);
+emit(close > 0, "long");
 `,
         "erc.indicator.missing-identity",
       ),

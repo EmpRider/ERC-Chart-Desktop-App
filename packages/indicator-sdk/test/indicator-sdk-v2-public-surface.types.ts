@@ -5,19 +5,14 @@ import {
   location,
   movingAverageTypes,
   plot,
-  priceSources,
-  priceValue,
-  series,
   shape,
   signal,
   ta,
   textSize,
   type DmiPoint,
-  type IndicatorBar,
   type InputOptions,
   type MovingAverageType,
   type PlotOptions,
-  type PriceSource,
   type SeriesNumber,
   type SignalOptions,
 } from "../src/index.js";
@@ -28,33 +23,19 @@ void input;
 void location;
 void movingAverageTypes;
 void plot;
-void priceSources;
-void priceValue;
-void series;
 void shape;
 void signal;
 void ta;
 void textSize;
 
 declare const dmiPoint: DmiPoint;
-declare const indicatorBar: IndicatorBar;
 declare const movingAverageType: MovingAverageType;
-declare const priceSource: PriceSource;
 declare const seriesNumber: SeriesNumber;
 declare const signalOptions: SignalOptions;
 void dmiPoint;
 void movingAverageType;
-void priceSource;
 void seriesNumber;
 void signalOptions;
-
-// History replay/finalization bookkeeping is SDK-owned in v2.
-// @ts-expect-error author callbacks do not inspect runtime history replay mode
-const historyReplay = indicatorBar.isHistory;
-// @ts-expect-error author callbacks do not inspect runtime history tail bookkeeping
-const historyFinalizedTail = indicatorBar.isHistoryFinalizedTail;
-void historyReplay;
-void historyFinalizedTail;
 
 const inputOptions: InputOptions = { title: "Length" };
 const plotOptions: PlotOptions = { title: "Average" };
@@ -68,6 +49,36 @@ const keyedInput: InputOptions = { key: "legacy-input", title: "Legacy" };
 const keyedPlot: PlotOptions = { key: "legacy-plot", title: "Legacy" };
 void keyedInput;
 void keyedPlot;
+
+// Runtime-shaped recurrence/source helpers are private implementation details.
+// @ts-expect-error public v2 authoring does not expose recurrence plumbing
+import { series } from "../src/index.js";
+// @ts-expect-error public v2 authoring does not expose source-option tokens
+import { priceSources } from "../src/index.js";
+// @ts-expect-error public v2 authoring does not expose candle source switching
+import { priceValue } from "../src/index.js";
+// @ts-expect-error source-token types are compiler/runtime-owned
+import type { PriceSource } from "../src/index.js";
+// @ts-expect-error callback bar/context types are not public authoring API
+import type { IndicatorBar } from "../src/index.js";
+// @ts-expect-error callback calculation types are not public authoring API
+import type { IndicatorCalculation } from "../src/index.js";
+// @ts-expect-error legacy option-array helper is not public authoring API
+import { inputOptions as legacyInputOptions } from "../src/index.js";
+void series;
+void priceSources;
+void priceValue;
+declare const priceSource: PriceSource;
+declare const indicatorBar: IndicatorBar;
+declare const indicatorCalculation: IndicatorCalculation;
+void priceSource;
+void indicatorBar;
+void indicatorCalculation;
+void legacyInputOptions;
+
+// Metadata-only defineIndicator() is the one public author declaration shape.
+// @ts-expect-error the compiler injects the hidden runtime callback
+defineIndicator({ id: "x", name: "x" }, () => void 0);
 
 // Array-oriented v1 helpers are not exported from the public v2 root.
 // @ts-expect-error v1 retained-array helper is not public

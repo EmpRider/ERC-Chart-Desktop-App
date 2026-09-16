@@ -34,23 +34,23 @@ test("packaged indicators preserve relative imports while lowering built-in hist
   await writeFile(
     source,
     `import { defineIndicator, history, plot } from "@erc-chart/indicator-sdk";
-import { historyOffset } from "./history-offset.ts";
+import { historyOffset } from "./history-offset.js";
 
-export default defineIndicator(
-  { id: "erc.indicator.history-syntax.main", name: "History syntax" },
-  ({ open, high, low, close, volume }) => {
-    plot.line(close[historyOffset], { key: "indexed" });
-    plot.line(close.at(historyOffset), { key: "at" });
-    plot.line(history(close, historyOffset), { key: "function" });
-    plot.line(history(close * 2, historyOffset), { key: "derived" });
-    plot.line(open[historyOffset], { key: "openIndexed" });
-    plot.line(high.at(historyOffset), { key: "highAt" });
-    plot.line(low[historyOffset], { key: "lowIndexed" });
-    plot.line(volume[historyOffset], { key: "volumeIndexed" });
-    plot.line(volume.at(historyOffset), { key: "volumeAt" });
-    plot.line(history(volume, historyOffset), { key: "volumeFunction" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.history-syntax.main",
+  name: "History syntax",
+});
+
+plot.line(close[historyOffset], { title: "Indexed" });
+plot.line(close.at(historyOffset), { title: "At" });
+plot.line(history(close, historyOffset), { title: "Function" });
+plot.line(history(close * 2, historyOffset), { title: "Derived" });
+plot.line(open[historyOffset], { title: "Open indexed" });
+plot.line(high.at(historyOffset), { title: "High at" });
+plot.line(low[historyOffset], { title: "Low indexed" });
+plot.line(volume[historyOffset], { title: "Volume indexed" });
+plot.line(volume.at(historyOffset), { title: "Volume at" });
+plot.line(history(volume, historyOffset), { title: "Volume function" });
 `,
     "utf8",
   );
@@ -65,57 +65,76 @@ export default defineIndicator(
   const { default: plugin } = await import(
     `data:text/javascript;base64,${entry.toString("base64")}`
   );
+  const keyFor = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+  const keys = {
+    indexed: keyFor("Indexed"),
+    at: keyFor("At"),
+    functionHistory: keyFor("Function"),
+    derived: keyFor("Derived"),
+    openIndexed: keyFor("Open indexed"),
+    highAt: keyFor("High at"),
+    lowIndexed: keyFor("Low indexed"),
+    volumeIndexed: keyFor("Volume indexed"),
+    volumeAt: keyFor("Volume at"),
+    volumeFunction: keyFor("Volume function"),
+  };
   const instance = plugin.createInstance({}, context);
   instance.onHistory([candle(0, 10), candle(1, 11), candle(2, 12)]);
 
-  for (const key of ["indexed", "at", "function"]) {
+  for (const key of [keys.indexed, keys.at, keys.functionHistory]) {
     assert.deepEqual(
       instance.snapshot().points.map((point) => point.values[key]),
       [null, 10, 11],
     );
   }
   assert.deepEqual(
-    instance.snapshot().points.map((point) => point.values.openIndexed),
+    instance.snapshot().points.map((point) => point.values[keys.openIndexed]),
     [null, 9, 10],
   );
   assert.deepEqual(
-    instance.snapshot().points.map((point) => point.values.highAt),
+    instance.snapshot().points.map((point) => point.values[keys.highAt]),
     [null, 11, 12],
   );
   assert.deepEqual(
-    instance.snapshot().points.map((point) => point.values.lowIndexed),
+    instance.snapshot().points.map((point) => point.values[keys.lowIndexed]),
     [null, 8, 9],
   );
-  for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"]) {
+  for (const key of [keys.volumeIndexed, keys.volumeAt, keys.volumeFunction]) {
     assert.deepEqual(
       instance.snapshot().points.map((point) => point.values[key]),
       [null, 1, 2],
     );
   }
   assert.deepEqual(
-    instance.snapshot().points.map((point) => point.values.derived),
+    instance.snapshot().points.map((point) => point.values[keys.derived]),
     [null, 20, 22],
   );
 
   instance.onBuildingBar(candle(2, 40));
-  for (const key of ["indexed", "at", "function"])
+  for (const key of [keys.indexed, keys.at, keys.functionHistory])
     assert.equal(instance.snapshot().points.at(-1).values[key], 11);
-  assert.equal(instance.snapshot().points.at(-1).values.openIndexed, 10);
-  assert.equal(instance.snapshot().points.at(-1).values.highAt, 12);
-  assert.equal(instance.snapshot().points.at(-1).values.lowIndexed, 9);
-  for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"])
+  assert.equal(instance.snapshot().points.at(-1).values[keys.openIndexed], 10);
+  assert.equal(instance.snapshot().points.at(-1).values[keys.highAt], 12);
+  assert.equal(instance.snapshot().points.at(-1).values[keys.lowIndexed], 9);
+  for (const key of [keys.volumeIndexed, keys.volumeAt, keys.volumeFunction])
     assert.equal(instance.snapshot().points.at(-1).values[key], 2);
-  assert.equal(instance.snapshot().points.at(-1).values.derived, 22);
+  assert.equal(instance.snapshot().points.at(-1).values[keys.derived], 22);
 
   instance.onFinalizedBar(candle(2, 40));
   instance.onBuildingBar(candle(3, 50));
-  for (const key of ["indexed", "at", "function"])
+  for (const key of [keys.indexed, keys.at, keys.functionHistory])
     assert.equal(instance.snapshot().points.at(-1).values[key], 40);
-  assert.equal(instance.snapshot().points.at(-1).values.openIndexed, 39);
-  assert.equal(instance.snapshot().points.at(-1).values.highAt, 41);
-  assert.equal(instance.snapshot().points.at(-1).values.lowIndexed, 38);
-  for (const key of ["volumeIndexed", "volumeAt", "volumeFunction"])
+  assert.equal(instance.snapshot().points.at(-1).values[keys.openIndexed], 39);
+  assert.equal(instance.snapshot().points.at(-1).values[keys.highAt], 41);
+  assert.equal(instance.snapshot().points.at(-1).values[keys.lowIndexed], 38);
+  for (const key of [keys.volumeIndexed, keys.volumeAt, keys.volumeFunction])
     assert.equal(instance.snapshot().points.at(-1).values[key], 3);
-  assert.equal(instance.snapshot().points.at(-1).values.derived, 80);
+  assert.equal(instance.snapshot().points.at(-1).values[keys.derived], 80);
   instance.dispose();
 });

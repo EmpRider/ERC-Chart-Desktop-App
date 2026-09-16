@@ -6,7 +6,6 @@ import {
 } from "@erc-chart/contracts";
 import {
   defineIndicator as runtimeDefineIndicator,
-  type IndicatorBar as RuntimeIndicatorBar,
   type IndicatorOptions,
 } from "./indicator.js";
 import { input as runtimeInput } from "./input.js";
@@ -39,6 +38,9 @@ export type IndicatorInputValue = boolean | number | string;
 export type IndicatorInputKind = "boolean" | "number" | "source" | "string";
 export type IndicatorInputEffect = "calculation" | "presentation";
 
+type IndicatorSourceDefault =
+  "close" | "open" | "high" | "low" | "hl2" | "hlc3" | "ohlc4";
+
 export interface IndicatorInputOption {
   readonly value: string;
   readonly label: string;
@@ -70,7 +72,7 @@ export type IndicatorInputDefinition = IndicatorInputMetadata &
       }
     | {
         readonly type: "source";
-        readonly defaultValue: import("./series.js").PriceSource;
+        readonly defaultValue: IndicatorSourceDefault;
       }
   );
 
@@ -171,15 +173,7 @@ export interface IndicatorBox {
 
 export type IndicatorOverlay = IndicatorLineSegment | IndicatorBox;
 
-export {
-  history,
-  inputOptions,
-  priceSources,
-  priceValue,
-  series,
-  type PriceSource,
-  type SeriesNumber,
-} from "./series.js";
+export { history, type SeriesNumber } from "./series.js";
 
 export { movingAverageTypes } from "./ta.js";
 export type { DmiPoint, MovingAverageType } from "./ta.js";
@@ -211,16 +205,8 @@ export interface TechnicalAnalysisApi {
 
 export const ta: TechnicalAnalysisApi = runtimeTa as TechnicalAnalysisApi;
 
-export type IndicatorBar = Omit<
-  RuntimeIndicatorBar,
-  "isHistory" | "isHistoryFinalizedTail"
->;
-export type IndicatorCalculation = (bar: IndicatorBar) => void;
 export type { IndicatorOptions } from "./indicator.js";
-export type DefineIndicator = (
-  options: IndicatorOptions,
-  calculate?: IndicatorCalculation,
-) => IndicatorModule;
+export type DefineIndicator = (options: IndicatorOptions) => IndicatorModule;
 export const defineIndicator: DefineIndicator =
   runtimeDefineIndicator as unknown as DefineIndicator;
 
@@ -281,7 +267,7 @@ export interface InputApi {
     options?: InputOptions,
   ) => string;
   readonly source: (
-    defaultValue: import("./series.js").PriceSource | number,
+    defaultValue: number,
     titleOrOptions?: string | InputOptions,
     options?: InputOptions,
   ) => number;

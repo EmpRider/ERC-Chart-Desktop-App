@@ -34,15 +34,14 @@ async function packagedPlugin(sourceText, id) {
 test("compiled indicator timeframe keeps the selected input identity when defaults match", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, indicator, input, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.timeframe-input-identity.main", name: "Timeframe input identity" },
-  () => {
-    const selected = input.timeframe("1h", { title: "Selected" });
-    input.timeframe("1h", { title: "Unrelated" });
-    indicator.timeframe(selected);
-    plot.line(1, { key: "value" });
-  },
-);`,
+export default defineIndicator({
+  id: "erc.indicator.timeframe-input-identity.main",
+  name: "Timeframe input identity",
+});
+const selected = input.timeframe("1h", { title: "Selected" });
+input.timeframe("1h", { title: "Unrelated" });
+indicator.timeframe(selected);
+plot.line(1, { title: "Value" });`,
     "erc.indicator.timeframe-input-identity",
   );
 
@@ -56,14 +55,13 @@ export default defineIndicator(
 test("compiled static indicator timeframe does not bind an equal-valued input", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, indicator, input, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.static-timeframe.main", name: "Static timeframe" },
-  () => {
-    input.timeframe("1h", { title: "Unrelated" });
-    indicator.timeframe("1h");
-    plot.line(1, { key: "value" });
-  },
-);`,
+export default defineIndicator({
+  id: "erc.indicator.static-timeframe.main",
+  name: "Static timeframe",
+});
+input.timeframe("1h", { title: "Unrelated" });
+indicator.timeframe("1h");
+plot.line(1, { title: "Value" });`,
     "erc.indicator.static-timeframe",
   );
 
@@ -75,15 +73,14 @@ export default defineIndicator(
 test("compiled indicator candle type keeps the selected input identity when defaults match", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { candle, defineIndicator, indicator, input, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.candle-input-identity.main", name: "Candle input identity" },
-  () => {
-    const selected = input.candleType(candle.heikinAshi, { title: "Selected" });
-    input.candleType(candle.heikinAshi, { title: "Unrelated" });
-    indicator.candleType(selected);
-    plot.line(1, { key: "value" });
-  },
-);`,
+export default defineIndicator({
+  id: "erc.indicator.candle-input-identity.main",
+  name: "Candle input identity",
+});
+const selected = input.candleType(candle.heikinAshi, { title: "Selected" });
+input.candleType(candle.heikinAshi, { title: "Unrelated" });
+indicator.candleType(selected);
+plot.line(1, { title: "Value" });`,
     "erc.indicator.candle-input-identity",
   );
 
@@ -98,14 +95,13 @@ export default defineIndicator(
 test("compiled static indicator candle type does not bind an equal-valued input", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { candle, defineIndicator, indicator, input, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.static-candle.main", name: "Static candle" },
-  () => {
-    input.candleType(candle.heikinAshi, { title: "Unrelated" });
-    indicator.candleType(candle.heikinAshi);
-    plot.line(1, { key: "value" });
-  },
-);`,
+export default defineIndicator({
+  id: "erc.indicator.static-candle.main",
+  name: "Static candle",
+});
+input.candleType(candle.heikinAshi, { title: "Unrelated" });
+indicator.candleType(candle.heikinAshi);
+plot.line(1, { title: "Value" });`,
     "erc.indicator.static-candle",
   );
 
@@ -155,13 +151,12 @@ function higherCandles() {
 test("compiled higher-timeframe TA preserves direct open and volume provenance", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.mtf-series-provenance.main", name: "MTF provenance" },
-  ({ open, volume }) => {
-    plot.line(ta.ema(open, 1, "1h"), { key: "source_open" });
-    plot.line(ta.ema(volume, 1, "1h"), { key: "source_volume" });
-  },
-);`,
+export default defineIndicator({
+  id: "erc.indicator.mtf-series-provenance.main",
+  name: "MTF provenance",
+});
+plot.line(ta.ema(open, 1, "1h"), { title: "Source open" });
+plot.line(ta.ema(volume, 1, "1h"), { title: "Source volume" });`,
     "erc.indicator.mtf-series-provenance",
   );
   const instance = plugin.createInstance(
@@ -172,10 +167,20 @@ export default defineIndicator(
       sourceCandles: { "1h": higherCandles() },
     },
   );
+  const openDefinition = plugin.definition.plots.find(
+    ({ label }) => label === "Source open",
+  );
+  const volumeDefinition = plugin.definition.plots.find(
+    ({ label }) => label === "Source volume",
+  );
+  assert.ok(openDefinition);
+  assert.ok(volumeDefinition);
+  const openKey = openDefinition.outputKey ?? openDefinition.key;
+  const volumeKey = volumeDefinition.outputKey ?? volumeDefinition.key;
   try {
     instance.onHistory(baseCandles());
-    assert.equal(instance.snapshot().points[3].values.source_open, 100);
-    assert.equal(instance.snapshot().points[3].values.source_volume, 500);
+    assert.equal(instance.snapshot().points[3].values[openKey], 100);
+    assert.equal(instance.snapshot().points[3].values[volumeKey], 500);
   } finally {
     instance.dispose();
   }
@@ -184,12 +189,11 @@ export default defineIndicator(
 test("compiled higher-timeframe TA rejects derived expressions instead of guessing provenance", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.mtf-derived-source.main", name: "MTF derived source" },
-  ({ close }) => {
-    plot.line(ta.ema(close * 2, 1, "1h"), { key: "derived" });
-  },
-);`,
+export default defineIndicator({
+  id: "erc.indicator.mtf-derived-source.main",
+  name: "MTF derived source",
+});
+plot.line(ta.ema(close * 2, 1, "1h"), { title: "Derived" });`,
     "erc.indicator.mtf-derived-source",
   );
   const instance = plugin.createInstance(

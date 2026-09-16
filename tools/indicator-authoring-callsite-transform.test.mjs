@@ -30,13 +30,12 @@ function callsiteMap(result) {
 
 test("injects hidden identities for every in-scope authoring family", async () => {
   const result = await transform(`
-import { defineIndicator, input, plot, series, signal, ta } from "@erc-chart/indicator-sdk";
+import { defineIndicator, input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 export default defineIndicator(
   { id: "erc.indicator.callsite.main", name: "Callsite" },
   ({ close }) => {
     const length = input.int(14, { title: "Length" });
     const average = ta.ema(close, length);
-    const count = series(0, (previous) => previous + 1);
     if (average > close) {
       plot.shape(average, { key: "shape" });
     }
@@ -45,8 +44,8 @@ export default defineIndicator(
       id: "legacy-box",
       startTimeMs: 0,
       endTimeMs: 1,
-      top: count + 1,
-      bottom: count,
+      top: average + 1,
+      bottom: average,
       color: "#ffffff"
     });
     signal(average > close, "long");
@@ -60,7 +59,6 @@ export default defineIndicator(
     [
       ["input", "input.int"],
       ["ta", "ta.ema"],
-      ["state", "series"],
       ["plot", "plot.shape"],
       ["plot", "plot.hline"],
       ["drawing", "plot.box"],
@@ -849,28 +847,6 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
   assert.deepEqual(signalCallsite.chartSeries, []);
 });
 
-test("signal dependency tracing follows state callbacks that capture outer TA and chart sources", async () => {
-  const result = await transform(`
-import { defineIndicator, series, signal, ta } from "@erc-chart/indicator-sdk";
-export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
-  const higher = ta.ema(1, "1h");
-  const state = series({ buy: false }, () => ({ buy: bar.close > higher }));
-  signal(state.buy, "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  const higherCallsite = result.callsites.find(
-    (value) => value.callee === "ta.ema",
-  );
-  assert.ok(signalCallsite);
-  assert.ok(higherCallsite);
-  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
-  assert.ok(signalCallsite.chartSeries.includes("close"));
-});
-
 test("signal dependency tracing fails closed when a helper hides TA execution", async () => {
   for (const helper of [
     `function buySignal(close) {
@@ -952,148 +928,6 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) =
       /signal condition helper .*(?:ta\.\* internally|nested in the indicator calculation)|signal condition callable .*statically traceable/u,
     );
   }
-});
-
-test("signal dependency tracing allows provable array helpers inside module signal-state helpers", async () => {
-  const result = await transform(`
-import { defineIndicator, series, signal, ta } from "@erc-chart/indicator-sdk";
-function step(previous, close, higher) {
-  const outcomes = [...previous.outcomes, close].slice(-4);
-  const prior = outcomes.find((value) => value > higher);
-  return { outcomes, buy: prior !== undefined && close > higher };
-}
-export default defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
-  const higher = ta.ema(1, "1h");
-  const state = series({ outcomes: [], buy: false }, (previous) =>
-    step(previous, close, higher),
-  );
-  signal(state.buy, "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  const higherCallsite = result.callsites.find(
-    (value) => value.callee === "ta.ema",
-  );
-  assert.ok(signalCallsite);
-  assert.ok(higherCallsite);
-  assert.deepEqual(signalCallsite.dependencies, [higherCallsite.id]);
-  assert.deepEqual(signalCallsite.chartSeries, ["close"]);
-});
-
-test("signal dependency tracing narrows whole-bar arguments to chart members read by module helpers", async () => {
-  const result = await transform(`
-import { defineIndicator, series, signal } from "@erc-chart/indicator-sdk";
-function step(previous, bar) {
-  return {
-    buy: previous.buy || (bar.isConfirmed && bar.open < bar.close),
-  };
-}
-export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
-  const state = series({ buy: false }, (previous) => step(previous, bar));
-  signal(state.buy, "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  assert.ok(signalCallsite);
-  assert.deepEqual(signalCallsite.chartSeries, ["open", "close"]);
-});
-
-test("signal dependency tracing recognizes pure SDK helpers and traces their arguments", async () => {
-  const result = await transform(`
-import { defineIndicator, history, priceValue, signal } from "@erc-chart/indicator-sdk";
-export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
-  const source = priceValue(bar, "close");
-  const previous = history(source, 1);
-  signal(previous > 0, "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  assert.ok(signalCallsite);
-  assert.ok(signalCallsite.chartSeries.includes("close"));
-});
-
-test("signal dependency tracing never treats volume as a possible priceValue source", async () => {
-  const result = await transform(`
-import { defineIndicator, input, priceValue, signal } from "@erc-chart/indicator-sdk";
-export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
-  const sourceName = input.string("close", {
-    options: ["open", "high", "low", "close", "hl2", "hlc3", "ohlc4"],
-  });
-  const source = priceValue(bar, sourceName);
-  signal(source > 0, "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  assert.ok(signalCallsite);
-  assert.deepEqual(signalCallsite.chartSeries, [
-    "open",
-    "high",
-    "low",
-    "close",
-    "hl2",
-    "hlc3",
-    "ohlc4",
-  ]);
-});
-
-test("signal dependency tracing narrows whole-bar helper parameters passed to priceValue", async () => {
-  const result = await transform(`
-import { defineIndicator, input, priceValue, signal } from "@erc-chart/indicator-sdk";
-function aboveZero(bar, sourceName) {
-  return priceValue(bar, sourceName) > 0;
-}
-export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
-  const sourceName = input.string("close", {
-    options: ["open", "high", "low", "close", "hl2", "hlc3", "ohlc4"],
-  });
-  signal(aboveZero(bar, sourceName), "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  assert.ok(signalCallsite);
-  assert.deepEqual(signalCallsite.chartSeries, [
-    "open",
-    "high",
-    "low",
-    "close",
-    "hl2",
-    "hlc3",
-    "ohlc4",
-  ]);
-});
-
-test("signal dependency tracing respects a local helper that shadows imported priceValue", async () => {
-  const result = await transform(`
-import { defineIndicator, priceValue, signal } from "@erc-chart/indicator-sdk";
-function aboveZero(bar) {
-  const priceValue = (value) => value.volume;
-  return priceValue(bar) > 0;
-}
-export default defineIndicator({ id: "fixture", name: "Fixture" }, (bar) => {
-  signal(aboveZero(bar), "long");
-});
-`);
-
-  const signalCallsite = result.callsites.find(
-    (value) => value.kind === "signal",
-  );
-  assert.ok(signalCallsite);
-  assert.deepEqual(signalCallsite.chartSeries, ["volume"]);
 });
 
 test("signal dependency tracing includes whole-bar helper default parameter initializers", async () => {

@@ -42,31 +42,45 @@ async function packagedPlugin(sourceText, id) {
   }
 }
 
+function plotOutputKey(plugin, label) {
+  const definition = plugin.definition.plots.find(
+    (candidate) => candidate.label === label,
+  );
+  assert.ok(definition, `Missing plot definition for ${label}`);
+  return definition.outputKey ?? definition.key;
+}
+
 test("conditional recurrence preserves its state and later recurrence identities", async () => {
   const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot, series } from "@erc-chart/indicator-sdk";
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 
 function optionalState() {
-  return series(0, (previous) => previous + 1);
+  var value = 0;
+  value += 1;
+  return value;
 }
 function alwaysState() {
-  return series(100, (previous) => previous + 10);
+  var value = 100;
+  value += 10;
+  return value;
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.conditional-series.main", name: "Conditional series" },
-  ({ close }) => {
-    const optional = close > 15 ? optionalState() : null;
-    const always = alwaysState();
-    plot.line(optional, { key: "optional", title: "Optional" });
-    plot.line(always, { key: "always", title: "Always" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.conditional-series.main",
+  name: "Conditional persistent state",
+});
+
+const optional = close > 15 ? optionalState() : null;
+const always = alwaysState();
+plot.line(optional, { title: "Optional" });
+plot.line(always, { title: "Always" });
 `,
     "erc.indicator.conditional-series",
   );
 
   const instance = plugin.createInstance({}, context);
+  const optionalKey = plotOutputKey(plugin, "Optional");
+  const alwaysKey = plotOutputKey(plugin, "Always");
   try {
     instance.onHistory([
       candle(0, 10),
@@ -76,11 +90,11 @@ export default defineIndicator(
     ]);
     const points = instance.snapshot().points;
     assert.deepEqual(
-      points.map((point) => point.values.optional),
+      points.map((point) => point.values[optionalKey]),
       [null, 1, null, 2],
     );
     assert.deepEqual(
-      points.map((point) => point.values.always),
+      points.map((point) => point.values[alwaysKey]),
       [110, 120, 130, 140],
     );
   } finally {
@@ -92,27 +106,29 @@ test("conditional TA preserves its state and later TA identities", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
 
-function optionalAverage(value) {
+function optionalAverage(value: number) {
   return ta.ema(value, 2);
 }
-function alwaysAverage(value) {
+function alwaysAverage(value: number) {
   return ta.ema(value, 2);
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.conditional-ta.main", name: "Conditional TA" },
-  ({ close }) => {
-    const optional = close > 15 ? optionalAverage(close) : null;
-    const always = alwaysAverage(close);
-    plot.line(optional, { key: "optional", title: "Optional" });
-    plot.line(always, { key: "always", title: "Always" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.conditional-ta.main",
+  name: "Conditional TA",
+});
+
+const optional = close > 15 ? optionalAverage(close) : null;
+const always = alwaysAverage(close);
+plot.line(optional, { title: "Optional" });
+plot.line(always, { title: "Always" });
 `,
     "erc.indicator.conditional-ta",
   );
 
   const instance = plugin.createInstance({}, context);
+  const optionalKey = plotOutputKey(plugin, "Optional");
+  const alwaysKey = plotOutputKey(plugin, "Always");
   try {
     instance.onHistory([
       candle(0, 10),
@@ -122,13 +138,13 @@ export default defineIndicator(
     ]);
     const points = instance.snapshot().points;
     assert.deepEqual(
-      points.map((point) => point.values.optional),
+      points.map((point) => point.values[optionalKey]),
       [null, null, null, 25],
     );
-    assert.equal(points[0].values.always, null);
-    assert.equal(points[1].values.always, 15);
-    assert.ok(Math.abs(points[2].values.always - 35 / 3) < 1e-12);
-    assert.ok(Math.abs(points[3].values.always - 215 / 9) < 1e-12);
+    assert.equal(points[0].values[alwaysKey], null);
+    assert.equal(points[1].values[alwaysKey], 15);
+    assert.ok(Math.abs(points[2].values[alwaysKey] - 35 / 3) < 1e-12);
+    assert.ok(Math.abs(points[3].values[alwaysKey] - 215 / 9) < 1e-12);
   } finally {
     instance.dispose();
   }
@@ -138,32 +154,31 @@ test("conditional plot omission preserves declaration metadata and later plot id
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 
-function optionalPlot(value) {
+function optionalPlot(value: number) {
   plot.line(value, {
-    key: "optional",
     title: "Optional",
     color: "#1188cc",
     width: 2,
     style: "dashed",
   });
 }
-function alwaysPlot(value) {
-  plot.line(value * 10, { key: "always", title: "Always" });
+function alwaysPlot(value: number) {
+  plot.line(value * 10, { title: "Always" });
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.conditional-plot.main", name: "Conditional plot" },
-  ({ close }) => {
-    if (close < 15) optionalPlot(close);
-    alwaysPlot(close);
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.conditional-plot.main",
+  name: "Conditional plot",
+});
+
+if (close < 15) optionalPlot(close);
+alwaysPlot(close);
 `,
     "erc.indicator.conditional-plot",
   );
 
   const optional = plugin.definition.plots.find(
-    (value) => value.outputKey === "optional",
+    (value) => value.label === "Optional",
   );
   assert.equal(optional?.kind, "line");
   assert.equal(optional?.label, "Optional");
@@ -172,6 +187,8 @@ export default defineIndicator(
   assert.equal(optional?.style, "dashed");
 
   const instance = plugin.createInstance({}, context);
+  const optionalKey = plotOutputKey(plugin, "Optional");
+  const alwaysKey = plotOutputKey(plugin, "Always");
   try {
     instance.onHistory([
       candle(0, 10),
@@ -181,11 +198,11 @@ export default defineIndicator(
     ]);
     const points = instance.snapshot().points;
     assert.deepEqual(
-      points.map((point) => point.values.optional),
+      points.map((point) => point.values[optionalKey]),
       [10, undefined, 10, undefined],
     );
     assert.deepEqual(
-      points.map((point) => point.values.always),
+      points.map((point) => point.values[alwaysKey]),
       [100, 200, 100, 300],
     );
   } finally {
@@ -197,31 +214,31 @@ test("a conditional plot skipped during discovery is still declared and may exec
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 
-function latePlot(value) {
-  plot.line(value, { key: "late", title: "Late", style: "dotted" });
+function latePlot(value: number) {
+  plot.line(value, { title: "Late", style: "dotted" });
 }
-function alwaysPlot(value) {
-  plot.line(value * 10, { key: "always", title: "Always" });
+function alwaysPlot(value: number) {
+  plot.line(value * 10, { title: "Always" });
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.late-conditional-plot.main", name: "Late conditional plot" },
-  ({ close }) => {
-    if (close > 15) latePlot(close);
-    alwaysPlot(close);
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.late-conditional-plot.main",
+  name: "Late conditional plot",
+});
+
+if (close > 15) latePlot(close);
+alwaysPlot(close);
 `,
     "erc.indicator.late-conditional-plot",
   );
 
-  const late = plugin.definition.plots.find(
-    (value) => value.outputKey === "late",
-  );
+  const late = plugin.definition.plots.find((value) => value.label === "Late");
   assert.equal(late?.kind, "line");
   assert.equal(late?.label, "Late");
   assert.equal(late?.style, "dotted");
-  assert.ok(plugin.definition.outputs.some((value) => value.key === "late"));
+  const lateKey = plotOutputKey(plugin, "Late");
+  const alwaysKey = plotOutputKey(plugin, "Always");
+  assert.ok(plugin.definition.outputs.some((value) => value.key === lateKey));
 
   const instance = plugin.createInstance({}, context);
   try {
@@ -233,11 +250,11 @@ export default defineIndicator(
     ]);
     const points = instance.snapshot().points;
     assert.deepEqual(
-      points.map((point) => point.values.late),
+      points.map((point) => point.values[lateKey]),
       [undefined, 20, undefined, 30],
     );
     assert.deepEqual(
-      points.map((point) => point.values.always),
+      points.map((point) => point.values[alwaysKey]),
       [100, 200, 100, 300],
     );
   } finally {
@@ -256,13 +273,13 @@ function alwaysSignal() {
   signal(true, "short");
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.conditional-signal.main", name: "Conditional signal" },
-  ({ close }) => {
-    if (close < 15) optionalSignal();
-    alwaysSignal();
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.conditional-signal.main",
+  name: "Conditional signal",
+});
+
+if (close < 15) optionalSignal();
+alwaysSignal();
 `,
     "erc.indicator.conditional-signal",
   );

@@ -11,8 +11,6 @@ const sdkRoots = new Set([
   "input",
   "location",
   "plot",
-  "priceValue",
-  "series",
   "shape",
   "signal",
   "ta",
@@ -28,9 +26,6 @@ const builtInSeriesNames = new Set([
   "hlc3",
   "ohlc4",
 ]);
-const priceValueSeriesNames = Object.freeze(
-  [...builtInSeriesNames].filter((name) => name !== "volume"),
-);
 const authoredLocationMappers = new WeakMap();
 const sdkConstantValues = Object.freeze({
   shape: Object.freeze({
@@ -81,7 +76,7 @@ const signalSafeDirectBuiltinCalls = new Set([
   "Object",
   "String",
 ]);
-const signalSafeSdkFunctionRoots = new Set(["history", "priceValue"]);
+const signalSafeSdkFunctionRoots = new Set(["history"]);
 const signalSafeDrawingHandleMethods = new Set(["set", "delete"]);
 const signalSafeLiteralRegExpMethods = new Set(["exec", "test"]);
 const signalDrawingHandleTypes = new Set([
@@ -891,28 +886,6 @@ function signalHelperParameterSeriesSources(
           ts.isStringLiteral(node.parent.argumentExpression))
       )
         return;
-      if (
-        ts.isCallExpression(node.parent) &&
-        node.parent.arguments[0] === node &&
-        ts.isIdentifier(node.parent.expression) &&
-        signalImportedBindingForIdentifier(node.parent.expression, bindings) ===
-          "priceValue"
-      ) {
-        const source = node.parent.arguments[1];
-        const choices =
-          source !== undefined &&
-          ts.isStringLiteral(source) &&
-          priceValueSeriesNames.includes(source.text)
-            ? [source.text]
-            : priceValueSeriesNames;
-        for (const choice of choices) {
-          if (!sourceNames.has(choice)) {
-            sourceNames.add(choice);
-            sources.push(choice);
-          }
-        }
-        return;
-      }
       if (ts.isCallExpression(node.parent)) {
         const argumentIndex = node.parent.arguments.findIndex(
           (argument) => argument === node,
@@ -953,30 +926,6 @@ function signalHelperParameterSeriesSources(
   if (functionLike.body !== undefined) visit(functionLike.body);
   resolving.delete(functionLike);
   return precise ? sources : undefined;
-}
-
-function signalPriceValueSeriesSources(call, bindings) {
-  if (
-    !ts.isIdentifier(call.expression) ||
-    signalImportedBindingForIdentifier(call.expression, bindings) !==
-      "priceValue"
-  )
-    return undefined;
-  const candle = call.arguments[0];
-  if (
-    !ts.isIdentifier(candle) ||
-    signalIndicatorSeriesSources(candle, bindings).length !==
-      builtInSeriesNames.size
-  )
-    return undefined;
-  const source = call.arguments[1];
-  if (
-    source !== undefined &&
-    ts.isStringLiteral(source) &&
-    priceValueSeriesNames.includes(source.text)
-  )
-    return [source.text];
-  return priceValueSeriesNames;
 }
 
 function signalIdentifierIsValueReference(identifier) {
@@ -1874,7 +1823,6 @@ function signalDependencyMetadata(
     }
     if (ts.isCallExpression(node)) {
       const metadata = callsiteByNode.get(node)?.metadata;
-      const priceValueSources = signalPriceValueSeriesSources(node, bindings);
       if (metadata?.kind === "ta" && !dependencyIds.has(metadata.id)) {
         dependencyIds.add(metadata.id);
         dependencies.push(metadata.id);
@@ -1927,15 +1875,6 @@ function signalDependencyMetadata(
         )
           continue;
         const argument = node.arguments[index];
-        if (index === 0 && priceValueSources !== undefined) {
-          for (const source of priceValueSources) {
-            if (!chartSeriesNames.has(source)) {
-              chartSeriesNames.add(source);
-              chartSeries.push(source);
-            }
-          }
-          continue;
-        }
         if (
           helper !== undefined &&
           ts.isIdentifier(argument) &&
@@ -1976,8 +1915,6 @@ function classifyCall(node, bindings) {
     const imported = bindings.get(node.expression.text);
     if (imported === "signal")
       return { kind: "signal", callee: "signal", authorArity: 3 };
-    if (imported === "series")
-      return { kind: "state", callee: "series", authorArity: 2 };
     return undefined;
   }
   if (!ts.isPropertyAccessExpression(node.expression)) return undefined;

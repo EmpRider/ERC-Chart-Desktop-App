@@ -33,7 +33,7 @@ const createPackagedInstance = async ({ source, outputRoot, id }) => {
   const { default: plugin } = await import(
     `data:text/javascript;base64,${entry.toString("base64")}`
   );
-  return plugin.createInstance({}, context);
+  return { plugin, instance: plugin.createInstance({}, context) };
 };
 
 const expectedEma = (committedValues, candidate, period) => {
@@ -74,19 +74,20 @@ const assertRuntimeState = ({
   candidateClose,
   fastCount,
   slowCount,
+  keys,
   label,
 }) => {
   const point = instance.snapshot().points.at(-1);
   assert.ok(point, `${label} must produce a point.`);
-  assert.equal(point.values["fast-count"], fastCount, `${label} fast count`);
-  assert.equal(point.values["slow-count"], slowCount, `${label} slow count`);
+  assert.equal(point.values[keys.fastCount], fastCount, `${label} fast count`);
+  assert.equal(point.values[keys.slowCount], slowCount, `${label} slow count`);
   assertApproxEqual(
-    point.values.fast,
+    point.values[keys.fast],
     expectedEma(committedCloses, candidateClose, 5),
     `${label} fast EMA`,
   );
   assertApproxEqual(
-    point.values.slow,
+    point.values[keys.slow],
     expectedSma(committedCloses, candidateClose, 14),
     `${label} slow SMA`,
   );
@@ -103,21 +104,19 @@ try {
   const source = path.join(sourceDirectory, "indicator.ts");
   await writeFile(
     source,
-    `import { defineIndicator, input, plot, series, signal, ta } from "@erc-chart/indicator-sdk";
+    `import { defineIndicator, input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 
-function fastState(value) {
+function fastState(value: number) {
   const length = input.int(5, { title: "Fast Length", min: 1, max: 50 });
-  const count = series(0, (previous) => previous + 1);
   const average = ta.ema(value, length);
-  plot.line(average, { key: "fast", title: "Fast" });
-  return { average, count };
+  plot.line(average, { title: "Fast" });
+  return average;
 }
 
-function slowState(value, openTimeMs) {
+function slowState(value: number, openTimeMs: number) {
   const length = input.int(14, { title: "Slow Length", min: 1, max: 50 });
-  const count = series(100, (previous) => previous + 2);
   const average = ta.sma(value, length);
-  plot.line(average, { key: "slow", title: "Slow" });
+  plot.line(average, { title: "Slow" });
   plot.box({
     left: openTimeMs,
     right: openTimeMs + 60_000,
@@ -125,42 +124,59 @@ function slowState(value, openTimeMs) {
     bottom: value - 1,
     color: "#555555",
   });
-  return { average, count };
+  return average;
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-performance.main", name: "Runtime identity performance" },
-  ({ close, openTimeMs }) => {
-    const signalAverage = ta.ema(close, 5);
-    let fast;
-    let slow;
-    if (Math.floor(close * 10) % 2 === 0) {
-      fast = fastState(close);
-      slow = slowState(close, openTimeMs);
-    } else {
-      slow = slowState(close, openTimeMs);
-      fast = fastState(close);
-    }
-    signal(
-      Number.isFinite(close) &&
-        close > 0 &&
-        Number.isFinite(signalAverage) &&
-        signalAverage > 0,
-      "long",
-    );
-    plot.histogram(fast.count, { key: "fast-count", title: "Fast Count" });
-    plot.histogram(slow.count, { key: "slow-count", title: "Slow Count" });
-  },
+export default defineIndicator({
+  id: "erc.indicator.runtime-identity-performance.main",
+  name: "Runtime identity performance",
+});
+
+var fastCount = 0;
+var slowCount = 100;
+fastCount += 1;
+slowCount += 2;
+const signalAverage = ta.ema(close, 5);
+let fast;
+let slow;
+if (Math.floor(close * 10) % 2 === 0) {
+  fast = fastState(close);
+  slow = slowState(close, bar.time);
+} else {
+  slow = slowState(close, bar.time);
+  fast = fastState(close);
+}
+signal(
+  Number.isFinite(close) &&
+    close > 0 &&
+    Number.isFinite(signalAverage) &&
+    signalAverage > 0,
+  "long",
 );
+plot.histogram(fastCount, { title: "Fast Count" });
+plot.histogram(slowCount, { title: "Slow Count" });
 `,
     "utf8",
   );
 
-  const instance = await createPackagedInstance({
+  const { plugin, instance } = await createPackagedInstance({
     source,
     outputRoot: path.join(outputDirectory, "package"),
     id: "erc.indicator.runtime-identity-performance",
   });
+  const outputKey = (label) => {
+    const definition = plugin.definition.plots.find(
+      (candidate) => candidate.label === label,
+    );
+    assert.ok(definition, `Missing plot definition for ${label}`);
+    return definition.outputKey ?? definition.key;
+  };
+  const keys = {
+    fast: outputKey("Fast"),
+    slow: outputKey("Slow"),
+    fastCount: outputKey("Fast Count"),
+    slowCount: outputKey("Slow Count"),
+  };
   try {
     const lifecycleCandles = Array.from({ length: 20 }, (_, index) =>
       candle(index),
@@ -175,6 +191,7 @@ export default defineIndicator(
       candidateClose: lifecycleCandles.at(-1).close,
       fastCount: 20,
       slowCount: 140,
+      keys,
       label: "lifecycle history",
     });
 
@@ -187,6 +204,7 @@ export default defineIndicator(
         candidateClose: buildingClose,
         fastCount: 20,
         slowCount: 140,
+        keys,
         label: `lifecycle building ${index + 1}`,
       });
     }
@@ -199,6 +217,7 @@ export default defineIndicator(
       candidateClose: lifecycleFinalizedClose,
       fastCount: 20,
       slowCount: 140,
+      keys,
       label: "lifecycle finalization",
     });
 
@@ -210,6 +229,7 @@ export default defineIndicator(
       candidateClose: nextBuildingClose,
       fastCount: 21,
       slowCount: 142,
+      keys,
       label: "lifecycle post-finalization building",
     });
 
@@ -227,6 +247,7 @@ export default defineIndicator(
       candidateClose: candles.at(-1).close,
       fastCount: historyBars,
       slowCount: 100 + 2 * historyBars,
+      keys,
       label: "performance history",
     });
 
@@ -249,6 +270,7 @@ export default defineIndicator(
       candidateClose: latestBuildingClose,
       fastCount: historyBars,
       slowCount: 100 + 2 * historyBars,
+      keys,
       label: "performance repeated building",
     });
 
@@ -262,6 +284,7 @@ export default defineIndicator(
       candidateClose: finalizedClose,
       fastCount: historyBars,
       slowCount: 100 + 2 * historyBars,
+      keys,
       label: "performance finalization",
     });
 
@@ -313,22 +336,23 @@ export default defineIndicator(
     maximumCardinalitySource,
     `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-cardinality.main", name: "Runtime identity cardinality" },
-  ({ close }) => {
+export default defineIndicator({
+  id: "erc.indicator.runtime-identity-cardinality.main",
+  name: "Runtime identity cardinality",
+});
 ${inputDeclarations}
 ${plotDeclarations}
-  },
-);
 `,
     "utf8",
   );
 
-  const maximumCardinalityInstance = await createPackagedInstance({
-    source: maximumCardinalitySource,
-    outputRoot: path.join(outputDirectory, "maximum-cardinality-package"),
-    id: "erc.indicator.runtime-identity-cardinality",
-  });
+  const { instance: maximumCardinalityInstance } = await createPackagedInstance(
+    {
+      source: maximumCardinalitySource,
+      outputRoot: path.join(outputDirectory, "maximum-cardinality-package"),
+      id: "erc.indicator.runtime-identity-cardinality",
+    },
+  );
   try {
     maximumCardinalityInstance.onHistory([candle(0)]);
     let maximumCardinalityBuildingMs = 0;

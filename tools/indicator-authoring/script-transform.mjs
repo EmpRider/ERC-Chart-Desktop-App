@@ -17,7 +17,6 @@ const runtimeSdkRoots = new Set([
   "indicator",
   "input",
   "plot",
-  "series",
   "signal",
   "ta",
 ]);
@@ -304,12 +303,12 @@ export function transformIndicatorScript(
   const metadataOnly = metadataDeclarations.filter(
     ({ call }) => call.arguments.length === 1,
   );
-  if (metadataOnly.length === 0)
+  if (metadataDeclarations.length === 0)
     return { code: sourceText, changed: false, relocatedHelperRanges: [] };
   if (metadataOnly.length !== 1 || metadataDeclarations.length !== 1)
     throw syntaxError(
       sourceFile,
-      metadataOnly[0]?.call ?? sourceFile,
+      metadataDeclarations[0]?.call ?? sourceFile,
       "top-level indicator authoring requires exactly one exported metadata-only defineIndicator declaration",
     );
 

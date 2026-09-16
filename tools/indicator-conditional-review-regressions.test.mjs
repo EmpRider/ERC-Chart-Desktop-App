@@ -31,7 +31,7 @@ async function buildPackage(sourceText, id, additionalFiles = {}) {
   }
 }
 
-test("compiler rejects method and accessor plot declaration metadata", async () => {
+test("authoring rejects method and accessor plot declaration metadata", async () => {
   for (const declaration of [
     `title() { return "Dynamic"; }`,
     `get title() { return "Dynamic"; }`,
@@ -40,16 +40,15 @@ test("compiler rejects method and accessor plot declaration metadata", async () 
       () =>
         buildPackage(
           `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.static-plot-member.main", name: "Static plot member" },
-  ({ close }) => {
-    plot.line(close, { ${declaration} });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.static-plot-member.main",
+  name: "Static plot member",
+});
+plot.line(close, { ${declaration} });
 `,
           "erc.indicator.static-plot-member",
         ),
-      /Plot declaration option "title" must use a static literal\./u,
+      /Type '.*' is not assignable to type 'string'|Plot declaration option "title" must use a static literal\./u,
     );
   }
 });
@@ -195,11 +194,12 @@ export default defineIndicator(
 test("tree-shaken plot callsites do not become compiler declarations", async () => {
   const result = await buildPackage(
     `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
-import { liveValue } from "./helper.ts";
-export default defineIndicator(
-  { id: "erc.indicator.reachable-plots.main", name: "Reachable plots" },
-  () => { plot.line(liveValue, { title: "Live" }); },
-);
+import { liveValue } from "./helper.js";
+export default defineIndicator({
+  id: "erc.indicator.reachable-plots.main",
+  name: "Reachable plots",
+});
+plot.line(liveValue, { title: "Live" });
 `,
     "erc.indicator.reachable-plots",
     {
