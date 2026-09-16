@@ -213,30 +213,47 @@ async function importBuiltIndicator(packageRoot, tag) {
 }
 
 function reorderUnrelatedTopLevelDeclarations(source) {
-  const ropeStart = source.indexOf("const ropeModes = [");
-  const ropeEndMarker = "] as const;";
-  const ropeEnd =
-    source.indexOf(ropeEndMarker, ropeStart) + ropeEndMarker.length;
-  const utStart = source.indexOf(
-    'const utModes = ["original", "0lag"] as const;',
-  );
-  const utEnd = source.indexOf(";", utStart) + 1;
+  const declaration = (name) => {
+    const match = new RegExp(
+      String.raw`const\s+${name}\s*(?::[^=;]+)?=\s*\[[\s\S]*?\]\s*(?:as\s+const)?\s*;`,
+      "u",
+    ).exec(source);
+    assert.ok(match, `Missing ${name} declaration`);
+    return {
+      start: match.index,
+      end: match.index + match[0].length,
+    };
+  };
+  const rope = declaration("ropeModes");
+  const ut = declaration("utModes");
   assert.ok(
-    ropeStart >= 0 && ropeEnd > ropeStart,
-    "Missing ropeModes declaration",
-  );
-  assert.ok(
-    utStart > ropeEnd && utEnd > utStart,
-    "Missing utModes declaration",
+    ut.start > rope.end,
+    "utModes must follow ropeModes in the fixture",
   );
   return (
-    source.slice(0, ropeStart) +
-    source.slice(utStart, utEnd) +
+    source.slice(0, rope.start) +
+    source.slice(ut.start, ut.end) +
     "\n" +
-    source.slice(ropeStart, ropeEnd) +
-    source.slice(utEnd)
+    source.slice(rope.start, rope.end) +
+    source.slice(rope.end, ut.start) +
+    source.slice(ut.end)
   );
 }
+
+test("unrelated declaration reorder preserves intervening source", () => {
+  const source = `const ropeModes = ["rope"] as const;
+// keep this unrelated source in the reordered fixture
+const utModes = ["ut"] as const;
+`;
+
+  const reordered = reorderUnrelatedTopLevelDeclarations(source);
+
+  assert.match(
+    reordered,
+    /\/\/ keep this unrelated source in the reordered fixture/u,
+  );
+  assert.ok(reordered.indexOf("utModes") < reordered.indexOf("ropeModes"));
+});
 
 test("approved ATR Rope + UT Bot semantics survive provisional replacement and finalized advancement", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-ecdd228-lifecycle-"));

@@ -139,6 +139,26 @@ function semanticDigest(indicator, overrides) {
 test("ATR Rope + UT Bot source uses the final SDK v2 authoring surface", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /export\s+default\s+defineIndicator\s*\(\s*\{/u);
+  assert.match(source, /input\.source\s*\(\s*close\b/u);
+  assert.match(source, /\bbar\.index\b/u);
+  assert.match(source, /\bbar\.time\b/u);
+  assert.match(source, /\bbar\.confirmed\b/u);
+
+  assert.doesNotMatch(source, /\breadInputs\s*\(/u);
+  assert.doesNotMatch(source, /\bpriceSources\b/u);
+  assert.doesNotMatch(source, /\bpriceValue\s*\(/u);
+  assert.doesNotMatch(source, /\bseries\s*\(/u);
+  assert.doesNotMatch(
+    source,
+    /\bempty(?:Rope|RopeDirection|Ut|Poc|Signal)State\b/u,
+  );
+  assert.doesNotMatch(source, /\bIndicatorBar\b/u);
+  assert.doesNotMatch(source, /\bPocTransition\b/u);
+  assert.doesNotMatch(source, /\bdirtyZones\b|\bremovedZones\b/u);
+  assert.doesNotMatch(source, /\bmarkZoneDirty\b|\brenderZones\b/u);
+  assert.doesNotMatch(source, /worker-persistent|runtime bookkeeping/iu);
+
   assert.doesNotMatch(source, /\bappendSeries\b/u);
   assert.doesNotMatch(source, /\blaggedValue\b/u);
   assert.match(source, /\bhistory\s*\(/u);
