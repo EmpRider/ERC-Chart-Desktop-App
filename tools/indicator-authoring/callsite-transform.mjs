@@ -2309,6 +2309,28 @@ function directHelperCalls(container, bindings) {
   return result;
 }
 
+function directIndicatorCallbacks(sourceFile, bindings) {
+  const result = [];
+  const visit = (node) => {
+    if (node !== sourceFile && ts.isFunctionLike(node)) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      bindings.get(node.expression.text) === "defineIndicator"
+    ) {
+      const callback = node.arguments[1];
+      if (
+        callback !== undefined &&
+        (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+      )
+        result.push(callback);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return result;
+}
+
 function validateInputHelperExecutionCardinality(
   sourceFile,
   callsiteByNode,
@@ -2338,8 +2360,12 @@ function validateInputHelperExecutionCardinality(
     for (const nested of directHelperCalls(helper, bindings)) execute(nested);
     active.delete(helper);
   };
-  for (const rootCall of directHelperCalls(sourceFile, bindings))
-    execute(rootCall);
+  for (const container of [
+    sourceFile,
+    ...directIndicatorCallbacks(sourceFile, bindings),
+  ])
+    for (const rootCall of directHelperCalls(container, bindings))
+      execute(rootCall);
 }
 
 function canonicalText(node, sourceFile, printer) {

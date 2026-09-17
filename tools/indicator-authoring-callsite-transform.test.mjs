@@ -228,6 +228,25 @@ void second;
   );
 });
 
+test("rejects an input helper that is reachable more than once from the indicator callback", async () => {
+  await assert.rejects(
+    () =>
+      transform(`
+import { defineIndicator, input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, () => {
+  const first = readLength();
+  const second = readLength();
+  void first;
+  void second;
+});
+`),
+    /input helpers cannot execute more than once/u,
+  );
+});
+
 test("rejects helpers containing inputs when the helper executes from a loop", async () => {
   await assert.rejects(
     () =>
