@@ -124,7 +124,7 @@ function paginatedCandles(length) {
 
 function migrationStressCandles(length) {
   const values = Array.from({ length }, (_, index) => {
-    const regime = (Math.floor(index / 5) * 37) % 1_200;
+    const regime = Math.floor(index / 5) * 37;
     return 100 + regime * 3 + Math.sin(index * 0.7);
   });
   return values.map((close, index) => {
@@ -160,9 +160,21 @@ test("rebuilds across multiple paginated history pages without exhausting drawin
 });
 
 test("10,000-bar POC migration keeps persistent drawing churn bounded", () => {
+  const profilePeriod = 10;
+  const maxRetainedZones = 20;
+  const maxSegmentsPerRetainedZone = profilePeriod + 1;
+  const overlaysPerRenderableSegment = 2;
+  const maxExpectedOverlays =
+    maxRetainedZones *
+    maxSegmentsPerRetainedZone *
+    overlaysPerRenderableSegment;
+  // Stress prices move through monotonically increasing regimes. Once a
+  // zone's price leaves the profile window it cannot match a later candidate,
+  // so it can start at most one segment per profile bar plus its creation bar.
+  // "Line + Band" owns exactly one line and one box per renderable segment.
   const instance = atrRopeUtBotIndicator.createInstance(
     defaults({
-      profilePeriod: 10,
+      profilePeriod,
       fastPocPeriod: 3,
       rowCount: 10,
       dmiLength: 1,
@@ -174,7 +186,7 @@ test("10,000-bar POC migration keeps persistent drawing churn bounded", () => {
       activeHistoricalPocCount: 0,
       minZoneBarsToRender: 1,
       minZoneHitsToRender: 1,
-      maxStoredZones: 1000,
+      maxStoredZones: maxRetainedZones,
       pocBandHalfRows: 0.1,
       maxBandExpansionRows: 0.5,
       drawMode: "Line + Band",
@@ -186,9 +198,10 @@ test("10,000-bar POC migration keeps persistent drawing churn bounded", () => {
     assert.doesNotThrow(() => instance.onHistory(history));
     const snapshot = instance.snapshot();
     assert.equal(snapshot.points.length, history.length);
+    assert.ok(snapshot.overlays.length > 0, "expected rendered POC geometry");
     assert.ok(
-      snapshot.overlays.length <= 2_000,
-      `expected handle-owned POC geometry at or below the 2,000 retention cap, received ${snapshot.overlays.length}`,
+      snapshot.overlays.length <= maxExpectedOverlays,
+      `expected at most ${maxExpectedOverlays} overlays from ${maxRetainedZones} retained zones with at most ${maxSegmentsPerRetainedZone} segments each, received ${snapshot.overlays.length}`,
     );
   } finally {
     instance.dispose();
