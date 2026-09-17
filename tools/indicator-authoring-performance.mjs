@@ -24,6 +24,13 @@ const repeatedCalls = Array.from(
 const trend${index} = ta.ema(close[1], ${index + 2});
 plot.line(trend${index});`,
 ).join("");
+const callbackInputHelperBranches = 16;
+const inputHelperBranches = Array.from(
+  { length: callbackInputHelperBranches },
+  (_, index) => `${index === 0 ? "if" : "else if"} (close < ${index}) {
+  callbackLength = readCallbackLength();
+}`,
+).join(" ");
 const sourceText = `import { defineIndicator, input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 
 export default defineIndicator({
@@ -31,7 +38,16 @@ export default defineIndicator({
   name: "Authoring performance",
 });
 
+function readCallbackLength() {
+  return input.int(21, "Callback helper length");
+}
+
 const length = input.int(14, "Length");${repeatedCalls}
+let callbackLength = length;
+${inputHelperBranches} else {
+  callbackLength = readCallbackLength();
+}
+void callbackLength;
 const fast = ta.sma(close, length);
 const slow = ta.sma(close, 28);
 plot.histogram(fast - slow);
@@ -88,7 +104,8 @@ try {
   console.log(
     JSON.stringify({
       component: "indicator-authoring-package",
-      representativeCallsites: 53,
+      representativeCallsites: 54,
+      callbackInputHelperBranches: callbackInputHelperBranches + 1,
       transformIterations,
       historyOnlyAverageMs,
       composedAverageMs,
