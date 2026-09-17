@@ -242,7 +242,7 @@ Dynamic drawings must instead use persistent opaque handles. Creation assigns hi
 ```ts
 var zoneBox = undefined;
 
-if (createZone) {
+if (createZone && zoneBox === undefined) {
   zoneBox = plot.box({ left: bar.time, right: bar.time, top, bottom, color });
 }
 
