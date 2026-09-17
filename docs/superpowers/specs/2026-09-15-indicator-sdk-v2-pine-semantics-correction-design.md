@@ -293,9 +293,10 @@ const ropeMultiplier = input.float(1.5, "Multiplier", { group: "ATR Rope" });
 const ropeSource = input.source(close, "Source", { group: "ATR Rope" });
 
 const ropeAtr = ta.atr(ropePeriod);
+let rope = ropeSource;
 const previousRope = rope[1];
 
-let rope = Number.isFinite(previousRope) ? previousRope : ropeSource;
+rope = Number.isFinite(previousRope) ? previousRope : ropeSource;
 // ATR Rope mathematics update `rope` here.
 
 const directionBase = ta.sma(rope, directionLookback);
