@@ -247,6 +247,29 @@ export default defineIndicator({ id: "fixture", name: "Fixture" }, () => {
   );
 });
 
+test("allows an input helper once per mutually exclusive indicator callback branch", async () => {
+  const result = await transform(`
+import { defineIndicator, input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" }, () => {
+  let length;
+  if (close > 10) {
+    length = readLength();
+  } else {
+    length = readLength();
+  }
+  void length;
+});
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
 test("rejects helpers containing inputs when the helper executes from a loop", async () => {
   await assert.rejects(
     () =>
