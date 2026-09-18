@@ -583,9 +583,17 @@ export function transformIndicatorScript(
   const [{ statement: metadataStatement, call: metadataCall }] = metadataOnly;
   const metadataIndex = sourceFile.statements.indexOf(metadataStatement);
   const dynamicHelpers = dynamicPreludeHelpers(sourceFile, metadataIndex);
+  const reservedCallbackNames = new Set(["bar", ...builtInSeriesNames]);
   for (let index = 0; index < metadataIndex; index += 1) {
     const statement = sourceFile.statements[index];
     if (statement !== undefined && dynamicHelpers.has(statement)) {
+      const helperName = statement.name;
+      if (reservedCallbackNames.has(helperName.text))
+        throw syntaxError(
+          sourceFile,
+          helperName,
+          `"${helperName.text}" is reserved by the indicator runtime; choose a different binding name`,
+        );
       if (statementHasExportModifier(statement))
         throw syntaxError(
           sourceFile,
@@ -610,7 +618,7 @@ export function transformIndicatorScript(
     index += 1
   ) {
     const statement = sourceFile.statements[index];
-    for (const reservedName of ["bar", ...builtInSeriesNames]) {
+    for (const reservedName of reservedCallbackNames) {
       const reservedBinding =
         statement === undefined
           ? undefined
