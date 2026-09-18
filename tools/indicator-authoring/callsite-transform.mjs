@@ -3347,7 +3347,6 @@ export function transformIndicatorCallsites(
         return factory.updateVariableDeclarationList(
           node,
           declarations,
-          ts.NodeFlags.Let,
         );
       }
       const persistentScope = persistentScopeByCall.get(node);
