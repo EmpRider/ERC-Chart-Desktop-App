@@ -89,6 +89,113 @@ plot.line(average, { title: "Average" });
   assert.match(callbackText, /\bbar\b/u);
 });
 
+test("rejects a post-metadata bar binding reserved by the hidden runtime callback", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+
+const bar = 1;
+plot.line(bar);
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/reserved-bar.ts",
+        sourceFileId: "src/reserved-bar.ts",
+      }),
+    /"bar" is reserved by the indicator runtime/u,
+  );
+});
+
+test("allows a pre-metadata module binding named bar", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+const bar = { title: "Fixture" };
+export default defineIndicator({ id: "fixture", name: bar.title });
+
+plot.line(close);
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/module-bar.ts",
+    sourceFileId: "src/module-bar.ts",
+  });
+
+  assert.equal(result.changed, true);
+  assert.match(result.code, /const bar = \{ title: "Fixture" \};/u);
+});
+
+test("allows a nested lexical bar binding inside the per-bar script", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+
+if (close > 0) {
+  const bar = close;
+  plot.line(bar);
+}
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/nested-lexical-bar.ts",
+    sourceFileId: "src/nested-lexical-bar.ts",
+  });
+
+  assert.equal(result.changed, true);
+});
+
+test("rejects a nested var bar binding that hoists into the per-bar callback", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+
+if (close > 0) {
+  var bar = close;
+  plot.line(bar);
+}
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/hoisted-var-bar.ts",
+        sourceFileId: "src/hoisted-var-bar.ts",
+      }),
+    /"bar" is reserved by the indicator runtime/u,
+  );
+});
+
+test("allows a function-local var bar binding inside the per-bar script", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+
+function helper() {
+  var bar = close;
+  return bar;
+}
+plot.line(helper());
+`;
+
+  const result = module.transformIndicatorAuthoring(source, {
+    fileName: "src/function-local-bar.ts",
+    sourceFileId: "src/function-local-bar.ts",
+  });
+
+  assert.equal(result.changed, true);
+});
+
 test("rejects callback-shaped authored defineIndicator declarations", async () => {
   const module = await loadTransform();
   const source = `

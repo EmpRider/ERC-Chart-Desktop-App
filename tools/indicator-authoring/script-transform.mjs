@@ -1,5 +1,9 @@
 import ts from "typescript";
-import { scopedNames, scriptKind } from "./ast-scope.mjs";
+import {
+  collectBindingNames,
+  scopedNames,
+  scriptKind,
+} from "./ast-scope.mjs";
 
 const sdkModule = "@erc-chart/indicator-sdk";
 const builtInSeriesNames = [
@@ -420,6 +424,76 @@ function dynamicPreludeHelpers(sourceFile, metadataIndex) {
   return dynamic;
 }
 
+function directStatementBinding(statement, requestedName) {
+  const names = new Set();
+  if (ts.isVariableStatement(statement)) {
+    for (const declaration of statement.declarationList.declarations) {
+      names.clear();
+      collectBindingNames(declaration.name, names);
+      if (names.has(requestedName)) return declaration.name;
+    }
+    return undefined;
+  }
+  if (
+    (ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement)) &&
+    statement.name?.text === requestedName
+  )
+    return statement.name;
+  if (
+    ts.isImportEqualsDeclaration(statement) &&
+    statement.name.text === requestedName
+  )
+    return statement.name;
+  return undefined;
+}
+
+function functionScopedVarBinding(node, requestedName) {
+  if (
+    ts.isFunctionLike(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node) ||
+    ts.isModuleDeclaration(node)
+  )
+    return undefined;
+  let found;
+  const visit = (current) => {
+    if (found !== undefined) return;
+    if (
+      current !== node &&
+      (ts.isFunctionLike(current) ||
+        ts.isClassDeclaration(current) ||
+        ts.isClassExpression(current) ||
+        ts.isModuleDeclaration(current))
+    )
+      return;
+    if (
+      ts.isVariableDeclarationList(current) &&
+      (current.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      for (const declaration of current.declarations) {
+        const names = new Set();
+        collectBindingNames(declaration.name, names);
+        if (names.has(requestedName)) {
+          found = declaration.name;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+  return found;
+}
+
+function conflictingCallbackBinding(statement, requestedName) {
+  return (
+    directStatementBinding(statement, requestedName) ??
+    functionScopedVarBinding(statement, requestedName)
+  );
+}
+
 function blankStatements(sourceText, sourceFile, statements) {
   if (statements.size === 0) return sourceText;
   const ranges = [...statements]
@@ -536,6 +610,16 @@ export function transformIndicatorScript(
     index += 1
   ) {
     const statement = sourceFile.statements[index];
+    const reservedBarBinding =
+      statement === undefined
+        ? undefined
+        : conflictingCallbackBinding(statement, "bar");
+    if (reservedBarBinding !== undefined)
+      throw syntaxError(
+        sourceFile,
+        reservedBarBinding,
+        '"bar" is reserved by the indicator runtime; choose a different binding name',
+      );
     if (statement !== undefined && statementHasExportModifier(statement))
       throw syntaxError(
         sourceFile,
