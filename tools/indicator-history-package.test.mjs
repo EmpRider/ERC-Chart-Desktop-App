@@ -139,3 +139,63 @@ plot.line(history(volume, historyOffset), { title: "Volume function" });
   assert.equal(instance.snapshot().points.at(-1).values[keys.derived], 80);
   instance.dispose();
 });
+
+test("packaged local helpers preserve prior values for series-derived returns", async (t) => {
+  const sourceDirectory = await mkdtemp(
+    path.join(import.meta.dirname, ".history-helper-authoring-"),
+  );
+  const outputDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "erc-history-helper-package-"),
+  );
+  t.after(() => rm(sourceDirectory, { recursive: true, force: true }));
+  t.after(() => rm(outputDirectory, { recursive: true, force: true }));
+
+  const source = path.join(sourceDirectory, "indicator.ts");
+  await writeFile(
+    source,
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function range(high: number, low: number) {
+  return high + low;
+}
+
+export default defineIndicator({
+  id: "erc.indicator.history-helper.main",
+  name: "History helper",
+});
+
+const derived = range(high, low);
+plot.line(derived[1], { title: "Previous helper result" });
+`,
+    "utf8",
+  );
+
+  const { manifest, packageRoot } = await buildIndicatorPackage({
+    source,
+    outputRoot: path.join(outputDirectory, "package"),
+    id: "erc.indicator.history-helper",
+    version: "0.1.0",
+  });
+  const entry = await readFile(path.join(packageRoot, manifest.entry));
+  const { default: plugin } = await import(
+    `data:text/javascript;base64,${entry.toString("base64")}`
+  );
+  const outputKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Previous helper result",
+  )?.outputKey;
+  assert.ok(outputKey);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 11), candle(2, 12)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[outputKey]),
+      [null, 19, 21],
+    );
+
+    instance.onBuildingBar(candle(2, 40));
+    assert.equal(instance.snapshot().points.at(-1).values[outputKey], 21);
+  } finally {
+    instance.dispose();
+  }
+});

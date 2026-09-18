@@ -300,3 +300,115 @@ test("rejects invalid literal history offsets during authoring transform", () =>
     );
   }
 });
+
+test("lowers history access for series-derived local helper returns", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function range(high, low) {
+  return high - low;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ high, low }) => {
+  const spread = range(high, low);
+  const prior = spread[1];
+  return prior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(spread, 1\)/u);
+});
+
+test("lowers history access when an omitted helper argument defaults to a series", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const selected = close;
+  function value(source = selected) {
+    return source;
+  }
+  const derived = value();
+  const prior = derived[1];
+  return prior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-default-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(derived, 1\)/u);
+});
+
+test("resolves omitted helper defaults in the helper declaration scope", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+const close = 5;
+function value(source = close) {
+  return source;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const derived = value();
+  const prior = derived[1];
+  return prior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-default-shadow.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
+test("resolves omitted helper defaults through the helper declaration closure", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const selected = close;
+  function value(source = selected) {
+    return source;
+  }
+  function nested() {
+    const selected = 5;
+    return value();
+  }
+  const derived = nested();
+  const prior = derived[1];
+  return prior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-default-closure.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(derived, 1\)/u);
+});
+
+test("does not classify scalar local helper returns as series-derived", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function constant(_value) {
+  return 5;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const scalar = constant(close);
+  const ordinary = [scalar, 10];
+  return ordinary[1];
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-scalar.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
