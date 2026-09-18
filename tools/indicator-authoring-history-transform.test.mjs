@@ -87,8 +87,8 @@ test("preserves element indexing for conditional named array values", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
-  const risingValues = [10, 20, 30];
-  const fallingValues = [40, 50, 60];
+  const risingValues = [10, 20, 30] satisfies number[];
+  const fallingValues = [40, 50, 60] satisfies number[];
   const values = close > open ? risingValues : fallingValues;
   const ordinary = values[1];
   return ordinary;
