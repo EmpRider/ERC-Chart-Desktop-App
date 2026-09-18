@@ -174,7 +174,7 @@ function normalizePersistentVarTypecheck(sourceText, fileName) {
 
 export function validateIndicatorAuthoringTypes(
   sourceText,
-  { fileName = "indicator.ts" } = {},
+  { fileName = "indicator.ts", sourceRoot } = {},
 ) {
   const scriptResult = transformIndicatorScript(sourceText, { fileName });
   if (!scriptResult.changed) return;
@@ -196,6 +196,7 @@ export function validateIndicatorAuthoringTypes(
   );
   const typecheckSource = persistentTypecheck.code;
   const sourcePath = path.resolve(fileName);
+  const authoringRoot = path.resolve(sourceRoot ?? path.dirname(sourcePath));
   const options = {
     strict: true,
     noEmit: true,
@@ -258,18 +259,27 @@ export function validateIndicatorAuthoringTypes(
     .find(
       (candidate) =>
         candidate.file !== undefined &&
-        path.resolve(candidate.file.fileName) === sourcePath,
+        isWithinRoot(authoringRoot, path.resolve(candidate.file.fileName)) &&
+        !isDependencyPath(candidate.file.fileName),
     );
-  if (diagnostic !== undefined)
+  if (diagnostic !== undefined) {
+    const diagnosticSourceFile = diagnostic.file;
+    const diagnosticPath = path.resolve(diagnosticSourceFile.fileName);
     throw new TypeError(
-      authoringTypeDiagnosticMessage(diagnostic, sourceFile, (position) =>
-        scriptResult.sourceLocationForPosition(
-          normalizedTypecheck.originalPositionForPosition(
-            persistentTypecheck.originalPositionForPosition(position),
-          ),
-        ),
+      authoringTypeDiagnosticMessage(
+        diagnostic,
+        diagnosticSourceFile,
+        diagnosticPath === sourcePath
+          ? (position) =>
+              scriptResult.sourceLocationForPosition(
+                normalizedTypecheck.originalPositionForPosition(
+                  persistentTypecheck.originalPositionForPosition(position),
+                ),
+              )
+          : undefined,
       ),
     );
+  }
 }
 
 export function transformIndicatorAuthoring(

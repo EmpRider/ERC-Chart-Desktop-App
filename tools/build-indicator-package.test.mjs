@@ -49,6 +49,57 @@ test("package build requires compiler SDK declaration resolution", async (t) => 
   );
 });
 
+test("package build validates imported authored helper modules", async (t) => {
+  const sourceRoot = await mkdtemp(
+    path.join(import.meta.dirname, ".typecheck-helper-source-"),
+  );
+  const outputRoot = await mkdtemp(
+    path.join(os.tmpdir(), "erc-typecheck-helper-output-"),
+  );
+  t.after(() => rm(sourceRoot, { recursive: true, force: true }));
+  t.after(() => rm(outputRoot, { recursive: true, force: true }));
+  await writeFile(
+    path.join(sourceRoot, "package.json"),
+    '{"name":"typecheck-helper-fixture","private":true,"type":"module"}\n',
+    "utf8",
+  );
+  const source = path.join(sourceRoot, "index.ts");
+  const helper = path.join(sourceRoot, "helper.ts");
+  await writeFile(
+    source,
+    `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+import { helperValue } from "./helper.js";
+export default defineIndicator({
+  id: "erc.indicator.typecheck-helper.main",
+  name: "Typecheck helper",
+});
+void helperValue;
+plot.line(close);
+`,
+    "utf8",
+  );
+  await writeFile(helper, "export const helperValue: string = 42;\n", "utf8");
+
+  await assert.rejects(
+    buildIndicatorPackage({
+      source,
+      outputRoot: path.join(outputRoot, "invalid-package"),
+      id: "erc.indicator.typecheck-helper",
+      version: "0.1.0",
+    }),
+    /helper\.ts:\d+:\d+ Type 'number' is not assignable to type 'string'/u,
+  );
+
+  await writeFile(helper, 'export const helperValue = "valid";\n', "utf8");
+  await buildIndicatorPackage({
+    source,
+    outputRoot: path.join(outputRoot, "valid-package"),
+    id: "erc.indicator.typecheck-helper",
+    version: "0.1.0",
+  });
+});
+
 test("maintained indicator examples stay behind the authoring compiler boundary", async () => {
   const examplesRoot = path.resolve(
     import.meta.dirname,

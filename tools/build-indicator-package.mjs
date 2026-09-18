@@ -179,7 +179,10 @@ export async function buildIndicatorPackage({
   const authoringRoot = await findAuthoringRoot(sourcePath);
   if (/\.[cm]?tsx?$/u.test(sourcePath)) {
     const sourceText = await readFile(sourcePath, "utf8");
-    validateIndicatorAuthoringTypes(sourceText, { fileName: sourcePath });
+    validateIndicatorAuthoringTypes(sourceText, {
+      fileName: sourcePath,
+      sourceRoot: authoringRoot,
+    });
   }
   const entryTransform = authoringTransformContext(authoringRoot);
   const metadataTransform = authoringTransformContext(authoringRoot);
