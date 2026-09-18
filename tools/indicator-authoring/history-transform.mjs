@@ -114,6 +114,15 @@ function isArrayValuedExpression(node, arrayBindings) {
   return false;
 }
 
+function nearestFunctionLike(node) {
+  let current = node;
+  while (current !== undefined) {
+    if (ts.isFunctionLike(current)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
 function functionReturnDependsOnSeries(
   functionLike,
   call,
@@ -133,13 +142,19 @@ function functionReturnDependsOnSeries(
   const functionNames = functionBindings(functionLike);
   const helperActive = new Set(withoutBindings(active, functionNames));
   const helperArrays = new Set(withoutBindings(arrayBindings, functionNames));
+  const declarationFunction = nearestFunctionLike(functionLike.parent);
+  const callFunction = nearestFunctionLike(call);
+  const defaultActive =
+    declarationFunction === callFunction ? helperActive : new Set();
+  const defaultArrays =
+    declarationFunction === callFunction ? helperArrays : new Set();
 
   functionLike.parameters.forEach((parameter, index) => {
     const argument = call.arguments[index];
     const value = argument ?? parameter.initializer;
     if (value === undefined) return;
-    const valueActive = argument === undefined ? helperActive : active;
-    const valueArrays = argument === undefined ? helperArrays : arrayBindings;
+    const valueActive = argument === undefined ? defaultActive : active;
+    const valueArrays = argument === undefined ? defaultArrays : arrayBindings;
     const names = new Set();
     collectBindingNames(parameter.name, names);
     if (
