@@ -300,3 +300,45 @@ test("rejects invalid literal history offsets during authoring transform", () =>
     );
   }
 });
+
+test("lowers history access for series-derived local helper returns", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function range(high, low) {
+  return high - low;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ high, low }) => {
+  const spread = range(high, low);
+  const prior = spread[1];
+  return prior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(spread, 1\)/u);
+});
+
+test("does not classify scalar local helper returns as series-derived", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function constant(_value) {
+  return 5;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const scalar = constant(close);
+  const ordinary = [scalar, 10];
+  return ordinary[1];
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-scalar.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});

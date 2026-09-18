@@ -7,11 +7,7 @@ import {
   scopedNames,
   scriptKind,
 } from "./ast-scope.mjs";
-import {
-  isDependencyPath,
-  isWithinRoot,
-  loaderFor,
-} from "./esbuild-utils.mjs";
+import { isDependencyPath, isWithinRoot, loaderFor } from "./esbuild-utils.mjs";
 
 const builtInSeriesNames = new Set([
   "open",
@@ -118,6 +114,115 @@ function isArrayValuedExpression(node, arrayBindings) {
   return false;
 }
 
+function functionReturnDependsOnSeries(
+  functionLike,
+  call,
+  active,
+  arrayBindings,
+  historyHelpers,
+  inputHelpers,
+  taHelpers,
+  resolvingHelpers,
+) {
+  if (functionLike.body === undefined || resolvingHelpers.has(functionLike))
+    return false;
+
+  const nextResolving = new Set(resolvingHelpers);
+  nextResolving.add(functionLike);
+
+  const functionNames = functionBindings(functionLike);
+  const helperActive = new Set(withoutBindings(active, functionNames));
+  const helperArrays = new Set(withoutBindings(arrayBindings, functionNames));
+
+  functionLike.parameters.forEach((parameter, index) => {
+    const argument = call.arguments[index];
+    if (argument === undefined) return;
+    const names = new Set();
+    collectBindingNames(parameter.name, names);
+    if (
+      expressionDependsOnSeries(
+        argument,
+        active,
+        arrayBindings,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+        nextResolving,
+      )
+    ) {
+      for (const name of names) helperActive.add(name);
+    }
+    if (isArrayValuedExpression(argument, arrayBindings)) {
+      for (const name of names) helperArrays.add(name);
+    }
+  });
+
+  if (!ts.isBlock(functionLike.body)) {
+    return expressionDependsOnSeries(
+      functionLike.body,
+      helperActive,
+      helperArrays,
+      historyHelpers,
+      inputHelpers,
+      taHelpers,
+      nextResolving,
+    );
+  }
+
+  const visit = (node, outerActive, outerArrays) => {
+    if (node !== functionLike.body && ts.isFunctionLike(node)) return false;
+
+    let scopedActive = outerActive;
+    let scopedArrays = outerArrays;
+    const names = scopedNames(node);
+    if (names !== undefined) {
+      scopedActive = withoutBindings(scopedActive, names);
+      scopedArrays = withoutBindings(scopedArrays, names);
+    }
+
+    if (ts.isBlock(node) || ts.isCaseBlock(node)) {
+      const localArrays = directArrayDeclarations(node, scopedArrays);
+      if (localArrays.size > 0) {
+        scopedArrays = new Set(scopedArrays);
+        for (const name of localArrays) scopedArrays.add(name);
+      }
+      const localSeries = directSeriesDeclarations(
+        node,
+        scopedActive,
+        scopedArrays,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+        nextResolving,
+      );
+      if (localSeries.size > 0) {
+        scopedActive = new Set(scopedActive);
+        for (const name of localSeries) scopedActive.add(name);
+      }
+    }
+
+    if (ts.isReturnStatement(node) && node.expression !== undefined) {
+      return expressionDependsOnSeries(
+        node.expression,
+        scopedActive,
+        scopedArrays,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+        nextResolving,
+      );
+    }
+
+    let depends = false;
+    ts.forEachChild(node, (child) => {
+      if (!depends) depends = visit(child, scopedActive, scopedArrays);
+    });
+    return depends;
+  };
+
+  return visit(functionLike.body, helperActive, helperArrays);
+}
+
 function expressionDependsOnSeries(
   node,
   active,
@@ -125,6 +230,7 @@ function expressionDependsOnSeries(
   historyHelpers,
   inputHelpers,
   taHelpers,
+  resolvingHelpers = new Set(),
 ) {
   if (ts.isIdentifier(node)) return active.has(node.text);
   if (
@@ -141,6 +247,7 @@ function expressionDependsOnSeries(
       historyHelpers,
       inputHelpers,
       taHelpers,
+      resolvingHelpers,
     );
   if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
     return expressionDependsOnSeries(
@@ -150,6 +257,7 @@ function expressionDependsOnSeries(
       historyHelpers,
       inputHelpers,
       taHelpers,
+      resolvingHelpers,
     );
   if (ts.isBinaryExpression(node))
     return (
@@ -160,6 +268,7 @@ function expressionDependsOnSeries(
         historyHelpers,
         inputHelpers,
         taHelpers,
+        resolvingHelpers,
       ) ||
       expressionDependsOnSeries(
         node.right,
@@ -168,6 +277,7 @@ function expressionDependsOnSeries(
         historyHelpers,
         inputHelpers,
         taHelpers,
+        resolvingHelpers,
       )
     );
   if (ts.isConditionalExpression(node)) {
@@ -179,6 +289,7 @@ function expressionDependsOnSeries(
         historyHelpers,
         inputHelpers,
         taHelpers,
+        resolvingHelpers,
       ) ||
       expressionDependsOnSeries(
         node.whenFalse,
@@ -187,6 +298,7 @@ function expressionDependsOnSeries(
         historyHelpers,
         inputHelpers,
         taHelpers,
+        resolvingHelpers,
       );
     if (branchDependsOnSeries) return true;
     if (
@@ -201,20 +313,32 @@ function expressionDependsOnSeries(
       historyHelpers,
       inputHelpers,
       taHelpers,
+      resolvingHelpers,
     );
   }
-  if (
-    ts.isCallExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    historyHelpers.has(node.expression.text)
-  )
-    return true;
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+    if (historyHelpers.has(node.expression.text)) return true;
+    const helper = resolveLocalFunctionReference(node.expression);
+    if (
+      helper !== undefined &&
+      functionReturnDependsOnSeries(
+        helper,
+        node,
+        active,
+        arrayBindings,
+        historyHelpers,
+        inputHelpers,
+        taHelpers,
+        resolvingHelpers,
+      )
+    )
+      return true;
+  }
   return (
     isRootPropertyCall(node, inputHelpers, scalarInputMethods) ||
     isRootPropertyCall(node, taHelpers, scalarTaMethods)
   );
 }
-
 function directArrayDeclarations(scope, outerArrayBindings) {
   if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
   const statements = ts.isCaseBlock(scope)
@@ -255,6 +379,7 @@ function directSeriesDeclarations(
   historyHelpers,
   inputHelpers,
   taHelpers,
+  resolvingHelpers = new Set(),
 ) {
   if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
   const statements = ts.isCaseBlock(scope)
@@ -287,6 +412,7 @@ function directSeriesDeclarations(
           historyHelpers,
           inputHelpers,
           taHelpers,
+          resolvingHelpers,
         )
       )
         continue;
@@ -297,7 +423,6 @@ function directSeriesDeclarations(
   }
   return result;
 }
-
 function sdkNamedBindings(sourceFile, requestedName) {
   const result = new Set();
   for (const statement of sourceFile.statements) {
@@ -383,7 +508,8 @@ function importBindsName(statement, requestedName) {
   if (clause.name?.text === requestedName) return true;
   const bindings = clause.namedBindings;
   if (bindings === undefined) return false;
-  if (ts.isNamespaceImport(bindings)) return bindings.name.text === requestedName;
+  if (ts.isNamespaceImport(bindings))
+    return bindings.name.text === requestedName;
   return bindings.elements.some(
     (element) => !element.isTypeOnly && element.name.text === requestedName,
   );
@@ -567,10 +693,7 @@ function resolveMutableLetReference(identifier) {
   return undefined;
 }
 
-function referencedIndicatorCallbacks(
-  sourceFile,
-  rootDefineIndicatorBindings,
-) {
+function referencedIndicatorCallbacks(sourceFile, rootDefineIndicatorBindings) {
   const callbacks = new Set();
 
   const visit = (node, defineIndicatorHelpers) => {
@@ -682,8 +805,7 @@ export function transformIndicatorHistory(
       defineIndicatorHelpers,
       activeOverride,
     ) {
-      let scopedActive =
-        activeOverride ?? withoutBindings(active, names);
+      let scopedActive = activeOverride ?? withoutBindings(active, names);
       let scopedArrayBindings = withoutBindings(arrayBindings, names);
       const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
       const scopedInputHelpers = withoutBindings(inputHelpers, names);
@@ -927,7 +1049,9 @@ export function transformIndicatorHistory(
     ]);
   }
   const code = changed
-    ? ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(transformed)
+    ? ts
+        .createPrinter({ newLine: ts.NewLineKind.LineFeed })
+        .printFile(transformed)
     : sourceText;
   result.dispose();
   return { code, changed, mutableSeriesHistories: mutableSeriesHistories() };
@@ -939,7 +1063,8 @@ export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
     name: "indicator-history-transform",
     setup(build) {
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-        if (root !== undefined && !isWithinRoot(root, args.path)) return undefined;
+        if (root !== undefined && !isWithinRoot(root, args.path))
+          return undefined;
         if (isDependencyPath(args.path)) return undefined;
         const sourceText = await readFile(args.path, "utf8");
         const transformed = transformIndicatorHistory(sourceText, args.path);
