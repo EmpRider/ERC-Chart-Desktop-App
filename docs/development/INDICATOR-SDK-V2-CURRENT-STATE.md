@@ -44,11 +44,42 @@ that historical evidence visible while superseding its author-experience claims.
   domain logic rather than ERC runtime plumbing.
 - **ECDD-240** removed legacy public authoring compatibility and kept authored
   packages behind the v2 compiler boundary.
-- **ECDD-241** is the final design-to-code compliance, documentation, regression,
-  performance, and delivery-governance acceptance task for the correction epic.
+- **ECDD-241** is the active final design-to-code compliance, documentation,
+  regression, performance, and delivery-governance acceptance task for the
+  correction epic. Fresh local implementation/performance evidence is recorded
+  below; exact-head pull-request CI and task/epic promotion remain delivery gates
+  until their live GitHub evidence exists.
 
 No correction task rewrites the historical design documents to hide the
 chronology. This file describes the current implementation instead.
+
+### ECDD-241 fresh local acceptance evidence — 2026-09-19
+
+The final audit re-read both approved SDK-v2 designs before assigning compliance
+status. The implementation audit found no remaining maintained-source dependency
+on the removed public recurrence/source-plumbing APIs and no author-visible
+runtime lifecycle/context path.
+
+Fresh local gates on `task/ECDD-241-final-sdk-v2-compliance`:
+
+- build, format, workspace-boundary/lint and typecheck: PASS;
+- unit: 653 total, 651 PASS, 0 FAIL, 2 expected Windows symlink skips;
+- integration: 291/291 PASS;
+- maintained indicator examples: 9/9 PASS;
+- Electron runtime smoke: PASS;
+- complete `test:performance`: PASS, including 100,000-bar history/runtime,
+  2,000 drawings, 400,000 dependency points, provider-aware MTF, renderer
+  alignment and four-chart/four-worker orchestration;
+- dedicated 10,000-bar ATR Rope + UT Bot POC migration stress: PASS with a
+  structural maximum of 440 retained overlays, below the unchanged 2,000
+  drawing safeguard;
+- version and `git diff --check`: PASS.
+
+Local `audit:ci` is not counted as a product failure: this workstation is
+running Node 25.9.0 / npm 11.19.0 with user-level `allow-scripts=9router`, while
+the repository pins Node 26.8.1 / npm 12.0.2. The command therefore stops with
+`EALLOWSCRIPTS`. The exact-head Delivery workflow must run the audit with the
+pinned toolchain before ECDD-241 can be accepted or merged.
 
 ## Current implementation map
 

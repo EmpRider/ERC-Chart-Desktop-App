@@ -15,7 +15,7 @@ output arrays or compatibility metadata.
 
 ## Current status
 
-Source version `1.0.0` includes live provider/history integration, klinecharts,
+Source version `1.1.0` includes live provider/history integration, klinecharts,
 indicator workers, plugin management, and recoverable per-instance workspace
 sessions. Canonical market data and SQLite operations now run in the data utility
 process; main retains provider supervision, privileged operations, and credentials.
