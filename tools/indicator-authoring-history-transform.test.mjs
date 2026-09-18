@@ -326,7 +326,8 @@ test("lowers history access when an omitted helper argument defaults to a series
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
-  function value(source = close) {
+  const selected = close;
+  function value(source = selected) {
     return source;
   }
   const derived = value();
@@ -369,10 +370,12 @@ test("resolves omitted helper defaults through the helper declaration closure", 
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
 defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
-  function value(source = close) {
+  const selected = close;
+  function value(source = selected) {
     return source;
   }
   function nested() {
+    const selected = 5;
     return value();
   }
   const derived = nested();
@@ -386,7 +389,7 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   );
 
   assert.equal(transformed.changed, true);
-  assert.match(transformed.code, /__ercHistory\\(derived, 1\\)/u);
+  assert.match(transformed.code, /__ercHistory\(derived, 1\)/u);
 });
 
 test("does not classify scalar local helper returns as series-derived", () => {
