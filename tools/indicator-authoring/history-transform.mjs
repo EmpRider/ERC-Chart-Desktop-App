@@ -7,7 +7,11 @@ import {
   scopedNames,
   scriptKind,
 } from "./ast-scope.mjs";
-import { isDependencyPath, isWithinRoot, loaderFor } from "./esbuild-utils.mjs";
+import {
+  isDependencyPath,
+  isWithinRoot,
+  loaderFor,
+} from "./esbuild-utils.mjs";
 
 const builtInSeriesNames = new Set([
   "open",
@@ -357,6 +361,7 @@ function expressionDependsOnSeries(
     isRootPropertyCall(node, taHelpers, scalarTaMethods)
   );
 }
+
 function directArrayDeclarations(scope, outerArrayBindings) {
   if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
   const statements = ts.isCaseBlock(scope)
@@ -441,6 +446,7 @@ function directSeriesDeclarations(
   }
   return result;
 }
+
 function sdkNamedBindings(sourceFile, requestedName) {
   const result = new Set();
   for (const statement of sourceFile.statements) {
@@ -526,8 +532,7 @@ function importBindsName(statement, requestedName) {
   if (clause.name?.text === requestedName) return true;
   const bindings = clause.namedBindings;
   if (bindings === undefined) return false;
-  if (ts.isNamespaceImport(bindings))
-    return bindings.name.text === requestedName;
+  if (ts.isNamespaceImport(bindings)) return bindings.name.text === requestedName;
   return bindings.elements.some(
     (element) => !element.isTypeOnly && element.name.text === requestedName,
   );
@@ -711,7 +716,10 @@ function resolveMutableLetReference(identifier) {
   return undefined;
 }
 
-function referencedIndicatorCallbacks(sourceFile, rootDefineIndicatorBindings) {
+function referencedIndicatorCallbacks(
+  sourceFile,
+  rootDefineIndicatorBindings,
+) {
   const callbacks = new Set();
 
   const visit = (node, defineIndicatorHelpers) => {
@@ -823,7 +831,8 @@ export function transformIndicatorHistory(
       defineIndicatorHelpers,
       activeOverride,
     ) {
-      let scopedActive = activeOverride ?? withoutBindings(active, names);
+      let scopedActive =
+        activeOverride ?? withoutBindings(active, names);
       let scopedArrayBindings = withoutBindings(arrayBindings, names);
       const scopedHistoryHelpers = withoutBindings(historyHelpers, names);
       const scopedInputHelpers = withoutBindings(inputHelpers, names);
@@ -1067,9 +1076,7 @@ export function transformIndicatorHistory(
     ]);
   }
   const code = changed
-    ? ts
-        .createPrinter({ newLine: ts.NewLineKind.LineFeed })
-        .printFile(transformed)
+    ? ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(transformed)
     : sourceText;
   result.dispose();
   return { code, changed, mutableSeriesHistories: mutableSeriesHistories() };
@@ -1081,8 +1088,7 @@ export function indicatorHistoryTransformPlugin({ sourceRoot } = {}) {
     name: "indicator-history-transform",
     setup(build) {
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-        if (root !== undefined && !isWithinRoot(root, args.path))
-          return undefined;
+        if (root !== undefined && !isWithinRoot(root, args.path)) return undefined;
         if (isDependencyPath(args.path)) return undefined;
         const sourceText = await readFile(args.path, "utf8");
         const transformed = transformIndicatorHistory(sourceText, args.path);
