@@ -183,6 +183,27 @@ plot.line(bar());
   );
 });
 
+test("rejects a relocated pre-metadata helper named after a built-in series", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function hl2() {
+  return high;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+plot.line(hl2());
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/relocated-hl2-helper.ts",
+        sourceFileId: "src/relocated-hl2-helper.ts",
+      }),
+    /"hl2" is reserved by the indicator runtime/u,
+  );
+});
+
 test("allows a nested lexical bar binding inside the per-bar script", async () => {
   const module = await loadTransform();
   const source = `
