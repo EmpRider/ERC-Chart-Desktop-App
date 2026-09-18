@@ -322,6 +322,27 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ high, low }) => {
   assert.match(transformed.code, /__ercHistory\(spread, 1\)/u);
 });
 
+test("lowers history access when an omitted helper argument defaults to a series", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function value(source = close) {
+  return source;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const derived = value();
+  const prior = derived[1];
+  return prior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "local-helper-default-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(derived, 1\)/u);
+});
+
 test("does not classify scalar local helper returns as series-derived", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";

@@ -136,14 +136,17 @@ function functionReturnDependsOnSeries(
 
   functionLike.parameters.forEach((parameter, index) => {
     const argument = call.arguments[index];
-    if (argument === undefined) return;
+    const value = argument ?? parameter.initializer;
+    if (value === undefined) return;
+    const valueActive = argument === undefined ? helperActive : active;
+    const valueArrays = argument === undefined ? helperArrays : arrayBindings;
     const names = new Set();
     collectBindingNames(parameter.name, names);
     if (
       expressionDependsOnSeries(
-        argument,
-        active,
-        arrayBindings,
+        value,
+        valueActive,
+        valueArrays,
         historyHelpers,
         inputHelpers,
         taHelpers,
@@ -152,7 +155,7 @@ function functionReturnDependsOnSeries(
     ) {
       for (const name of names) helperActive.add(name);
     }
-    if (isArrayValuedExpression(argument, arrayBindings)) {
+    if (isArrayValuedExpression(value, valueArrays)) {
       for (const name of names) helperArrays.add(name);
     }
   });
