@@ -162,6 +162,27 @@ plot.line(close);
   assert.match(result.code, /const bar = \{ title: "Fixture" \};/u);
 });
 
+test("rejects a relocated pre-metadata helper named bar", async () => {
+  const module = await loadTransform();
+  const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+function bar() {
+  return close;
+}
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+plot.line(bar());
+`;
+
+  assert.throws(
+    () =>
+      module.transformIndicatorAuthoring(source, {
+        fileName: "src/relocated-bar-helper.ts",
+        sourceFileId: "src/relocated-bar-helper.ts",
+      }),
+    /"bar" is reserved by the indicator runtime/u,
+  );
+});
+
 test("allows a nested lexical bar binding inside the per-bar script", async () => {
   const module = await loadTransform();
   const source = `
