@@ -249,13 +249,7 @@ export function validateIndicatorAuthoringTypes(
   const sourceFile = program.getSourceFile(sourcePath);
   if (sourceFile === undefined)
     throw new Error(`Authoring typecheck could not load ${sourcePath}.`);
-  const resolvedSdkDeclaration = program
-    .getSourceFiles()
-    .some(
-      (candidate) =>
-        path.resolve(candidate.fileName) === indicatorSdkDeclarationPath,
-    );
-  if (!resolvedSdkDeclaration)
+  if (program.getSourceFile(indicatorSdkDeclarationPath) === undefined)
     throw new Error(
       `Authoring typecheck could not resolve compiler SDK declaration ${indicatorSdkDeclarationPath}. Build @erc-chart/indicator-sdk before packaging indicators.`,
     );
