@@ -1179,29 +1179,36 @@ plot.line(total, { title: "Total" });
   )?.outputKey;
   assert.ok(totalKey);
 
-  const instance = plugin.createInstance({}, context);
+  const firstInstance = plugin.createInstance({}, context);
+  const secondInstance = plugin.createInstance({}, context);
+  const totals = (instance) =>
+    instance.snapshot().points.map((point) => point.values[totalKey]);
   try {
-    instance.onHistory([candle(0, 10), candle(1, 11), candle(2, 12)]);
-    assert.deepEqual(
-      instance.snapshot().points.map((point) => point.values[totalKey]),
-      [10, 21, 33],
-    );
+    firstInstance.onHistory([candle(0, 10), candle(1, 11), candle(2, 12)]);
+    secondInstance.onHistory([candle(0, 10), candle(1, 11), candle(2, 12)]);
+    assert.deepEqual(totals(firstInstance), [10, 21, 33]);
+    assert.deepEqual(totals(secondInstance), [10, 21, 33]);
 
-    instance.onBuildingBar(candle(2, 20));
-    instance.onBuildingBar(candle(2, 30));
-    assert.equal(instance.snapshot().points.at(-1).values[totalKey], 51);
+    firstInstance.onBuildingBar(candle(2, 20));
+    firstInstance.onBuildingBar(candle(2, 30));
+    assert.equal(firstInstance.snapshot().points.at(-1).values[totalKey], 51);
+    assert.deepEqual(totals(secondInstance), [10, 21, 33]);
 
-    instance.onFinalizedBar(candle(2, 30));
-    instance.onBuildingBar(candle(3, 4));
-    assert.equal(instance.snapshot().points.at(-1).values[totalKey], 55);
+    firstInstance.onFinalizedBar(candle(2, 30));
+    firstInstance.onBuildingBar(candle(3, 4));
+    assert.equal(firstInstance.snapshot().points.at(-1).values[totalKey], 55);
+    assert.deepEqual(totals(secondInstance), [10, 21, 33]);
 
-    instance.onHistory([candle(0, 2), candle(1, 3)]);
-    assert.deepEqual(
-      instance.snapshot().points.map((point) => point.values[totalKey]),
-      [2, 5],
-    );
+    firstInstance.onHistory([candle(0, 2), candle(1, 3)]);
+    assert.deepEqual(totals(firstInstance), [2, 5]);
+    assert.deepEqual(totals(secondInstance), [10, 21, 33]);
+
+    secondInstance.onBuildingBar(candle(2, 40));
+    assert.equal(secondInstance.snapshot().points.at(-1).values[totalKey], 61);
+    assert.deepEqual(totals(firstInstance), [2, 5]);
   } finally {
-    instance.dispose();
+    firstInstance.dispose();
+    secondInstance.dispose();
   }
 });
 
