@@ -118,13 +118,43 @@ function isArrayValuedExpression(node, arrayBindings) {
   return false;
 }
 
-function nearestFunctionLike(node) {
-  let current = node;
-  while (current !== undefined) {
-    if (ts.isFunctionLike(current)) return current;
-    current = current.parent;
+function directFunctionDeclarations(scope) {
+  if (!ts.isSourceFile(scope) && !ts.isBlock(scope) && !ts.isCaseBlock(scope))
+    return [];
+  const statements = ts.isCaseBlock(scope)
+    ? scope.clauses.flatMap((clause) => [...clause.statements])
+    : scope.statements;
+  const result = [];
+  for (const statement of statements) {
+    if (ts.isFunctionDeclaration(statement)) {
+      result.push(statement);
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = declaration.initializer;
+      if (
+        initializer !== undefined &&
+        (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))
+      )
+        result.push(initializer);
+    }
   }
-  return undefined;
+  return result;
+}
+
+function registerFunctionEnvironments(
+  scope,
+  active,
+  arrayBindings,
+  functionEnvironments,
+) {
+  for (const functionLike of directFunctionDeclarations(scope)) {
+    functionEnvironments.set(functionLike, {
+      active: new Set(active),
+      arrayBindings: new Set(arrayBindings),
+    });
+  }
 }
 
 function functionReturnDependsOnSeries(
@@ -136,6 +166,7 @@ function functionReturnDependsOnSeries(
   inputHelpers,
   taHelpers,
   resolvingHelpers,
+  functionEnvironments,
 ) {
   if (functionLike.body === undefined || resolvingHelpers.has(functionLike))
     return false;
@@ -144,14 +175,18 @@ function functionReturnDependsOnSeries(
   nextResolving.add(functionLike);
 
   const functionNames = functionBindings(functionLike);
-  const helperActive = new Set(withoutBindings(active, functionNames));
-  const helperArrays = new Set(withoutBindings(arrayBindings, functionNames));
-  const declarationFunction = nearestFunctionLike(functionLike.parent);
-  const callFunction = nearestFunctionLike(call);
-  const defaultActive =
-    declarationFunction === callFunction ? helperActive : new Set();
-  const defaultArrays =
-    declarationFunction === callFunction ? helperArrays : new Set();
+  const declarationEnvironment = functionEnvironments.get(functionLike);
+  const declarationActive = declarationEnvironment?.active ?? new Set();
+  const declarationArrays =
+    declarationEnvironment?.arrayBindings ?? new Set();
+  const helperActive = new Set(
+    withoutBindings(declarationActive, functionNames),
+  );
+  const helperArrays = new Set(
+    withoutBindings(declarationArrays, functionNames),
+  );
+  const defaultActive = new Set(helperActive);
+  const defaultArrays = new Set(helperArrays);
 
   functionLike.parameters.forEach((parameter, index) => {
     const argument = call.arguments[index];
@@ -170,12 +205,19 @@ function functionReturnDependsOnSeries(
         inputHelpers,
         taHelpers,
         nextResolving,
+        functionEnvironments,
       )
     ) {
-      for (const name of names) helperActive.add(name);
+      for (const name of names) {
+        helperActive.add(name);
+        defaultActive.add(name);
+      }
     }
     if (isArrayValuedExpression(value, valueArrays)) {
-      for (const name of names) helperArrays.add(name);
+      for (const name of names) {
+        helperArrays.add(name);
+        defaultArrays.add(name);
+      }
     }
   });
 
@@ -188,6 +230,7 @@ function functionReturnDependsOnSeries(
       inputHelpers,
       taHelpers,
       nextResolving,
+      functionEnvironments,
     );
   }
 
@@ -216,6 +259,7 @@ function functionReturnDependsOnSeries(
         inputHelpers,
         taHelpers,
         nextResolving,
+        functionEnvironments,
       );
       if (localSeries.size > 0) {
         scopedActive = new Set(scopedActive);
@@ -232,6 +276,7 @@ function functionReturnDependsOnSeries(
         inputHelpers,
         taHelpers,
         nextResolving,
+        functionEnvironments,
       );
     }
 
@@ -253,6 +298,7 @@ function expressionDependsOnSeries(
   inputHelpers,
   taHelpers,
   resolvingHelpers = new Set(),
+  functionEnvironments = new Map(),
 ) {
   if (ts.isIdentifier(node)) return active.has(node.text);
   if (
@@ -270,6 +316,7 @@ function expressionDependsOnSeries(
       inputHelpers,
       taHelpers,
       resolvingHelpers,
+      functionEnvironments,
     );
   if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
     return expressionDependsOnSeries(
@@ -280,6 +327,7 @@ function expressionDependsOnSeries(
       inputHelpers,
       taHelpers,
       resolvingHelpers,
+      functionEnvironments,
     );
   if (ts.isBinaryExpression(node))
     return (
@@ -291,6 +339,7 @@ function expressionDependsOnSeries(
         inputHelpers,
         taHelpers,
         resolvingHelpers,
+        functionEnvironments,
       ) ||
       expressionDependsOnSeries(
         node.right,
@@ -300,6 +349,7 @@ function expressionDependsOnSeries(
         inputHelpers,
         taHelpers,
         resolvingHelpers,
+        functionEnvironments,
       )
     );
   if (ts.isConditionalExpression(node)) {
@@ -312,6 +362,7 @@ function expressionDependsOnSeries(
         inputHelpers,
         taHelpers,
         resolvingHelpers,
+        functionEnvironments,
       ) ||
       expressionDependsOnSeries(
         node.whenFalse,
@@ -321,6 +372,7 @@ function expressionDependsOnSeries(
         inputHelpers,
         taHelpers,
         resolvingHelpers,
+        functionEnvironments,
       );
     if (branchDependsOnSeries) return true;
     if (
@@ -336,6 +388,7 @@ function expressionDependsOnSeries(
       inputHelpers,
       taHelpers,
       resolvingHelpers,
+      functionEnvironments,
     );
   }
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
@@ -352,6 +405,7 @@ function expressionDependsOnSeries(
         inputHelpers,
         taHelpers,
         resolvingHelpers,
+        functionEnvironments,
       )
     )
       return true;
@@ -403,6 +457,7 @@ function directSeriesDeclarations(
   inputHelpers,
   taHelpers,
   resolvingHelpers = new Set(),
+  functionEnvironments = new Map(),
 ) {
   if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
   const statements = ts.isCaseBlock(scope)
@@ -424,6 +479,12 @@ function directSeriesDeclarations(
   let changed = true;
   while (changed) {
     changed = false;
+    registerFunctionEnvironments(
+      scope,
+      active,
+      arrayBindings,
+      functionEnvironments,
+    );
     for (const declaration of declarations) {
       const name = declaration.name.text;
       if (result.has(name)) continue;
@@ -436,6 +497,7 @@ function directSeriesDeclarations(
           inputHelpers,
           taHelpers,
           resolvingHelpers,
+          functionEnvironments,
         )
       )
         continue;
@@ -819,6 +881,7 @@ export function transformIndicatorHistory(
 
   const transformer = (context) => {
     const { factory } = context;
+    const functionEnvironments = new Map();
 
     function descendWithBindings(
       node,
@@ -853,11 +916,19 @@ export function transformIndicatorHistory(
         scopedHistoryHelpers,
         scopedInputHelpers,
         scopedTaHelpers,
+        new Set(),
+        functionEnvironments,
       );
       if (localSeries.size > 0) {
         scopedActive = new Set(scopedActive);
         for (const name of localSeries) scopedActive.add(name);
       }
+      registerFunctionEnvironments(
+        node,
+        scopedActive,
+        scopedArrayBindings,
+        functionEnvironments,
+      );
       return ts.visitEachChild(
         node,
         (child) =>
