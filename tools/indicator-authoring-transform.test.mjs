@@ -427,6 +427,30 @@ plot.line(bar.index + bar.time + (bar.confirmed ? 1 : 0));
   );
 });
 
+test("requires compiler SDK declaration resolution before authoring validation", async (t) => {
+  const module = await loadTransform();
+  const declarationPath = path.resolve(
+    import.meta.dirname,
+    "../packages/indicator-sdk/dist/index.d.ts",
+  );
+  const fileExists = ts.sys.fileExists;
+  t.mock.method(ts.sys, "fileExists", (candidate) =>
+    path.resolve(candidate) === declarationPath ? false : fileExists(candidate),
+  );
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+`;
+
+  assert.throws(
+    () =>
+      module.validateIndicatorAuthoringTypes(source, {
+        fileName: path.join(import.meta.dirname, "_virtual-missing-sdk.ts"),
+      }),
+    /Authoring typecheck could not resolve compiler SDK declaration/u,
+  );
+});
+
 test("type-checks inferred mutable scalar recurrence as ordinary numeric state", async () => {
   const module = await loadTransform();
   const source = `

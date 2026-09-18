@@ -11,6 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 import { isInstalledIndicatorDefinition } from "../packages/contracts/dist/index.js";
 import {
   discardStagedPlugin,
@@ -18,6 +19,35 @@ import {
 } from "../packages/provider-runtime/dist/index.js";
 import { buildIndicatorPackage } from "./build-indicator-package.mjs";
 import { validateIndicatorAuthoringTypes } from "./indicator-authoring-transform.mjs";
+
+test("package build requires compiler SDK declaration resolution", async (t) => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "erc-missing-sdk-declaration-"),
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = path.resolve(
+    import.meta.dirname,
+    "../packages/indicator-examples/src/atr-bands.ts",
+  );
+  const declarationPath = path.resolve(
+    import.meta.dirname,
+    "../packages/indicator-sdk/dist/index.d.ts",
+  );
+  const fileExists = ts.sys.fileExists;
+  t.mock.method(ts.sys, "fileExists", (candidate) =>
+    path.resolve(candidate) === declarationPath ? false : fileExists(candidate),
+  );
+
+  await assert.rejects(
+    buildIndicatorPackage({
+      source,
+      outputRoot: path.join(directory, "package"),
+      id: "erc.indicator.atr-bands",
+      version: "0.1.0",
+    }),
+    /Authoring typecheck could not resolve compiler SDK declaration/u,
+  );
+});
 
 test("maintained indicator examples stay behind the authoring compiler boundary", async () => {
   const examplesRoot = path.resolve(
