@@ -584,22 +584,16 @@ export function transformIndicatorScript(
   const metadataIndex = sourceFile.statements.indexOf(metadataStatement);
   const dynamicHelpers = dynamicPreludeHelpers(sourceFile, metadataIndex);
   const reservedCallbackNames = new Set(["bar", ...builtInSeriesNames]);
-  for (const helper of dynamicHelpers) {
-    const helperName = helper.name?.text;
-    if (
-      helperName !== undefined &&
-      reservedCallbackNames.has(helperName) &&
-      helper.name !== undefined
-    )
-      throw syntaxError(
-        sourceFile,
-        helper.name,
-        `"${helperName}" is reserved by the indicator runtime; choose a different binding name`,
-      );
-  }
   for (let index = 0; index < metadataIndex; index += 1) {
     const statement = sourceFile.statements[index];
     if (statement !== undefined && dynamicHelpers.has(statement)) {
+      const helperName = statement.name;
+      if (reservedCallbackNames.has(helperName.text))
+        throw syntaxError(
+          sourceFile,
+          helperName,
+          `"${helperName.text}" is reserved by the indicator runtime; choose a different binding name`,
+        );
       if (statementHasExportModifier(statement))
         throw syntaxError(
           sourceFile,
