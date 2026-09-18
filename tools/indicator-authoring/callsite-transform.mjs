@@ -2309,12 +2309,58 @@ function directHelperCalls(container, bindings) {
   return result;
 }
 
+function directIndicatorCallbacks(sourceFile, bindings) {
+  const result = [];
+  const visit = (node) => {
+    if (node !== sourceFile && ts.isFunctionLike(node)) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      bindings.get(node.expression.text) === "defineIndicator"
+    ) {
+      const callback = node.arguments[1];
+      if (
+        callback !== undefined &&
+        (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+      )
+        result.push(callback);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return result;
+}
+
+function mutuallyExclusiveBranchConstraints(node, container) {
+  const constraints = new Map();
+  let child = node;
+  let current = node.parent;
+  while (current !== undefined && current !== container) {
+    if (ts.isIfStatement(current)) {
+      if (current.thenStatement === child) constraints.set(current, "then");
+      else if (current.elseStatement === child) constraints.set(current, "else");
+    } else if (ts.isConditionalExpression(current)) {
+      if (current.whenTrue === child) constraints.set(current, "true");
+      else if (current.whenFalse === child) constraints.set(current, "false");
+    }
+    child = current;
+    current = current.parent;
+  }
+  return constraints;
+}
+
+function executionPathsCanOverlap(left, right) {
+  for (const [branch, side] of left)
+    if (right.has(branch) && right.get(branch) !== side) return false;
+  return true;
+}
+
 function validateInputHelperExecutionCardinality(
   sourceFile,
   callsiteByNode,
   bindings,
 ) {
-  const executionCounts = new Map();
+  const executionsByHelper = new Map();
   const active = new Set();
   const containsInput = new Map();
   const helperHasInput = (helper) => {
@@ -2323,23 +2369,35 @@ function validateInputHelperExecutionCardinality(
     containsInput.set(helper, result);
     return result;
   };
-  const execute = ({ call, helper }) => {
+  const execute = ({ call, helper }, inheritedConstraints, container) => {
     if (!helperHasInput(helper)) return;
-    const count = (executionCounts.get(helper) ?? 0) + 1;
-    executionCounts.set(helper, count);
-    if (count > 1)
+    const constraints = new Map(inheritedConstraints);
+    for (const [branch, side] of mutuallyExclusiveBranchConstraints(
+      call,
+      container,
+    ))
+      constraints.set(branch, side);
+    const executions = executionsByHelper.get(helper) ?? [];
+    if (executions.some((previous) => executionPathsCanOverlap(previous, constraints)))
       throw syntaxError(
         sourceFile,
         call,
         "input helpers cannot execute more than once; declare each input once from a statically single-execution path",
       );
+    executions.push(constraints);
+    executionsByHelper.set(helper, executions);
     if (active.has(helper)) return;
     active.add(helper);
-    for (const nested of directHelperCalls(helper, bindings)) execute(nested);
+    for (const nested of directHelperCalls(helper, bindings))
+      execute(nested, constraints, helper);
     active.delete(helper);
   };
-  for (const rootCall of directHelperCalls(sourceFile, bindings))
-    execute(rootCall);
+  for (const container of [
+    sourceFile,
+    ...directIndicatorCallbacks(sourceFile, bindings),
+  ])
+    for (const rootCall of directHelperCalls(container, bindings))
+      execute(rootCall, new Map(), container);
 }
 
 function canonicalText(node, sourceFile, printer) {
