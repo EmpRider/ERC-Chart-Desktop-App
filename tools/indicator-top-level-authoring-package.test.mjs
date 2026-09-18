@@ -662,6 +662,47 @@ plot.line(expressionSourceFirst, { title: "Expression source first" });
   }
 });
 
+test("persistent var lowering preserves var-style hoisting", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.var-hoisting",
+  name: "Persistent var hoisting",
+});
+
+const hoisted = typeof state === "undefined";
+var state: unknown = { total: close };
+const typedState = state as { total: number };
+plot.line(hoisted ? 1 : 0, { title: "Hoisted" });
+plot.line(typedState.total, { title: "Total" });
+`);
+
+  const hoistedKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Hoisted",
+  )?.outputKey;
+  const totalKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Total",
+  )?.outputKey;
+  assert.ok(hoistedKey);
+  assert.ok(totalKey);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 11)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[hoistedKey]),
+      [1, 1],
+    );
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[totalKey]),
+      [10, 10],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("persistent var objects commit finalized state, roll back building replacements, and reset on rebuild", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
