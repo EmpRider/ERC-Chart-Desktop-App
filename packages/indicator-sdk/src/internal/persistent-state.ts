@@ -4,7 +4,11 @@ import {
   type AuthoringFrame,
   type KernelSlot,
 } from "../authoring-context.js";
-import { assertBoundedSeriesCollections, cloneSeriesState } from "../series.js";
+import {
+  assertBoundedSeriesCollectionGroup,
+  assertBoundedSeriesCollections,
+  cloneSeriesState,
+} from "../series.js";
 import { readCompilerCallsite } from "./callsite.js";
 import type { CompilerCallsite } from "./callsite.js";
 
@@ -199,11 +203,15 @@ export function finalizePersistentState(frame: AuthoringFrame): void {
   const pending = pendingPersistentState.get(frame);
   if (pending !== undefined) {
     pendingPersistentState.delete(frame);
-    for (const entry of pending) {
-      const value = entry.readCurrent();
-      assertBoundedSeriesCollections(value);
-      if (frame.phase === "finalized") {
-        entry.state.committed = cloneSeriesState(value);
+    const values = pending.map((entry) => entry.readCurrent());
+    assertBoundedSeriesCollectionGroup(values);
+    const committedValues =
+      frame.phase === "finalized"
+        ? values.map((value) => cloneSeriesState(value))
+        : undefined;
+    for (const [index, entry] of pending.entries()) {
+      if (committedValues !== undefined) {
+        entry.state.committed = committedValues[index];
         entry.state.initialized = true;
       }
     }
