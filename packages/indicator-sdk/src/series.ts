@@ -87,11 +87,7 @@ export function cloneSeriesState<T>(value: T): T {
   return clone(value) as T;
 }
 
-/** @internal Shared by compiler-lowered persistent state. */
-export function assertBoundedSeriesCollections(value: unknown): void {
-  if (value === null || typeof value !== "object") return;
-  const pending: object[] = [value];
-  const visited = new Set<object>();
+function assertBoundedSeriesCollectionValues(values: readonly unknown[]): void {
   let items = 0;
   const addItems = (count: number): void => {
     items += count;
@@ -100,47 +96,64 @@ export function assertBoundedSeriesCollections(value: unknown): void {
         `Series state collections may contain at most ${maxSeriesCollectionItems.toLocaleString("en-US")} items.`,
       );
   };
-  const visit = (entry: unknown): void => {
-    if (entry !== null && typeof entry === "object") pending.push(entry);
-  };
+  for (const value of values) {
+    if (value === null || typeof value !== "object") continue;
+    const pending: object[] = [value];
+    const visited = new Set<object>();
+    const visit = (entry: unknown): void => {
+      if (entry !== null && typeof entry === "object") pending.push(entry);
+    };
 
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined || visited.has(current)) continue;
-    visited.add(current);
-    if (Array.isArray(current)) {
-      addItems(current.length);
-      for (const entry of current) visit(entry);
-      continue;
-    }
-    if (current instanceof Map) {
-      addItems(current.size);
-      for (const [key, entry] of current) {
-        visit(key);
-        visit(entry);
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined || visited.has(current)) continue;
+      visited.add(current);
+      if (Array.isArray(current)) {
+        addItems(current.length);
+        for (const entry of current) visit(entry);
+        continue;
       }
-      continue;
+      if (current instanceof Map) {
+        addItems(current.size);
+        for (const [key, entry] of current) {
+          visit(key);
+          visit(entry);
+        }
+        continue;
+      }
+      if (current instanceof Set) {
+        addItems(current.size);
+        for (const entry of current) visit(entry);
+        continue;
+      }
+      if (ArrayBuffer.isView(current)) {
+        addItems(
+          "length" in current
+            ? Number((current as { readonly length: number }).length)
+            : current.byteLength,
+        );
+        continue;
+      }
+      if (current instanceof ArrayBuffer) {
+        addItems(current.byteLength);
+        continue;
+      }
+      for (const key of Object.keys(current))
+        visit((current as Record<string, unknown>)[key]);
     }
-    if (current instanceof Set) {
-      addItems(current.size);
-      for (const entry of current) visit(entry);
-      continue;
-    }
-    if (ArrayBuffer.isView(current)) {
-      addItems(
-        "length" in current
-          ? Number((current as { readonly length: number }).length)
-          : current.byteLength,
-      );
-      continue;
-    }
-    if (current instanceof ArrayBuffer) {
-      addItems(current.byteLength);
-      continue;
-    }
-    for (const key of Object.keys(current))
-      visit((current as Record<string, unknown>)[key]);
   }
+}
+
+/** @internal Shared by compiler-lowered persistent state. */
+export function assertBoundedSeriesCollections(value: unknown): void {
+  assertBoundedSeriesCollectionValues([value]);
+}
+
+/** @internal Enforces the shared retained-collection budget across persistent slots. */
+export function assertBoundedSeriesCollectionGroup(
+  values: readonly unknown[],
+): void {
+  assertBoundedSeriesCollectionValues(values);
 }
 
 export const priceSources = [

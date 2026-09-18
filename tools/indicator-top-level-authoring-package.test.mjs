@@ -905,6 +905,139 @@ plot.line(state.values.length, { title: "Count" });
   }
 });
 
+test("persistent var collection limit accepts 4,096 items across slots", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.aggregate-state-boundary",
+  name: "Aggregate persistent state boundary",
+});
+
+var left = [] as number[];
+var right = [] as number[];
+if (left.length === 0)
+  for (let index = 0; index < 2_048; index += 1) left.push(index);
+if (right.length === 0)
+  for (let index = 0; index < 2_048; index += 1) right.push(index);
+plot.line(left.length + right.length, { title: "Count" });
+`);
+
+  const countKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Count",
+  )?.outputKey;
+  assert.ok(countKey);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 11)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[countKey]),
+      [4_096, 4_096],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("persistent var collection limit rejects aggregate overflow across slots", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.aggregate-state-overflow",
+  name: "Aggregate persistent state overflow",
+});
+
+var left = [] as number[];
+var right = [] as number[];
+if (left.length === 0)
+  for (let index = 0; index < 2_048; index += 1) left.push(index);
+if (right.length === 0)
+  for (let index = 0; index < 2_049; index += 1) right.push(index);
+plot.line(left.length + right.length, { title: "Count" });
+`);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => instance.onHistory([candle(0, 10), candle(1, 11)]),
+      /Series state collections may contain at most 4,096 items/u,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("packaged persistent var state rejects custom class instances", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+class CustomState {
+  value = 0;
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.custom-class-state",
+  name: "Custom class persistent state",
+});
+
+var state: { value: number } = { value: 0 };
+if (bar.confirmed) state = new CustomState();
+state.value += 1;
+plot.line(state.value, { title: "Value" });
+`);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    assert.throws(
+      () => instance.onHistory([candle(0, 10), candle(1, 11)]),
+      /Series state does not support custom class instances/u,
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("packaged persistent var state preserves null object prototypes across commits", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+function createState() {
+  const state = Object.create(null) as { total: number };
+  state.total = 0;
+  return state;
+}
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.null-prototype-state",
+  name: "Null prototype persistent state",
+});
+
+var state = createState();
+state.total += 1;
+plot.line(Object.getPrototypeOf(state) === null ? state.total : -1, {
+  title: "Total",
+});
+`);
+
+  const totalKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Total",
+  )?.outputKey;
+  assert.ok(totalKey);
+
+  const instance = plugin.createInstance({}, context);
+  try {
+    instance.onHistory([candle(0, 10), candle(1, 11)]);
+    assert.deepEqual(
+      instance.snapshot().points.map((point) => point.values[totalKey]),
+      [1, 2],
+    );
+  } finally {
+    instance.dispose();
+  }
+});
+
 test("conditional persistent helper calls retain hidden state identity", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
