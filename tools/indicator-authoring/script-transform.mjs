@@ -610,16 +610,18 @@ export function transformIndicatorScript(
     index += 1
   ) {
     const statement = sourceFile.statements[index];
-    const reservedBarBinding =
-      statement === undefined
-        ? undefined
-        : conflictingCallbackBinding(statement, "bar");
-    if (reservedBarBinding !== undefined)
-      throw syntaxError(
-        sourceFile,
-        reservedBarBinding,
-        '"bar" is reserved by the indicator runtime; choose a different binding name',
-      );
+    for (const reservedName of ["bar", ...builtInSeriesNames]) {
+      const reservedBinding =
+        statement === undefined
+          ? undefined
+          : conflictingCallbackBinding(statement, reservedName);
+      if (reservedBinding !== undefined)
+        throw syntaxError(
+          sourceFile,
+          reservedBinding,
+          `"${reservedName}" is reserved by the indicator runtime; choose a different binding name`,
+        );
+    }
     if (statement !== undefined && statementHasExportModifier(statement))
       throw syntaxError(
         sourceFile,

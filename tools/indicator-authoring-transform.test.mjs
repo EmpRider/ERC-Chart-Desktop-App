@@ -110,6 +110,38 @@ plot.line(bar);
   );
 });
 
+test("rejects post-metadata bindings reserved by the hidden runtime series callback", async () => {
+  const module = await loadTransform();
+  for (const reservedName of [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "hl2",
+    "hlc3",
+    "ohlc4",
+  ]) {
+    const source = `
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+
+const ${reservedName} = 1;
+plot.line(${reservedName});
+`;
+
+    assert.throws(
+      () =>
+        module.transformIndicatorAuthoring(source, {
+          fileName: `src/reserved-${reservedName}.ts`,
+          sourceFileId: `src/reserved-${reservedName}.ts`,
+        }),
+      new RegExp(`"${reservedName}" is reserved by the indicator runtime`, "u"),
+    );
+  }
+});
+
 test("allows a pre-metadata module binding named bar", async () => {
   const module = await loadTransform();
   const source = `
