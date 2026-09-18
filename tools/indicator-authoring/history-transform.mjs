@@ -104,6 +104,7 @@ function isArrayValuedExpression(node, arrayBindings) {
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
     ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   )
     return isArrayValuedExpression(node.expression, arrayBindings);
@@ -130,6 +131,7 @@ function expressionDependsOnSeries(
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
     ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   )
     return expressionDependsOnSeries(

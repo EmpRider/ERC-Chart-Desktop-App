@@ -44,7 +44,8 @@ export default defineIndicator({
 plot.line(close[historyOffset], { title: "Indexed" });
 plot.line(close.at(historyOffset), { title: "At" });
 plot.line(history(close, historyOffset), { title: "Function" });
-plot.line(history(close * 2, historyOffset), { title: "Derived" });
+const doubled = (close * 2) satisfies number;
+plot.line(doubled[1], { title: "Derived" });
 plot.line(open[historyOffset], { title: "Open indexed" });
 plot.line(high.at(historyOffset), { title: "High at" });
 plot.line(low[historyOffset], { title: "Low indexed" });
