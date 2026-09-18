@@ -24,6 +24,10 @@ const indicatorSdkTypesPath = path.resolve(
   import.meta.dirname,
   "indicator-authoring/compiler-sdk.d.ts",
 );
+const indicatorSdkDeclarationPath = path.resolve(
+  repositoryRoot,
+  "packages/indicator-sdk/dist/index.d.ts",
+);
 const persistentStateRuntimePath = path.resolve(
   import.meta.dirname,
   "../packages/indicator-sdk/dist/internal/persistent-state.js",
@@ -245,6 +249,16 @@ export function validateIndicatorAuthoringTypes(
   const sourceFile = program.getSourceFile(sourcePath);
   if (sourceFile === undefined)
     throw new Error(`Authoring typecheck could not load ${sourcePath}.`);
+  const resolvedSdkDeclaration = program
+    .getSourceFiles()
+    .some(
+      (candidate) =>
+        path.resolve(candidate.fileName) === indicatorSdkDeclarationPath,
+    );
+  if (!resolvedSdkDeclaration)
+    throw new Error(
+      `Authoring typecheck could not resolve compiler SDK declaration ${indicatorSdkDeclarationPath}. Build @erc-chart/indicator-sdk before packaging indicators.`,
+    );
   const diagnostic = ts
     .getPreEmitDiagnostics(program)
     .find(
