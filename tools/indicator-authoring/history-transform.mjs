@@ -305,7 +305,11 @@ function functionReturnIsArrayValued(
   };
 
   visit(functionLike.body, helperArrays);
-  return sawReturn && allReturnsArrayValued;
+  return (
+    sawReturn &&
+    allReturnsArrayValued &&
+    !statementCanCompleteNormally(functionLike.body)
+  );
 }
 
 function functionReturnDependsOnSeries(
