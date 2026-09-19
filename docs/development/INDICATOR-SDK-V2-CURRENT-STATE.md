@@ -44,42 +44,55 @@ that historical evidence visible while superseding its author-experience claims.
   domain logic rather than ERC runtime plumbing.
 - **ECDD-240** removed legacy public authoring compatibility and kept authored
   packages behind the v2 compiler boundary.
-- **ECDD-241** is the active final design-to-code compliance, documentation,
-  regression, performance, and delivery-governance acceptance task for the
-  correction epic. Fresh local implementation/performance evidence is recorded
-  below; exact-head pull-request CI and task/epic promotion remain delivery gates
-  until their live GitHub evidence exists.
+- **ECDD-241** produced the first final design-to-code compliance checklist and
+  was promoted to the correction epic through PR #188 / squash merge
+  `a2247308642c8622d136b248eed68b99ab2f8922`.
+- **ECDD-242 through ECDD-259** are governed follow-up tasks created from the
+  comprehensive epic review. They close review findings at the compiler, SDK,
+  maintained-indicator, performance, and documentation layers rather than
+  weakening the approved design or adding compatibility paths.
+- **ECDD-260** is the current final-review closure task. It closes the remaining
+  provisional drawing-identity rollback, persistent-state isolation,
+  real-update drawing-performance, and documentation-evidence gaps before the
+  final epic-to-`main` review sequence is repeated on one stable exact head.
 
 No correction task rewrites the historical design documents to hide the
 chronology. This file describes the current implementation instead.
 
-### ECDD-241 fresh local acceptance evidence — 2026-09-19
+### Current correction acceptance evidence — refreshed through ECDD-260
 
 The final audit re-read both approved SDK-v2 designs before assigning compliance
 status. The implementation audit found no remaining maintained-source dependency
 on the removed public recurrence/source-plumbing APIs and no author-visible
 runtime lifecycle/context path.
 
-Fresh local gates on `task/ECDD-241-final-sdk-v2-compliance`:
+Fresh local gates on `task/ECDD-260-final-review-corrections` before final
+task-to-epic promotion:
 
 - build, format, workspace-boundary/lint and typecheck: PASS;
-- unit: 653 total, 651 PASS, 0 FAIL, 2 expected Windows symlink skips;
-- integration: 291/291 PASS;
+- unit: 654 total, 652 PASS, 0 FAIL, 2 expected Windows symlink skips;
+- integration: 301/301 PASS;
 - maintained indicator examples: 9/9 PASS;
 - Electron runtime smoke: PASS;
 - complete `test:performance`: PASS, including 100,000-bar history/runtime,
-  2,000 drawings, 400,000 dependency points, provider-aware MTF, renderer
-  alignment and four-chart/four-worker orchestration;
+  2,000 stable drawings plus 250 bars x 2,000 real geometry updates, 400,000
+  dependency points, provider-aware MTF, renderer alignment and
+  four-chart/four-worker orchestration;
 - dedicated 10,000-bar ATR Rope + UT Bot POC migration stress: PASS with a
   structural maximum of 440 retained overlays, below the unchanged 2,000
   drawing safeguard;
-- version and `git diff --check`: PASS.
+- version and `git diff --check`: PASS;
+- direct dependency audit: 0 vulnerabilities.
 
-Local `audit:ci` is not counted as a product failure: this workstation is
-running Node 25.9.0 / npm 11.19.0 with user-level `allow-scripts=9router`, while
-the repository pins Node 26.8.1 / npm 12.0.2. The command therefore stops with
-`EALLOWSCRIPTS`. The exact-head Delivery workflow must run the audit with the
-pinned toolchain before ECDD-241 can be accepted or merged.
+The pinned-toolchain Delivery workflow, Semgrep, CodeRabbit status, exact-head
+maintainer review, and applicable manual-review evidence remain delivery gates
+for the current task/epic head. Their live results are recorded in GitHub/Jira;
+this tracked inventory does not claim evidence from a future check run.
+
+`INDICATOR-SDK-V2-FINAL-COMPLIANCE-2026-09-19.md` is preserved as the checklist
+snapshot produced by ECDD-241. Its then-pending CI/delivery rows are historical
+task evidence, not the current promotion status; current exact-head delivery
+evidence is recorded in the active PR/Jira workflow and summarized here.
 
 ## Current implementation map
 
@@ -101,7 +114,7 @@ pinned toolchain before ECDD-241 can be accepted or merged.
 | Worker/runtime boundary       | ECDD-140/ECDD-145 retain validated columnar history/rebuild snapshots, bounded candle deltas, generation/revision rejection, quotas, deterministic failure settlement, restart behavior, output caps, and typed validation.                                                                                                                                     | Full-history/rebuild traffic and live deltas must remain bounded and stale work must not mutate current state.                          |
 | Renderer orchestration        | Renderer code materializes source/dependency snapshots, keeps live updates incremental, rebuilds when required, rejects stale generations, maps outputs/drawings, and executes the dependency DAG upstream-first.                                                                                                                                               | Four-chart/four-worker acceptance and recovery/resource cleanup remain required.                                                        |
 | Documentation                 | `INDICATOR-AUTHORING.md` now documents only metadata-only top-level v2 authoring, direct globals/history, `var`, source inputs, approved TA overloads, persistent drawing handles, source-confirmed signals, MTF, and HA.                                                                                                                                       | Example code in current docs must compile through the production authoring pipeline and must not teach removed author/runtime plumbing. |
-| Performance/resource gates    | Existing gates cover large history, provisional/finalized updates, TA complexity, drawing workloads, worker materialization, MTF, renderer alignment, 400,000-point dependency payloads, and four-chart orchestration.                                                                                                                                          | ECDD-241 must rerun the complete exact-head gate plus the 10,000-bar flagship drawing stress before promotion.                          |
+| Performance/resource gates    | Existing gates cover large history, provisional/finalized updates, TA complexity, stable and changing drawing workloads, worker materialization, MTF, renderer alignment, 400,000-point dependency payloads, and four-chart orchestration.                                                                                                                      | Final exact-head acceptance must rerun the complete gate plus the 10,000-bar flagship drawing stress before promotion.                  |
 
 ## Public/private boundary
 
@@ -153,8 +166,9 @@ see them.
 
 ## Correction acceptance checklist
 
-ECDD-241 is complete only when fresh exact-head evidence marks every row below
-PASS (or records an explicitly approved exception):
+Final SDK-v2 correction acceptance is complete only when fresh exact-head
+evidence marks every row below PASS (or records an explicitly approved
+exception):
 
 1. one public metadata-only top-level authoring model;
 2. direct globals/helpers with compiler-owned hidden identity;
@@ -195,5 +209,7 @@ recorded the September 14 Phase 16 acceptance of that then-current model.
 
 PR #161 later promoted that accepted state to `main`, followed by the `1.1.0`
 release remediation. Those events remain valid history. They do not override the
-September 15 correction design or substitute for ECDD-241's fresh final
-design-to-code acceptance.
+September 15 correction design or substitute for the current final
+design-to-code and delivery acceptance. ECDD-241's checklist was subsequently
+reviewed through the ECDD-242..ECDD-260 correction sequence before final
+epic-to-`main` promotion.
