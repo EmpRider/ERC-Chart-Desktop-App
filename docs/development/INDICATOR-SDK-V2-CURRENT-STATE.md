@@ -4,7 +4,9 @@
 
 **Pine-semantics correction implementation:** ECDD-236 through ECDD-241 under ECDD-135
 
-**Comprehensive-review corrections:** ECDD-242 through ECDD-260 under ECDD-135
+**Comprehensive-review corrections:** ECDD-242 through ECDD-262 under ECDD-135
+
+**Final compliance refresh:** ECDD-263 under ECDD-135
 
 **Original design:** `docs/superpowers/specs/2026-09-09-indicator-sdk-v2-redesign-design.md`
 
@@ -49,42 +51,34 @@ that historical evidence visible while superseding its author-experience claims.
 - **ECDD-241** produced the first final design-to-code compliance checklist and
   was promoted to the correction epic through PR #188 / squash merge
   `a2247308642c8622d136b248eed68b99ab2f8922`.
-- **ECDD-242 through ECDD-259** are governed follow-up tasks created from the
+- **ECDD-242 through ECDD-260** are governed follow-up tasks created from the
   comprehensive epic review. They close review findings at the compiler, SDK,
   maintained-indicator, performance, and documentation layers rather than
   weakening the approved design or adding compatibility paths.
-- **ECDD-260** is the current final-review closure task. It closes the remaining
-  provisional drawing-identity rollback, persistent-state isolation,
-  real-update drawing-performance, and documentation-evidence gaps before the
-  final epic-to-`main` review sequence is repeated on one stable exact head.
+- **ECDD-261** removed the remaining final-compliance trailing whitespace without
+  changing SDK behavior.
+- **ECDD-262** preserved series identity through bracket/`.at(1)` history-derived
+  locals while retaining ordinary array indexing and the one-argument `.at()`
+  lowering contract. PR #195 merged the reviewed fix as
+  `237701774ac4d3da31a474fb5294817f205fcd15`.
+- **ECDD-263** refreshes final current-state and design-to-code evidence after
+  the complete ECDD-242..ECDD-262 correction sequence. It does not introduce an
+  API/runtime redesign unless the fresh audit proves a real implementation gap.
 
 No correction task rewrites the historical design documents to hide the
 chronology. This file describes the current implementation instead.
 
-### Current correction acceptance evidence — refreshed through ECDD-260
+### Current correction acceptance evidence — refreshed through ECDD-263
 
 The final audit re-read both approved SDK-v2 designs before assigning compliance
 status. The implementation audit found no remaining maintained-source dependency
 on the removed public recurrence/source-plumbing APIs and no author-visible
 runtime lifecycle/context path.
 
-Fresh local gates on `task/ECDD-260-final-review-corrections` before final
-task-to-epic promotion:
-
-- build, format, workspace-boundary/lint and typecheck: PASS;
-- unit: 654 total, 652 PASS, 0 FAIL, 2 expected Windows symlink skips;
-- integration: 301/301 PASS;
-- maintained indicator examples: 9/9 PASS;
-- Electron runtime smoke: PASS;
-- complete `test:performance`: PASS, including 100,000-bar history/runtime,
-  2,000 stable drawings plus 250 bars x 2,000 real geometry updates, 400,000
-  dependency points, provider-aware MTF, renderer alignment and
-  four-chart/four-worker orchestration;
-- dedicated 10,000-bar ATR Rope + UT Bot POC migration stress: PASS with a
-  structural maximum of 440 retained overlays, below the unchanged 2,000
-  drawing safeguard;
-- version and `git diff --check`: PASS;
-- direct dependency audit: 0 vulnerabilities.
+Fresh ECDD-263 exact-tree verification is recorded in
+`INDICATOR-SDK-V2-FINAL-COMPLIANCE-2026-09-19-POST-REVIEW.md`. That matrix is the
+current compliance artifact and rechecks the complete code/test/performance
+surface after ECDD-262 rather than inheriting ECDD-260 counts.
 
 The pinned-toolchain Delivery workflow, Semgrep, CodeRabbit status, exact-head
 maintainer review, and applicable manual-review evidence remain delivery gates
@@ -93,8 +87,10 @@ this tracked inventory does not claim evidence from a future check run.
 
 `INDICATOR-SDK-V2-FINAL-COMPLIANCE-2026-09-19.md` is preserved as the checklist
 snapshot produced by ECDD-241. Its then-pending CI/delivery rows are historical
-task evidence, not the current promotion status; current exact-head delivery
-evidence is recorded in the active PR/Jira workflow and summarized here.
+task evidence, not the current promotion status. The post-review ECDD-263 matrix
+is the current design-to-code evidence; exact-head delivery evidence remains in
+the active PR/Jira workflow because a tracked file cannot prove its own future
+task/epic merges.
 
 ## Current implementation map
 
@@ -213,5 +209,6 @@ PR #161 later promoted that accepted state to `main`, followed by the `1.1.0`
 release remediation. Those events remain valid history. They do not override the
 September 15 correction design or substitute for the current final
 design-to-code and delivery acceptance. ECDD-241's checklist was subsequently
-reviewed through the ECDD-242..ECDD-260 correction sequence before final
-epic-to-`main` promotion.
+reviewed through the ECDD-242..ECDD-262 correction sequence. ECDD-263 performs
+the fresh final compliance refresh before epic-to-`main` promotion is allowed
+to proceed.
