@@ -1,7 +1,7 @@
 # Indicator SDK v2 Final Compliance Checklist — ECDD-241
 
-**Date:** 2026-09-19  
-**Task:** ECDD-241 — Finalize docs, performance gates, and design compliance audit  
+**Date:** 2026-09-19
+**Task:** ECDD-241 — Finalize docs, performance gates, and design compliance audit
 **Branch:** `task/ECDD-241-final-sdk-v2-compliance`
 
 ## Authority
