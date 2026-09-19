@@ -31,11 +31,23 @@ const inputSelectors = Object.freeze({
   utbotMode: ["UT Bot", "Mode"],
   profilePeriod: ["ADX POC", "Profile period"],
   fastPocPeriod: ["ADX POC", "Fast POC period"],
+  rowCount: ["ADX POC", "Price rows"],
   dmiLength: ["ADX POC", "ADX / DI length"],
   minEarlyBars: ["ADX POC", "Minimum early bars"],
   showTrailingStop: ["Display", "Show trailing stop"],
   adxPocSource: ["ADX POC", "Price source"],
   bodyWeight: ["ADX POC", "Body weight"],
+  projectionBars: ["ADX POC Migration", "Projection bars"],
+  migrationStrength: ["ADX POC Migration", "Migration strength"],
+  migrationConfirmBars: ["ADX POC Migration", "Migration confirmations"],
+  migrationCenterSmoothing: ["ADX POC Migration", "Center smoothing"],
+  activeHistoricalPocCount: ["ADX POC Zones", "Active historical POCs"],
+  minZoneBarsToRender: ["ADX POC Zones", "Minimum zone bars"],
+  minZoneHitsToRender: ["ADX POC Zones", "Minimum zone hits"],
+  maxStoredZones: ["ADX POC Zones", "Maximum stored zones"],
+  pocBandHalfRows: ["ADX POC Band", "Band half rows"],
+  maxBandExpansionRows: ["ADX POC Band", "Maximum band expansion"],
+  drawMode: ["ADX POC Style", "POC draw mode"],
 });
 
 function defaults(overrides = {}) {
@@ -110,6 +122,26 @@ function paginatedCandles(length) {
   }));
 }
 
+function migrationStressCandles(length) {
+  const values = Array.from({ length }, (_, index) => {
+    const regime = Math.floor(index / 5) * 37;
+    return 100 + regime * 3 + Math.sin(index * 0.7);
+  });
+  return values.map((close, index) => {
+    const open = values[index - 1] ?? close;
+    return {
+      instrumentId: "stress.instrument",
+      timeframeId: "1m",
+      openTimeMs: 1_900_000_000_000 + index * 60_000,
+      open,
+      high: Math.max(open, close) + 0.5,
+      low: Math.min(open, close) - 0.5,
+      close,
+      volume: 100 + (index % 17),
+    };
+  });
+}
+
 test("rebuilds across multiple paginated history pages without exhausting drawing updates", () => {
   const instance = atrRopeUtBotIndicator.createInstance(defaults(), {
     instrumentId: "edge.instrument",
@@ -122,6 +154,55 @@ test("rebuilds across multiple paginated history pages without exhausting drawin
     assert.equal(snapshot.points.length, history.length);
     assert.equal(snapshot.points[0].openTimeMs, history[0].openTimeMs);
     assert.equal(snapshot.points.at(-1).openTimeMs, history.at(-1).openTimeMs);
+  } finally {
+    instance.dispose();
+  }
+});
+
+test("10,000-bar POC migration keeps persistent drawing churn bounded", () => {
+  const profilePeriod = 10;
+  const maxRetainedZones = 20;
+  const maxSegmentsPerRetainedZone = profilePeriod + 1;
+  const overlaysPerRenderableSegment = 2;
+  const maxExpectedOverlays =
+    maxRetainedZones *
+    maxSegmentsPerRetainedZone *
+    overlaysPerRenderableSegment;
+  // Stress prices move through monotonically increasing regimes. Once a
+  // zone's price leaves the profile window it cannot match a later candidate,
+  // so it can start at most one segment per profile bar plus its creation bar.
+  // "Line + Band" owns exactly one line and one box per renderable segment.
+  const instance = atrRopeUtBotIndicator.createInstance(
+    defaults({
+      profilePeriod,
+      fastPocPeriod: 3,
+      rowCount: 10,
+      dmiLength: 1,
+      minEarlyBars: 2,
+      projectionBars: 1,
+      migrationStrength: 1,
+      migrationConfirmBars: 1,
+      migrationCenterSmoothing: 0,
+      activeHistoricalPocCount: 0,
+      minZoneBarsToRender: 1,
+      minZoneHitsToRender: 1,
+      maxStoredZones: maxRetainedZones,
+      pocBandHalfRows: 0.1,
+      maxBandExpansionRows: 0.5,
+      drawMode: "Line + Band",
+    }),
+    { instrumentId: "stress.instrument", timeframeId: "1m" },
+  );
+  try {
+    const history = migrationStressCandles(10_000);
+    assert.doesNotThrow(() => instance.onHistory(history));
+    const snapshot = instance.snapshot();
+    assert.equal(snapshot.points.length, history.length);
+    assert.ok(snapshot.overlays.length > 0, "expected rendered POC geometry");
+    assert.ok(
+      snapshot.overlays.length <= maxExpectedOverlays,
+      `expected at most ${maxExpectedOverlays} overlays from ${maxRetainedZones} retained zones with at most ${maxSegmentsPerRetainedZone} segments each, received ${snapshot.overlays.length}`,
+    );
   } finally {
     instance.dispose();
   }

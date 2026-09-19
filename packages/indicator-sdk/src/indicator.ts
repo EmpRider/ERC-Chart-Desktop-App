@@ -27,6 +27,7 @@ import type {
   SignalCandidate,
 } from "./internal/runtime-contracts.js";
 import { validateDrawingUsage } from "./internal/drawings.js";
+import { finalizePersistentState } from "./internal/persistent-state.js";
 import {
   commitSignalEvents,
   createSignalState,
@@ -397,6 +398,7 @@ export function defineIndicator(
             throw new RangeError(
               "Reload retained history at the 100,000-candle limit.",
             );
+          finalizePersistentState(frame);
           points[finalizedCount] = frame.point;
           if (overlays !== previousOverlays || emitted.length > 0)
             visualRevision += 1;

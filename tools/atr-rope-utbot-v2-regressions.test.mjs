@@ -203,6 +203,30 @@ function definitionIdentity(indicator) {
   };
 }
 
+function overlayDomainKey(overlay) {
+  return `${overlay.kind}:${overlay.startTimeMs}`;
+}
+
+function overlaysByDomainKey(overlays) {
+  const entries = overlays.map((overlay) => [
+    overlayDomainKey(overlay),
+    overlay,
+  ]);
+  const result = new Map(entries);
+  assert.equal(
+    result.size,
+    entries.length,
+    "POC fixture must expose unique kind/start-time drawing identities",
+  );
+  return result;
+}
+
+function overlayGeometry(overlay) {
+  const geometry = { ...overlay };
+  delete geometry.id;
+  return geometry;
+}
+
 async function importBuiltIndicator(packageRoot, tag) {
   const entry = path.join(packageRoot, "dist", "index.js");
   const module = await import(
@@ -213,30 +237,47 @@ async function importBuiltIndicator(packageRoot, tag) {
 }
 
 function reorderUnrelatedTopLevelDeclarations(source) {
-  const ropeStart = source.indexOf("const ropeModes = [");
-  const ropeEndMarker = "] as const;";
-  const ropeEnd =
-    source.indexOf(ropeEndMarker, ropeStart) + ropeEndMarker.length;
-  const utStart = source.indexOf(
-    'const utModes = ["original", "0lag"] as const;',
-  );
-  const utEnd = source.indexOf(";", utStart) + 1;
+  const declaration = (name) => {
+    const match = new RegExp(
+      String.raw`const\s+${name}\s*(?::[^=;]+)?=\s*\[[\s\S]*?\]\s*(?:as\s+const)?\s*;`,
+      "u",
+    ).exec(source);
+    assert.ok(match, `Missing ${name} declaration`);
+    return {
+      start: match.index,
+      end: match.index + match[0].length,
+    };
+  };
+  const rope = declaration("ropeModes");
+  const ut = declaration("utModes");
   assert.ok(
-    ropeStart >= 0 && ropeEnd > ropeStart,
-    "Missing ropeModes declaration",
-  );
-  assert.ok(
-    utStart > ropeEnd && utEnd > utStart,
-    "Missing utModes declaration",
+    ut.start > rope.end,
+    "utModes must follow ropeModes in the fixture",
   );
   return (
-    source.slice(0, ropeStart) +
-    source.slice(utStart, utEnd) +
+    source.slice(0, rope.start) +
+    source.slice(ut.start, ut.end) +
     "\n" +
-    source.slice(ropeStart, ropeEnd) +
-    source.slice(utEnd)
+    source.slice(rope.start, rope.end) +
+    source.slice(rope.end, ut.start) +
+    source.slice(ut.end)
   );
 }
+
+test("unrelated declaration reorder preserves intervening source", () => {
+  const source = `const ropeModes = ["rope"] as const;
+// keep this unrelated source in the reordered fixture
+const utModes = ["ut"] as const;
+`;
+
+  const reordered = reorderUnrelatedTopLevelDeclarations(source);
+
+  assert.match(
+    reordered,
+    /\/\/ keep this unrelated source in the reordered fixture/u,
+  );
+  assert.ok(reordered.indexOf("utModes") < reordered.indexOf("ropeModes"));
+});
 
 test("approved ATR Rope + UT Bot semantics survive provisional replacement and finalized advancement", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "erc-ecdd228-lifecycle-"));
@@ -303,6 +344,90 @@ test("approved ATR Rope + UT Bot semantics survive provisional replacement and f
         incremental.dispose();
         reference.dispose();
       }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATR Rope POC overlays keep stable IDs while surviving zone lifecycle changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-ecdd258-drawings-"));
+  try {
+    const built = await buildAtrRopeUtBotIndicatorPackage({
+      root: repoRoot,
+      outputRoot: path.join(root, "package"),
+    });
+    const indicator = await importBuiltIndicator(
+      built.packageRoot,
+      "drawing-identity",
+    );
+    const parameters = labeledParameters(indicator, {
+      "ADX POC::ADX / DI length": 4,
+      "ADX POC::Profile period": 20,
+      "ADX POC::Fast POC period": 6,
+      "ADX POC::Minimum early bars": 4,
+      "ADX POC Zones::Active historical POCs": 1,
+      "ADX POC Zones::Minimum zone bars": 1,
+      "ADX POC Zones::Minimum zone hits": 1,
+      "ADX POC Zones::Maximum stored zones": 20,
+      "ADX POC Style::POC draw mode": "Line + Band",
+    });
+    const sequence = candles();
+    const instance = indicator.createInstance(parameters, context);
+    let membershipChangesWithSurvivors = 0;
+    let survivingGeometryUpdates = 0;
+    try {
+      const initialLength = 25;
+      instance.onHistory(sequence.slice(0, initialLength));
+      let previous = overlaysByDomainKey(instance.snapshot().overlays ?? []);
+
+      for (let index = initialLength; index < sequence.length; index += 1) {
+        instance.onFinalizedBar(sequence[index - 1]);
+        instance.onBuildingBar(sequence[index]);
+        const current = overlaysByDomainKey(instance.snapshot().overlays ?? []);
+        const survivingKeys = [...current.keys()].filter((key) =>
+          previous.has(key),
+        );
+        const added = [...current.keys()].filter((key) => !previous.has(key));
+        const removed = [...previous.keys()].filter((key) => !current.has(key));
+
+        if (
+          (added.length > 0 || removed.length > 0) &&
+          survivingKeys.length > 0
+        ) {
+          membershipChangesWithSurvivors += 1;
+        }
+
+        for (const key of survivingKeys) {
+          const before = previous.get(key);
+          const after = current.get(key);
+          assert.ok(before && after);
+          assert.equal(
+            after.id,
+            before.id,
+            `surviving POC overlay ${key} changed renderer identity`,
+          );
+          if (
+            JSON.stringify(overlayGeometry(after)) !==
+            JSON.stringify(overlayGeometry(before))
+          ) {
+            survivingGeometryUpdates += 1;
+          }
+        }
+
+        previous = current;
+      }
+
+      assert.ok(
+        membershipChangesWithSurvivors > 0,
+        "fixture must exercise POC overlay additions/removals while drawings survive",
+      );
+      assert.ok(
+        survivingGeometryUpdates > 0,
+        "fixture must exercise .set() updates on surviving POC drawing handles",
+      );
+    } finally {
+      instance.dispose();
     }
   } finally {
     await rm(root, { recursive: true, force: true });

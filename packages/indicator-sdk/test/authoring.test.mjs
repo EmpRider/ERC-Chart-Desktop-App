@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   candle as candleType,
-  defineIndicator,
   indicator,
   input,
   plot,
-  series,
   signal,
   ta,
   timeframe,
 } from "../dist/index.js";
+import { defineIndicator } from "../dist/indicator.js";
 import {
   isInstalledIndicatorDefinition,
   isIndicatorRuntimeSnapshot,
@@ -514,109 +513,6 @@ test("building replacements and finalization match a fresh history run and do no
   assert.deepEqual(instance.snapshot().signals, reference.snapshot().signals);
   instance.dispose();
   reference.dispose();
-});
-
-test("scalar recurrences roll back provisional state and remain isolated per instance", () => {
-  const plugin = defineIndicator(
-    { id: "erc.indicator.state.main", name: "State" },
-    ({ close }) => {
-      plot.line(series(0, (previous) => previous + close));
-    },
-  );
-  const first = plugin.createInstance({}, context);
-  const second = plugin.createInstance({}, context);
-  first.onHistory([candle(0, 10), candle(1, 11)]);
-  second.onHistory([candle(0, 20), candle(1, 21)]);
-  first.onBuildingBar(candle(1, 12));
-  first.onBuildingBar(candle(1, 13));
-  assert.equal(first.snapshot().points.at(-1).values.plot_0, 23);
-  assert.equal(second.snapshot().points.at(-1).values.plot_0, 41);
-  first.onFinalizedBar(candle(1, 13));
-  first.onBuildingBar(candle(2, 14));
-  assert.equal(first.snapshot().points.at(-1).values.plot_0, 37);
-  first.dispose();
-  second.dispose();
-});
-
-test("structured series state is isolated from nested mutations and returned-value mutations", () => {
-  const plugin = defineIndicator(
-    { id: "erc.indicator.structured-state.main", name: "Structured state" },
-    (bar) => {
-      const state = series({ values: [] }, (previous) => {
-        previous.values.push(bar.close);
-        return previous;
-      });
-      plot.line(state.values.reduce((sum, value) => sum + value, 0));
-      if (bar.isConfirmed) state.values.push(1_000);
-    },
-  );
-  const instance = plugin.createInstance({}, context);
-  instance.onHistory([candle(0, 10), candle(1, 11)]);
-  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 21);
-  instance.onBuildingBar(candle(1, 20));
-  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 30);
-  instance.dispose();
-});
-
-test("structured series rejects custom instances nested in collections", () => {
-  class CustomState {
-    value = 1;
-  }
-  for (const initial of [
-    { child: new CustomState() },
-    new Map([["child", new CustomState()]]),
-  ]) {
-    assert.throws(
-      () =>
-        defineIndicator(
-          { id: "erc.indicator.custom-state.main", name: "Custom state" },
-          () => series(initial, (previous) => previous),
-        ),
-      /does not support custom class instances/u,
-    );
-  }
-});
-
-test("structured series preserves null-prototype objects", () => {
-  const initial = Object.assign(Object.create(null), { value: 2 });
-  const plugin = defineIndicator(
-    { id: "erc.indicator.null-state.main", name: "Null state" },
-    () => {
-      const state = series(initial, (previous) => {
-        assert.equal(Object.getPrototypeOf(previous), null);
-        previous.value += 1;
-        return previous;
-      });
-      plot.line(state.value);
-    },
-  );
-  const instance = plugin.createInstance({}, context);
-  instance.onHistory([candle(0), candle(1)]);
-  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 4);
-  assert.equal(initial.value, 2);
-  instance.dispose();
-});
-
-test("structured series rejects retained collections above the documented limit", () => {
-  const plugin = defineIndicator(
-    { id: "erc.indicator.series-limit.main", name: "Series limit" },
-    ({ close }) => {
-      const state = series({ values: [] }, (previous) => {
-        previous.values.push(close);
-        return previous;
-      });
-      plot.line(state.values.length);
-    },
-  );
-  const instance = plugin.createInstance({}, context);
-  assert.throws(
-    () =>
-      instance.onHistory(
-        Array.from({ length: 4_098 }, (_, index) => candle(index)),
-      ),
-    /Series state collections may contain at most 4,096 items/u,
-  );
-  instance.dispose();
 });
 
 test("provisional drawings roll back and finalized drawings persist without author-owned arrays", () => {

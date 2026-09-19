@@ -42,32 +42,31 @@ async function packagedPlugin(sourceText, id) {
   }
 }
 
-function conditionalSeriesCalls(count, { repeatFirstAt } = {}) {
+function conditionalStateCalls(count, { repeatFirstAt } = {}) {
   return Array.from({ length: count }, (_, index) => {
     const condition =
       index === 0 && repeatFirstAt !== undefined
         ? `bar.index === 0 || bar.index === ${repeatFirstAt}`
         : `bar.index === ${index}`;
-    return `    if (${condition}) series(${index}, (previous) => previous + 1);`;
+    return `if (${condition}) { var state${index} = ${index}; state${index} += 1; }`;
   }).join("\n");
 }
 
-function sourceWithConditionalSeries(count, options = {}) {
-  return `import { defineIndicator, plot, series } from "@erc-chart/indicator-sdk";
+function sourceWithConditionalState(count, options = {}) {
+  return `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  { id: "erc.indicator.kernel-capacity.main", name: "Kernel capacity" },
-  (bar) => {
-${conditionalSeriesCalls(count, options)}
-    plot.line(bar.close, { key: "close", title: "Close" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.kernel-capacity.main",
+  name: "Kernel capacity",
+});
+${conditionalStateCalls(count, options)}
+plot.line(close, { title: "Close" });
 `;
 }
 
 test("conditional compiler kernels enforce the 256-slot persistent limit across bars", async () => {
   const { default: plugin } = await packagedPlugin(
-    sourceWithConditionalSeries(257),
+    sourceWithConditionalState(257),
     "erc.indicator.kernel-capacity",
   );
   const instance = plugin.createInstance({}, context);
@@ -86,7 +85,7 @@ test("conditional compiler kernels enforce the 256-slot persistent limit across 
 
 test("conditional compiler kernels may reuse an existing slot at the 256-slot limit", async () => {
   const { default: plugin } = await packagedPlugin(
-    sourceWithConditionalSeries(256, { repeatFirstAt: 256 }),
+    sourceWithConditionalState(256, { repeatFirstAt: 256 }),
     "erc.indicator.kernel-capacity",
   );
   const instance = plugin.createInstance({}, context);

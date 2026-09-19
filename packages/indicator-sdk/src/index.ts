@@ -4,11 +4,7 @@ import {
   type CompatibilityRange,
   type ContractVersion,
 } from "@erc-chart/contracts";
-import {
-  defineIndicator as runtimeDefineIndicator,
-  type IndicatorBar as RuntimeIndicatorBar,
-  type IndicatorOptions,
-} from "./indicator.js";
+import type { IndicatorOptions } from "./indicator.js";
 import { input as runtimeInput } from "./input.js";
 import {
   plot as runtimePlot,
@@ -38,6 +34,9 @@ export const indicatorHostVersion: ContractVersion = hostApiVersion;
 export type IndicatorInputValue = boolean | number | string;
 export type IndicatorInputKind = "boolean" | "number" | "source" | "string";
 export type IndicatorInputEffect = "calculation" | "presentation";
+
+type IndicatorSourceDefault =
+  "close" | "open" | "high" | "low" | "hl2" | "hlc3" | "ohlc4";
 
 export interface IndicatorInputOption {
   readonly value: string;
@@ -70,7 +69,7 @@ export type IndicatorInputDefinition = IndicatorInputMetadata &
       }
     | {
         readonly type: "source";
-        readonly defaultValue: import("./series.js").PriceSource;
+        readonly defaultValue: IndicatorSourceDefault;
       }
   );
 
@@ -171,15 +170,7 @@ export interface IndicatorBox {
 
 export type IndicatorOverlay = IndicatorLineSegment | IndicatorBox;
 
-export {
-  history,
-  inputOptions,
-  priceSources,
-  priceValue,
-  series,
-  type PriceSource,
-  type SeriesNumber,
-} from "./series.js";
+export { history, type SeriesNumber } from "./series.js";
 
 export { movingAverageTypes } from "./ta.js";
 export type { DmiPoint, MovingAverageType } from "./ta.js";
@@ -211,19 +202,13 @@ export interface TechnicalAnalysisApi {
 
 export const ta: TechnicalAnalysisApi = runtimeTa as TechnicalAnalysisApi;
 
-export type IndicatorBar = Omit<
-  RuntimeIndicatorBar,
-  "isHistory" | "isHistoryFinalizedTail"
->;
-export type IndicatorCalculation = (bar: IndicatorBar) => void;
 export type { IndicatorOptions } from "./indicator.js";
-export const defineIndicator: (
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-) => IndicatorModule = runtimeDefineIndicator as (
-  options: IndicatorOptions,
-  calculate: IndicatorCalculation,
-) => IndicatorModule;
+export type DefineIndicator = (options: IndicatorOptions) => IndicatorModule;
+export const defineIndicator: DefineIndicator = () => {
+  throw new Error(
+    "indicator source must be compiled before defineIndicator executes.",
+  );
+};
 
 export interface InputOptions {
   readonly title?: string;
@@ -247,29 +232,54 @@ type StringOptionValue<T> = T extends string
 export interface InputApi {
   readonly float: (
     defaultValue: number,
+    titleOrOptions?: string | NumberInputOptions,
     options?: NumberInputOptions,
   ) => number;
-  readonly int: (defaultValue: number, options?: NumberInputOptions) => number;
-  readonly bool: (defaultValue: boolean, options?: InputOptions) => boolean;
+  readonly int: (
+    defaultValue: number,
+    titleOrOptions?: string | NumberInputOptions,
+    options?: NumberInputOptions,
+  ) => number;
+  readonly bool: (
+    defaultValue: boolean,
+    titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
+  ) => boolean;
   readonly string: {
     <const O extends readonly (string | IndicatorInputOption)[]>(
       defaultValue: StringOptionValue<O[number]>,
       options: StringInputOptions & { readonly options: O },
     ): StringOptionValue<O[number]>;
-    (defaultValue: string, options?: StringInputOptions): string;
+    <const O extends readonly (string | IndicatorInputOption)[]>(
+      defaultValue: StringOptionValue<O[number]>,
+      title: string,
+      options: StringInputOptions & { readonly options: O },
+    ): StringOptionValue<O[number]>;
+    (
+      defaultValue: string,
+      titleOrOptions?: string | StringInputOptions,
+      options?: StringInputOptions,
+    ): string;
   };
-  readonly color: (defaultValue: string, options?: InputOptions) => string;
-  readonly source: (
-    defaultValue: import("./series.js").PriceSource,
+  readonly color: (
+    defaultValue: string,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
+  ) => string;
+  readonly source: (
+    defaultValue: number,
+    titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => number;
   readonly timeframe: (
     defaultValue: string,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => string;
   readonly candleType: (
     defaultValue: import("./constants.js").CandleTypeSelection,
     titleOrOptions?: string | InputOptions,
+    options?: InputOptions,
   ) => import("./constants.js").CandleTypeSelection;
 }
 export const input: InputApi = runtimeInput as InputApi;
