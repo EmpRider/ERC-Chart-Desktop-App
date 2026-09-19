@@ -50,6 +50,47 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /const ordinary = values\[1\];/u);
 });
 
+test("keeps values derived from history access series-capable", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const bracketPrior = close[1];
+  const bracketOlder = bracketPrior[1];
+  const methodPrior = close.at(1);
+  const methodOlder = methodPrior.at(1);
+  return bracketOlder + methodOlder;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "derived-history-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(bracketPrior, 1\)/u);
+  assert.match(transformed.code, /__ercHistory\(methodPrior, 1\)/u);
+});
+
+test("does not treat unsupported .at arities as lowered series history", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const missingOffset = close.at();
+  const extraOffset = close.at(1, 2);
+  const missingPrior = missingOffset[1];
+  const extraPrior = extraOffset[1];
+  return missingPrior + extraPrior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "unsupported-at-arity.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
 test("keeps scalar conditionals series-capable when their condition depends on series", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
