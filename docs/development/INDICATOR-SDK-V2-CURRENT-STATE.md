@@ -2,7 +2,9 @@
 
 **Original redesign:** ECDD-216 / ECDD-217 and follow-up tasks
 
-**Pine-semantics correction:** ECDD-236 through ECDD-241 under ECDD-135
+**Pine-semantics correction implementation:** ECDD-236 through ECDD-241 under ECDD-135
+
+**Comprehensive-review corrections:** ECDD-242 through ECDD-260 under ECDD-135
 
 **Original design:** `docs/superpowers/specs/2026-09-09-indicator-sdk-v2-redesign-design.md`
 
