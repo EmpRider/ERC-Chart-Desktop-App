@@ -99,7 +99,12 @@ function isRootPropertyCall(node, roots, propertyNames) {
   );
 }
 
-function isArrayValuedExpression(node, arrayBindings) {
+function isArrayValuedExpression(
+  node,
+  arrayBindings,
+  resolvingHelpers = new Set(),
+  functionEnvironments = new Map(),
+) {
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
@@ -107,14 +112,42 @@ function isArrayValuedExpression(node, arrayBindings) {
     ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   )
-    return isArrayValuedExpression(node.expression, arrayBindings);
+    return isArrayValuedExpression(
+      node.expression,
+      arrayBindings,
+      resolvingHelpers,
+      functionEnvironments,
+    );
   if (ts.isIdentifier(node)) return arrayBindings.has(node.text);
   if (ts.isArrayLiteralExpression(node)) return true;
   if (ts.isConditionalExpression(node))
     return (
-      isArrayValuedExpression(node.whenTrue, arrayBindings) &&
-      isArrayValuedExpression(node.whenFalse, arrayBindings)
+      isArrayValuedExpression(
+        node.whenTrue,
+        arrayBindings,
+        resolvingHelpers,
+        functionEnvironments,
+      ) &&
+      isArrayValuedExpression(
+        node.whenFalse,
+        arrayBindings,
+        resolvingHelpers,
+        functionEnvironments,
+      )
     );
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+    const helper = resolveLocalFunctionReference(node.expression);
+    return (
+      helper !== undefined &&
+      functionReturnIsArrayValued(
+        helper,
+        node,
+        arrayBindings,
+        resolvingHelpers,
+        functionEnvironments,
+      )
+    );
+  }
   return false;
 }
 
@@ -155,6 +188,190 @@ function registerFunctionEnvironments(
       arrayBindings: new Set(arrayBindings),
     });
   }
+}
+
+function unwrappedExpression(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function statementCanCompleteNormally(statement) {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement))
+    return false;
+  if (ts.isBlock(statement)) {
+    for (const child of statement.statements) {
+      if (!statementCanCompleteNormally(child)) return false;
+    }
+    return true;
+  }
+  if (ts.isIfStatement(statement)) {
+    if (statement.elseStatement === undefined) return true;
+    return (
+      statementCanCompleteNormally(statement.thenStatement) ||
+      statementCanCompleteNormally(statement.elseStatement)
+    );
+  }
+  return true;
+}
+
+function addArrayValuedBinding(
+  name,
+  value,
+  valueArrays,
+  targetArrays,
+  resolvingHelpers,
+  functionEnvironments,
+) {
+  if (ts.isIdentifier(name)) {
+    if (
+      isArrayValuedExpression(
+        value,
+        valueArrays,
+        resolvingHelpers,
+        functionEnvironments,
+      )
+    )
+      targetArrays.add(name.text);
+    return;
+  }
+  if (!ts.isArrayBindingPattern(name)) return;
+  const unwrapped = unwrappedExpression(value);
+  if (!ts.isArrayLiteralExpression(unwrapped)) return;
+  for (let index = 0; index < name.elements.length; index += 1) {
+    const binding = name.elements[index];
+    if (ts.isOmittedExpression(binding)) continue;
+    if (binding.dotDotDotToken !== undefined) {
+      if (ts.isIdentifier(binding.name)) targetArrays.add(binding.name.text);
+      continue;
+    }
+    const element = unwrapped.elements[index];
+    if (element === undefined || ts.isSpreadElement(element)) continue;
+    addArrayValuedBinding(
+      binding.name,
+      element,
+      valueArrays,
+      targetArrays,
+      resolvingHelpers,
+      functionEnvironments,
+    );
+  }
+}
+
+function functionReturnIsArrayValued(
+  functionLike,
+  call,
+  arrayBindings,
+  resolvingHelpers,
+  functionEnvironments,
+) {
+  if (functionLike.body === undefined || resolvingHelpers.has(functionLike))
+    return false;
+
+  const nextResolving = new Set(resolvingHelpers);
+  nextResolving.add(functionLike);
+
+  const functionNames = functionBindings(functionLike);
+  const declarationEnvironment = functionEnvironments.get(functionLike);
+  const declarationArrays =
+    declarationEnvironment?.arrayBindings ?? new Set();
+  const helperArrays = new Set(
+    withoutBindings(declarationArrays, functionNames),
+  );
+  const defaultArrays = new Set(helperArrays);
+
+  functionLike.parameters.forEach((parameter, index) => {
+    if (parameter.dotDotDotToken !== undefined) {
+      if (ts.isIdentifier(parameter.name)) {
+        helperArrays.add(parameter.name.text);
+        defaultArrays.add(parameter.name.text);
+      }
+      return;
+    }
+    const argument = call.arguments[index];
+    const value = argument ?? parameter.initializer;
+    if (value === undefined) return;
+    const valueArrays = argument === undefined ? defaultArrays : arrayBindings;
+    const parameterArrays = new Set();
+    addArrayValuedBinding(
+      parameter.name,
+      value,
+      valueArrays,
+      parameterArrays,
+      nextResolving,
+      functionEnvironments,
+    );
+    for (const name of parameterArrays) {
+      helperArrays.add(name);
+      defaultArrays.add(name);
+    }
+  });
+
+  if (!ts.isBlock(functionLike.body)) {
+    return isArrayValuedExpression(
+      functionLike.body,
+      helperArrays,
+      nextResolving,
+      functionEnvironments,
+    );
+  }
+
+  let sawReturn = false;
+  let allReturnsArrayValued = true;
+
+  const visit = (node, outerArrays) => {
+    if (node !== functionLike.body && ts.isFunctionLike(node)) return;
+
+    let scopedArrays = outerArrays;
+    const names = scopedNames(node);
+    if (names !== undefined)
+      scopedArrays = withoutBindings(scopedArrays, names);
+
+    if (ts.isBlock(node) || ts.isCaseBlock(node)) {
+      const localArrays = directArrayDeclarations(
+        node,
+        scopedArrays,
+        nextResolving,
+        functionEnvironments,
+      );
+      if (localArrays.size > 0) {
+        scopedArrays = new Set(scopedArrays);
+        for (const name of localArrays) scopedArrays.add(name);
+      }
+    }
+
+    if (ts.isReturnStatement(node)) {
+      sawReturn = true;
+      if (
+        node.expression === undefined ||
+        !isArrayValuedExpression(
+          node.expression,
+          scopedArrays,
+          nextResolving,
+          functionEnvironments,
+        )
+      )
+        allReturnsArrayValued = false;
+      return;
+    }
+
+    ts.forEachChild(node, (child) => visit(child, scopedArrays));
+  };
+
+  visit(functionLike.body, helperArrays);
+  return (
+    sawReturn &&
+    allReturnsArrayValued &&
+    !statementCanCompleteNormally(functionLike.body)
+  );
 }
 
 function functionReturnDependsOnSeries(
@@ -213,11 +430,18 @@ function functionReturnDependsOnSeries(
         defaultActive.add(name);
       }
     }
-    if (isArrayValuedExpression(value, valueArrays)) {
-      for (const name of names) {
-        helperArrays.add(name);
-        defaultArrays.add(name);
-      }
+    const parameterArrays = new Set();
+    addArrayValuedBinding(
+      parameter.name,
+      value,
+      valueArrays,
+      parameterArrays,
+      nextResolving,
+      functionEnvironments,
+    );
+    for (const name of parameterArrays) {
+      helperArrays.add(name);
+      defaultArrays.add(name);
     }
   });
 
@@ -246,7 +470,12 @@ function functionReturnDependsOnSeries(
     }
 
     if (ts.isBlock(node) || ts.isCaseBlock(node)) {
-      const localArrays = directArrayDeclarations(node, scopedArrays);
+      const localArrays = directArrayDeclarations(
+        node,
+        scopedArrays,
+        nextResolving,
+        functionEnvironments,
+      );
       if (localArrays.size > 0) {
         scopedArrays = new Set(scopedArrays);
         for (const name of localArrays) scopedArrays.add(name);
@@ -376,8 +605,18 @@ function expressionDependsOnSeries(
       );
     if (branchDependsOnSeries) return true;
     if (
-      isArrayValuedExpression(node.whenTrue, arrayBindings) &&
-      isArrayValuedExpression(node.whenFalse, arrayBindings)
+      isArrayValuedExpression(
+        node.whenTrue,
+        arrayBindings,
+        resolvingHelpers,
+        functionEnvironments,
+      ) &&
+      isArrayValuedExpression(
+        node.whenFalse,
+        arrayBindings,
+        resolvingHelpers,
+        functionEnvironments,
+      )
     )
       return false;
     return expressionDependsOnSeries(
@@ -416,7 +655,12 @@ function expressionDependsOnSeries(
   );
 }
 
-function directArrayDeclarations(scope, outerArrayBindings) {
+function directArrayDeclarations(
+  scope,
+  outerArrayBindings,
+  resolvingHelpers = new Set(),
+  functionEnvironments = new Map(),
+) {
   if (!ts.isBlock(scope) && !ts.isCaseBlock(scope)) return new Set();
   const statements = ts.isCaseBlock(scope)
     ? scope.clauses.flatMap((clause) => [...clause.statements])
@@ -437,10 +681,24 @@ function directArrayDeclarations(scope, outerArrayBindings) {
   let changed = true;
   while (changed) {
     changed = false;
+    registerFunctionEnvironments(
+      scope,
+      new Set(),
+      active,
+      functionEnvironments,
+    );
     for (const declaration of declarations) {
       const name = declaration.name.text;
       if (result.has(name)) continue;
-      if (!isArrayValuedExpression(declaration.initializer, active)) continue;
+      if (
+        !isArrayValuedExpression(
+          declaration.initializer,
+          active,
+          resolvingHelpers,
+          functionEnvironments,
+        )
+      )
+        continue;
       result.add(name);
       active.add(name);
       changed = true;
@@ -904,7 +1162,12 @@ export function transformIndicatorHistory(
         defineIndicatorHelpers,
         names,
       );
-      const localArrays = directArrayDeclarations(node, scopedArrayBindings);
+      const localArrays = directArrayDeclarations(
+        node,
+        scopedArrayBindings,
+        new Set(),
+        functionEnvironments,
+      );
       if (localArrays.size > 0) {
         scopedArrayBindings = new Set(scopedArrayBindings);
         for (const name of localArrays) scopedArrayBindings.add(name);

@@ -103,6 +103,52 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
   assert.equal(transformed.code, source);
 });
 
+test("preserves element indexing for conditional local helper array values", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function risingValues() {
+  return [10, 20, 30];
+}
+function fallingValues() {
+  return [40, 50, 60];
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const values = close > open ? risingValues() : fallingValues();
+  const ordinary = values[1];
+  return ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-conditional.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
+test("keeps mixed-shape local helper returns out of array classification", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function maybeValues(useArray) {
+  if (useArray) return [10, 20, 30];
+  return 40;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const values = close > open ? maybeValues(true) : maybeValues(false);
+  const previous = values[1];
+  return previous;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "mixed-helper-return-shapes.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(values, 1\)/u);
+});
+
 test("lowers history access for input source and explicit history derived locals", () => {
   const source = `
 import { defineIndicator, history, input } from "@erc-chart/indicator-sdk";
@@ -409,6 +455,66 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
     "local-helper-scalar.ts",
   );
 
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
+test("keeps helper fallthrough out of array classification", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function maybeValues(useArray) {
+  if (useArray) return [10, 20, 30];
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const values = close > open ? maybeValues(true) : maybeValues(false);
+  const previous = values[1];
+  return previous;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-fallthrough.ts",
+  );
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(values, 1\)/u);
+});
+
+test("maps destructured array parameters by element value", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function firstValue([first]) {
+  return first;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const value = close > open ? firstValue([10, 20]) : firstValue([30, 40]);
+  const previous = value[1];
+  return previous;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-destructuring.ts",
+  );
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(value, 1\)/u);
+});
+
+test("treats identifier rest parameters as array-valued", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+function collectValues(...values) {
+  return values;
+}
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
+  const values = close > open ? collectValues(10, 20, 30) : collectValues(40, 50, 60);
+  const ordinary = values[1];
+  return ordinary;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-rest-parameter.ts",
+  );
   assert.equal(transformed.changed, false);
   assert.equal(transformed.code, source);
 });
