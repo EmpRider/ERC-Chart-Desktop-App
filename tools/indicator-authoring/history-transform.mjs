@@ -190,6 +190,25 @@ function registerFunctionEnvironments(
   }
 }
 
+function statementCanCompleteNormally(statement) {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement))
+    return false;
+  if (ts.isBlock(statement)) {
+    for (const child of statement.statements) {
+      if (!statementCanCompleteNormally(child)) return false;
+    }
+    return true;
+  }
+  if (ts.isIfStatement(statement)) {
+    if (statement.elseStatement === undefined) return true;
+    return (
+      statementCanCompleteNormally(statement.thenStatement) ||
+      statementCanCompleteNormally(statement.elseStatement)
+    );
+  }
+  return true;
+}
+
 function functionReturnIsArrayValued(
   functionLike,
   call,
