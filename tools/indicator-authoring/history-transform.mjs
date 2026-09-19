@@ -190,6 +190,20 @@ function registerFunctionEnvironments(
   }
 }
 
+function unwrappedExpression(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
 function statementCanCompleteNormally(statement) {
   if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement))
     return false;
@@ -207,6 +221,49 @@ function statementCanCompleteNormally(statement) {
     );
   }
   return true;
+}
+
+function addArrayValuedBinding(
+  name,
+  value,
+  valueArrays,
+  targetArrays,
+  resolvingHelpers,
+  functionEnvironments,
+) {
+  if (ts.isIdentifier(name)) {
+    if (
+      isArrayValuedExpression(
+        value,
+        valueArrays,
+        resolvingHelpers,
+        functionEnvironments,
+      )
+    )
+      targetArrays.add(name.text);
+    return;
+  }
+  if (!ts.isArrayBindingPattern(name)) return;
+  const unwrapped = unwrappedExpression(value);
+  if (!ts.isArrayLiteralExpression(unwrapped)) return;
+  for (let index = 0; index < name.elements.length; index += 1) {
+    const binding = name.elements[index];
+    if (ts.isOmittedExpression(binding)) continue;
+    if (binding.dotDotDotToken !== undefined) {
+      if (ts.isIdentifier(binding.name)) targetArrays.add(binding.name.text);
+      continue;
+    }
+    const element = unwrapped.elements[index];
+    if (element === undefined || ts.isSpreadElement(element)) continue;
+    addArrayValuedBinding(
+      binding.name,
+      element,
+      valueArrays,
+      targetArrays,
+      resolvingHelpers,
+      functionEnvironments,
+    );
+  }
 }
 
 function functionReturnIsArrayValued(
@@ -232,24 +289,29 @@ function functionReturnIsArrayValued(
   const defaultArrays = new Set(helperArrays);
 
   functionLike.parameters.forEach((parameter, index) => {
+    if (parameter.dotDotDotToken !== undefined) {
+      if (ts.isIdentifier(parameter.name)) {
+        helperArrays.add(parameter.name.text);
+        defaultArrays.add(parameter.name.text);
+      }
+      return;
+    }
     const argument = call.arguments[index];
     const value = argument ?? parameter.initializer;
     if (value === undefined) return;
     const valueArrays = argument === undefined ? defaultArrays : arrayBindings;
-    const names = new Set();
-    collectBindingNames(parameter.name, names);
-    if (
-      isArrayValuedExpression(
-        value,
-        valueArrays,
-        nextResolving,
-        functionEnvironments,
-      )
-    ) {
-      for (const name of names) {
-        helperArrays.add(name);
-        defaultArrays.add(name);
-      }
+    const parameterArrays = new Set();
+    addArrayValuedBinding(
+      parameter.name,
+      value,
+      valueArrays,
+      parameterArrays,
+      nextResolving,
+      functionEnvironments,
+    );
+    for (const name of parameterArrays) {
+      helperArrays.add(name);
+      defaultArrays.add(name);
     }
   });
 
@@ -368,18 +430,18 @@ function functionReturnDependsOnSeries(
         defaultActive.add(name);
       }
     }
-    if (
-      isArrayValuedExpression(
-        value,
-        valueArrays,
-        nextResolving,
-        functionEnvironments,
-      )
-    ) {
-      for (const name of names) {
-        helperArrays.add(name);
-        defaultArrays.add(name);
-      }
+    const parameterArrays = new Set();
+    addArrayValuedBinding(
+      parameter.name,
+      value,
+      valueArrays,
+      parameterArrays,
+      nextResolving,
+      functionEnvironments,
+    );
+    for (const name of parameterArrays) {
+      helperArrays.add(name);
+      defaultArrays.add(name);
     }
   });
 
