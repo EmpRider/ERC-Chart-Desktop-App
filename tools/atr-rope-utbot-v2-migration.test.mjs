@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import ts from "typescript";
 
 import { buildAtrRopeUtBotIndicatorPackage } from "./build-atr-rope-utbot-indicator.mjs";
 
@@ -16,6 +17,134 @@ const sourcePath = path.join(
   "src",
   "atr-rope-utbot.ts",
 );
+
+function memberPath(node) {
+  if (ts.isIdentifier(node)) return node.text;
+  if (!ts.isPropertyAccessExpression(node)) return undefined;
+  const owner = memberPath(node.expression);
+  return owner === undefined ? undefined : `${owner}.${node.name.text}`;
+}
+
+function collectNodes(root, predicate) {
+  const matches = [];
+  const visit = (node) => {
+    if (predicate(node)) matches.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return matches;
+}
+
+function isUndefinedCheck(expression, propertyPath, operatorKind) {
+  if (!ts.isBinaryExpression(expression)) return false;
+  if (expression.operatorToken.kind !== operatorKind) return false;
+  const left = memberPath(expression.left);
+  const right = memberPath(expression.right);
+  return (
+    (left === propertyPath && right === "undefined") ||
+    (left === "undefined" && right === propertyPath)
+  );
+}
+
+function hasCall(root, calleePath) {
+  return (
+    collectNodes(
+      root,
+      (node) =>
+        ts.isCallExpression(node) && memberPath(node.expression) === calleePath,
+    ).length > 0
+  );
+}
+
+function hasFactoryAssignment(root, propertyPath, factoryPath) {
+  return (
+    collectNodes(root, (node) => {
+      if (!ts.isBinaryExpression(node)) return false;
+      if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
+      if (memberPath(node.left) !== propertyPath) return false;
+      return (
+        ts.isCallExpression(node.right) &&
+        memberPath(node.right.expression) === factoryPath
+      );
+    }).length > 0
+  );
+}
+
+function hasDeleteExpression(root, propertyPath) {
+  return (
+    collectNodes(
+      root,
+      (node) =>
+        ts.isDeleteExpression(node) &&
+        memberPath(node.expression) === propertyPath,
+    ).length > 0
+  );
+}
+
+function assertPersistentDrawingHandle(
+  sourceFile,
+  property,
+  handleType,
+  factoryPath,
+) {
+  const segment = sourceFile.statements.find(
+    (statement) =>
+      ts.isInterfaceDeclaration(statement) &&
+      statement.name.text === "PocSegment",
+  );
+  assert.ok(segment, "PocSegment must own persistent drawing handles");
+
+  const handle = segment.members.find(
+    (member) =>
+      ts.isPropertySignature(member) &&
+      ts.isIdentifier(member.name) &&
+      member.name.text === property,
+  );
+  assert.ok(handle, `PocSegment.${property} must persist the drawing handle`);
+  assert.ok(handle.questionToken, `PocSegment.${property} must be optional`);
+  assert.equal(
+    handle.type?.getText(sourceFile),
+    handleType,
+    `PocSegment.${property} must use ${handleType}`,
+  );
+
+  const propertyPath = `segment.${property}`;
+  const creationBranches = collectNodes(
+    sourceFile,
+    (node) =>
+      ts.isIfStatement(node) &&
+      isUndefinedCheck(
+        node.expression,
+        propertyPath,
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+      ) &&
+      hasFactoryAssignment(node.thenStatement, propertyPath, factoryPath) &&
+      node.elseStatement !== undefined &&
+      hasCall(node.elseStatement, `${propertyPath}.set`),
+  );
+  assert.equal(
+    creationBranches.length,
+    1,
+    `${propertyPath} must create once and update the stored handle with .set()`,
+  );
+
+  const deletionBranches = collectNodes(
+    sourceFile,
+    (node) =>
+      ts.isIfStatement(node) &&
+      isUndefinedCheck(
+        node.expression,
+        propertyPath,
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+      ) &&
+      hasCall(node.thenStatement, `${propertyPath}.delete`) &&
+      hasDeleteExpression(node.thenStatement, propertyPath),
+  );
+  assert.ok(
+    deletionBranches.length > 0,
+    `${propertyPath} must delete and clear the stored handle when hidden`,
+  );
+}
 
 const expectedSemantics = Object.freeze({
   original: Object.freeze({
@@ -155,8 +284,6 @@ test("ATR Rope + UT Bot source uses the final SDK v2 authoring surface", async (
   );
   assert.doesNotMatch(source, /\bIndicatorBar\b/u);
   assert.doesNotMatch(source, /\bPocTransition\b/u);
-  assert.doesNotMatch(source, /\bdirtyZones\b|\bremovedZones\b/u);
-  assert.doesNotMatch(source, /\bmarkZoneDirty\b|\brenderZones\b/u);
   assert.doesNotMatch(source, /worker-persistent|runtime bookkeeping/iu);
 
   assert.doesNotMatch(source, /\bappendSeries\b/u);
@@ -173,8 +300,26 @@ test("ATR Rope + UT Bot source uses the final SDK v2 authoring surface", async (
   assert.match(source, /text:\s*["']SELL["']/u);
   assert.doesNotMatch(source, /\bmarkerAtr\b|\bpadding\b/u);
 
-  assert.match(source, /\.delete\(\)/u);
   assert.doesNotMatch(source, /compatib(?:ility|le).*v1|legacy.*shim/iu);
+});
+
+test("ATR Rope POC drawings persist SDK handles across their lifecycle", async () => {
+  const source = await readFile(sourcePath, "utf8");
+  const sourceFile = ts.createSourceFile(
+    sourcePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  assertPersistentDrawingHandle(sourceFile, "box", "BoxHandle", "plot.box");
+  assertPersistentDrawingHandle(
+    sourceFile,
+    "line",
+    "SegmentHandle",
+    "plot.segment",
+  );
 });
 
 test("compiled ATR Rope + UT Bot preserves approved output and signal semantics", async () => {
