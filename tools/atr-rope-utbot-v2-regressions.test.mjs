@@ -203,6 +203,30 @@ function definitionIdentity(indicator) {
   };
 }
 
+function overlayDomainKey(overlay) {
+  return `${overlay.kind}:${overlay.startTimeMs}`;
+}
+
+function overlaysByDomainKey(overlays) {
+  const entries = overlays.map((overlay) => [
+    overlayDomainKey(overlay),
+    overlay,
+  ]);
+  const result = new Map(entries);
+  assert.equal(
+    result.size,
+    entries.length,
+    "POC fixture must expose unique kind/start-time drawing identities",
+  );
+  return result;
+}
+
+function overlayGeometry(overlay) {
+  const geometry = { ...overlay };
+  delete geometry.id;
+  return geometry;
+}
+
 async function importBuiltIndicator(packageRoot, tag) {
   const entry = path.join(packageRoot, "dist", "index.js");
   const module = await import(
@@ -320,6 +344,90 @@ test("approved ATR Rope + UT Bot semantics survive provisional replacement and f
         incremental.dispose();
         reference.dispose();
       }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATR Rope POC overlays keep stable IDs while surviving zone lifecycle changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "erc-ecdd258-drawings-"));
+  try {
+    const built = await buildAtrRopeUtBotIndicatorPackage({
+      root: repoRoot,
+      outputRoot: path.join(root, "package"),
+    });
+    const indicator = await importBuiltIndicator(
+      built.packageRoot,
+      "drawing-identity",
+    );
+    const parameters = labeledParameters(indicator, {
+      "ADX POC::ADX / DI length": 4,
+      "ADX POC::Profile period": 20,
+      "ADX POC::Fast POC period": 6,
+      "ADX POC::Minimum early bars": 4,
+      "ADX POC Zones::Active historical POCs": 1,
+      "ADX POC Zones::Minimum zone bars": 1,
+      "ADX POC Zones::Minimum zone hits": 1,
+      "ADX POC Zones::Maximum stored zones": 20,
+      "ADX POC Style::POC draw mode": "Line + Band",
+    });
+    const sequence = candles();
+    const instance = indicator.createInstance(parameters, context);
+    let membershipChangesWithSurvivors = 0;
+    let survivingGeometryUpdates = 0;
+    try {
+      const initialLength = 25;
+      instance.onHistory(sequence.slice(0, initialLength));
+      let previous = overlaysByDomainKey(instance.snapshot().overlays ?? []);
+
+      for (let index = initialLength; index < sequence.length; index += 1) {
+        instance.onFinalizedBar(sequence[index - 1]);
+        instance.onBuildingBar(sequence[index]);
+        const current = overlaysByDomainKey(instance.snapshot().overlays ?? []);
+        const survivingKeys = [...current.keys()].filter((key) =>
+          previous.has(key),
+        );
+        const added = [...current.keys()].filter((key) => !previous.has(key));
+        const removed = [...previous.keys()].filter((key) => !current.has(key));
+
+        if (
+          (added.length > 0 || removed.length > 0) &&
+          survivingKeys.length > 0
+        ) {
+          membershipChangesWithSurvivors += 1;
+        }
+
+        for (const key of survivingKeys) {
+          const before = previous.get(key);
+          const after = current.get(key);
+          assert.ok(before && after);
+          assert.equal(
+            after.id,
+            before.id,
+            `surviving POC overlay ${key} changed renderer identity`,
+          );
+          if (
+            JSON.stringify(overlayGeometry(after)) !==
+            JSON.stringify(overlayGeometry(before))
+          ) {
+            survivingGeometryUpdates += 1;
+          }
+        }
+
+        previous = current;
+      }
+
+      assert.ok(
+        membershipChangesWithSurvivors > 0,
+        "fixture must exercise POC overlay additions/removals while drawings survive",
+      );
+      assert.ok(
+        survivingGeometryUpdates > 0,
+        "fixture must exercise .set() updates on surviving POC drawing handles",
+      );
+    } finally {
+      instance.dispose();
     }
   } finally {
     await rm(root, { recursive: true, force: true });
