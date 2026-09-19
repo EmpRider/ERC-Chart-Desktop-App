@@ -534,7 +534,8 @@ function expressionDependsOnSeries(
     ? node.expression
     : ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "at"
+        node.expression.name.text === "at" &&
+        node.arguments.length === 1
       ? node.expression.expression
       : undefined;
   if (

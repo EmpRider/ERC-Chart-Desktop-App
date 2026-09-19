@@ -71,6 +71,26 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /__ercHistory\(methodPrior, 1\)/u);
 });
 
+test("does not treat unsupported .at arities as lowered series history", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const missingOffset = close.at();
+  const extraOffset = close.at(1, 2);
+  const missingPrior = missingOffset[1];
+  const extraPrior = extraOffset[1];
+  return missingPrior + extraPrior;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "unsupported-at-arity.ts",
+  );
+
+  assert.equal(transformed.changed, false);
+  assert.equal(transformed.code, source);
+});
+
 test("keeps scalar conditionals series-capable when their condition depends on series", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
