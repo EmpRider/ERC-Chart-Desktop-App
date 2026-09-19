@@ -42,8 +42,8 @@ GitHub/Jira rather than fabricated in this file.
 |   9 | Provider/MTF acquisition and source lifecycle remain host-owned and no-lookahead.                                                                         | Shared source engine owns native/derived acquisition, timeframe selection/alignment, revisions and leases.                                                                                                               | Fresh integration source planning/provenance/signal dependency coverage; exact-head full performance remains row 14.       | PASS                      |
 |  10 | Heikin Ashi transform order, recursive rollback, source identity and provenance remain correct.                                                           | Target timeframe construction precedes HA; synthetic identity/provenance and bounded recursive seed remain host-owned.                                                                                                   | Fresh integration runtime/source regressions preserve the accepted HA/source contract.                                     | PASS                      |
 |  11 | Signals commit only finalized/source-confirmed events and preserve replay equivalence/no-lookahead.                                                       | Compiler traces dependencies; runtime commits finalized confirmed-source identities and replaces stale corrected-history results.                                                                                        | Fresh finalized-only flagship tests plus compiler dependency/provisional/replay integration coverage.                      | PASS                      |
-|  12 | Dependency DAG validates bindings/order/history and enforces aggregate bounds.                                                                            | Runtime validates explicit instance/output bindings, topologically orders them, preindexes history and caps aggregate payload at 400,000 points.                                                                         | Fresh integration dependency coverage plus 400,000-point payload gate, max 1,114.19 ms < 5,000 ms.                         | PASS                      |
-|  13 | Worker/runtime/renderer boundaries preserve typed transport, stale rejection, quotas, recovery and cleanup.                                               | Typed-array snapshots/bounded deltas, generation/revision fencing, worker quotas/restart bounds and cleanup remain host/runtime concerns.                                                                                | Fresh integration supervisor/orchestration coverage, worker smoke, and snapshot materialization max 31.93 ms < 60,000 ms.  | PASS                      |
+|  12 | Dependency DAG validates bindings/order/history and enforces aggregate bounds.                                                                            | Runtime validates explicit instance/output bindings, topologically orders them, preindexes history and caps aggregate payload at 400,000 points.                                                                         | Fresh integration dependency coverage plus 400,000-point payload gate, max 1,025.08 ms < 5,000 ms.                         | PASS                      |
+|  13 | Worker/runtime/renderer boundaries preserve typed transport, stale rejection, quotas, recovery and cleanup.                                               | Typed-array snapshots/bounded deltas, generation/revision fencing, worker quotas/restart bounds and cleanup remain host/runtime concerns.                                                                                | Fresh integration supervisor/orchestration coverage, worker smoke, and snapshot materialization max 45.72 ms < 60,000 ms.  | PASS                      |
 |  14 | Performance/resource coverage exercises the approved large-history and multi-instance limits.                                                             | Existing limits remain unchanged, including 2,000 drawing/change and 400,000 dependency-point safeguards.                                                                                                                | Fresh full `test:performance` under Node 26.8.1 plus the 10,000-bar flagship stress; all configured budgets passed.        | PASS                      |
 |  15 | Maintained examples and current public docs teach only corrected SDK v2.                                                                                  | `atr-bands.ts`, `atr-rope-utbot.ts`, `INDICATOR-AUTHORING.md` and README use/describe the corrected top-level model.                                                                                                     | Fresh production plugin build, full SDK-v2 doc re-read, and maintained-source forbidden-surface scan.                      | PASS                      |
 |  16 | Current-state documentation preserves chronology while reflecting all review corrections.                                                                 | ECDD-241 remains historical; current-state chronology now includes ECDD-242..ECDD-262 and this ECDD-263 refresh.                                                                                                         | Current documentation diff plus prior exact-tree format/lint and fresh `git diff --check`.                                 | PASS                      |
@@ -54,7 +54,7 @@ GitHub/Jira rather than fabricated in this file.
 
 The ECDD-263 tree has only documentation changes over merge
 `237701774ac4d3da31a474fb5294817f205fcd15`; no SDK/runtime source is modified by
-this task. Fresh/current-tree evidence collected before the task PR includes:
+this task. Fresh/current-tree evidence collected for the task includes:
 
 - `npm run format:check`: PASS;
 - `npm run lint`: PASS;
@@ -92,10 +92,10 @@ this task. Fresh/current-tree evidence collected before the task PR includes:
   four-chart/four-worker 100,000-bar workload 25,365.20 ms < 60,000 ms with a
   maximum building update of 1.37 ms < 100 ms;
 - `audit:ci`: PASS under Node `26.8.1` / npm `12.0.2` with 0 vulnerabilities;
-- exact-head GitHub Delivery run `35446405658`: PASS for Governance and aggregate
-  Delivery. The Windows application job was correctly skipped because ECDD-263
-  changes documentation only. Exact-head Semgrep and the required CodeRabbit
-  status are PASS.
+- exact-head GitHub Governance and aggregate Delivery: PASS. The Windows
+  application job is correctly skipped because ECDD-263 changes documentation
+  only. Exact-head Semgrep and the required CodeRabbit status are also required
+  PASS evidence and are recorded externally in the PR/Jira workflow.
 
 ## Anti-drift review
 
