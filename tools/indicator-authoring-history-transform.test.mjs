@@ -471,7 +471,10 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
   return previous;
 });
 `;
-  const transformed = transformIndicatorHistory(source, "helper-array-fallthrough.ts");
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-fallthrough.ts",
+  );
   assert.equal(transformed.changed, true);
   assert.match(transformed.code, /__ercHistory\(values, 1\)/u);
 });
@@ -488,7 +491,10 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
   return previous;
 });
 `;
-  const transformed = transformIndicatorHistory(source, "helper-array-destructuring.ts");
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-destructuring.ts",
+  );
   assert.equal(transformed.changed, true);
   assert.match(transformed.code, /__ercHistory\(value, 1\)/u);
 });
@@ -505,7 +511,10 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close, open }) => {
   return ordinary;
 });
 `;
-  const transformed = transformIndicatorHistory(source, "helper-array-rest-parameter.ts");
+  const transformed = transformIndicatorHistory(
+    source,
+    "helper-array-rest-parameter.ts",
+  );
   assert.equal(transformed.changed, false);
   assert.equal(transformed.code, source);
 });
