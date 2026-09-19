@@ -44,10 +44,10 @@ GitHub/Jira rather than fabricated in this file.
 |  11 | Signals commit only finalized/source-confirmed events and preserve replay equivalence/no-lookahead.                                                       | Compiler traces dependencies; runtime commits finalized confirmed-source identities and replaces stale corrected-history results.                                                                                        | Fresh finalized-only flagship tests plus compiler dependency/provisional/replay integration coverage.                      | PASS                      |
 |  12 | Dependency DAG validates bindings/order/history and enforces aggregate bounds.                                                                            | Runtime validates explicit instance/output bindings, topologically orders them, preindexes history and caps aggregate payload at 400,000 points.                                                                         | Fresh integration dependency coverage plus 400,000-point payload gate, max 1,114.19 ms < 5,000 ms.                         | PASS                      |
 |  13 | Worker/runtime/renderer boundaries preserve typed transport, stale rejection, quotas, recovery and cleanup.                                               | Typed-array snapshots/bounded deltas, generation/revision fencing, worker quotas/restart bounds and cleanup remain host/runtime concerns.                                                                                | Fresh integration supervisor/orchestration coverage, worker smoke, and snapshot materialization max 31.93 ms < 60,000 ms.  | PASS                      |
-|  14 | Performance/resource coverage exercises the approved large-history and multi-instance limits.                                                             | Existing limits remain unchanged, including 2,000 drawing/change and 400,000 dependency-point safeguards.                                                                                                                | Full `test:performance`, 100,000-bar/update gates, provider/renderer MTF, four-chart/four-worker and flagship stress.      | VERIFYING                 |
+|  14 | Performance/resource coverage exercises the approved large-history and multi-instance limits.                                                             | Existing limits remain unchanged, including 2,000 drawing/change and 400,000 dependency-point safeguards.                                                                                                                | Fresh full `test:performance` under Node 26.8.1 plus the 10,000-bar flagship stress; all configured budgets passed.        | PASS                      |
 |  15 | Maintained examples and current public docs teach only corrected SDK v2.                                                                                  | `atr-bands.ts`, `atr-rope-utbot.ts`, `INDICATOR-AUTHORING.md` and README use/describe the corrected top-level model.                                                                                                     | Fresh production plugin build, full SDK-v2 doc re-read, and maintained-source forbidden-surface scan.                      | PASS                      |
 |  16 | Current-state documentation preserves chronology while reflecting all review corrections.                                                                 | ECDD-241 remains historical; current-state chronology now includes ECDD-242..ECDD-262 and this ECDD-263 refresh.                                                                                                         | Current documentation diff plus prior exact-tree format/lint and fresh `git diff --check`.                                 | PASS                      |
-|  17 | Repository-wide exact-tree correctness, format, lint, type, build, integration, maintained-indicator, performance, Electron, version and diff gates pass. | No implementation exception is allowed for documentation refresh.                                                                                                                                                        | Fresh ECDD-263 local gates and pinned exact-head Delivery CI.                                                              | VERIFYING                 |
+|  17 | Repository-wide exact-tree correctness, format, lint, type, build, integration, maintained-indicator, performance, Electron, version and diff gates pass. | No implementation exception is allowed for documentation refresh.                                                                                                                                                        | Fresh Node 26.8.1/npm 12.0.2 local gates plus exact-head Delivery, Semgrep and required CodeRabbit status.                 | PASS                      |
 |  18 | Task-to-epic and epic-to-main governance is satisfied without stale review evidence.                                                                      | Task merge uses current-head required statuses/conversation resolution; epic promotion additionally requires comprehensive CodeRabbit and the configured manual review sequence.                                         | GitHub/Jira exact-head evidence. A tracked commit cannot prove its own future merges, so final merge evidence is external. | EXTERNAL DELIVERY PENDING |
 
 ## Fresh ECDD-263 verification
@@ -69,7 +69,8 @@ this task. Fresh/current-tree evidence collected before the task PR includes:
 - `npm run test:legacy-indicators`: 9/9 PASS, including the 10,000-bar POC
   migration stress and paginated-history drawing-update case;
 - `npm run build:plugins`: PASS; built Binomo, ATR Rope + UT Bot and ATR Bands;
-- `npm run smoke:indicator-worker`: PASS;
+- Electron development, workspace-restart, multi-instance and indicator-worker
+  smokes: PASS under Node `26.8.1` / npm `12.0.2`;
 - `npm run version:check`: PASS (`Workspace boundaries: valid`);
 - `git diff --check`: PASS;
 - maintained-source audit: no `readInputs`, `priceSources`, `priceValue`, public
@@ -77,23 +78,24 @@ this task. Fresh/current-tree evidence collected before the task PR includes:
   `plot.remove`, `ctx`, or `runtimeIdentity` use under
   `packages/indicator-examples/src`; the SDK public root exports `history` but
   does not export `series`, `priceSources`, or `priceValue`;
-- measured performance components PASS on this tree: authoring transform
-  overhead 34.37 ms < 100 ms and package build 637.45 ms < 5,000 ms; 100,000-bar
-  persistent history 773.89 ms; 100,000-bar runtime identity 32,571.85 ms <
-  60,000 ms with maximum building update 1.16 ms < 100 ms; worker snapshot
-  materialization maximum 31.93 ms < 60,000 ms; 400,000 dependency points
-  1,114.19 ms < 5,000 ms; 100,000 bars with 4,096 retained persistent items
-  5,714.91 ms; all required 100,000-update TA kernels below 9 ms < 1,000 ms;
-  100,000 bars with 2,000 stable drawings 25,143.01 ms < 60,000 ms; and 250
-  bars x 2,000 real drawing updates 287.80 ms < 5,000 ms.
-
-The workstation is running Node `v25.9.0`, while the repository pins Node
-`26.8.1` / npm `12.0.2`. Direct local invocation of the aggregate
-`test:performance`, tick/MTF/renderer-MTF/multi-chart components, `audit:ci`,
-and the general Electron smoke was rejected by the Codex command transport
-before execution, so those are not represented as local PASS results. Rows 14
-and 17 remain `VERIFYING` until the pinned exact-head Delivery workflow supplies
-the complete authoritative suite.
+- full `npm run test:performance`: PASS under Node `26.8.1`. Representative
+  exact-tree measurements were authoring transform overhead 39.38 ms < 100 ms;
+  package build 658.79 ms < 5,000 ms; 100,000-bar persistent history 699.83 ms;
+  100,000-bar runtime identity 40,706.86 ms < 60,000 ms with maximum building
+  update 1.46 ms < 100 ms; worker snapshot materialization maximum 45.72 ms <
+  60,000 ms; 400,000 dependency points 1,025.08 ms < 5,000 ms; 100,000 bars
+  with 4,096 retained persistent items 7,158.14 ms; all required 100,000-update
+  TA kernels below 9 ms < 1,000 ms; 100,000 bars with 2,000 stable drawings
+  25,306.57 ms < 60,000 ms; 250 bars x 2,000 real drawing updates 298.29 ms <
+  5,000 ms; 100,000-bar ATR Rope history 18,950.14 ms; provider MTF alignment
+  657.23 ms < 60,000 ms; renderer MTF alignment 11.46 ms < 1,000 ms; and the
+  four-chart/four-worker 100,000-bar workload 25,365.20 ms < 60,000 ms with a
+  maximum building update of 1.37 ms < 100 ms;
+- `audit:ci`: PASS under Node `26.8.1` / npm `12.0.2` with 0 vulnerabilities;
+- exact-head GitHub Delivery run `35446405658`: PASS for Governance and aggregate
+  Delivery. The Windows application job was correctly skipped because ECDD-263
+  changes documentation only. Exact-head Semgrep and the required CodeRabbit
+  status are PASS.
 
 ## Anti-drift review
 
