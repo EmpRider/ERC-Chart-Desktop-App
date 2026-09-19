@@ -530,6 +530,32 @@ function expressionDependsOnSeries(
   functionEnvironments = new Map(),
 ) {
   if (ts.isIdentifier(node)) return active.has(node.text);
+  const seriesReceiver = ts.isElementAccessExpression(node)
+    ? node.expression
+    : ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "at"
+      ? node.expression.expression
+      : undefined;
+  if (
+    seriesReceiver !== undefined &&
+    !isArrayValuedExpression(
+      seriesReceiver,
+      arrayBindings,
+      resolvingHelpers,
+      functionEnvironments,
+    )
+  )
+    return expressionDependsOnSeries(
+      seriesReceiver,
+      active,
+      arrayBindings,
+      historyHelpers,
+      inputHelpers,
+      taHelpers,
+      resolvingHelpers,
+      functionEnvironments,
+    );
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||

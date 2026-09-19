@@ -50,6 +50,27 @@ defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
   assert.match(transformed.code, /const ordinary = values\[1\];/u);
 });
 
+test("keeps values derived from history access series-capable", () => {
+  const source = `
+import { defineIndicator } from "@erc-chart/indicator-sdk";
+defineIndicator({ id: "fixture", name: "Fixture" }, ({ close }) => {
+  const bracketPrior = close[1];
+  const bracketOlder = bracketPrior[1];
+  const methodPrior = close.at(1);
+  const methodOlder = methodPrior.at(1);
+  return bracketOlder + methodOlder;
+});
+`;
+  const transformed = transformIndicatorHistory(
+    source,
+    "derived-history-series.ts",
+  );
+
+  assert.equal(transformed.changed, true);
+  assert.match(transformed.code, /__ercHistory\(bracketPrior, 1\)/u);
+  assert.match(transformed.code, /__ercHistory\(methodPrior, 1\)/u);
+});
+
 test("keeps scalar conditionals series-capable when their condition depends on series", () => {
   const source = `
 import { defineIndicator } from "@erc-chart/indicator-sdk";
