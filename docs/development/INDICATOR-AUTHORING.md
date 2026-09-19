@@ -296,20 +296,26 @@ export default defineIndicator({
 });
 
 var zone: BoxHandle | undefined = undefined;
+var zoneEndTime = 0;
 const geometry = {
   left: bar.time,
-  right: bar.time + 60_000,
+  right: zone === undefined ? bar.time + 5 * 60_000 : zoneEndTime,
   top: high,
   bottom: low,
   color: "rgba(41, 98, 255, 0.15)",
 };
 
-if (zone === undefined) zone = plot.box(geometry);
-else zone.set(geometry);
-
-if (expired) {
+const expired = bar.time >= zoneEndTime;
+if (zone !== undefined && expired) {
   zone.delete();
   zone = undefined;
+}
+
+if (zone === undefined) {
+  zoneEndTime = bar.time + 5 * 60_000;
+  zone = plot.box({ ...geometry, right: zoneEndTime });
+} else {
+  zone.set(geometry);
 }
 ```
 

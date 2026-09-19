@@ -358,6 +358,56 @@ test("building drawing mutations roll back to the committed handle state", () =>
   instance.dispose();
 });
 
+test("building drawing creation reuses the finalized callsite sequence after rollback", () => {
+  const plugin = defineIndicator(
+    {
+      id: "erc.indicator.handle-building-sequence.main",
+      name: "Building sequence rollback",
+    },
+    (bar) => {
+      if (bar.index > 1) return;
+      plot.box(
+        {
+          left: bar.openTimeMs,
+          right: bar.openTimeMs + 60_000,
+          top: bar.close,
+          bottom: bar.close - 1,
+          color: "#008800",
+        },
+        rollbackBoxCallsite,
+      );
+    },
+  );
+
+  const instance = plugin.createInstance({}, context);
+  instance.onFinalizedBar(candle(0, 20));
+  const committedId = instance.snapshot().overlays[0]?.id;
+  assert.equal(typeof committedId, "string");
+
+  instance.onBuildingBar(candle(1, 21));
+  const firstBuildingId = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.startTimeMs === 60_000)?.id;
+  assert.equal(typeof firstBuildingId, "string");
+  assert.notEqual(firstBuildingId, committedId);
+
+  instance.onBuildingBar(candle(1, 22));
+  assert.equal(
+    instance
+      .snapshot()
+      .overlays.find((overlay) => overlay.startTimeMs === 60_000)?.id,
+    firstBuildingId,
+  );
+
+  instance.onFinalizedBar(candle(1, 23));
+  const finalized = instance
+    .snapshot()
+    .overlays.find((overlay) => overlay.startTimeMs === 60_000);
+  assert.equal(finalized?.id, firstBuildingId);
+  assert.equal(finalized?.top, 23);
+  instance.dispose();
+});
+
 test("drawing handles cannot mutate another indicator instance", () => {
   let ownerHandle;
   const plugin = defineIndicator(

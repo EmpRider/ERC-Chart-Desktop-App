@@ -768,6 +768,57 @@ plot.line(state.values.length, { title: "Count" });
   }
 });
 
+test("persistent var object state is isolated between indicator instances", async () => {
+  const { default: plugin } = await packagedPlugin(`
+import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
+
+export default defineIndicator({
+  id: "erc.indicator.top-level-authoring.instance-state",
+  name: "Persistent instance state",
+});
+
+var state = { values: [] as number[], total: 0 };
+state.values.push(close);
+state.total += close;
+plot.line(state.total, { title: "Total" });
+plot.line(state.values.length, { title: "Count" });
+`);
+
+  const totalKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Total",
+  )?.outputKey;
+  const countKey = plugin.definition.plots.find(
+    (candidate) => candidate.label === "Count",
+  )?.outputKey;
+  assert.ok(totalKey);
+  assert.ok(countKey);
+
+  const first = plugin.createInstance({}, context);
+  const second = plugin.createInstance({}, context);
+  try {
+    const initialHistory = [candle(0, 10), candle(1, 11)];
+    first.onHistory(initialHistory);
+    second.onHistory(initialHistory);
+    const secondBefore = structuredClone(second.snapshot());
+
+    first.onBuildingBar(candle(1, 30));
+    first.onFinalizedBar(candle(1, 30));
+    first.onBuildingBar(candle(2, 5));
+    assert.equal(first.snapshot().points.at(-1).values[totalKey], 45);
+    assert.equal(first.snapshot().points.at(-1).values[countKey], 3);
+    assert.deepEqual(second.snapshot(), secondBefore);
+
+    second.onBuildingBar(candle(1, 7));
+    assert.equal(second.snapshot().points.at(-1).values[totalKey], 17);
+    assert.equal(second.snapshot().points.at(-1).values[countKey], 2);
+    assert.equal(first.snapshot().points.at(-1).values[totalKey], 45);
+    assert.equal(first.snapshot().points.at(-1).values[countKey], 3);
+  } finally {
+    first.dispose();
+    second.dispose();
+  }
+});
+
 test("persistent var initializers run once per indicator state lifetime", async () => {
   const { default: plugin } = await packagedPlugin(`
 import { defineIndicator, plot } from "@erc-chart/indicator-sdk";

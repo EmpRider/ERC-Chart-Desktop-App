@@ -57,6 +57,10 @@ const drawingCreationCounters = new WeakMap<
   KernelSlot[],
   Map<string, number>
 >();
+const buildingDrawingCounterSnapshots = new WeakMap<
+  AuthoringFrame,
+  Map<string, number>
+>();
 
 function invalidDevDrawingUsage(): Error {
   return new Error(devDrawingUsageError);
@@ -102,6 +106,18 @@ function validateDevDrawingUsage(
 }
 
 function rollbackBuildingDrawingEntries(frame: AuthoringFrame): void {
+  const counterSnapshots = buildingDrawingCounterSnapshots.get(frame);
+  if (counterSnapshots !== undefined) {
+    const counters = drawingCreationCounters.get(frame.kernels);
+    if (counters !== undefined) {
+      for (const [callsiteId, sequence] of counterSnapshots) {
+        if (sequence === 0) counters.delete(callsiteId);
+        else counters.set(callsiteId, sequence);
+      }
+    }
+    buildingDrawingCounterSnapshots.delete(frame);
+  }
+
   const entries = buildingDrawingEntries.get(frame);
   if (entries === undefined) return;
   const registry = drawingRegistries.get(frame.kernels);
@@ -198,6 +214,14 @@ function nextDrawingId(
     drawingCreationCounters.set(frame.kernels, counters);
   }
   const sequence = counters.get(callsite.id) ?? 0;
+  if (frame.phase === "building" && !frame.discovery) {
+    let snapshots = buildingDrawingCounterSnapshots.get(frame);
+    if (snapshots === undefined) {
+      snapshots = new Map();
+      buildingDrawingCounterSnapshots.set(frame, snapshots);
+    }
+    if (!snapshots.has(callsite.id)) snapshots.set(callsite.id, sequence);
+  }
   counters.set(callsite.id, sequence + 1);
   return `${callsite.id}:${sequence}`;
 }
