@@ -56,6 +56,43 @@ plot.line(implicit + second + (titled ? 1 : 0), { title: "Result" });
     assert.match(definition.key, /^erc-v2-input-[0-9a-f]{24}$/u);
 });
 
+test("package build rejects input declarations from repeated callbacks", async () => {
+  const sourceDirectory = await mkdtemp(
+    path.join(import.meta.dirname, ".repeated-input-callback-source-"),
+  );
+  const outputDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "erc-repeated-input-callback-package-"),
+  );
+  try {
+    const source = path.join(sourceDirectory, "indicator.ts");
+    await writeFile(
+      source,
+      `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+[9, 14].forEach(() => {
+  input.int(14, "Length");
+});
+plot.line(close, { title: "Close" });
+`,
+      "utf8",
+    );
+
+    await assert.rejects(
+      () =>
+        buildIndicatorPackage({
+          source,
+          outputRoot: path.join(outputDirectory, "package"),
+          id: "erc.indicator.repeated-input-callback",
+          version: "0.1.0",
+        }),
+      /indicator\.ts:3:17 input declarations cannot execute inside repeated callbacks/u,
+    );
+  } finally {
+    await rm(sourceDirectory, { recursive: true, force: true });
+    await rm(outputDirectory, { recursive: true, force: true });
+  }
+});
+
 test("implicit input labels remain stable when compiler callsites reorder", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
