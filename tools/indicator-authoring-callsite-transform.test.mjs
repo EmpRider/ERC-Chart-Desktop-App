@@ -195,6 +195,78 @@ for (const length of [9, 14]) {
   );
 });
 
+test("rejects input declarations inside repeated callbacks", async () => {
+  const fixtures = [
+    `[9, 14].forEach(() => { input.int(14, "Length"); });`,
+    `[9, 14].map(() => input.int(14, "Length"));`,
+    `[9, 14].filter(() => input.bool(true, "Enabled"));`,
+    `[9, 14].reduce((total) => total + input.int(14, "Length"), 0);`,
+    `[9, 14].sort(() => input.int(14, "Length"));`,
+    `[9, 14].toSorted(() => input.int(14, "Length"));`,
+  ];
+  for (const [index, statement] of fixtures.entries()) {
+    await assert.rejects(
+      () =>
+        transform(
+          `import { input } from "@erc-chart/indicator-sdk";\n${statement}\n`,
+          `src/repeated-callback-input-${index}.ts`,
+        ),
+      /input declarations cannot execute inside repeated callbacks/u,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+[9, 14].forEach(() => {
+  input.int(14, "Length");
+});
+`,
+        "src/repeated-callback-input.ts",
+      ),
+    /src\/repeated-callback-input\.ts:2:17 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects input helpers invoked by repeated callbacks", async () => {
+  const helperSource = `
+import { input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+`;
+
+  await assert.rejects(
+    () =>
+      transform(`${helperSource}
+[9, 14].forEach(() => readLength());
+`),
+    /input declarations cannot execute inside repeated callbacks/u,
+  );
+
+  await assert.rejects(
+    () =>
+      transform(`${helperSource}
+[9, 14].forEach(readLength);
+`),
+    /input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("allows a single-execution IIFE to declare an input", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const length = (() => input.int(14, "Length"))();
+void length;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
 test("allows a statically single-execution helper to declare an input", async () => {
   const result = await transform(`
 import { input } from "@erc-chart/indicator-sdk";
