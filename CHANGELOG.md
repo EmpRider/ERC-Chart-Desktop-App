@@ -2,6 +2,13 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [1.1.1] - 2026-09-20
+
+### SDK v2 corrected release identity
+
+- Publishes the corrected Indicator SDK v2 delivery under the new immutable `v1.1.1` release identity after `v1.1.0` was already published from the earlier accepted main.
+- Keeps the SDK/compiler/runtime behavior unchanged; this release advances package, installer, and release metadata only.
+
 ## [1.1.0] - 2026-09-14
 
 ### Indicator SDK v2
