@@ -4,7 +4,7 @@
 
 **Pine-semantics correction implementation:** ECDD-236 through ECDD-241 under ECDD-135
 
-**Comprehensive-review corrections:** ECDD-242 through ECDD-262 under ECDD-135
+**Comprehensive-review corrections:** ECDD-242 through ECDD-264 under ECDD-135
 
 **Final compliance refresh:** ECDD-263 under ECDD-135
 
@@ -64,11 +64,15 @@ that historical evidence visible while superseding its author-experience claims.
 - **ECDD-263** refreshes final current-state and design-to-code evidence after
   the complete ECDD-242..ECDD-262 correction sequence. It does not introduce an
   API/runtime redesign unless the fresh audit proves a real implementation gap.
+- **ECDD-264** closes the post-refresh compiler gap found during epic review by
+  rejecting input declarations that can execute through compiler-provable
+  repeated callbacks, while preserving shadowed/custom single-execution helpers
+  and leaving runtime input identity unchanged.
 
 No correction task rewrites the historical design documents to hide the
 chronology. This file describes the current implementation instead.
 
-### Current correction acceptance evidence — refreshed through ECDD-263
+### Current correction acceptance evidence — refreshed through ECDD-264
 
 The final audit re-read both approved SDK-v2 designs before assigning compliance
 status. The implementation audit found no remaining maintained-source dependency
@@ -79,6 +83,11 @@ Fresh ECDD-263 exact-tree verification is recorded in
 `INDICATOR-SDK-V2-FINAL-COMPLIANCE-2026-09-19-POST-REVIEW.md`. That matrix is the
 current compliance artifact and rechecks the complete code/test/performance
 surface after ECDD-262 rather than inheriting ECDD-260 counts.
+
+ECDD-264 is a post-refresh compiler correction discovered during the epic
+review. Its exact-head task evidence is recorded in GitHub/Jira. The ECDD-263
+compliance artifact remains unchanged as historical verification and does not
+claim ECDD-264 test evidence retroactively.
 
 The pinned-toolchain Delivery workflow, Semgrep, CodeRabbit status, exact-head
 maintainer review, and applicable manual-review evidence remain delivery gates
