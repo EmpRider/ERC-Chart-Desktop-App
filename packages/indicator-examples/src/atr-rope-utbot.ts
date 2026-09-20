@@ -5,19 +5,32 @@ import {
   location,
   movingAverageTypes,
   plot,
-  priceSources,
-  priceValue,
-  series,
   shape,
   signal,
   ta,
   textSize,
+  type BoxHandle,
   type DmiPoint,
-  type IndicatorBar,
-  type IndicatorModule,
+  type SegmentHandle,
 } from "@erc-chart/indicator-sdk";
 
-const ropeModes = [
+type RopeMode =
+  | "original"
+  | "partial"
+  | "reduced"
+  | "momentum"
+  | "ema"
+  | "adaptive"
+  | "zerolag";
+type UtMode = "original" | "0lag";
+type SignalMode =
+  "original" | "MG Follow" | "Win Follow" | "Win Follow + MG Follow";
+type SuppressionMode =
+  "off" | "Any" | "ATR Rope" | "UT Bot" | "ATR Rope + UT Bot";
+type DrawMode = "Line + Band" | "Line" | "Band";
+type BandMergeMode = "Inside Band" | "Band Overlap";
+
+const ropeModes: readonly RopeMode[] = [
   "original",
   "partial",
   "reduced",
@@ -25,25 +38,26 @@ const ropeModes = [
   "ema",
   "adaptive",
   "zerolag",
-] as const;
-const utModes = ["original", "0lag"] as const;
-const signalModes = [
+];
+const utModes: readonly UtMode[] = ["original", "0lag"];
+const signalModes: readonly SignalMode[] = [
   "original",
   "MG Follow",
   "Win Follow",
   "Win Follow + MG Follow",
-] as const;
-const suppressionModes = [
+];
+const suppressionModes: readonly SuppressionMode[] = [
   "off",
   "Any",
   "ATR Rope",
   "UT Bot",
   "ATR Rope + UT Bot",
-] as const;
-const drawModes = ["Line + Band", "Line", "Band"] as const;
-const bandMergeModes = ["Inside Band", "Band Overlap"] as const;
-
-type BandMergeMode = (typeof bandMergeModes)[number];
+];
+const drawModes: readonly DrawMode[] = ["Line + Band", "Line", "Band"];
+const bandMergeModes: readonly BandMergeMode[] = [
+  "Inside Band",
+  "Band Overlap",
+];
 type Direction = -1 | 0 | 1;
 type SignalSide = "buy" | "sell";
 
@@ -106,6 +120,8 @@ interface PocSegment {
   center: number;
   bandLow: number;
   bandHigh: number;
+  box?: BoxHandle;
+  line?: SegmentHandle;
 }
 
 interface PocZone {
@@ -157,335 +173,54 @@ interface SignalState {
   sell: boolean;
 }
 
-const emptyRopeState: RopeState = {
-  previousRope: Number.NaN,
-  rope: Number.NaN,
-  directionInput: Number.NaN,
-};
-const emptyRopeDirectionState: RopeDirectionState = {
-  bandAtr: Number.NaN,
-  upper: Number.NaN,
-  lower: Number.NaN,
-  direction: 0,
-};
-const emptyUtState: UtState = {
-  previousStop: Number.NaN,
-  previousClose: Number.NaN,
-  stop: Number.NaN,
-  position: 0,
-};
-const emptyPocState: PocState = {
-  bars: [],
-  zones: [],
-  previousScores: [],
-};
-const emptySignalState: SignalState = {
-  previousUnified: 0,
-  previousBlocked: false,
-  followDirection: undefined,
-  lastSignalIndex: undefined,
-  mgDirection: undefined,
-  mgStep: 0,
-  mgSignalIndex: undefined,
-  outcomes: [],
-  buy: false,
-  sell: false,
-};
-
-function readInputs() {
-  return {
-    ropePeriod: input.int(14, {
-      title: "ATR period",
-      group: "ATR Rope",
-      min: 1,
-      max: 500,
-    }),
-    ropeMultiplier: input.float(1.5, {
-      title: "Sensitivity multiplier",
-      group: "ATR Rope",
-      min: 0.1,
-      max: 10,
-      step: 0.1,
-    }),
-    ropeSource: input.string("close", {
-      title: "Price source",
-      group: "ATR Rope",
-      options: priceSources,
-    }),
-    ropeSensitivityMode: input.string("original", {
-      title: "Sensitivity mode",
-      group: "ATR Rope",
-      options: ropeModes,
-    }),
-    ropeDirectionMaType: input.string("sma", {
-      title: "Direction MA",
-      group: "ATR Rope Direction",
-      options: movingAverageTypes,
-    }),
-    ropeDirectionLookback: input.int(2, {
-      title: "Direction lookback",
-      group: "ATR Rope Direction",
-      min: 1,
-      max: 20,
-    }),
-    ropeDirectionThreshold: input.float(0.05, {
-      title: "Direction threshold",
-      group: "ATR Rope Direction",
-      min: 0,
-      max: 500,
-      step: 0.01,
-    }),
-    utbotKeyValue: input.float(1, {
-      title: "ATR multiplier",
-      group: "UT Bot",
-      min: 0.1,
-      max: 10,
-      step: 0.1,
-    }),
-    utbotAtrPeriod: input.int(10, {
-      title: "ATR period",
-      group: "UT Bot",
-      min: 1,
-      max: 500,
-    }),
-    utbotSource: input.string("close", {
-      title: "Price source",
-      group: "UT Bot",
-      options: priceSources,
-    }),
-    utbotMode: input.string("original", {
-      title: "Mode",
-      group: "UT Bot",
-      options: utModes,
-    }),
-    signalIssueMode: input.string("original", {
-      title: "Signal mode",
-      group: "Signals",
-      options: signalModes,
-    }),
-    mgStepCount: input.int(0, {
-      title: "MG follow steps",
-      group: "Signals",
-      min: 0,
-      max: 20,
-    }),
-    buySignalColor: input.color("#089981", {
-      title: "Buy color",
-      group: "Signals",
-      effect: "presentation",
-    }),
-    sellSignalColor: input.color("#F23645", {
-      title: "Sell color",
-      group: "Signals",
-      effect: "presentation",
-    }),
-    adxPocSource: input.string("close", {
-      title: "Price source",
-      group: "ADX POC",
-      options: priceSources,
-    }),
-    profilePeriod: input.int(30, {
-      title: "Profile period",
-      group: "ADX POC",
-      min: 5,
-      max: 500,
-    }),
-    fastPocPeriod: input.int(10, {
-      title: "Fast POC period",
-      group: "ADX POC",
-      min: 3,
-      max: 100,
-    }),
-    rowCount: input.int(24, {
-      title: "Price rows",
-      group: "ADX POC",
-      min: 10,
-      max: 100,
-    }),
-    dmiLength: input.int(14, {
-      title: "ADX / DI length",
-      group: "ADX POC",
-      min: 1,
-      max: 500,
-    }),
-    minEarlyBars: input.int(5, {
-      title: "Minimum early bars",
-      group: "ADX POC",
-      min: 2,
-      max: 100,
-    }),
-    projectionBars: input.int(5, {
-      title: "Projection bars",
-      group: "ADX POC Migration",
-      min: 1,
-      max: 50,
-    }),
-    bodyWeight: input.float(0.7, {
-      title: "Body weight",
-      group: "ADX POC",
-      min: 0,
-      max: 1,
-      step: 0.05,
-    }),
-    migrationStrength: input.float(1.1, {
-      title: "Migration strength",
-      group: "ADX POC Migration",
-      min: 1,
-      max: 3,
-      step: 0.05,
-    }),
-    migrationConfirmBars: input.int(1, {
-      title: "Migration confirmations",
-      group: "ADX POC Migration",
-      min: 1,
-      max: 5,
-    }),
-    migrationCenterSmoothing: input.float(0.1, {
-      title: "Center smoothing",
-      group: "ADX POC Migration",
-      min: 0,
-      max: 0.95,
-      step: 0.05,
-    }),
-    activeHistoricalPocCount: input.int(1, {
-      title: "Active historical POCs",
-      group: "ADX POC Zones",
-      min: 0,
-      max: 20,
-    }),
-    minZoneBarsToRender: input.int(3, {
-      title: "Minimum zone bars",
-      group: "ADX POC Zones",
-      min: 1,
-      max: 20,
-    }),
-    minZoneHitsToRender: input.int(2, {
-      title: "Minimum zone hits",
-      group: "ADX POC Zones",
-      min: 1,
-      max: 20,
-    }),
-    maxStoredZones: input.int(300, {
-      title: "Maximum stored zones",
-      group: "ADX POC Zones",
-      min: 20,
-      max: 1000,
-      step: 10,
-    }),
-    pocBandHalfRows: input.float(1.5, {
-      title: "Band half rows",
-      group: "ADX POC Band",
-      min: 0.1,
-      max: 20,
-      step: 0.1,
-    }),
-    bandMergeMode: input.string("Inside Band", {
-      title: "Band merge mode",
-      group: "ADX POC Band",
-      options: bandMergeModes,
-    }),
-    maxBandExpansionRows: input.float(2, {
-      title: "Maximum band expansion",
-      group: "ADX POC Band",
-      min: 0.5,
-      max: 20,
-      step: 0.25,
-    }),
-    pocBandSignalSuppressLine: input.string("off", {
-      title: "Signal suppression",
-      group: "ADX POC Suppression",
-      options: suppressionModes,
-    }),
-    drawMode: input.string("Line + Band", {
-      title: "POC draw mode",
-      group: "ADX POC Style",
-      options: drawModes,
-      effect: "presentation",
-    }),
-    currentColor: input.color("rgba(255, 255, 0, 1)", {
-      title: "Current POC",
-      group: "ADX POC Style",
-      effect: "presentation",
-    }),
-    historicalColor: input.color("rgba(255, 213, 79, 0.75)", {
-      title: "Historical POC",
-      group: "ADX POC Style",
-      effect: "presentation",
-    }),
-    frozenColor: input.color("rgba(255, 255, 0, 0.35)", {
-      title: "Frozen POC",
-      group: "ADX POC Style",
-      effect: "presentation",
-    }),
-    bandOpacity: input.float(0.18, {
-      title: "Band opacity",
-      group: "ADX POC Style",
-      min: 0,
-      max: 1,
-      step: 0.05,
-      effect: "presentation",
-    }),
-    lineOpacity: input.float(0.95, {
-      title: "Line opacity",
-      group: "ADX POC Style",
-      min: 0,
-      max: 1,
-      step: 0.05,
-      effect: "presentation",
-    }),
-    lineWidth: input.int(2, {
-      title: "Line width",
-      group: "ADX POC Style",
-      min: 1,
-      max: 5,
-      effect: "presentation",
-    }),
-    ropeUpColor: input.color("#3daa45", {
-      title: "Rope up color",
-      group: "Display",
-      effect: "presentation",
-    }),
-    ropeDownColor: input.color("#ff033e", {
-      title: "Rope down color",
-      group: "Display",
-      effect: "presentation",
-    }),
-    ropeFlatColor: input.color("#004d92", {
-      title: "Rope flat color",
-      group: "Display",
-      effect: "presentation",
-    }),
-    ropeWidth: input.int(3, {
-      title: "Rope width",
-      group: "Display",
-      min: 1,
-      max: 10,
-      effect: "presentation",
-    }),
-    showTrailingStop: input.bool(true, {
-      title: "Show trailing stop",
-      group: "Display",
-      effect: "presentation",
-    }),
-    utbotTrailingStopColor: input.color("#787B86", {
-      title: "UT neutral color",
-      group: "Display",
-      effect: "presentation",
-    }),
-    utbotUpTrendColor: input.color("#089981", {
-      title: "UT up color",
-      group: "Display",
-      effect: "presentation",
-    }),
-    utbotDownTrendColor: input.color("#F23645", {
-      title: "UT down color",
-      group: "Display",
-      effect: "presentation",
-    }),
-  };
+interface Params {
+  readonly ropePeriod: number;
+  readonly ropeMultiplier: number;
+  readonly ropeSensitivityMode: RopeMode;
+  readonly ropeDirectionMaType: (typeof movingAverageTypes)[number];
+  readonly ropeDirectionLookback: number;
+  readonly ropeDirectionThreshold: number;
+  readonly utbotKeyValue: number;
+  readonly utbotAtrPeriod: number;
+  readonly utbotMode: UtMode;
+  readonly signalIssueMode: SignalMode;
+  readonly mgStepCount: number;
+  readonly buySignalColor: string;
+  readonly sellSignalColor: string;
+  readonly profilePeriod: number;
+  readonly fastPocPeriod: number;
+  readonly rowCount: number;
+  readonly dmiLength: number;
+  readonly minEarlyBars: number;
+  readonly projectionBars: number;
+  readonly bodyWeight: number;
+  readonly migrationStrength: number;
+  readonly migrationConfirmBars: number;
+  readonly migrationCenterSmoothing: number;
+  readonly activeHistoricalPocCount: number;
+  readonly minZoneBarsToRender: number;
+  readonly minZoneHitsToRender: number;
+  readonly maxStoredZones: number;
+  readonly pocBandHalfRows: number;
+  readonly bandMergeMode: BandMergeMode;
+  readonly maxBandExpansionRows: number;
+  readonly pocBandSignalSuppressLine: SuppressionMode;
+  readonly drawMode: DrawMode;
+  readonly currentColor: string;
+  readonly historicalColor: string;
+  readonly frozenColor: string;
+  readonly bandOpacity: number;
+  readonly lineOpacity: number;
+  readonly lineWidth: number;
+  readonly ropeUpColor: string;
+  readonly ropeDownColor: string;
+  readonly ropeFlatColor: string;
+  readonly ropeWidth: number;
+  readonly showTrailingStop: boolean;
+  readonly utbotTrailingStopColor: string;
+  readonly utbotUpTrendColor: string;
+  readonly utbotDownTrendColor: string;
 }
-
-type Params = ReturnType<typeof readInputs>;
 
 function stepRope(
   previous: Readonly<RopeState>,
@@ -884,6 +619,13 @@ function updateZone(
   segment.center = center;
   segment.bandLow = zone.bandLow;
   segment.bandHigh = zone.bandHigh;
+  renderZoneSegment(
+    zone,
+    segment,
+    params,
+    candidate.barIndex,
+    candidate.openTimeMs,
+  );
 }
 
 function nearestProjectedScore(candidate: PocCandidate, value: number): number {
@@ -903,7 +645,8 @@ function rankZones(
   zones: readonly PocZone[],
   current: PocZone,
   barIndex: number,
-  historicalCount: number,
+  openTimeMs: number,
+  params: Params,
 ): void {
   const maxOrder = zones.reduce(
     (max, zone) => Math.max(max, zone.lastActiveOrder),
@@ -914,8 +657,11 @@ function rankZones(
     (left, right) => right.lastActiveOrder - left.lastActiveOrder,
   );
   ranked.forEach((zone, index) => {
+    const previousRank = zone.activeRank;
+    const previousFrozen = zone.frozen;
+    const previousEndIndex = zone.segments.at(-1)?.endIndex;
     zone.activeRank = index;
-    if (index > historicalCount) {
+    if (index > params.activeHistoricalPocCount) {
       zone.frozen = true;
       const priorSegment = zone.segments.at(-1);
       if (priorSegment !== undefined) {
@@ -924,6 +670,11 @@ function rankZones(
         segment.endIndex = Math.min(segment.endIndex, barIndex);
       }
     } else if (zone === current || index > 0) zone.frozen = false;
+    const changed =
+      previousRank !== zone.activeRank ||
+      previousFrozen !== zone.frozen ||
+      previousEndIndex !== zone.segments.at(-1)?.endIndex;
+    if (changed) renderZone(zone, params, barIndex, openTimeMs);
   });
 }
 
@@ -932,13 +683,14 @@ function extendZones(
   current: PocZone,
   barIndex: number,
   openTimeMs: number,
-  historicalCount: number,
+  params: Params,
 ): void {
   for (const zone of zones) {
     if (
       zone.frozen ||
       (zone !== current &&
-        (zone.activeRank <= 0 || zone.activeRank > historicalCount))
+        (zone.activeRank <= 0 ||
+          zone.activeRank > params.activeHistoricalPocCount))
     )
       continue;
     let segment = zone.segments.at(-1);
@@ -962,18 +714,22 @@ function extendZones(
     segment.center = zone.center;
     segment.bandLow = zone.bandLow;
     segment.bandHigh = zone.bandHigh;
+    renderZoneSegment(zone, segment, params, barIndex, openTimeMs);
   }
 }
 
 function advanceSegmentEnds(
   zones: readonly PocZone[],
-  bar: IndicatorBar,
+  currentIndex: number,
+  currentTimeMs: number,
+  params: Params,
 ): void {
   for (const zone of zones) {
     const priorSegment = zone.segments.at(-1);
-    if (priorSegment?.endIndex !== bar.index - 1) continue;
-    const segment = { ...priorSegment, endTimeMs: bar.openTimeMs };
+    if (priorSegment?.endIndex !== currentIndex - 1) continue;
+    const segment = { ...priorSegment, endTimeMs: currentTimeMs };
     zone.segments[zone.segments.length - 1] = segment;
+    renderZoneSegment(zone, segment, params, currentIndex, currentTimeMs);
   }
 }
 
@@ -989,93 +745,79 @@ function zoneIsRenderable(
   );
 }
 
-interface ZoneBoxDrawing {
-  readonly left: number;
-  readonly right: number;
-  readonly top: number;
-  readonly bottom: number;
-  readonly color: string;
-}
-
-interface ZoneSegmentDrawing {
-  readonly left: number;
-  readonly right: number;
-  readonly startValue: number;
-  readonly endValue: number;
-  readonly color: string;
-  readonly width: number;
-  readonly style: "solid" | "dashed" | "dotted";
-}
-
-interface ZoneDrawings {
-  readonly boxes: readonly ZoneBoxDrawing[];
-  readonly segments: readonly ZoneSegmentDrawing[];
-}
-
-function collectZoneDrawings(
-  zones: readonly PocZone[],
-  params: Params,
-  bar: IndicatorBar,
-): ZoneDrawings {
-  const boxes: ZoneBoxDrawing[] = [];
-  const segments: ZoneSegmentDrawing[] = [];
+function deleteZoneDrawings(zones: readonly PocZone[]): void {
   for (const zone of zones) {
     for (const segment of zone.segments) {
-      if (!zoneIsRenderable(zone, segment, params)) continue;
-      const endTimeMs =
-        segment.endIndex + 1 === bar.index ? bar.openTimeMs : segment.endTimeMs;
-      const color = zoneColor(zone, params);
-      if (params.drawMode === "Band" || params.drawMode === "Line + Band") {
-        boxes.push({
-          left: segment.startTimeMs,
-          right: endTimeMs,
-          top: segment.bandHigh,
-          bottom: segment.bandLow,
-          color: rgbaWithAlpha(color, params.bandOpacity),
-        });
-      }
-      if (params.drawMode === "Line" || params.drawMode === "Line + Band") {
-        segments.push({
-          left: segment.startTimeMs,
-          right: endTimeMs,
-          startValue: segment.center,
-          endValue: segment.center,
-          color: rgbaWithAlpha(color, params.lineOpacity),
-          width: params.lineWidth,
-          style:
-            zone.activeRank === 0 && !zone.frozen
-              ? "solid"
-              : zone.frozen
-                ? "dotted"
-                : "dashed",
-        });
-      }
+      segment.box?.delete();
+      segment.line?.delete();
     }
   }
-  return { boxes, segments };
 }
 
-function syncZoneDrawings(previous: ZoneDrawings, current: ZoneDrawings): void {
-  const boxCount = Math.max(previous.boxes.length, current.boxes.length);
-  for (let index = 0; index < boxCount; index += 1) {
-    const currentDrawing = current.boxes[index];
-    const drawing = currentDrawing ?? previous.boxes[index];
-    if (drawing === undefined) continue;
-    const handle = plot.box(drawing);
-    if (currentDrawing === undefined) handle.delete();
+function renderZoneSegment(
+  zone: PocZone,
+  segment: PocSegment,
+  params: Params,
+  currentIndex: number,
+  currentTimeMs: number,
+): void {
+  const renderable = zoneIsRenderable(zone, segment, params);
+  const drawBand =
+    renderable &&
+    (params.drawMode === "Band" || params.drawMode === "Line + Band");
+  const drawLine =
+    renderable &&
+    (params.drawMode === "Line" || params.drawMode === "Line + Band");
+  const endTimeMs =
+    segment.endIndex + 1 === currentIndex ? currentTimeMs : segment.endTimeMs;
+  const color = zoneColor(zone, params);
+
+  if (drawBand) {
+    const drawing = {
+      left: segment.startTimeMs,
+      right: endTimeMs,
+      top: segment.bandHigh,
+      bottom: segment.bandLow,
+      color: rgbaWithAlpha(color, params.bandOpacity),
+    };
+    if (segment.box === undefined) segment.box = plot.box(drawing);
+    else segment.box.set(drawing);
+  } else if (segment.box !== undefined) {
+    segment.box.delete();
+    delete segment.box;
   }
 
-  const segmentCount = Math.max(
-    previous.segments.length,
-    current.segments.length,
-  );
-  for (let index = 0; index < segmentCount; index += 1) {
-    const currentDrawing = current.segments[index];
-    const drawing = currentDrawing ?? previous.segments[index];
-    if (drawing === undefined) continue;
-    const handle = plot.segment(drawing);
-    if (currentDrawing === undefined) handle.delete();
+  if (drawLine) {
+    const drawing = {
+      left: segment.startTimeMs,
+      right: endTimeMs,
+      startValue: segment.center,
+      endValue: segment.center,
+      color: rgbaWithAlpha(color, params.lineOpacity),
+      width: params.lineWidth,
+      style:
+        zone.activeRank === 0 && !zone.frozen
+          ? ("solid" as const)
+          : zone.frozen
+            ? ("dotted" as const)
+            : ("dashed" as const),
+    };
+    if (segment.line === undefined) segment.line = plot.segment(drawing);
+    else segment.line.set(drawing);
+  } else if (segment.line !== undefined) {
+    segment.line.delete();
+    delete segment.line;
   }
+}
+
+function renderZone(
+  zone: PocZone,
+  params: Params,
+  currentIndex: number,
+  currentTimeMs: number,
+): void {
+  for (const segment of zone.segments)
+    renderZoneSegment(zone, segment, params, currentIndex, currentTimeMs);
 }
 
 function trimZones(zones: readonly PocZone[], params: Params): PocZone[] {
@@ -1084,45 +826,37 @@ function trimZones(zones: readonly PocZone[], params: Params): PocZone[] {
     .filter((zone) => zone.frozen)
     .sort((left, right) => left.lastSeenIndex - right.lastSeenIndex);
   const keepFrozen = Math.max(0, params.maxStoredZones - active.length);
-  return [...frozen.slice(-keepFrozen), ...active].sort(
+  const removedCount = Math.max(0, frozen.length - keepFrozen);
+  deleteZoneDrawings(frozen.slice(0, removedCount));
+  return [...frozen.slice(removedCount), ...active].sort(
     (left, right) => left.createdAt - right.createdAt,
   );
 }
 
 function stepPoc(
   previous: Readonly<PocState>,
-  bar: IndicatorBar,
-  dmi: DmiPoint,
+  currentBar: PocBar,
+  confirmed: boolean,
   params: Params,
 ): PocState {
-  if (!bar.isConfirmed) return { ...previous };
-  const pocBar: PocBar = {
-    index: bar.index,
-    openTimeMs: bar.openTimeMs,
-    open: bar.open,
-    high: bar.high,
-    low: bar.low,
-    close: priceValue(bar, params.adxPocSource),
-    dmi,
-  };
+  if (!confirmed) return { ...previous };
+  const pocBar = currentBar;
   const bars = [...previous.bars, pocBar].filter(
-    (item) => item.index >= bar.index - params.profilePeriod + 1,
+    (item) => item.index >= currentBar.index - params.profilePeriod + 1,
   );
-  // series() supplies an isolated candidate state for every update and only
-  // commits finalized values, so author code does not need replay-mode flags.
-  let zones = [...previous.zones];
-  advanceSegmentEnds(zones, bar);
+  const zones = [...previous.zones];
+  advanceSegmentEnds(zones, currentBar.index, currentBar.openTimeMs, params);
   let current = previous.currentZoneId
     ? zones.find((zone) => zone.id === previous.currentZoneId)
     : undefined;
   let previousScores = previous.previousScores;
   let pendingMigration = previous.pendingMigration;
 
-  if (bar.index >= Math.max(params.dmiLength, params.minEarlyBars) - 1) {
+  if (currentBar.index >= Math.max(params.dmiLength, params.minEarlyBars) - 1) {
     const candidate = projectedPocCandidate(
       bars,
       params,
-      bar.index,
+      currentBar.index,
       previousScores,
     );
     if (candidate !== undefined) {
@@ -1133,17 +867,30 @@ function stepPoc(
       if (current === undefined) {
         current = createZone(candidate);
         zones.push(current);
-        rankZones(zones, current, bar.index, params.activeHistoricalPocCount);
+        renderZone(current, params, currentBar.index, currentBar.openTimeMs);
+        rankZones(
+          zones,
+          current,
+          currentBar.index,
+          currentBar.openTimeMs,
+          params,
+        );
       } else if (zoneMatches(candidate, current, params.bandMergeMode)) {
         updateZone(current, candidate, params);
         pendingMigration = undefined;
-        rankZones(zones, current, bar.index, params.activeHistoricalPocCount);
+        rankZones(
+          zones,
+          current,
+          currentBar.index,
+          currentBar.openTimeMs,
+          params,
+        );
         extendZones(
           zones,
           current,
-          bar.index,
-          bar.openTimeMs,
-          params.activeHistoricalPocCount,
+          currentBar.index,
+          currentBar.openTimeMs,
+          params,
         );
       } else {
         const activeScore = nearestProjectedScore(candidate, current.center);
@@ -1182,6 +929,12 @@ function stepPoc(
           pendingMigration = nextPendingMigration;
           if (nextPendingMigration.hitCount >= params.migrationConfirmBars) {
             current.frozen = true;
+            renderZone(
+              current,
+              params,
+              currentBar.index,
+              currentBar.openTimeMs,
+            );
             const matching = findMatchingZone(
               candidate,
               zones,
@@ -1191,6 +944,12 @@ function stepPoc(
             if (matching === undefined) {
               current = createZone(candidate);
               zones.push(current);
+              renderZone(
+                current,
+                params,
+                currentBar.index,
+                currentBar.openTimeMs,
+              );
             } else {
               current = matching;
               updateZone(current, candidate, params);
@@ -1199,26 +958,26 @@ function stepPoc(
             rankZones(
               zones,
               current,
-              bar.index,
-              params.activeHistoricalPocCount,
+              currentBar.index,
+              currentBar.openTimeMs,
+              params,
             );
           }
         } else pendingMigration = undefined;
         extendZones(
           zones,
           current,
-          bar.index,
-          bar.openTimeMs,
-          params.activeHistoricalPocCount,
+          currentBar.index,
+          currentBar.openTimeMs,
+          params,
         );
       }
     }
   }
 
-  zones = trimZones(zones, params);
   return {
     bars,
-    zones,
+    zones: trimZones(zones, params),
     ...(current === undefined ? {} : { currentZoneId: current.id }),
     previousScores,
     ...(pendingMigration === undefined ? {} : { pendingMigration }),
@@ -1280,15 +1039,18 @@ function signalBlocked(
 
 function stepSignals(
   previous: Readonly<SignalState>,
-  bar: IndicatorBar,
+  index: number,
+  confirmed: boolean,
+  currentOpen: number,
+  currentClose: number,
   unified: Direction,
   blocked: boolean,
   params: Params,
 ): SignalState {
-  if (!bar.isConfirmed) return { ...previous, buy: false, sell: false };
+  if (!confirmed) return { ...previous, buy: false, sell: false };
   const outcomes = [
     ...previous.outcomes,
-    { index: bar.index, open: bar.open, close: bar.close },
+    { index, open: currentOpen, close: currentClose },
   ].slice(-64);
   const next: SignalState = {
     ...previous,
@@ -1314,8 +1076,7 @@ function stepSignals(
     direction: SignalSide,
     signalIndex: number | undefined,
   ): boolean | undefined => {
-    if (signalIndex === undefined || signalIndex + 1 > bar.index)
-      return undefined;
+    if (signalIndex === undefined || signalIndex + 1 > index) return undefined;
     const outcome = outcomes.find((item) => item.index === signalIndex + 1);
     if (outcome === undefined) return undefined;
     return direction === "buy"
@@ -1325,7 +1086,7 @@ function stepSignals(
   const issue = (direction: SignalSide): void => {
     next.buy = direction === "buy";
     next.sell = direction === "sell";
-    next.lastSignalIndex = bar.index;
+    next.lastSignalIndex = index;
   };
   const clearMg = (): void => {
     next.mgDirection = undefined;
@@ -1361,7 +1122,7 @@ function stepSignals(
     }
     const direction = next.mgDirection;
     issue(direction);
-    next.mgSignalIndex = bar.index;
+    next.mgSignalIndex = index;
     next.mgStep += 1;
   };
 
@@ -1376,12 +1137,12 @@ function stepSignals(
       clearMg();
       issue("buy");
       next.mgDirection = "buy";
-      next.mgSignalIndex = bar.index;
+      next.mgSignalIndex = index;
     } else if (originalSell) {
       clearMg();
       issue("sell");
       next.mgDirection = "sell";
-      next.mgSignalIndex = bar.index;
+      next.mgSignalIndex = index;
     } else runMg();
     next.followDirection = undefined;
   } else if (usesWinFollow) {
@@ -1434,148 +1195,529 @@ function zoneColor(zone: PocZone, params: Params): string {
   return zone.activeRank === 0 ? params.currentColor : params.historicalColor;
 }
 
-function renderZones(
-  previous: Readonly<PocState>,
-  state: PocState,
-  bar: IndicatorBar,
-  params: Params,
-): void {
-  syncZoneDrawings(
-    collectZoneDrawings(previous.zones, params, bar),
-    collectZoneDrawings(state.zones, params, bar),
-  );
-}
+export default defineIndicator({
+  id: "erc.indicator.atr-rope-utbot.unified",
+  name: "ATR Rope + UT Bot Unified",
+  description:
+    "ATR Rope + UT Bot with follow signals and rolling ADX POC migration. Uses chart-timeframe candles until explicit MTF inputs are available.",
+  placement: "overlay",
+});
 
-const indicator: IndicatorModule = defineIndicator(
-  {
-    id: "erc.indicator.atr-rope-utbot.unified",
-    name: "ATR Rope + UT Bot Unified",
-    description:
-      "ATR Rope + UT Bot with follow signals and rolling ADX POC migration. Uses chart-timeframe candles until explicit MTF inputs are available.",
-    placement: "overlay",
-  },
-  (bar) => {
-    const params = readInputs();
+const ropePeriod = input.int(14, {
+  title: "ATR period",
+  group: "ATR Rope",
+  min: 1,
+  max: 500,
+});
+const ropeMultiplier = input.float(1.5, {
+  title: "Sensitivity multiplier",
+  group: "ATR Rope",
+  min: 0.1,
+  max: 10,
+  step: 0.1,
+});
+const ropeSource = input.source(close, {
+  title: "Price source",
+  group: "ATR Rope",
+});
+const ropeSensitivityMode = input.string("original", {
+  title: "Sensitivity mode",
+  group: "ATR Rope",
+  options: ropeModes,
+});
+const ropeDirectionMaType = input.string("sma", {
+  title: "Direction MA",
+  group: "ATR Rope Direction",
+  options: movingAverageTypes,
+});
+const ropeDirectionLookback = input.int(2, {
+  title: "Direction lookback",
+  group: "ATR Rope Direction",
+  min: 1,
+  max: 20,
+});
+const ropeDirectionThreshold = input.float(0.05, {
+  title: "Direction threshold",
+  group: "ATR Rope Direction",
+  min: 0,
+  max: 500,
+  step: 0.01,
+});
+const utbotKeyValue = input.float(1, {
+  title: "ATR multiplier",
+  group: "UT Bot",
+  min: 0.1,
+  max: 10,
+  step: 0.1,
+});
+const utbotAtrPeriod = input.int(10, {
+  title: "ATR period",
+  group: "UT Bot",
+  min: 1,
+  max: 500,
+});
+const utbotSource = input.source(close, {
+  title: "Price source",
+  group: "UT Bot",
+});
+const utbotMode = input.string("original", {
+  title: "Mode",
+  group: "UT Bot",
+  options: utModes,
+});
+const signalIssueMode = input.string("original", {
+  title: "Signal mode",
+  group: "Signals",
+  options: signalModes,
+});
+const mgStepCount = input.int(0, {
+  title: "MG follow steps",
+  group: "Signals",
+  min: 0,
+  max: 20,
+});
+const buySignalColor = input.color("#089981", {
+  title: "Buy color",
+  group: "Signals",
+  effect: "presentation",
+});
+const sellSignalColor = input.color("#F23645", {
+  title: "Sell color",
+  group: "Signals",
+  effect: "presentation",
+});
+const adxPocSource = input.source(close, {
+  title: "Price source",
+  group: "ADX POC",
+});
+const profilePeriod = input.int(30, {
+  title: "Profile period",
+  group: "ADX POC",
+  min: 5,
+  max: 500,
+});
+const fastPocPeriod = input.int(10, {
+  title: "Fast POC period",
+  group: "ADX POC",
+  min: 3,
+  max: 100,
+});
+const rowCount = input.int(24, {
+  title: "Price rows",
+  group: "ADX POC",
+  min: 10,
+  max: 100,
+});
+const dmiLength = input.int(14, {
+  title: "ADX / DI length",
+  group: "ADX POC",
+  min: 1,
+  max: 500,
+});
+const minEarlyBars = input.int(5, {
+  title: "Minimum early bars",
+  group: "ADX POC",
+  min: 2,
+  max: 100,
+});
+const projectionBars = input.int(5, {
+  title: "Projection bars",
+  group: "ADX POC Migration",
+  min: 1,
+  max: 50,
+});
+const bodyWeight = input.float(0.7, {
+  title: "Body weight",
+  group: "ADX POC",
+  min: 0,
+  max: 1,
+  step: 0.05,
+});
+const migrationStrength = input.float(1.1, {
+  title: "Migration strength",
+  group: "ADX POC Migration",
+  min: 1,
+  max: 3,
+  step: 0.05,
+});
+const migrationConfirmBars = input.int(1, {
+  title: "Migration confirmations",
+  group: "ADX POC Migration",
+  min: 1,
+  max: 5,
+});
+const migrationCenterSmoothing = input.float(0.1, {
+  title: "Center smoothing",
+  group: "ADX POC Migration",
+  min: 0,
+  max: 0.95,
+  step: 0.05,
+});
+const activeHistoricalPocCount = input.int(1, {
+  title: "Active historical POCs",
+  group: "ADX POC Zones",
+  min: 0,
+  max: 20,
+});
+const minZoneBarsToRender = input.int(3, {
+  title: "Minimum zone bars",
+  group: "ADX POC Zones",
+  min: 1,
+  max: 20,
+});
+const minZoneHitsToRender = input.int(2, {
+  title: "Minimum zone hits",
+  group: "ADX POC Zones",
+  min: 1,
+  max: 20,
+});
+const maxStoredZones = input.int(300, {
+  title: "Maximum stored zones",
+  group: "ADX POC Zones",
+  min: 20,
+  max: 1000,
+  step: 10,
+});
+const pocBandHalfRows = input.float(1.5, {
+  title: "Band half rows",
+  group: "ADX POC Band",
+  min: 0.1,
+  max: 20,
+  step: 0.1,
+});
+const bandMergeMode = input.string("Inside Band", {
+  title: "Band merge mode",
+  group: "ADX POC Band",
+  options: bandMergeModes,
+});
+const maxBandExpansionRows = input.float(2, {
+  title: "Maximum band expansion",
+  group: "ADX POC Band",
+  min: 0.5,
+  max: 20,
+  step: 0.25,
+});
+const pocBandSignalSuppressLine = input.string("off", {
+  title: "Signal suppression",
+  group: "ADX POC Suppression",
+  options: suppressionModes,
+});
+const drawMode = input.string("Line + Band", {
+  title: "POC draw mode",
+  group: "ADX POC Style",
+  options: drawModes,
+  effect: "presentation",
+});
+const currentColor = input.color("rgba(255, 255, 0, 1)", {
+  title: "Current POC",
+  group: "ADX POC Style",
+  effect: "presentation",
+});
+const historicalColor = input.color("rgba(255, 213, 79, 0.75)", {
+  title: "Historical POC",
+  group: "ADX POC Style",
+  effect: "presentation",
+});
+const frozenColor = input.color("rgba(255, 255, 0, 0.35)", {
+  title: "Frozen POC",
+  group: "ADX POC Style",
+  effect: "presentation",
+});
+const bandOpacity = input.float(0.18, {
+  title: "Band opacity",
+  group: "ADX POC Style",
+  min: 0,
+  max: 1,
+  step: 0.05,
+  effect: "presentation",
+});
+const lineOpacity = input.float(0.95, {
+  title: "Line opacity",
+  group: "ADX POC Style",
+  min: 0,
+  max: 1,
+  step: 0.05,
+  effect: "presentation",
+});
+const lineWidth = input.int(2, {
+  title: "Line width",
+  group: "ADX POC Style",
+  min: 1,
+  max: 5,
+  effect: "presentation",
+});
+const ropeUpColor = input.color("#3daa45", {
+  title: "Rope up color",
+  group: "Display",
+  effect: "presentation",
+});
+const ropeDownColor = input.color("#ff033e", {
+  title: "Rope down color",
+  group: "Display",
+  effect: "presentation",
+});
+const ropeFlatColor = input.color("#004d92", {
+  title: "Rope flat color",
+  group: "Display",
+  effect: "presentation",
+});
+const ropeWidth = input.int(3, {
+  title: "Rope width",
+  group: "Display",
+  min: 1,
+  max: 10,
+  effect: "presentation",
+});
+const showTrailingStop = input.bool(true, {
+  title: "Show trailing stop",
+  group: "Display",
+  effect: "presentation",
+});
+const utbotTrailingStopColor = input.color("#787B86", {
+  title: "UT neutral color",
+  group: "Display",
+  effect: "presentation",
+});
+const utbotUpTrendColor = input.color("#089981", {
+  title: "UT up color",
+  group: "Display",
+  effect: "presentation",
+});
+const utbotDownTrendColor = input.color("#F23645", {
+  title: "UT down color",
+  group: "Display",
+  effect: "presentation",
+});
 
-    const ropeSource = priceValue(bar, params.ropeSource);
-    const ropeAtr = ta.atr(params.ropePeriod);
-    const ropeLag = Math.floor((params.ropePeriod - 1) / 2);
-    const ropeHistoryOffset =
-      params.ropeSensitivityMode === "momentum"
-        ? 3
-        : params.ropeSensitivityMode === "adaptive"
-          ? 5
-          : params.ropeSensitivityMode === "zerolag"
-            ? ropeLag
-            : 0;
-    const ropeLaggedSource = historicalOrCurrent(
-      history(ropeSource, ropeHistoryOffset),
-      ropeSource,
-    );
-    const ropeState = series(emptyRopeState, (previous) =>
-      stepRope(previous, ropeSource, ropeAtr, ropeLaggedSource, params),
-    );
-    const directionBase = ta.movingAverage(
-      ropeState.directionInput,
-      params.ropeDirectionMaType,
-      params.ropeDirectionLookback,
-    );
-    const ropeDirection = series(emptyRopeDirectionState, (previous) =>
-      stepRopeDirection(
-        previous,
-        ropeState.rope,
-        ropeAtr,
-        directionBase,
-        params.ropeDirectionThreshold,
-      ),
-    );
+const params: Params = {
+  ropePeriod,
+  ropeMultiplier,
+  ropeSensitivityMode,
+  ropeDirectionMaType,
+  ropeDirectionLookback,
+  ropeDirectionThreshold,
+  utbotKeyValue,
+  utbotAtrPeriod,
+  utbotMode,
+  signalIssueMode,
+  mgStepCount,
+  buySignalColor,
+  sellSignalColor,
+  profilePeriod,
+  fastPocPeriod,
+  rowCount,
+  dmiLength,
+  minEarlyBars,
+  projectionBars,
+  bodyWeight,
+  migrationStrength,
+  migrationConfirmBars,
+  migrationCenterSmoothing,
+  activeHistoricalPocCount,
+  minZoneBarsToRender,
+  minZoneHitsToRender,
+  maxStoredZones,
+  pocBandHalfRows,
+  bandMergeMode,
+  maxBandExpansionRows,
+  pocBandSignalSuppressLine,
+  drawMode,
+  currentColor,
+  historicalColor,
+  frozenColor,
+  bandOpacity,
+  lineOpacity,
+  lineWidth,
+  ropeUpColor,
+  ropeDownColor,
+  ropeFlatColor,
+  ropeWidth,
+  showTrailingStop,
+  utbotTrailingStopColor,
+  utbotUpTrendColor,
+  utbotDownTrendColor,
+};
 
-    const utSource = priceValue(bar, params.utbotSource);
-    const utAtr = ta.atr(params.utbotAtrPeriod);
-    const utLag =
-      params.utbotMode === "0lag"
-        ? Math.floor((params.utbotAtrPeriod - 1) / 2)
+const currentIndex = bar.index;
+const currentTime = bar.time;
+const currentConfirmed = bar.confirmed;
+
+const ropeAtr = ta.atr(params.ropePeriod);
+const ropeLag = Math.floor((params.ropePeriod - 1) / 2);
+const ropeHistoryOffset =
+  params.ropeSensitivityMode === "momentum"
+    ? 3
+    : params.ropeSensitivityMode === "adaptive"
+      ? 5
+      : params.ropeSensitivityMode === "zerolag"
+        ? ropeLag
         : 0;
-    const utLaggedSource = historicalOrCurrent(
-      history(utSource, utLag),
-      utSource,
-    );
-    const ut = series(emptyUtState, (previous) =>
-      stepUtBot(previous, utSource, utAtr, bar.index, utLaggedSource, params),
-    );
-
-    const dmi = ta.dmi(params.dmiLength);
-    let previousPoc: Readonly<PocState> = emptyPocState;
-    const poc = series(emptyPocState, (previous) => {
-      previousPoc = previous;
-      return stepPoc(previous, bar, dmi, params);
-    });
-    const unified: Direction =
-      ropeDirection.direction === ut.position ? ropeDirection.direction : 0;
-    const blocked = signalBlocked(
-      bar.index,
-      params,
-      poc.zones,
-      bar.close,
-      ropeState.rope,
-      ut.stop,
-    );
-    const signalState = series(emptySignalState, (previous) =>
-      stepSignals(previous, bar, unified, blocked, params),
-    );
-    const ropeColor =
-      ropeDirection.direction > 0
-        ? params.ropeUpColor
-        : ropeDirection.direction < 0
-          ? params.ropeDownColor
-          : params.ropeFlatColor;
-    const utColor =
-      ut.position > 0
-        ? params.utbotUpTrendColor
-        : ut.position < 0
-          ? params.utbotDownTrendColor
-          : params.utbotTrailingStopColor;
-
-    plot.line(ropeState.rope, {
-      title: "ATR Rope",
-      color: ropeColor,
-      width: params.ropeWidth,
-    });
-    plot.line(ropeDirection.upper, {
-      title: "Direction Upper",
-      color: "#3daa45",
-    });
-    plot.line(ropeDirection.lower, {
-      title: "Direction Lower",
-      color: "#ff033e",
-    });
-    plot.line(params.showTrailingStop ? ut.stop : null, {
-      title: "UT Stop",
-      color: utColor,
-      width: 2,
-    });
-    plot.shape(signalState.buy, {
-      title: "Buy",
-      shape: shape.labelUp,
-      location: location.belowBar,
-      text: "BUY",
-      textColor: "#ffffff",
-      textSize: textSize.small,
-      color: params.buySignalColor,
-    });
-    plot.shape(signalState.sell, {
-      title: "Sell",
-      shape: shape.labelDown,
-      location: location.aboveBar,
-      text: "SELL",
-      textColor: "#ffffff",
-      textSize: textSize.small,
-      color: params.sellSignalColor,
-    });
-    renderZones(previousPoc, poc, bar, params);
-    signal(signalState.buy, "long");
-    signal(signalState.sell, "short");
-  },
+const ropeLaggedSource = historicalOrCurrent(
+  history(ropeSource, ropeHistoryOffset),
+  ropeSource,
+);
+// eslint-disable-next-line no-var -- Pine-style persistent indicator state.
+var ropeState: RopeState = {
+  previousRope: Number.NaN,
+  rope: Number.NaN,
+  directionInput: Number.NaN,
+};
+const nextRopeState = stepRope(
+  ropeState,
+  ropeSource,
+  ropeAtr,
+  ropeLaggedSource,
+  params,
+);
+const directionBase = ta.movingAverage(
+  nextRopeState.directionInput,
+  params.ropeDirectionMaType,
+  params.ropeDirectionLookback,
+);
+// eslint-disable-next-line no-var -- Pine-style persistent indicator state.
+var ropeDirection: RopeDirectionState = {
+  bandAtr: Number.NaN,
+  upper: Number.NaN,
+  lower: Number.NaN,
+  direction: 0,
+};
+const nextRopeDirection = stepRopeDirection(
+  ropeDirection,
+  nextRopeState.rope,
+  ropeAtr,
+  directionBase,
+  params.ropeDirectionThreshold,
 );
 
-export default indicator;
+const utAtr = ta.atr(params.utbotAtrPeriod);
+const utLag =
+  params.utbotMode === "0lag" ? Math.floor((params.utbotAtrPeriod - 1) / 2) : 0;
+const utLaggedSource = historicalOrCurrent(
+  history(utbotSource, utLag),
+  utbotSource,
+);
+// eslint-disable-next-line no-var -- Pine-style persistent indicator state.
+var ut: UtState = {
+  previousStop: Number.NaN,
+  previousClose: Number.NaN,
+  stop: Number.NaN,
+  position: 0,
+};
+const nextUt = stepUtBot(
+  ut,
+  utbotSource,
+  utAtr,
+  currentIndex,
+  utLaggedSource,
+  params,
+);
+
+const dmi = ta.dmi(params.dmiLength);
+const pocBar: PocBar = {
+  index: currentIndex,
+  openTimeMs: currentTime,
+  open,
+  high,
+  low,
+  close: adxPocSource,
+  dmi,
+};
+// eslint-disable-next-line no-var -- Pine-style persistent indicator state.
+var pocState: PocState = { bars: [], zones: [], previousScores: [] };
+const poc = stepPoc(pocState, pocBar, currentConfirmed, params);
+const unified: Direction =
+  nextRopeDirection.direction === nextUt.position
+    ? nextRopeDirection.direction
+    : 0;
+const blocked = signalBlocked(
+  currentIndex,
+  params,
+  poc.zones,
+  close,
+  nextRopeState.rope,
+  nextUt.stop,
+);
+// eslint-disable-next-line no-var -- Pine-style persistent indicator state.
+var signalState: SignalState = {
+  previousUnified: 0,
+  previousBlocked: false,
+  followDirection: undefined,
+  lastSignalIndex: undefined,
+  mgDirection: undefined,
+  mgStep: 0,
+  mgSignalIndex: undefined,
+  outcomes: [],
+  buy: false,
+  sell: false,
+};
+const nextSignalState = stepSignals(
+  signalState,
+  currentIndex,
+  currentConfirmed,
+  open,
+  close,
+  unified,
+  blocked,
+  params,
+);
+const ropeColor =
+  nextRopeDirection.direction > 0
+    ? params.ropeUpColor
+    : nextRopeDirection.direction < 0
+      ? params.ropeDownColor
+      : params.ropeFlatColor;
+const utColor =
+  nextUt.position > 0
+    ? params.utbotUpTrendColor
+    : nextUt.position < 0
+      ? params.utbotDownTrendColor
+      : params.utbotTrailingStopColor;
+
+plot.line(nextRopeState.rope, {
+  title: "ATR Rope",
+  color: ropeColor,
+  width: params.ropeWidth,
+});
+plot.line(nextRopeDirection.upper, {
+  title: "Direction Upper",
+  color: "#3daa45",
+});
+plot.line(nextRopeDirection.lower, {
+  title: "Direction Lower",
+  color: "#ff033e",
+});
+plot.line(params.showTrailingStop ? nextUt.stop : null, {
+  title: "UT Stop",
+  color: utColor,
+  width: 2,
+});
+plot.shape(nextSignalState.buy, {
+  title: "Buy",
+  shape: shape.labelUp,
+  location: location.belowBar,
+  text: "BUY",
+  textColor: "#ffffff",
+  textSize: textSize.small,
+  color: params.buySignalColor,
+});
+plot.shape(nextSignalState.sell, {
+  title: "Sell",
+  shape: shape.labelDown,
+  location: location.aboveBar,
+  text: "SELL",
+  textColor: "#ffffff",
+  textSize: textSize.small,
+  color: params.sellSignalColor,
+});
+signal(nextSignalState.buy, "long");
+signal(nextSignalState.sell, "short");
+// eslint-disable-next-line no-useless-assignment -- Pine-style persistent state commit is consumed by the authoring compiler.
+ropeState = nextRopeState;
+// eslint-disable-next-line no-useless-assignment -- Pine-style persistent state commit is consumed by the authoring compiler.
+ropeDirection = nextRopeDirection;
+// eslint-disable-next-line no-useless-assignment -- Pine-style persistent state commit is consumed by the authoring compiler.
+ut = nextUt;
+// eslint-disable-next-line no-useless-assignment -- Pine-style persistent state commit is consumed by the authoring compiler.
+pocState = poc;
+// eslint-disable-next-line no-useless-assignment -- Pine-style persistent state commit is consumed by the authoring compiler.
+signalState = nextSignalState;

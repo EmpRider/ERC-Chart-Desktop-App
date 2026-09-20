@@ -53,21 +53,21 @@ function slowLength() {
   return input.int(3, { title: "Slow Length", min: 1, max: 20 });
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-input.main", name: "Runtime identity input" },
-  ({ close }) => {
-    let fast;
-    let slow;
-    if (close > 15) {
-      slow = slowLength();
-      fast = fastLength();
-    } else {
-      fast = fastLength();
-      slow = slowLength();
-    }
-    plot.line(fast * 100 + slow, { key: "result", title: "Result" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.runtime-identity-input.main",
+  name: "Runtime identity input",
+});
+
+let fast;
+let slow;
+if (close > 15) {
+  slow = slowLength();
+  fast = fastLength();
+} else {
+  fast = fastLength();
+  slow = slowLength();
+}
+plot.line(fast * 100 + slow, { title: "Result" });
 `,
     "erc.indicator.runtime-identity-input",
   );
@@ -83,6 +83,11 @@ export default defineIndicator(
   assert.match(fast.key, /^erc-v2-input-[0-9a-f]{24}$/u);
   assert.match(slow.key, /^erc-v2-input-[0-9a-f]{24}$/u);
   assert.notEqual(fast.key, slow.key);
+  const resultDefinition = plugin.definition.plots.find(
+    ({ label }) => label === "Result",
+  );
+  assert.ok(resultDefinition);
+  const resultKey = resultDefinition.outputKey ?? resultDefinition.key;
 
   const instance = plugin.createInstance(
     { [fast.key]: 7, [slow.key]: 9 },
@@ -91,7 +96,7 @@ export default defineIndicator(
   try {
     instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
     assert.deepEqual(
-      instance.snapshot().points.map((point) => point.values.result),
+      instance.snapshot().points.map((point) => point.values[resultKey]),
       [709, 709, 709],
     );
   } finally {
@@ -102,18 +107,17 @@ export default defineIndicator(
 test("input replay rejects changed constraints and nested string options at one compiler identity", async () => {
   const { default: numericPlugin } = await packagedPlugin(
     `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-input-contract-number.main", name: "Runtime identity numeric input contract" },
-  ({ close }) => {
-    const length = input.float(5, {
-      title: "Length",
-      min: close > 15 ? 2 : 1,
-      max: 20,
-      step: 0.5,
-    });
-    plot.line(length, { key: "result", title: "Result" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.runtime-identity-input-contract-number.main",
+  name: "Runtime identity numeric input contract",
+});
+const length = input.float(5, {
+  title: "Length",
+  min: close > 15 ? 2 : 1,
+  max: 20,
+  step: 0.5,
+});
+plot.line(length, { title: "Result" });
 `,
     "erc.indicator.runtime-identity-input-contract-number",
   );
@@ -130,18 +134,17 @@ export default defineIndicator(
 
   const { default: stringPlugin } = await packagedPlugin(
     `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-input-contract-string.main", name: "Runtime identity string input contract" },
-  ({ close }) => {
-    const source = input.string("close", {
-      title: "Source",
-      options: close > 15
-        ? [{ value: "close", label: "Close" }, { value: "high", label: "High" }]
-        : [{ value: "close", label: "Close" }, { value: "open", label: "Open" }],
-    });
-    plot.line(source === "close" ? close : 0, { key: "result", title: "Result" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.runtime-identity-input-contract-string.main",
+  name: "Runtime identity string input contract",
+});
+const source = input.string("close", {
+  title: "Source",
+  options: close > 15
+    ? [{ value: "close", label: "Close" }, { value: "high", label: "High" }]
+    : [{ value: "close", label: "Close" }, { value: "open", label: "Open" }],
+});
+plot.line(source === "close" ? close : 0, { title: "Result" });
 `,
     "erc.indicator.runtime-identity-input-contract-string",
   );
@@ -157,89 +160,57 @@ export default defineIndicator(
   }
 });
 
-test("recurrence state follows compiler identity when execution order changes", async () => {
-  const { default: plugin } = await packagedPlugin(
-    `import { defineIndicator, plot, series } from "@erc-chart/indicator-sdk";
-
-function fastState() {
-  return series(0, (previous) => previous + 1);
-}
-function slowState() {
-  return series(100, (previous) => previous + 10);
-}
-
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-series.main", name: "Runtime identity series" },
-  ({ close }) => {
-    let fast;
-    let slow;
-    if (close > 15) {
-      slow = slowState();
-      fast = fastState();
-    } else {
-      fast = fastState();
-      slow = slowState();
-    }
-    plot.line(fast * 1_000 + slow, { key: "result", title: "Result" });
-  },
-);
-`,
-    "erc.indicator.runtime-identity-series",
-  );
-
-  const instance = plugin.createInstance({}, context);
-  try {
-    instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
-    assert.deepEqual(
-      instance.snapshot().points.map((point) => point.values.result),
-      [1_110, 2_120, 3_130],
-    );
-  } finally {
-    instance.dispose();
-  }
-});
-
 test("TA state follows compiler identity when execution order changes", async () => {
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, plot, ta } from "@erc-chart/indicator-sdk";
 
-function fastAverage(value) {
+function fastAverage(value: number) {
   return ta.ema(value, 2);
 }
-function slowAverage(value) {
+function slowAverage(value: number) {
   return ta.ema(value * 10, 2);
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.runtime-identity-ta.main", name: "Runtime identity TA" },
-  ({ close }) => {
-    let fast;
-    let slow;
-    if (close > 15) {
-      slow = slowAverage(close);
-      fast = fastAverage(close);
-    } else {
-      fast = fastAverage(close);
-      slow = slowAverage(close);
-    }
-    plot.line(fast, { key: "fast", title: "Fast" });
-    plot.line(slow, { key: "slow", title: "Slow" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.runtime-identity-ta.main",
+  name: "Runtime identity TA",
+});
+
+let fast;
+let slow;
+if (close > 15) {
+  slow = slowAverage(close);
+  fast = fastAverage(close);
+} else {
+  fast = fastAverage(close);
+  slow = slowAverage(close);
+}
+plot.line(fast, { title: "Fast" });
+plot.line(slow, { title: "Slow" });
 `,
     "erc.indicator.runtime-identity-ta",
   );
 
   const instance = plugin.createInstance({}, context);
+  const fastDefinition = plugin.definition.plots.find(
+    ({ label }) => label === "Fast",
+  );
+  const slowDefinition = plugin.definition.plots.find(
+    ({ label }) => label === "Slow",
+  );
+  assert.ok(fastDefinition);
+  assert.ok(slowDefinition);
+  const fastKey = fastDefinition.outputKey ?? fastDefinition.key;
+  const slowKey = slowDefinition.outputKey ?? slowDefinition.key;
   try {
     instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
     const points = instance.snapshot().points;
-    assert.equal(points[0].values.fast, null);
-    assert.equal(points[0].values.slow, null);
-    assert.equal(points[1].values.fast, 15);
-    assert.equal(points[1].values.slow, 150);
-    assert.ok(Math.abs(points[2].values.fast - 35 / 3) < 1e-12);
-    assert.ok(Math.abs(points[2].values.slow - 350 / 3) < 1e-12);
+    assert.equal(points[0].values[fastKey], null);
+    assert.equal(points[0].values[slowKey], null);
+    assert.equal(points[1].values[fastKey], 15);
+    assert.equal(points[1].values[slowKey], 150);
+    assert.ok(Math.abs(points[2].values[fastKey] - 35 / 3) < 1e-12);
+    assert.ok(Math.abs(points[2].values[slowKey] - 350 / 3) < 1e-12);
   } finally {
     instance.dispose();
   }

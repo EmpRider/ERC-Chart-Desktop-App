@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import { defineIndicator, plot } from "../packages/indicator-sdk/dist/index.js";
+import { plot } from "../packages/indicator-sdk/dist/index.js";
+import { defineIndicator } from "../packages/indicator-sdk/dist/indicator.js";
 
 // SDK-only fixture. The enforced budget matches the worker's maximum history timeout.
 const historyBars = 100_000;
 const drawingCount = 2_000;
 const budgetMs = 60_000;
+const updateBars = 250;
+const updateBudgetMs = 5_000;
 const drawings = Array.from({ length: drawingCount }, (_, index) => ({
   left: 0,
   right: 60_000,
@@ -27,15 +30,25 @@ const drawingCallsite = Object.freeze({
     column: 1,
   }),
 });
+const handles = [];
 const plugin = defineIndicator(
   {
     id: "erc.indicator.drawings-performance.main",
     name: "Drawing performance",
   },
   () => {
-    for (const drawing of drawings) plot.box(drawing, drawingCallsite);
+    if (handles.length === 0) {
+      for (const drawing of drawings)
+        handles.push(plot.box(drawing, drawingCallsite));
+      return;
+    }
+    for (let index = 0; index < handles.length; index += 1)
+      handles[index].set(drawings[index]);
   },
 );
+// defineIndicator executes one metadata-discovery pass with an isolated kernel
+// set. Do not carry those discovery-only handles into the runtime instance.
+handles.length = 0;
 const candle = (index) => ({
   instrumentId: "PERF",
   timeframeId: "1m",
@@ -77,4 +90,62 @@ try {
   );
 } finally {
   instance.dispose();
+}
+
+const updateHandles = [];
+let updateIndex = 0;
+const updatePlugin = defineIndicator(
+  {
+    id: "erc.indicator.drawings-update-performance.main",
+    name: "Drawing update performance",
+  },
+  () => {
+    if (updateHandles.length === 0) {
+      for (const drawing of drawings)
+        updateHandles.push(plot.box(drawing, drawingCallsite));
+      return;
+    }
+    updateIndex += 1;
+    for (let index = 0; index < updateHandles.length; index += 1) {
+      const drawing = drawings[index];
+      updateHandles[index].set({
+        ...drawing,
+        top: drawing.top + updateIndex,
+        bottom: drawing.bottom + updateIndex,
+      });
+    }
+  },
+);
+updateHandles.length = 0;
+updateIndex = 0;
+const updateInstance = updatePlugin.createInstance(
+  {},
+  { instrumentId: "PERF", timeframeId: "1m" },
+);
+try {
+  const candles = Array.from({ length: updateBars }, (_, index) =>
+    candle(index),
+  );
+  const started = performance.now();
+  updateInstance.onHistory(candles);
+  const elapsedMs = performance.now() - started;
+  const snapshot = updateInstance.snapshot();
+  assert.equal(snapshot.overlays.length, drawingCount);
+  assert.equal(snapshot.overlays[0].top, drawings[0].top + updateIndex);
+  assert.ok(snapshot.visualRevision > 1);
+  console.log(
+    JSON.stringify({
+      component: "indicator-drawing-updates",
+      historyBars: updateBars,
+      drawingCount,
+      elapsedMs,
+      budgetMs: updateBudgetMs,
+    }),
+  );
+  assert.ok(
+    elapsedMs < updateBudgetMs,
+    `Drawing updates exceeded ${updateBudgetMs} ms: ${elapsedMs}`,
+  );
+} finally {
+  updateInstance.dispose();
 }

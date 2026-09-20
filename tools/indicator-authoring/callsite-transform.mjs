@@ -1,8 +1,9 @@
 import ts from "typescript";
-import { scopedNames, scriptKind } from "./ast-scope.mjs";
+import { collectBindingNames, scopedNames, scriptKind } from "./ast-scope.mjs";
 import { semanticCallsiteKey, stableCallsiteId } from "./identity.mjs";
 
 const sdkModule = "@erc-chart/indicator-sdk";
+const sdkPersistentStateModule = "erc-chart:indicator-persistent-state";
 const sdkRoots = new Set([
   "defineIndicator",
   "history",
@@ -10,8 +11,6 @@ const sdkRoots = new Set([
   "input",
   "location",
   "plot",
-  "priceValue",
-  "series",
   "shape",
   "signal",
   "ta",
@@ -27,9 +26,7 @@ const builtInSeriesNames = new Set([
   "hlc3",
   "ohlc4",
 ]);
-const priceValueSeriesNames = Object.freeze(
-  [...builtInSeriesNames].filter((name) => name !== "volume"),
-);
+const authoredLocationMappers = new WeakMap();
 const sdkConstantValues = Object.freeze({
   shape: Object.freeze({
     circle: "circle",
@@ -63,6 +60,13 @@ const statefulTaMethods = new Set([
   "rsi",
   "sma",
 ]);
+const lengthFirstTaMethods = new Set([
+  "ema",
+  "highest",
+  "lowest",
+  "rsi",
+  "sma",
+]);
 const drawingMethods = new Set(["box", "drawings", "remove", "segment"]);
 const signalSafeBuiltinCallRoots = new Set([
   "Array",
@@ -72,7 +76,21 @@ const signalSafeBuiltinCallRoots = new Set([
   "Object",
   "String",
 ]);
-const signalSafeSdkFunctionRoots = new Set(["history", "priceValue"]);
+const signalSafeDirectBuiltinCalls = new Set([
+  "Array",
+  "Boolean",
+  "Number",
+  "Object",
+  "String",
+]);
+const signalSafeSdkFunctionRoots = new Set(["history"]);
+const signalSafeDrawingHandleMethods = new Set(["set", "delete"]);
+const signalSafeLiteralRegExpMethods = new Set(["exec", "test"]);
+const signalDrawingHandleTypes = new Set([
+  "DrawingHandle",
+  "BoxHandle",
+  "SegmentHandle",
+]);
 const signalSafeArrayMethods = new Set([
   "at",
   "concat",
@@ -164,6 +182,13 @@ const signalArrayElementCallbackMethods = new Set([
   "forEach",
   "map",
   "some",
+]);
+const inputRepeatedCallbackMethods = new Set([
+  ...signalArrayElementCallbackMethods,
+  "reduce",
+  "reduceRight",
+  "sort",
+  "toSorted",
 ]);
 const scalarPlotKinds = new Map([
   ["line", "line"],
@@ -276,42 +301,46 @@ function directIndicatorSeriesSource(expression, bindings) {
   while (current !== undefined && !ts.isSourceFile(current)) {
     if (ts.isFunctionLike(current)) {
       const parent = current.parent;
-      if (!(
+      const indicatorCallback =
         (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) &&
         ts.isCallExpression(parent) &&
         parent.arguments[1] === current &&
         ts.isIdentifier(parent.expression) &&
-        bindings.get(parent.expression.text) === "defineIndicator"
-      ))
-        return undefined;
-      const parameter = current.parameters[0];
-      if (parameter === undefined) return undefined;
-      if (ts.isIdentifier(parameter.name))
-        return parameter.name.text === requestedName
-          ? wholeBarSource?.sourceName
-          : undefined;
-      if (
-        !ts.isObjectBindingPattern(parameter.name) ||
-        wholeBarSource !== undefined
-      )
-        return undefined;
-      for (const element of parameter.name.elements) {
+        bindings.get(parent.expression.text) === "defineIndicator";
+      if (indicatorCallback) {
+        const parameter = current.parameters[0];
+        if (parameter === undefined) return undefined;
+        if (ts.isIdentifier(parameter.name))
+          return parameter.name.text === requestedName
+            ? wholeBarSource?.sourceName
+            : undefined;
         if (
-          !ts.isIdentifier(element.name) ||
-          element.name.text !== requestedName
+          !ts.isObjectBindingPattern(parameter.name) ||
+          wholeBarSource !== undefined
         )
-          continue;
-        const sourceName =
-          element.propertyName === undefined
-            ? element.name.text
-            : ts.isIdentifier(element.propertyName)
-              ? element.propertyName.text
-              : undefined;
-        return sourceName !== undefined && builtInSeriesNames.has(sourceName)
-          ? sourceName
-          : undefined;
+          return undefined;
+        for (const element of parameter.name.elements) {
+          if (
+            !ts.isIdentifier(element.name) ||
+            element.name.text !== requestedName
+          )
+            continue;
+          const sourceName =
+            element.propertyName === undefined
+              ? element.name.text
+              : ts.isIdentifier(element.propertyName)
+                ? element.propertyName.text
+                : undefined;
+          return sourceName !== undefined && builtInSeriesNames.has(sourceName)
+            ? sourceName
+            : undefined;
+        }
+        return undefined;
       }
-      return undefined;
+      const names = scopedNames(current);
+      if (names?.has(requestedName)) return undefined;
+      current = current.parent;
+      continue;
     }
     const names = scopedNames(current);
     if (names?.has(requestedName)) return undefined;
@@ -323,8 +352,12 @@ function directIndicatorSeriesSource(expression, bindings) {
 function variableInitializerForReference(identifier) {
   const requestedName = identifier.text;
   let current = identifier.parent;
-  while (current !== undefined && !ts.isSourceFile(current)) {
-    if (ts.isBlock(current) || ts.isCaseBlock(current)) {
+  while (current !== undefined) {
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isSourceFile(current)
+    ) {
       const statements = ts.isCaseBlock(current)
         ? current.clauses.flatMap((clause) => [...clause.statements])
         : current.statements;
@@ -339,10 +372,176 @@ function variableInitializerForReference(identifier) {
         }
       }
     }
-    if (ts.isFunctionLike(current)) return undefined;
+    if (ts.isFunctionLike(current) && scopedNames(current)?.has(requestedName))
+      return undefined;
+    if (ts.isSourceFile(current)) return undefined;
     current = current.parent;
   }
   return undefined;
+}
+
+function sdkMemberCall(expression, bindings, root, method) {
+  if (
+    !ts.isCallExpression(expression) ||
+    !ts.isPropertyAccessExpression(expression.expression) ||
+    !ts.isIdentifier(expression.expression.expression)
+  )
+    return false;
+  return (
+    bindings.get(expression.expression.expression.text) === root &&
+    expression.expression.name.text === method
+  );
+}
+
+function taLengthExpression(expression, bindings, resolving = new Set()) {
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
+    return taLengthExpression(expression.expression, bindings, resolving);
+  if (ts.isNumericLiteral(expression)) {
+    const value = Number(expression.text);
+    return Number.isSafeInteger(value) && value >= 1 && value <= 100_000;
+  }
+  if (sdkMemberCall(expression, bindings, "input", "int")) return true;
+  if (!ts.isIdentifier(expression)) return false;
+  const initializer = variableInitializerForReference(expression);
+  if (initializer === undefined || resolving.has(initializer)) return false;
+  resolving.add(initializer);
+  const result = taLengthExpression(initializer, bindings, resolving);
+  resolving.delete(initializer);
+  return result;
+}
+
+function taHelperReturnsSeries(helper, bindings, resolving) {
+  if (resolving.has(helper)) return false;
+  resolving.add(helper);
+  let result = false;
+  const visit = (node) => {
+    if (result) return;
+    if (node !== helper && ts.isFunctionLike(node)) return;
+    if (
+      ts.isReturnStatement(node) &&
+      node.expression !== undefined &&
+      taSeriesExpression(node.expression, bindings, resolving)
+    ) {
+      result = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (
+    ts.isArrowFunction(helper) &&
+    helper.body !== undefined &&
+    !ts.isBlock(helper.body)
+  )
+    result = taSeriesExpression(helper.body, bindings, resolving);
+  else if (helper.body !== undefined) visit(helper.body);
+  resolving.delete(helper);
+  return result;
+}
+
+function taSeriesExpression(expression, bindings, resolving = new Set()) {
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
+    return taSeriesExpression(expression.expression, bindings, resolving);
+  if (ts.isElementAccessExpression(expression))
+    return taSeriesExpression(expression.expression, bindings, resolving);
+  if (directIndicatorSeriesSource(expression, bindings) !== undefined)
+    return true;
+  if (sdkMemberCall(expression, bindings, "input", "source")) return true;
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    bindings.get(expression.expression.expression.text) === "ta" &&
+    statefulTaMethods.has(expression.expression.name.text)
+  )
+    return true;
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    bindings.get(expression.expression.text) === "history"
+  )
+    return true;
+  if (ts.isCallExpression(expression)) {
+    if (
+      expression.arguments.some((argument) =>
+        taSeriesExpression(argument, bindings, resolving),
+      )
+    )
+      return true;
+    const callable = expression.expression;
+    if (ts.isIdentifier(callable)) {
+      const helper = localFunctionForReference(callable);
+      if (
+        helper !== undefined &&
+        taHelperReturnsSeries(helper, bindings, resolving)
+      )
+        return true;
+    }
+    if (
+      (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable)) &&
+      taHelperReturnsSeries(callable, bindings, resolving)
+    )
+      return true;
+  }
+  if (ts.isIdentifier(expression)) {
+    const initializer = variableInitializerForReference(expression);
+    if (initializer === undefined || resolving.has(initializer)) return false;
+    resolving.add(initializer);
+    const result = taSeriesExpression(initializer, bindings, resolving);
+    resolving.delete(initializer);
+    return result;
+  }
+  if (ts.isBinaryExpression(expression))
+    return (
+      taSeriesExpression(expression.left, bindings, resolving) ||
+      taSeriesExpression(expression.right, bindings, resolving)
+    );
+  if (ts.isConditionalExpression(expression))
+    return (
+      taSeriesExpression(expression.condition, bindings, resolving) ||
+      taSeriesExpression(expression.whenTrue, bindings, resolving) ||
+      taSeriesExpression(expression.whenFalse, bindings, resolving)
+    );
+  if (
+    ts.isPrefixUnaryExpression(expression) ||
+    ts.isPostfixUnaryExpression(expression)
+  )
+    return taSeriesExpression(expression.operand, bindings, resolving);
+  return false;
+}
+
+function lengthFirstTaCall(node, classified, bindings) {
+  if (
+    classified?.kind !== "ta" ||
+    !lengthFirstTaMethods.has(classified.callee.slice("ta.".length)) ||
+    node.arguments.length < 2
+  )
+    return false;
+  const length = node.arguments[0];
+  const source = node.arguments[1];
+  return (
+    length !== undefined &&
+    source !== undefined &&
+    taLengthExpression(length, bindings) &&
+    taSeriesExpression(source, bindings)
+  );
+}
+
+function canonicalTaSourceArgument(node, classified, bindings) {
+  return lengthFirstTaCall(node, classified, bindings)
+    ? node.arguments[1]
+    : node.arguments[0];
 }
 
 function signalVariableInitializerForReference(identifier) {
@@ -871,28 +1070,6 @@ function signalHelperParameterSeriesSources(
           ts.isStringLiteral(node.parent.argumentExpression))
       )
         return;
-      if (
-        ts.isCallExpression(node.parent) &&
-        node.parent.arguments[0] === node &&
-        ts.isIdentifier(node.parent.expression) &&
-        signalImportedBindingForIdentifier(node.parent.expression, bindings) ===
-          "priceValue"
-      ) {
-        const source = node.parent.arguments[1];
-        const choices =
-          source !== undefined &&
-          ts.isStringLiteral(source) &&
-          priceValueSeriesNames.includes(source.text)
-            ? [source.text]
-            : priceValueSeriesNames;
-        for (const choice of choices) {
-          if (!sourceNames.has(choice)) {
-            sourceNames.add(choice);
-            sources.push(choice);
-          }
-        }
-        return;
-      }
       if (ts.isCallExpression(node.parent)) {
         const argumentIndex = node.parent.arguments.findIndex(
           (argument) => argument === node,
@@ -933,30 +1110,6 @@ function signalHelperParameterSeriesSources(
   if (functionLike.body !== undefined) visit(functionLike.body);
   resolving.delete(functionLike);
   return precise ? sources : undefined;
-}
-
-function signalPriceValueSeriesSources(call, bindings) {
-  if (
-    !ts.isIdentifier(call.expression) ||
-    signalImportedBindingForIdentifier(call.expression, bindings) !==
-      "priceValue"
-  )
-    return undefined;
-  const candle = call.arguments[0];
-  if (
-    !ts.isIdentifier(candle) ||
-    signalIndicatorSeriesSources(candle, bindings).length !==
-      builtInSeriesNames.size
-  )
-    return undefined;
-  const source = call.arguments[1];
-  if (
-    source !== undefined &&
-    ts.isStringLiteral(source) &&
-    priceValueSeriesNames.includes(source.text)
-  )
-    return [source.text];
-  return priceValueSeriesNames;
 }
 
 function signalIdentifierIsValueReference(identifier) {
@@ -1123,6 +1276,115 @@ function signalNamedTypeDeclaration(sourceFile, name) {
       return statement;
   }
   return undefined;
+}
+
+function signalSdkImportedTypeName(sourceFile, localName) {
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== sdkModule
+    )
+      continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.name.text !== localName) continue;
+      return element.propertyName?.text ?? element.name.text;
+    }
+  }
+  return undefined;
+}
+
+function signalTypeReferenceLexicalDeclaration(typeReference) {
+  const requestedName = typeReference.typeName.text;
+  let current = typeReference.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    const typeParameters = current.typeParameters;
+    if (
+      typeParameters?.some(
+        (typeParameter) => typeParameter.name.text === requestedName,
+      )
+    )
+      return { kind: "type-parameter" };
+    if (ts.isBlock(current) || ts.isCaseBlock(current)) {
+      const statements = ts.isCaseBlock(current)
+        ? current.clauses.flatMap((clause) => [...clause.statements])
+        : current.statements;
+      for (const statement of statements) {
+        if (
+          (ts.isInterfaceDeclaration(statement) ||
+            ts.isTypeAliasDeclaration(statement) ||
+            ts.isClassDeclaration(statement)) &&
+          statement.name?.text === requestedName
+        )
+          return { kind: "declaration", declaration: statement };
+      }
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function signalTypeIsSdkDrawingHandle(type, resolving = new Set()) {
+  let current = type;
+  while (
+    current !== undefined &&
+    (ts.isParenthesizedTypeNode(current) ||
+      (ts.isTypeOperatorNode(current) &&
+        current.operator === ts.SyntaxKind.ReadonlyKeyword))
+  )
+    current = current.type;
+  if (current === undefined) return false;
+  if (ts.isUnionTypeNode(current)) {
+    const nonNullish = current.types.filter(
+      (member) =>
+        member.kind !== ts.SyntaxKind.UndefinedKeyword &&
+        !(
+          ts.isLiteralTypeNode(member) &&
+          member.literal.kind === ts.SyntaxKind.NullKeyword
+        ),
+    );
+    return (
+      nonNullish.length > 0 &&
+      nonNullish.every((member) =>
+        signalTypeIsSdkDrawingHandle(member, resolving),
+      )
+    );
+  }
+  if (!ts.isTypeReferenceNode(current) || !ts.isIdentifier(current.typeName))
+    return false;
+  const lexicalDeclaration = signalTypeReferenceLexicalDeclaration(current);
+  if (lexicalDeclaration?.kind === "type-parameter") return false;
+  if (lexicalDeclaration?.kind === "declaration") {
+    const declaration = lexicalDeclaration.declaration;
+    if (!ts.isTypeAliasDeclaration(declaration) || resolving.has(declaration))
+      return false;
+    resolving.add(declaration);
+    const result = signalTypeIsSdkDrawingHandle(declaration.type, resolving);
+    resolving.delete(declaration);
+    return result;
+  }
+  const imported = signalSdkImportedTypeName(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (imported !== undefined && signalDrawingHandleTypes.has(imported))
+    return true;
+  const declaration = signalNamedTypeDeclaration(
+    current.getSourceFile(),
+    current.typeName.text,
+  );
+  if (
+    declaration === undefined ||
+    !ts.isTypeAliasDeclaration(declaration) ||
+    resolving.has(declaration)
+  )
+    return false;
+  resolving.add(declaration);
+  const result = signalTypeIsSdkDrawingHandle(declaration.type, resolving);
+  resolving.delete(declaration);
+  return result;
 }
 
 function signalArrayElementType(type, resolving = new Set()) {
@@ -1497,6 +1759,7 @@ function signalExpressionIsProvableArray(expression, resolving = new Set()) {
     ts.isPropertyAccessExpression(callable) &&
     ts.isIdentifier(callable.expression) &&
     callable.expression.text === "Array" &&
+    !signalNameIsLexicallyBoundAt(callable, "Array") &&
     (callable.name.text === "from" || callable.name.text === "of")
   );
 }
@@ -1508,6 +1771,11 @@ function signalCallableAnalysis(expression, bindings) {
   if (ts.isIdentifier(callable)) {
     const imported = signalImportedBindingForIdentifier(callable, bindings);
     if (imported !== undefined && signalSafeSdkFunctionRoots.has(imported))
+      return { kind: "safe" };
+    if (
+      signalSafeDirectBuiltinCalls.has(callable.text) &&
+      !signalNameIsLexicallyBoundAt(callable, callable.text)
+    )
       return { kind: "safe" };
     const helper = localFunctionForReference(callable);
     return helper === undefined
@@ -1540,6 +1808,19 @@ function signalCallableAnalysis(expression, bindings) {
     if (
       signalSafeArrayMethods.has(callable.name.text) &&
       signalExpressionIsProvableArray(callable.expression)
+    )
+      return { kind: "safe" };
+    if (signalSafeDrawingHandleMethods.has(callable.name.text)) {
+      const receiverType = signalExpressionDeclaredType(callable.expression);
+      if (
+        receiverType !== undefined &&
+        signalTypeIsSdkDrawingHandle(receiverType)
+      )
+        return { kind: "safe" };
+    }
+    if (
+      signalSafeLiteralRegExpMethods.has(callable.name.text) &&
+      ts.isRegularExpressionLiteral(unwrapSignalCallable(callable.expression))
     )
       return { kind: "safe" };
     return { kind: "unresolved" };
@@ -1654,6 +1935,14 @@ function helperIsNestedInIndicatorCalculation(functionLike, bindings) {
   return false;
 }
 
+function helperWasCompilerRelocated(functionLike, sourceFile, ranges) {
+  const start = functionLike.getStart(sourceFile);
+  return ranges.some(
+    (range) =>
+      start >= range.generatedStart && functionLike.end <= range.generatedEnd,
+  );
+}
+
 function timeframeInputCallForExpression(expression, callsiteByNode) {
   if (ts.isCallExpression(expression)) {
     const metadata = callsiteByNode.get(expression)?.metadata;
@@ -1681,14 +1970,18 @@ function signalDependencyMetadata(
   callsiteByNode,
   bindings,
   sourceFile,
+  compilerRelocatedHelperRanges,
 ) {
   const dependencies = [];
   const dependencyIds = new Set();
   const chartSeries = [];
   const chartSeriesNames = new Set();
   const resolving = new Set();
+  const visited = new Set();
 
   const visit = (node) => {
+    if (visited.has(node)) return;
+    visited.add(node);
     if (ts.isIdentifier(node)) {
       if (!signalIdentifierIsValueReference(node)) return;
       const seriesSources = signalIndicatorSeriesSources(node, bindings);
@@ -1716,8 +2009,8 @@ function signalDependencyMetadata(
       return;
     }
     if (ts.isCallExpression(node)) {
-      const metadata = callsiteByNode.get(node)?.metadata;
-      const priceValueSources = signalPriceValueSeriesSources(node, bindings);
+      const callsite = callsiteByNode.get(node);
+      const metadata = callsite?.metadata;
       if (metadata?.kind === "ta" && !dependencyIds.has(metadata.id)) {
         dependencyIds.add(metadata.id);
         dependencies.push(metadata.id);
@@ -1734,7 +2027,12 @@ function signalDependencyMetadata(
         helper = analysis.kind === "helper" ? analysis.helper : undefined;
         if (
           helper !== undefined &&
-          helperIsNestedInIndicatorCalculation(helper, bindings)
+          helperIsNestedInIndicatorCalculation(helper, bindings) &&
+          !helperWasCompilerRelocated(
+            helper,
+            sourceFile,
+            compilerRelocatedHelperRanges,
+          )
         )
           throw syntaxError(
             sourceFile,
@@ -1757,23 +2055,21 @@ function signalDependencyMetadata(
             );
         }
       }
+      const explicitTaSeriesIndex =
+        metadata?.kind === "ta" &&
+        metadata.seriesSource !== undefined &&
+        callsite !== undefined
+          ? lengthFirstTaCall(
+              node,
+              { kind: metadata.kind, callee: metadata.callee },
+              callsite.bindings,
+            )
+            ? 1
+            : 0
+          : -1;
       for (let index = 0; index < node.arguments.length; index += 1) {
-        if (
-          metadata?.kind === "ta" &&
-          index === 0 &&
-          metadata.seriesSource !== undefined
-        )
-          continue;
+        if (index === explicitTaSeriesIndex) continue;
         const argument = node.arguments[index];
-        if (index === 0 && priceValueSources !== undefined) {
-          for (const source of priceValueSources) {
-            if (!chartSeriesNames.has(source)) {
-              chartSeriesNames.add(source);
-              chartSeries.push(source);
-            }
-          }
-          continue;
-        }
         if (
           helper !== undefined &&
           ts.isIdentifier(argument) &&
@@ -1814,8 +2110,6 @@ function classifyCall(node, bindings) {
     const imported = bindings.get(node.expression.text);
     if (imported === "signal")
       return { kind: "signal", callee: "signal", authorArity: 3 };
-    if (imported === "series")
-      return { kind: "state", callee: "series", authorArity: 2 };
     return undefined;
   }
   if (!ts.isPropertyAccessExpression(node.expression)) return undefined;
@@ -1824,7 +2118,7 @@ function classifyCall(node, bindings) {
   if (imported === undefined) return undefined;
   const method = node.expression.name.text;
   if (imported === "input")
-    return { kind: "input", callee: `input.${method}`, authorArity: 2 };
+    return { kind: "input", callee: `input.${method}`, authorArity: 3 };
   if (imported === "ta")
     return statefulTaMethods.has(method)
       ? {
@@ -1845,6 +2139,343 @@ function classifyCall(node, bindings) {
             : 2,
     };
   return undefined;
+}
+
+function inputLoopAncestor(node) {
+  let current = node.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (ts.isFunctionLike(current)) return undefined;
+    if (
+      ts.isForStatement(current) ||
+      ts.isForInStatement(current) ||
+      ts.isForOfStatement(current) ||
+      ts.isWhileStatement(current) ||
+      ts.isDoStatement(current)
+    )
+      return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function helperContainsInputCall(
+  functionLike,
+  callsiteByNode,
+  bindings,
+  resolving = new Set(),
+) {
+  if (resolving.has(functionLike)) return false;
+  resolving.add(functionLike);
+  let containsInput = false;
+  const visit = (node) => {
+    if (containsInput) return;
+    if (node !== functionLike && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node)) {
+      if (callsiteByNode.get(node)?.metadata.kind === "input") {
+        containsInput = true;
+        return;
+      }
+      const analysis = signalCallableAnalysis(node.expression, bindings);
+      if (
+        analysis.kind === "helper" &&
+        helperContainsInputCall(
+          analysis.helper,
+          callsiteByNode,
+          bindings,
+          resolving,
+        )
+      ) {
+        containsInput = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const parameter of functionLike.parameters) {
+    if (parameter.initializer !== undefined) visit(parameter.initializer);
+  }
+  if (functionLike.body !== undefined) visit(functionLike.body);
+  resolving.delete(functionLike);
+  return containsInput;
+}
+
+function validateLoopInvokedInputHelpers(sourceFile, callsiteByNode, bindings) {
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      inputLoopAncestor(node) !== undefined &&
+      callsiteByNode.get(node)?.metadata.kind !== "input"
+    ) {
+      const analysis = signalCallableAnalysis(node.expression, bindings);
+      if (
+        analysis.kind === "helper" &&
+        helperContainsInputCall(analysis.helper, callsiteByNode, bindings)
+      )
+        throw syntaxError(
+          sourceFile,
+          node,
+          "input declarations cannot execute inside loops; declare each input once from a statically single-execution path",
+        );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+function repeatedInputCallback(call) {
+  const callable = unwrapSignalCallable(call.expression);
+  if (!ts.isPropertyAccessExpression(callable)) return undefined;
+  if (
+    inputRepeatedCallbackMethods.has(callable.name.text) &&
+    signalExpressionIsProvableArray(callable.expression)
+  )
+    return call.arguments[0];
+  if (
+    (callable.name.text === "from" || callable.name.text === "fromAsync") &&
+    ts.isIdentifier(callable.expression) &&
+    callable.expression.text === "Array" &&
+    !signalNameIsLexicallyBoundAt(callable, "Array")
+  )
+    return call.arguments[1];
+  return undefined;
+}
+
+function inputCallableReference(expression, bindings, resolving = new Set()) {
+  const callable = unwrapSignalCallable(expression);
+  if (
+    ts.isPropertyAccessExpression(callable) &&
+    ts.isIdentifier(callable.expression)
+  )
+    return (
+      signalImportedBindingForIdentifier(callable.expression, bindings) ===
+      "input"
+    );
+  if (!ts.isIdentifier(callable)) return false;
+  const initializer = signalVariableInitializerForReference(callable);
+  if (initializer === undefined || resolving.has(initializer)) return false;
+  resolving.add(initializer);
+  const result = inputCallableReference(initializer, bindings, resolving);
+  resolving.delete(initializer);
+  return result;
+}
+
+function validateRepeatedInputCallbacks(sourceFile, callsiteByNode, bindings) {
+  const visit = (node) => {
+    if (ts.isCallExpression(node)) {
+      const callback = repeatedInputCallback(node);
+      if (callback !== undefined) {
+        if (inputCallableReference(callback, bindings))
+          throw syntaxError(
+            sourceFile,
+            callback,
+            "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
+          );
+        const analysis = signalCallableAnalysis(callback, bindings);
+        if (
+          analysis.kind === "helper" &&
+          helperContainsInputCall(analysis.helper, callsiteByNode, bindings)
+        )
+          throw syntaxError(
+            sourceFile,
+            callback,
+            "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
+          );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+function helperParticipatesInRecursion(functionLike, bindings) {
+  const start = functionLike;
+  const visited = new Set();
+  const bindingName = (helper) => {
+    if (helper.name !== undefined && ts.isIdentifier(helper.name))
+      return helper.name.text;
+    const parent = helper.parent;
+    return ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)
+      ? parent.name.text
+      : undefined;
+  };
+  const isSelfReference = (identifier, helper) => {
+    const name = bindingName(helper);
+    if (name === undefined || identifier.text !== name) return false;
+    const parameterNames = new Set();
+    for (const parameter of helper.parameters)
+      collectBindingNames(parameter.name, parameterNames);
+    if (parameterNames.has(name)) return false;
+    let current = identifier.parent;
+    while (current !== undefined && current !== helper) {
+      if (
+        (ts.isBlock(current) || ts.isCaseBlock(current)) &&
+        scopedNames(current)?.has(name)
+      )
+        return false;
+      current = current.parent;
+    }
+    return current === helper;
+  };
+  const reachesStart = (current) => {
+    if (visited.has(current)) return false;
+    visited.add(current);
+    let recursive = false;
+    const visit = (node) => {
+      if (recursive) return;
+      if (node !== current && ts.isFunctionLike(node)) return;
+      if (ts.isCallExpression(node)) {
+        const callable = unwrapSignalCallable(node.expression);
+        if (ts.isIdentifier(callable) && isSelfReference(callable, current)) {
+          recursive = current === start || reachesStart(current);
+          return;
+        }
+        const analysis = signalCallableAnalysis(node.expression, bindings);
+        if (
+          analysis.kind === "helper" &&
+          (analysis.helper === start || reachesStart(analysis.helper))
+        ) {
+          recursive = true;
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    for (const parameter of current.parameters) {
+      if (parameter.initializer !== undefined) visit(parameter.initializer);
+    }
+    if (current.body !== undefined) visit(current.body);
+    return recursive;
+  };
+  return reachesStart(start);
+}
+
+function validateRecursiveInputHelpers(sourceFile, callsiteByNode, bindings) {
+  const visit = (node) => {
+    if (
+      ts.isFunctionLike(node) &&
+      helperContainsInputCall(node, callsiteByNode, bindings) &&
+      helperParticipatesInRecursion(node, bindings)
+    )
+      throw syntaxError(
+        sourceFile,
+        node,
+        "input declarations cannot execute through recursion; declare each input once from a statically single-execution path",
+      );
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+function directHelperCalls(container, bindings) {
+  const result = [];
+  const visit = (node) => {
+    if (node !== container && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node)) {
+      const analysis = signalCallableAnalysis(node.expression, bindings);
+      if (analysis.kind === "helper") {
+        result.push({ call: node, helper: analysis.helper });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(container);
+  return result;
+}
+
+function directIndicatorCallbacks(sourceFile, bindings) {
+  const result = [];
+  const visit = (node) => {
+    if (node !== sourceFile && ts.isFunctionLike(node)) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      bindings.get(node.expression.text) === "defineIndicator"
+    ) {
+      const callback = node.arguments[1];
+      if (
+        callback !== undefined &&
+        (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+      )
+        result.push(callback);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return result;
+}
+
+function mutuallyExclusiveBranchConstraints(node, container) {
+  const constraints = new Map();
+  let child = node;
+  let current = node.parent;
+  while (current !== undefined && current !== container) {
+    if (ts.isIfStatement(current)) {
+      if (current.thenStatement === child) constraints.set(current, "then");
+      else if (current.elseStatement === child)
+        constraints.set(current, "else");
+    } else if (ts.isConditionalExpression(current)) {
+      if (current.whenTrue === child) constraints.set(current, "true");
+      else if (current.whenFalse === child) constraints.set(current, "false");
+    }
+    child = current;
+    current = current.parent;
+  }
+  return constraints;
+}
+
+function executionPathsCanOverlap(left, right) {
+  for (const [branch, side] of left)
+    if (right.has(branch) && right.get(branch) !== side) return false;
+  return true;
+}
+
+function validateInputHelperExecutionCardinality(
+  sourceFile,
+  callsiteByNode,
+  bindings,
+) {
+  const executionsByHelper = new Map();
+  const active = new Set();
+  const containsInput = new Map();
+  const helperHasInput = (helper) => {
+    if (containsInput.has(helper)) return containsInput.get(helper);
+    const result = helperContainsInputCall(helper, callsiteByNode, bindings);
+    containsInput.set(helper, result);
+    return result;
+  };
+  const execute = ({ call, helper }, inheritedConstraints, container) => {
+    if (!helperHasInput(helper)) return;
+    const constraints = new Map(inheritedConstraints);
+    for (const [branch, side] of mutuallyExclusiveBranchConstraints(
+      call,
+      container,
+    ))
+      constraints.set(branch, side);
+    const executions = executionsByHelper.get(helper) ?? [];
+    if (
+      executions.some((previous) =>
+        executionPathsCanOverlap(previous, constraints),
+      )
+    )
+      throw syntaxError(
+        sourceFile,
+        call,
+        "input helpers cannot execute more than once; declare each input once from a statically single-execution path",
+      );
+    executions.push(constraints);
+    executionsByHelper.set(helper, executions);
+    if (active.has(helper)) return;
+    active.add(helper);
+    for (const nested of directHelperCalls(helper, bindings))
+      execute(nested, constraints, helper);
+    active.delete(helper);
+  };
+  for (const container of [
+    sourceFile,
+    ...directIndicatorCallbacks(sourceFile, bindings),
+  ])
+    for (const rootCall of directHelperCalls(container, bindings))
+      execute(rootCall, new Map(), container);
 }
 
 function canonicalText(node, sourceFile, printer) {
@@ -1926,9 +2557,10 @@ function semanticAnchor(node, sourceFile, printer) {
 }
 
 function sourceLocation(node, sourceFile, sourceFileId) {
-  const location = sourceFile.getLineAndCharacterOfPosition(
-    node.getStart(sourceFile),
-  );
+  const position = node.getStart(sourceFile);
+  const location =
+    authoredLocationMappers.get(sourceFile)?.(position) ??
+    sourceFile.getLineAndCharacterOfPosition(position);
   return Object.freeze({
     file: sourceFileId.replaceAll("\\", "/"),
     line: location.line + 1,
@@ -2095,9 +2727,10 @@ function compilerPlotDeclaration(
 }
 
 function syntaxError(sourceFile, node, message) {
-  const location = sourceFile.getLineAndCharacterOfPosition(
-    node.getStart(sourceFile),
-  );
+  const position = node.getStart(sourceFile);
+  const location =
+    authoredLocationMappers.get(sourceFile)?.(position) ??
+    sourceFile.getLineAndCharacterOfPosition(position);
   return new SyntaxError(
     `${sourceFile.fileName}:${location.line + 1}:${location.character + 1} ${message}`,
   );
@@ -2107,6 +2740,46 @@ function uniqueTokenPrefix(sourceText) {
   let prefix = "__ercCallsite_";
   while (new RegExp(`\\b${prefix}\\d*\\b`, "u").test(sourceText)) prefix += "_";
   return prefix;
+}
+
+function isWithinIndicatorCallback(node, bindings) {
+  let current = node.parent;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (
+      (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) &&
+      ts.isCallExpression(current.parent) &&
+      current.parent.arguments[1] === current &&
+      ts.isIdentifier(current.parent.expression) &&
+      bindings.get(current.parent.expression.text) === "defineIndicator"
+    )
+      return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function persistentVarDeclaration(node, bindings, sourceFile) {
+  if (!ts.isVariableDeclaration(node)) return false;
+  const declarationList = node.parent;
+  if (
+    !ts.isVariableDeclarationList(declarationList) ||
+    (declarationList.flags & ts.NodeFlags.BlockScoped) !== 0 ||
+    !isWithinIndicatorCallback(node, bindings)
+  )
+    return false;
+  if (!ts.isVariableStatement(declarationList.parent))
+    throw syntaxError(
+      sourceFile,
+      node,
+      "persistent var declarations must be ordinary statements; use let/const for loop bindings",
+    );
+  if (!ts.isIdentifier(node.name))
+    throw syntaxError(
+      sourceFile,
+      node,
+      "persistent var declarations require a simple variable name",
+    );
+  return true;
 }
 
 function callsiteDeclaration(factory, name, metadata) {
@@ -2208,7 +2881,13 @@ function callsiteDeclaration(factory, name, metadata) {
 
 export function transformIndicatorCallsites(
   sourceText,
-  { fileName = "indicator.ts", sourceFileId = fileName } = {},
+  {
+    fileName = "indicator.ts",
+    sourceFileId = fileName,
+    sourceLocationForPosition,
+    mutableSeriesHistories = [],
+    compilerRelocatedHelperRanges = [],
+  } = {},
 ) {
   const sourceFile = ts.createSourceFile(
     fileName,
@@ -2217,18 +2896,214 @@ export function transformIndicatorCallsites(
     true,
     scriptKind(fileName),
   );
+  if (typeof sourceLocationForPosition === "function")
+    authoredLocationMappers.set(sourceFile, sourceLocationForPosition);
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   const rootBindings = sdkBindings(sourceFile);
   const callsiteByNode = new Map();
+  const persistentVarByDeclaration = new Map();
+  const persistentScopeByCall = new Map();
+  const mutableSeriesByDeclarationStart = new Map(
+    mutableSeriesHistories.map((entry) => [entry.declarationStart, entry]),
+  );
+  const mutableSeriesAccessToDeclarationStart = new Map();
+  for (const entry of mutableSeriesHistories) {
+    for (const accessStart of entry.accessStarts)
+      mutableSeriesAccessToDeclarationStart.set(
+        accessStart,
+        entry.declarationStart,
+      );
+  }
+  const mutableSeriesByDeclaration = new Map();
+  const mutableSeriesByAccess = new Map();
   const callsBySemanticKey = new Map();
   const callsById = new Map();
   const callsites = [];
   const plotDeclarations = [];
   const indicatorTimeframeCalls = [];
   const indicatorCandleTypeCalls = [];
+  const statefulHelperCache = new Map();
+
+  const helperUsesPersistentState = (helper, resolving = new Set()) => {
+    const cached = statefulHelperCache.get(helper);
+    if (cached !== undefined) return cached;
+    if (resolving.has(helper)) return false;
+    resolving.add(helper);
+    let stateful = false;
+    const visit = (node) => {
+      if (stateful) return;
+      if (node !== helper && ts.isFunctionLike(node)) return;
+      if (
+        ts.isVariableDeclarationList(node) &&
+        (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        ts.isVariableStatement(node.parent)
+      ) {
+        stateful = true;
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        mutableSeriesByDeclarationStart.has(node.getStart(sourceFile))
+      ) {
+        stateful = true;
+        return;
+      }
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const nested = localFunctionForReference(node.expression);
+        if (
+          nested !== undefined &&
+          helperUsesPersistentState(nested, resolving)
+        ) {
+          stateful = true;
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    for (const parameter of helper.parameters) {
+      if (parameter.initializer !== undefined) visit(parameter.initializer);
+    }
+    if (helper.body !== undefined) visit(helper.body);
+    resolving.delete(helper);
+    statefulHelperCache.set(helper, stateful);
+    return stateful;
+  };
 
   const collect = (node, bindings, namespaceLike) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      mutableSeriesByDeclarationStart.has(node.getStart(sourceFile))
+    ) {
+      if (!ts.isIdentifier(node.name))
+        throw syntaxError(
+          sourceFile,
+          node,
+          "scalar recurrence requires a simple variable name",
+        );
+      const parts = {
+        sourceFileId: sourceFileId.replaceAll("\\", "/"),
+        kind: "state",
+        callee: "scalar-series",
+        scope: semanticScope(node, sourceFile, printer),
+        anchor: `binding:${canonicalText(node.name, sourceFile, printer)}`,
+      };
+      const semanticKey = semanticCallsiteKey(parts);
+      const existingSemantic = callsBySemanticKey.get(semanticKey);
+      if (existingSemantic !== undefined)
+        throw syntaxError(
+          sourceFile,
+          node,
+          `ambiguous stable call-site identity for scalar recurrence; use a distinct semantic binding (first occurrence at ${existingSemantic.source.file}:${existingSemantic.source.line}:${existingSemantic.source.column})`,
+        );
+      const id = stableCallsiteId(parts);
+      const existingId = callsById.get(id);
+      if (existingId !== undefined && existingId.semanticKey !== semanticKey)
+        throw syntaxError(
+          sourceFile,
+          node,
+          "stable call-site identity collision for scalar recurrence; change the semantic binding and rebuild",
+        );
+      const metadata = {
+        id,
+        kind: "state",
+        callee: "scalar-series",
+        source: sourceLocation(node, sourceFile, sourceFileId),
+      };
+      mutableSeriesByDeclaration.set(node, metadata);
+      callsBySemanticKey.set(semanticKey, metadata);
+      callsById.set(id, { semanticKey, metadata });
+      callsites.push(metadata);
+    }
+    const mutableDeclarationStart = mutableSeriesAccessToDeclarationStart.get(
+      node.getStart(sourceFile),
+    );
+    if (mutableDeclarationStart !== undefined)
+      mutableSeriesByAccess.set(node, mutableDeclarationStart);
+    if (persistentVarDeclaration(node, rootBindings.named, sourceFile)) {
+      const parts = {
+        sourceFileId: sourceFileId.replaceAll("\\", "/"),
+        kind: "state",
+        callee: "persistent-var",
+        scope: semanticScope(node, sourceFile, printer),
+        anchor: `binding:${canonicalText(node.name, sourceFile, printer)}`,
+      };
+      const semanticKey = semanticCallsiteKey(parts);
+      const existingSemantic = callsBySemanticKey.get(semanticKey);
+      if (existingSemantic !== undefined) {
+        throw syntaxError(
+          sourceFile,
+          node,
+          `ambiguous stable call-site identity for persistent var; use a distinct semantic binding (first occurrence at ${existingSemantic.source.file}:${existingSemantic.source.line}:${existingSemantic.source.column})`,
+        );
+      }
+      const id = stableCallsiteId(parts);
+      const existingId = callsById.get(id);
+      if (existingId !== undefined && existingId.semanticKey !== semanticKey) {
+        throw syntaxError(
+          sourceFile,
+          node,
+          "stable call-site identity collision for persistent var; change the semantic binding and rebuild",
+        );
+      }
+      const metadata = {
+        id,
+        kind: "state",
+        callee: "persistent-var",
+        source: sourceLocation(node, sourceFile, sourceFileId),
+      };
+      persistentVarByDeclaration.set(node, metadata);
+      callsBySemanticKey.set(semanticKey, metadata);
+      callsById.set(id, { semanticKey, metadata });
+      callsites.push(metadata);
+    }
     if (ts.isCallExpression(node)) {
+      if (ts.isIdentifier(node.expression)) {
+        const helper = localFunctionForReference(node.expression);
+        if (
+          helper !== undefined &&
+          isWithinIndicatorCallback(node, rootBindings.named) &&
+          helperUsesPersistentState(helper)
+        ) {
+          const parts = {
+            sourceFileId: sourceFileId.replaceAll("\\", "/"),
+            kind: "state",
+            callee: "persistent-scope",
+            scope: semanticScope(node, sourceFile, printer),
+            anchor: semanticAnchor(node, sourceFile, printer),
+          };
+          const semanticKey = semanticCallsiteKey(parts);
+          const existingSemantic = callsBySemanticKey.get(semanticKey);
+          if (existingSemantic !== undefined) {
+            throw syntaxError(
+              sourceFile,
+              node,
+              `ambiguous stable call-site identity for persistent helper invocation; use a distinct semantic binding (first occurrence at ${existingSemantic.source.file}:${existingSemantic.source.line}:${existingSemantic.source.column})`,
+            );
+          }
+          const id = stableCallsiteId(parts);
+          const existingId = callsById.get(id);
+          if (
+            existingId !== undefined &&
+            existingId.semanticKey !== semanticKey
+          ) {
+            throw syntaxError(
+              sourceFile,
+              node,
+              "stable call-site identity collision for persistent helper invocation; change the semantic binding and rebuild",
+            );
+          }
+          const metadata = {
+            id,
+            kind: "state",
+            callee: "persistent-scope",
+            source: sourceLocation(node, sourceFile, sourceFileId),
+          };
+          persistentScopeByCall.set(node, metadata);
+          callsBySemanticKey.set(semanticKey, metadata);
+          callsById.set(id, { semanticKey, metadata });
+          callsites.push(metadata);
+        }
+      }
       const namespacePath = propertyPath(node.expression);
       if (
         namespacePath !== undefined &&
@@ -2258,6 +3133,15 @@ export function transformIndicatorCallsites(
       )
         indicatorCandleTypeCalls.push(node);
       if (classified !== undefined) {
+        if (
+          classified.kind === "input" &&
+          inputLoopAncestor(node) !== undefined
+        )
+          throw syntaxError(
+            sourceFile,
+            node,
+            "input declarations cannot execute inside loops; declare each input once from a statically single-execution path",
+          );
         const parts = {
           sourceFileId: sourceFileId.replaceAll("\\", "/"),
           kind: classified.kind,
@@ -2286,18 +3170,21 @@ export function transformIndicatorCallsites(
             `stable call-site identity collision for ${classified.callee}; change the semantic binding and rebuild`,
           );
         }
+        const seriesArgument = canonicalTaSourceArgument(
+          node,
+          classified,
+          bindings,
+        );
+        const seriesSource =
+          seriesArgument === undefined ||
+          (classified.kind !== "ta" && classified.callee !== "input.source")
+            ? undefined
+            : directIndicatorSeriesSource(seriesArgument, bindings);
         const metadata = {
           id,
           kind: classified.kind,
           callee: classified.callee,
-          ...(classified.kind !== "ta" || node.arguments[0] === undefined
-            ? {}
-            : {
-                seriesSource: directIndicatorSeriesSource(
-                  node.arguments[0],
-                  bindings,
-                ),
-              }),
+          ...(seriesSource === undefined ? {} : { seriesSource }),
           source: sourceLocation(node, sourceFile, sourceFileId),
         };
         callsiteByNode.set(node, {
@@ -2333,6 +3220,34 @@ export function transformIndicatorCallsites(
   };
 
   collect(sourceFile, rootBindings.named, rootBindings.namespaceLike);
+  for (const [access, declarationStart] of mutableSeriesByAccess) {
+    const declaration = [...mutableSeriesByDeclaration.entries()].find(
+      ([candidate]) => candidate.getStart(sourceFile) === declarationStart,
+    );
+    if (declaration === undefined)
+      throw syntaxError(
+        sourceFile,
+        access,
+        "scalar recurrence history could not resolve its declaration identity",
+      );
+    mutableSeriesByAccess.set(access, declaration[1]);
+  }
+  validateLoopInvokedInputHelpers(
+    sourceFile,
+    callsiteByNode,
+    rootBindings.named,
+  );
+  validateRepeatedInputCallbacks(
+    sourceFile,
+    callsiteByNode,
+    rootBindings.named,
+  );
+  validateRecursiveInputHelpers(sourceFile, callsiteByNode, rootBindings.named);
+  validateInputHelperExecutionCardinality(
+    sourceFile,
+    callsiteByNode,
+    rootBindings.named,
+  );
   for (const [node, callsite] of callsiteByNode) {
     if (callsite.metadata.kind !== "signal" || !ts.isCallExpression(node))
       continue;
@@ -2345,6 +3260,7 @@ export function transformIndicatorCallsites(
             callsiteByNode,
             callsite.bindings,
             sourceFile,
+            compilerRelocatedHelperRanges,
           );
     callsite.metadata.dependencies = dependencyMetadata.dependencies;
     callsite.metadata.chartSeries = dependencyMetadata.chartSeries;
@@ -2386,12 +3302,157 @@ export function transformIndicatorCallsites(
     };
 
   const prefix = uniqueTokenPrefix(sourceText);
+  const persistentVarName = `${prefix}persistentVar`;
+  const persistentScopeName = `${prefix}persistentScope`;
+  const scalarSeriesName = `${prefix}scalarSeries`;
+  const scalarHistoryName = `${prefix}scalarHistory`;
   const tokenNames = new Map(
     callsites.map((metadata, index) => [metadata, `${prefix}${index}`]),
   );
   const transformer = (context) => {
     const { factory } = context;
     const visit = (node) => {
+      if (ts.isVariableDeclaration(node)) {
+        const metadata = mutableSeriesByDeclaration.get(node);
+        if (metadata !== undefined && ts.isIdentifier(node.name)) {
+          const initializer =
+            node.initializer === undefined
+              ? factory.createIdentifier("undefined")
+              : ts.visitNode(node.initializer, visit);
+          const getter = factory.createArrowFunction(
+            undefined,
+            undefined,
+            [],
+            undefined,
+            factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+            factory.createIdentifier(node.name.text),
+          );
+          return factory.updateVariableDeclaration(
+            node,
+            node.name,
+            node.exclamationToken,
+            node.type,
+            factory.createCallExpression(
+              factory.createIdentifier(scalarSeriesName),
+              undefined,
+              [
+                initializer,
+                getter,
+                factory.createIdentifier(tokenNames.get(metadata)),
+              ],
+            ),
+          );
+        }
+      }
+      const scalarHistoryMetadata = mutableSeriesByAccess.get(node);
+      if (scalarHistoryMetadata !== undefined) {
+        if (
+          ts.isElementAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.argumentExpression !== undefined
+        ) {
+          return factory.createCallExpression(
+            factory.createIdentifier(scalarHistoryName),
+            undefined,
+            [
+              factory.createIdentifier(node.expression.text),
+              ts.visitNode(node.argumentExpression, visit),
+              factory.createIdentifier(tokenNames.get(scalarHistoryMetadata)),
+            ],
+          );
+        }
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.name.text === "at" &&
+          node.arguments.length === 1
+        ) {
+          const offset = node.arguments[0];
+          if (offset !== undefined)
+            return factory.createCallExpression(
+              factory.createIdentifier(scalarHistoryName),
+              undefined,
+              [
+                factory.createIdentifier(node.expression.expression.text),
+                ts.visitNode(offset, visit),
+                factory.createIdentifier(tokenNames.get(scalarHistoryMetadata)),
+              ],
+            );
+        }
+      }
+      if (
+        ts.isVariableDeclarationList(node) &&
+        (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        node.declarations.some((declaration) =>
+          persistentVarByDeclaration.has(declaration),
+        )
+      ) {
+        const declarations = node.declarations.map((declaration) => {
+          const metadata = persistentVarByDeclaration.get(declaration);
+          if (metadata === undefined || !ts.isIdentifier(declaration.name))
+            return ts.visitEachChild(declaration, visit, context);
+          const initializer =
+            declaration.initializer === undefined
+              ? factory.createIdentifier("undefined")
+              : ts.visitNode(declaration.initializer, visit);
+          const getter = factory.createArrowFunction(
+            undefined,
+            undefined,
+            [],
+            undefined,
+            factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+            factory.createIdentifier(declaration.name.text),
+          );
+          return factory.updateVariableDeclaration(
+            declaration,
+            declaration.name,
+            declaration.exclamationToken,
+            declaration.type,
+            factory.createCallExpression(
+              factory.createIdentifier(persistentVarName),
+              undefined,
+              [
+                factory.createArrowFunction(
+                  undefined,
+                  undefined,
+                  [],
+                  undefined,
+                  factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                  initializer,
+                ),
+                getter,
+                factory.createIdentifier(tokenNames.get(metadata)),
+              ],
+            ),
+          );
+        });
+        return factory.updateVariableDeclarationList(node, declarations);
+      }
+      const persistentScope = persistentScopeByCall.get(node);
+      if (persistentScope !== undefined && ts.isCallExpression(node)) {
+        const invocation = factory.updateCallExpression(
+          node,
+          ts.visitNode(node.expression, visit),
+          node.typeArguments,
+          node.arguments.map((argument) => ts.visitNode(argument, visit)),
+        );
+        return factory.createCallExpression(
+          factory.createIdentifier(persistentScopeName),
+          undefined,
+          [
+            factory.createIdentifier(tokenNames.get(persistentScope)),
+            factory.createArrowFunction(
+              undefined,
+              undefined,
+              [],
+              undefined,
+              factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+              invocation,
+            ),
+          ],
+        );
+      }
       const candleTypeInputKey = candleTypeInputKeyByCall.get(node);
       if (candleTypeInputKey !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);
@@ -2427,7 +3488,23 @@ export function transformIndicatorCallsites(
       const callsite = callsiteByNode.get(node);
       if (callsite !== undefined && ts.isCallExpression(node)) {
         const expression = ts.visitNode(node.expression, visit);
-        const argumentsWithCallsite = node.arguments.map((argument) =>
+        let authorArguments = [...node.arguments];
+        if (
+          lengthFirstTaCall(
+            node,
+            {
+              kind: callsite.metadata.kind,
+              callee: callsite.metadata.callee,
+            },
+            callsite.bindings,
+          )
+        )
+          authorArguments = [
+            authorArguments[1],
+            authorArguments[0],
+            ...authorArguments.slice(2),
+          ];
+        const argumentsWithCallsite = authorArguments.map((argument) =>
           ts.visitNode(argument, visit),
         );
         while (argumentsWithCallsite.length < callsite.authorArity)
@@ -2459,8 +3536,59 @@ export function transformIndicatorCallsites(
   const declarations = callsites.map((metadata) =>
     callsiteDeclaration(ts.factory, tokenNames.get(metadata), metadata),
   );
+  const persistentStateImport =
+    persistentVarByDeclaration.size === 0 &&
+    persistentScopeByCall.size === 0 &&
+    mutableSeriesByDeclaration.size === 0
+      ? []
+      : [
+          ts.factory.createImportDeclaration(
+            undefined,
+            ts.factory.createImportClause(
+              false,
+              undefined,
+              ts.factory.createNamedImports([
+                ...(persistentVarByDeclaration.size === 0
+                  ? []
+                  : [
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("persistentVar"),
+                        ts.factory.createIdentifier(persistentVarName),
+                      ),
+                    ]),
+                ...(persistentScopeByCall.size === 0
+                  ? []
+                  : [
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("withPersistentStateScope"),
+                        ts.factory.createIdentifier(persistentScopeName),
+                      ),
+                    ]),
+                ...(mutableSeriesByDeclaration.size === 0
+                  ? []
+                  : [
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("scalarSeries"),
+                        ts.factory.createIdentifier(scalarSeriesName),
+                      ),
+                      ts.factory.createImportSpecifier(
+                        false,
+                        ts.factory.createIdentifier("scalarSeriesHistory"),
+                        ts.factory.createIdentifier(scalarHistoryName),
+                      ),
+                    ]),
+              ]),
+            ),
+            ts.factory.createStringLiteral(sdkPersistentStateModule),
+            undefined,
+          ),
+        ];
   const withMetadata = ts.factory.updateSourceFile(transformed, [
     ...statements.slice(0, insertionIndex),
+    ...persistentStateImport,
     ...declarations,
     ...statements.slice(insertionIndex),
   ]);

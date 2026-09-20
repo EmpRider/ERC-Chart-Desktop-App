@@ -35,25 +35,62 @@ test("compiler input identities do not leak into default settings labels", async
   const { default: plugin } = await packagedPlugin(
     `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  { id: "erc.indicator.input-label-identity.main", name: "Input label identity" },
-  () => {
-    const implicit = input.int(5);
-    const keyed = input.float(2, { key: "source" });
-    const titled = input.bool(true, { title: "Enabled" });
-    plot.line(implicit + keyed + (titled ? 1 : 0), { key: "result", title: "Result" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.input-label-identity.main",
+  name: "Input label identity",
+});
+
+const implicit = input.int(5);
+const second = input.float(2);
+const titled = input.bool(true, { title: "Enabled" });
+plot.line(implicit + second + (titled ? 1 : 0), { title: "Result" });
 `,
     "erc.indicator.input-label-identity",
   );
 
   assert.deepEqual(
     plugin.definition.inputs.map(({ label }) => label),
-    ["input_0", "source", "Enabled"],
+    ["input_0", "input_1", "Enabled"],
   );
   for (const definition of plugin.definition.inputs)
     assert.match(definition.key, /^erc-v2-input-[0-9a-f]{24}$/u);
+});
+
+test("package build rejects input declarations from repeated callbacks", async () => {
+  const sourceDirectory = await mkdtemp(
+    path.join(import.meta.dirname, ".repeated-input-callback-source-"),
+  );
+  const outputDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "erc-repeated-input-callback-package-"),
+  );
+  try {
+    const source = path.join(sourceDirectory, "indicator.ts");
+    await writeFile(
+      source,
+      `import { defineIndicator, input, plot } from "@erc-chart/indicator-sdk";
+export default defineIndicator({ id: "fixture", name: "Fixture" });
+[9, 14].forEach(() => {
+  input.int(14, "Length");
+});
+plot.line(close, { title: "Close" });
+`,
+      "utf8",
+    );
+
+    await assert.rejects(
+      () =>
+        buildIndicatorPackage({
+          source,
+          outputRoot: path.join(outputDirectory, "package"),
+          id: "erc.indicator.repeated-input-callback",
+          version: "0.1.0",
+        }),
+      /indicator\.ts:3:17 input declarations cannot execute inside repeated callbacks/u,
+    );
+  } finally {
+    await rm(sourceDirectory, { recursive: true, force: true });
+    await rm(outputDirectory, { recursive: true, force: true });
+  }
 });
 
 test("implicit input labels remain stable when compiler callsites reorder", async () => {
@@ -67,21 +104,21 @@ function slowLength() {
   return input.int(3);
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.input-label-reorder.main", name: "Input label reorder" },
-  ({ close }) => {
-    let fast;
-    let slow;
-    if (close > 15) {
-      slow = slowLength();
-      fast = fastLength();
-    } else {
-      fast = fastLength();
-      slow = slowLength();
-    }
-    plot.line(fast * 100 + slow, { key: "result", title: "Result" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.input-label-reorder.main",
+  name: "Input label reorder",
+});
+
+let fast;
+let slow;
+if (close > 15) {
+  slow = slowLength();
+  fast = fastLength();
+} else {
+  fast = fastLength();
+  slow = slowLength();
+}
+plot.line(fast * 100 + slow, { title: "Result" });
 `,
     "erc.indicator.input-label-reorder",
   );
@@ -90,6 +127,12 @@ export default defineIndicator(
     plugin.definition.inputs.map(({ label }) => label),
     ["input_0", "input_1"],
   );
+
+  const resultDefinition = plugin.definition.plots.find(
+    ({ label }) => label === "Result",
+  );
+  assert.ok(resultDefinition);
+  const resultKey = resultDefinition.outputKey ?? resultDefinition.key;
 
   const context = { instrumentId: "TEST", timeframeId: "1m" };
   const candle = (index, close) => ({
@@ -105,7 +148,7 @@ export default defineIndicator(
   try {
     instance.onHistory([candle(0, 10), candle(1, 20), candle(2, 10)]);
     assert.deepEqual(
-      instance.snapshot().points.map((point) => point.values.result),
+      instance.snapshot().points.map((point) => point.values[resultKey]),
       [203, 203, 203],
     );
   } finally {

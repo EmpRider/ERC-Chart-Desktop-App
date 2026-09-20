@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  defineIndicator,
   history,
   indicatorContractVersion,
   indicatorSdkVersion,
   plot,
 } from "../dist/index.js";
+import { defineIndicator } from "../dist/indicator.js";
 
 const context = { instrumentId: "TEST", timeframeId: "1m" };
 const candle = (index, close) => ({

@@ -21,21 +21,57 @@ const outputDirectory = await mkdtemp(
 const repeatedCalls = Array.from(
   { length: 24 },
   (_, index) => `
-    const trend${index} = ta.ema(close[1], ${index + 2});
-    plot.line(trend${index}, { key: "trend-${index}" });`,
+const trend${index} = ta.ema(close[1], ${index + 2});
+plot.line(trend${index});`,
 ).join("");
+const callbackInputHelperBranches = 16;
+const inputHelperBranches = Array.from(
+  { length: callbackInputHelperBranches },
+  (_, index) => `${index === 0 ? "if" : "else if"} (close < ${index}) {
+  callbackLength = readCallbackLength();
+}`,
+).join(" ");
+const repeatedCallbackFanout = 12;
+const sharedCallbackHelperStatements = 96;
+const sharedCallbackHelperBody = "  total += value > 0 ? 1 : 0;\n".repeat(
+  sharedCallbackHelperStatements,
+);
+const sharedCallbackWorkload = Array.from(
+  { length: repeatedCallbackFanout },
+  (_, index) => `
+function repeatedCallback${index}(value: number) {
+  return sharedRepeatedCallbackHelper(value);
+}
+[1, 2, 3].forEach(repeatedCallback${index});`,
+).join("\n");
 const sourceText = `import { defineIndicator, input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 
-export default defineIndicator(
-  { id: "erc.indicator.authoring-performance.main", name: "Authoring performance" },
-  ({ close }) => {
-    const length = input.int(14, { key: "length" });${repeatedCalls}
-    const fast = ta.sma(close, length);
-    const slow = ta.sma(close, 28);
-    plot.histogram(fast - slow, { key: "spread" });
-    signal(fast > slow, "long", { key: "cross" });
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.authoring-performance.main",
+  name: "Authoring performance",
+});
+
+function readCallbackLength() {
+  return input.int(21, "Callback helper length");
+}
+
+function sharedRepeatedCallbackHelper(value: number) {
+  let total = value;
+${sharedCallbackHelperBody}  return total;
+}
+
+${sharedCallbackWorkload}
+
+const length = input.int(14, "Length");${repeatedCalls}
+let callbackLength = length;
+${inputHelperBranches} else {
+  callbackLength = readCallbackLength();
+}
+void callbackLength;
+const fast = ta.sma(close, length);
+const slow = ta.sma(close, 28);
+plot.histogram(fast - slow);
+signal(fast > slow, "long");
 `;
 
 function averageTransformMs(transform) {
@@ -88,7 +124,10 @@ try {
   console.log(
     JSON.stringify({
       component: "indicator-authoring-package",
-      representativeCallsites: 53,
+      representativeCallsites: 54,
+      callbackInputHelperBranches: callbackInputHelperBranches + 1,
+      repeatedCallbackFanout,
+      sharedCallbackHelperStatements,
       transformIterations,
       historyOnlyAverageMs,
       composedAverageMs,

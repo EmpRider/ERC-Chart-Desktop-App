@@ -103,7 +103,7 @@ test("covers the authoring package root", async (t) => {
   await mkdir(shared, { recursive: true });
   await writeFile(
     path.join(shared, "indicator.ts"),
-    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";\nexport default defineIndicator(\n  { id: "erc.indicator.history-root.main", name: "History root" },\n  ({ close }) => { plot.line(close[1], { key: "history" }); },\n);\n`,
+    `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";\nexport default defineIndicator({ id: "erc.indicator.history-root.main", name: "History root" });\nplot.line(close[1], { title: "History" });\n`,
     "utf8",
   );
   const source = path.join(src, "index.ts");

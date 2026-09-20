@@ -18,20 +18,19 @@ test("compiler rejects dynamic declaration metadata for a conditional plot", asy
       source,
       `import { defineIndicator, plot } from "@erc-chart/indicator-sdk";
 
-function latePlot(value) {
+function latePlot(value: number) {
   plot.line(value, {
-    key: "late",
     title: value > 20 ? "Late high" : "Late low",
     style: "dotted",
   });
 }
 
-export default defineIndicator(
-  { id: "erc.indicator.dynamic-late-plot.main", name: "Dynamic late plot" },
-  ({ close }) => {
-    if (close > 15) latePlot(close);
-  },
-);
+export default defineIndicator({
+  id: "erc.indicator.dynamic-late-plot.main",
+  name: "Dynamic late plot",
+});
+
+if (close > 15) latePlot(close);
 `,
       "utf8",
     );

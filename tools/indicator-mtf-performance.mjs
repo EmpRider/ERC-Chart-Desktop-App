@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import {
-  defineIndicator,
-  plot,
-  ta,
-} from "../packages/indicator-sdk/dist/index.js";
+import { plot, ta } from "../packages/indicator-sdk/dist/index.js";
+import { defineIndicator } from "../packages/indicator-sdk/dist/indicator.js";
 
 // Run after npm run build. Synthetic provider-specific timeframe IDs exercise
 // the fallback alignment path that cannot derive a duration from the ID.

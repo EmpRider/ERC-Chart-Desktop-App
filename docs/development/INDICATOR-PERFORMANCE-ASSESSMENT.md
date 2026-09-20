@@ -43,12 +43,52 @@ before/after interactive FPS recording of the user's live session.
 - Changed legacy ATR building updates to replace their current candle/point in
   place. Added visual revisions so unchanged drawings/signals are retained
   without being retransmitted.
-- Added a Pine-inspired authored SDK: `defineIndicator`, `input`, scalar `ta`,
-  `series`, `plot`, and `signal`. Definitions, output arrays and lifecycle
-  handling are generated internally. Provisional calculations roll back to the
-  last committed bar before each tick, preventing cumulative intrabar errors.
+- Added the first Pine-inspired authored SDK. Its early public recurrence helper
+  was later removed by the September 15 SDK-v2 correction; current authoring uses
+  top-level scalar/history semantics and compiler-managed persistent `var` state.
+  Definitions, output arrays and lifecycle handling remain generated internally.
+  Provisional calculations roll back to the last committed bar before each tick,
+  preventing cumulative intrabar errors.
 
 ## Measured results and checks
+
+### ECDD-241 final correction measurements — 2026-09-19
+
+Fresh Windows measurements on the final correction task branch use the repository
+performance gates rather than the historical observations below. The local
+workstation runs Node 25.9.0; exact-head Delivery CI must repeat required gates
+with the repository-pinned Node 26.8.1/npm 12.0.2 toolchain before promotion.
+
+| Final correction workload                              | Fresh observation |             Enforced budget |
+| ------------------------------------------------------ | ----------------: | --------------------------: |
+| Authoring transform overhead                           |          36.22 ms |                      100 ms |
+| Indicator package build                                |         582.24 ms |                    5,000 ms |
+| Compiler history path, 100,000 bars                    |         747.76 ms | 60 s worker history ceiling |
+| Runtime identity path, 100,000 bars                    |           30.47 s |                        60 s |
+| Runtime identity, slowest building update              |           1.16 ms |                      100 ms |
+| Worker snapshot materialization, worst total           |          42.23 ms |        60 s history ceiling |
+| Dependency payload, 400,000 points                     | 1.015 s worst run |                         5 s |
+| Persistent state, 100,000 bars / 4,096 items           |            5.54 s |          bounded-state gate |
+| Drawings, 100,000 bars / 2,000 retained                |           26.00 s |                        60 s |
+| ATR Rope + UT Bot, 100,000 bars                        |           19.84 s |                        60 s |
+| ATR Rope + UT Bot, slowest building update             |           1.07 ms |                      100 ms |
+| Provider-aware MTF, 100,000 chart bars                 |         672.39 ms |                        60 s |
+| Renderer MTF alignment, 100,000 chart bars             |          11.57 ms |                         1 s |
+| Four-chart/four-worker history, 100,000 aggregate bars |           21.84 s |                        60 s |
+| Four-chart building sweep, slowest sweep               |           2.84 ms |                         5 s |
+| Four-chart slowest individual building update          |           0.90 ms |                      100 ms |
+| Four-chart finalized sweep                             |           7.97 ms |                         1 s |
+
+The dedicated maintained-example stress replayed 10,000 ATR Rope + UT Bot bars
+with production-like POC migration in about 2.48 seconds. Its fixture permits at
+most 20 retained zones × 11 segments × two overlays = 440 overlays, so it proves
+the corrected persistent-handle architecture stays comfortably inside the
+unchanged 2,000-drawing safeguard without raising the cap.
+
+The performance command begins with a scaffold step that explicitly reports
+`NOT MEASURED`; that step is not treated as acceptance evidence. The measured
+indicator/runtime/source/renderer/multi-chart gates that follow all completed
+successfully.
 
 In the isolated derived-2m test with 100,000 source bars, 100 tick updates took
 approximately 1.59 ms after the changes, versus the earlier 1,004 ms observation.
@@ -155,6 +195,18 @@ Validation completed on Delivery #1047:
 - Electron application, workspace-restart and multi-instance smokes passed.
 - Build, authored performance acceptance, audit and version checks passed.
 - Dependency audit reported zero vulnerabilities.
+
+ECDD-237 extends the `indicator-history` gate with one compiler-managed
+persistent object containing an opaque `plot.box()` handle. This exercises both
+persistent-state reads and finalized commits through `cloneSeriesState()` while
+retaining the SDK-owned handle by identity. Review-fix validation on Windows /
+Node 26.8.1 measured the following against the existing worker budgets:
+
+| ECDD-237 opaque persistent-state workload | Observed time | CI budget |
+| ----------------------------------------- | ------------: | --------: |
+| 100,000-bar history replay                |     769.25 ms |      60 s |
+| Slowest of 1,000 building updates         |       0.05 ms |    100 ms |
+| Finalized update                          |       0.01 ms |    100 ms |
 
 ## ECDD-145 worker resilience and TA complexity gate
 
