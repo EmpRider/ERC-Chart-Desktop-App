@@ -278,6 +278,25 @@ void values;
   );
 });
 
+test("does not infer an array through a shadowed Array.from call", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const Array = {
+  from() {
+    return { forEach(callback) { return callback(); } };
+  },
+};
+const once = Array.from();
+const value = once.forEach(() => input.int(14, "Length"));
+void value;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
 test("does not treat same-named custom callback methods as repeated array callbacks", async () => {
   const result = await transform(`
 import { input } from "@erc-chart/indicator-sdk";

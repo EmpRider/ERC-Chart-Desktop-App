@@ -1759,6 +1759,7 @@ function signalExpressionIsProvableArray(expression, resolving = new Set()) {
     ts.isPropertyAccessExpression(callable) &&
     ts.isIdentifier(callable.expression) &&
     callable.expression.text === "Array" &&
+    !signalNameIsLexicallyBoundAt(callable, "Array") &&
     (callable.name.text === "from" || callable.name.text === "of")
   );
 }
