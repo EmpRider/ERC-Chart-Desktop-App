@@ -264,6 +264,46 @@ Array.from([9, 14], readLength);
   );
 });
 
+test("rejects direct input member references used as repeated callbacks", async () => {
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+[9, 14].forEach(input.int);
+`,
+        "src/direct-input-callback.ts",
+      ),
+    /src\/direct-input-callback\.ts:2:17 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects imported input aliases used as repeated callbacks", async () => {
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input as sdkInput } from "@erc-chart/indicator-sdk";
+Array.from([9, 14], sdkInput.int);
+`,
+        "src/import-aliased-input-callback.ts",
+      ),
+    /src\/import-aliased-input-callback\.ts:2:21 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects local aliases of input members used as repeated callbacks", async () => {
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+const readLength = input.int;
+[9, 14].forEach(readLength);
+`,
+        "src/local-aliased-input-callback.ts",
+      ),
+    /src\/local-aliased-input-callback\.ts:3:17 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
 test("does not treat a shadowed Array.from helper as the built-in mapper", async () => {
   const result = await transform(`
 import { input } from "@erc-chart/indicator-sdk";

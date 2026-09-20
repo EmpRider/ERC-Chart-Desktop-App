@@ -2240,11 +2240,36 @@ function repeatedInputCallback(call) {
   return undefined;
 }
 
+function inputCallableReference(expression, bindings, resolving = new Set()) {
+  const callable = unwrapSignalCallable(expression);
+  if (
+    ts.isPropertyAccessExpression(callable) &&
+    ts.isIdentifier(callable.expression)
+  )
+    return (
+      signalImportedBindingForIdentifier(callable.expression, bindings) ===
+      "input"
+    );
+  if (!ts.isIdentifier(callable)) return false;
+  const initializer = signalVariableInitializerForReference(callable);
+  if (initializer === undefined || resolving.has(initializer)) return false;
+  resolving.add(initializer);
+  const result = inputCallableReference(initializer, bindings, resolving);
+  resolving.delete(initializer);
+  return result;
+}
+
 function validateRepeatedInputCallbacks(sourceFile, callsiteByNode, bindings) {
   const visit = (node) => {
     if (ts.isCallExpression(node)) {
       const callback = repeatedInputCallback(node);
       if (callback !== undefined) {
+        if (inputCallableReference(callback, bindings))
+          throw syntaxError(
+            sourceFile,
+            callback,
+            "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
+          );
         const analysis = signalCallableAnalysis(callback, bindings);
         if (
           analysis.kind === "helper" &&
