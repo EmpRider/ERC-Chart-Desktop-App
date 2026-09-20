@@ -22,12 +22,12 @@ import {
 } from "./packaging-contract.mjs";
 
 test("defines klinecharts architecture release identity", () => {
-  assert.equal(applicationVersion, "1.1.0");
+  assert.equal(applicationVersion, "1.1.1");
   assert.equal(packageIdentityName, "erc-chart-desktop-app");
-  assert.equal(releaseTag(applicationVersion), "v1.1.0");
+  assert.equal(releaseTag(applicationVersion), "v1.1.1");
   assert.equal(
     installerArtifactName(applicationVersion),
-    "ERC-Chart-Setup-1.1.0.exe",
+    "ERC-Chart-Setup-1.1.1.exe",
   );
 });
 
@@ -53,7 +53,7 @@ test("requires a release version to advance beyond all published versions", () =
   );
 
   assert.doesNotThrow(() =>
-    packagingContract.assertReleaseVersionAdvances("1.1.0", ["0.3.6", "1.0.0"]),
+    packagingContract.assertReleaseVersionAdvances("1.1.1", ["0.3.6", "1.0.0", "1.1.0"]),
   );
   assert.doesNotThrow(() =>
     packagingContract.assertReleaseVersionAdvances("9007199254740993.0.0", [
@@ -151,7 +151,7 @@ test("creates packaged smoke arguments without a development entry path", () => 
 });
 
 test("requires the packaged ASAR manifest to carry the release version", () => {
-  assert.doesNotThrow(() => assertPackagedVersion("1.1.0"));
+  assert.doesNotThrow(() => assertPackagedVersion("1.1.1"));
   assert.throws(
     () => assertPackagedVersion("0.1.0-dev.1"),
     /Packaged application/,
@@ -160,8 +160,8 @@ test("requires the packaged ASAR manifest to carry the release version", () => {
 
 test("writes a conventional SHA-256 checksum line", () => {
   assert.equal(
-    checksumLine("a".repeat(64), "ERC-Chart-Setup-1.1.0.exe"),
-    `${"a".repeat(64)}  ERC-Chart-Setup-1.1.0.exe\n`,
+    checksumLine("a".repeat(64), "ERC-Chart-Setup-1.1.1.exe"),
+    `${"a".repeat(64)}  ERC-Chart-Setup-1.1.1.exe\n`,
   );
   assert.throws(() => checksumLine("not-a-digest", "setup.exe"), /SHA-256/);
   assert.throws(() => checksumLine("a".repeat(64), "../setup.exe"), /filename/);
