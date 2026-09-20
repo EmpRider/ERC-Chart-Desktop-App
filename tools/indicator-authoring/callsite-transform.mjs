@@ -2221,27 +2221,39 @@ function validateLoopInvokedInputHelpers(sourceFile, callsiteByNode, bindings) {
   visit(sourceFile);
 }
 
+function repeatedInputCallback(call) {
+  const callable = unwrapSignalCallable(call.expression);
+  if (!ts.isPropertyAccessExpression(callable)) return undefined;
+  if (
+    inputRepeatedCallbackMethods.has(callable.name.text) &&
+    signalExpressionIsProvableArray(callable.expression)
+  )
+    return call.arguments[0];
+  if (
+    (callable.name.text === "from" || callable.name.text === "fromAsync") &&
+    ts.isIdentifier(callable.expression) &&
+    callable.expression.text === "Array" &&
+    !signalNameIsLexicallyBoundAt(callable, "Array")
+  )
+    return call.arguments[1];
+  return undefined;
+}
+
 function validateRepeatedInputCallbacks(sourceFile, callsiteByNode, bindings) {
   const visit = (node) => {
     if (ts.isCallExpression(node)) {
-      const callable = unwrapSignalCallable(node.expression);
-      if (
-        ts.isPropertyAccessExpression(callable) &&
-        inputRepeatedCallbackMethods.has(callable.name.text)
-      ) {
-        const callback = node.arguments[0];
-        if (callback !== undefined) {
-          const analysis = signalCallableAnalysis(callback, bindings);
-          if (
-            analysis.kind === "helper" &&
-            helperContainsInputCall(analysis.helper, callsiteByNode, bindings)
-          )
-            throw syntaxError(
-              sourceFile,
-              callback,
-              "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
-            );
-        }
+      const callback = repeatedInputCallback(node);
+      if (callback !== undefined) {
+        const analysis = signalCallableAnalysis(callback, bindings);
+        if (
+          analysis.kind === "helper" &&
+          helperContainsInputCall(analysis.helper, callsiteByNode, bindings)
+        )
+          throw syntaxError(
+            sourceFile,
+            callback,
+            "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
+          );
       }
     }
     ts.forEachChild(node, visit);

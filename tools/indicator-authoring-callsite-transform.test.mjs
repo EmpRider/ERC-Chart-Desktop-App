@@ -203,6 +203,8 @@ test("rejects input declarations inside repeated callbacks", async () => {
     `[9, 14].reduce((total) => total + input.int(14, "Length"), 0);`,
     `[9, 14].sort(() => input.int(14, "Length"));`,
     `[9, 14].toSorted(() => input.int(14, "Length"));`,
+    `Array.from([9, 14], () => input.int(14, "Length"));`,
+    `Array.fromAsync([9, 14], () => input.int(14, "Length"));`,
   ];
   for (const [index, statement] of fixtures.entries()) {
     await assert.rejects(
@@ -251,6 +253,42 @@ function readLength() {
 [9, 14].forEach(readLength);
 `),
     /input declarations cannot execute inside repeated callbacks/u,
+  );
+
+  await assert.rejects(
+    () =>
+      transform(`${helperSource}
+Array.from([9, 14], readLength);
+`),
+    /input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("does not treat a shadowed Array.from helper as the built-in mapper", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const Array = { from(values, callback) { return callback(values[0]); } };
+const values = Array.from([9], () => input.int(14, "Length"));
+void values;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
+test("does not treat same-named custom callback methods as repeated array callbacks", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const once = { forEach(callback) { return callback(); } };
+const value = once.forEach(() => input.int(14, "Length"));
+void value;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
   );
 });
 
