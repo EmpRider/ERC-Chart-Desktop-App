@@ -31,6 +31,19 @@ const inputHelperBranches = Array.from(
   callbackLength = readCallbackLength();
 }`,
 ).join(" ");
+const repeatedCallbackFanout = 12;
+const sharedCallbackHelperStatements = 96;
+const sharedCallbackHelperBody = "  total += value > 0 ? 1 : 0;\n".repeat(
+  sharedCallbackHelperStatements,
+);
+const sharedCallbackWorkload = Array.from(
+  { length: repeatedCallbackFanout },
+  (_, index) => `
+function repeatedCallback${index}(value: number) {
+  return sharedRepeatedCallbackHelper(value);
+}
+[1, 2, 3].forEach(repeatedCallback${index});`,
+).join("\n");
 const sourceText = `import { defineIndicator, input, plot, signal, ta } from "@erc-chart/indicator-sdk";
 
 export default defineIndicator({
@@ -41,6 +54,13 @@ export default defineIndicator({
 function readCallbackLength() {
   return input.int(21, "Callback helper length");
 }
+
+function sharedRepeatedCallbackHelper(value: number) {
+  let total = value;
+${sharedCallbackHelperBody}  return total;
+}
+
+${sharedCallbackWorkload}
 
 const length = input.int(14, "Length");${repeatedCalls}
 let callbackLength = length;
@@ -106,6 +126,8 @@ try {
       component: "indicator-authoring-package",
       representativeCallsites: 54,
       callbackInputHelperBranches: callbackInputHelperBranches + 1,
+      repeatedCallbackFanout,
+      sharedCallbackHelperStatements,
       transformIterations,
       historyOnlyAverageMs,
       composedAverageMs,

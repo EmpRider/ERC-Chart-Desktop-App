@@ -97,8 +97,9 @@ plot.line(range, { title: "Range" });
 Normal helper functions are allowed. Pass their mathematical inputs as ordinary
 arguments; do not add an ERC runtime/context parameter. Stateful authoring calls
 inside supported helpers receive compiler-owned identity. Inputs must still have
-statically bounded declaration multiplicity: input declarations in loops or
-recursive execution paths are rejected at build time.
+statically bounded declaration multiplicity: input declarations in loops,
+recursive execution paths, or compiler-provable repeated callbacks such as
+array iteration callbacks are rejected at build time.
 
 ## Inputs
 
@@ -370,8 +371,9 @@ if (buy) signal(true, "long");
 ```
 
 A single authored call site still represents one semantic declaration. Do not
-execute an input declaration repeatedly through a loop/recursive path, and avoid
-using one stateful call site as an unbounded dynamic factory.
+execute an input declaration repeatedly through a loop, recursive path, or
+compiler-provable repeated callback, and avoid using one stateful call site as
+an unbounded dynamic factory.
 
 ## Multi-timeframe and provider-aware sources
 

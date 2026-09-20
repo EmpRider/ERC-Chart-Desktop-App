@@ -4,7 +4,7 @@
 
 **Pine-semantics correction implementation:** ECDD-236 through ECDD-241 under ECDD-135
 
-**Comprehensive-review corrections:** ECDD-242 through ECDD-262 under ECDD-135
+**Comprehensive-review corrections:** ECDD-242 through ECDD-264 under ECDD-135
 
 **Final compliance refresh:** ECDD-263 under ECDD-135
 
@@ -64,11 +64,15 @@ that historical evidence visible while superseding its author-experience claims.
 - **ECDD-263** refreshes final current-state and design-to-code evidence after
   the complete ECDD-242..ECDD-262 correction sequence. It does not introduce an
   API/runtime redesign unless the fresh audit proves a real implementation gap.
+- **ECDD-264** closes the post-refresh compiler gap found during epic review by
+  rejecting input declarations that can execute through compiler-provable
+  repeated callbacks, while preserving shadowed/custom single-execution helpers
+  and leaving runtime input identity unchanged.
 
 No correction task rewrites the historical design documents to hide the
 chronology. This file describes the current implementation instead.
 
-### Current correction acceptance evidence — refreshed through ECDD-263
+### Current correction acceptance evidence — refreshed through ECDD-264
 
 The final audit re-read both approved SDK-v2 designs before assigning compliance
 status. The implementation audit found no remaining maintained-source dependency
@@ -79,6 +83,11 @@ Fresh ECDD-263 exact-tree verification is recorded in
 `INDICATOR-SDK-V2-FINAL-COMPLIANCE-2026-09-19-POST-REVIEW.md`. That matrix is the
 current compliance artifact and rechecks the complete code/test/performance
 surface after ECDD-262 rather than inheriting ECDD-260 counts.
+
+ECDD-264 is a post-refresh compiler correction discovered during the epic
+review. Its exact-head task evidence is recorded in GitHub/Jira. The ECDD-263
+compliance artifact remains unchanged as historical verification and does not
+claim ECDD-264 test evidence retroactively.
 
 The pinned-toolchain Delivery workflow, Semgrep, CodeRabbit status, exact-head
 maintainer review, and applicable manual-review evidence remain delivery gates
@@ -98,7 +107,7 @@ task/epic merges.
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Public authoring surface      | `packages/indicator-sdk/src/index.ts` exposes metadata-only `defineIndicator`, `input`, scalar `ta`, plots/drawing handles, signals, history, constants, whole-indicator controls, and author-relevant types. Runtime instance/snapshot contracts, source tokens, old history helpers, flat TA aliases, and low-level kernels are not public authoring exports. | Public-surface negative type tests must remain green; no compatibility facade may be reintroduced.                                      |
 | Script execution model        | `script-transform.mjs` lowers one exported metadata-only declaration plus top-level script statements into the hidden runtime calculation callback. Direct `open/high/low/close/volume/hl2/hlc3/ohlc4` and `bar.index/time/confirmed` are compiler supplied.                                                                                                    | Maintained indicator source must not contain host/runtime context plumbing.                                                             |
-| Inputs                        | Input declarations use compiler-generated stable identity. Concise titled overloads and advanced options are supported. Dynamic input multiplicity through loops/recursion fails at build time.                                                                                                                                                                 | `input.source(close, ...)` must own source selection without author source-token tables/switches.                                       |
+| Inputs                        | Input declarations use compiler-generated stable identity. Concise titled overloads and advanced options are supported. Dynamic input multiplicity through loops, recursion, and repeated callbacks fails at build time.                                                                                                                                        | `input.source(close, ...)` must own source selection without author source-token tables/switches.                                       |
 | History and scalar recurrence | `close[n]` and derived-value history are compiler-lowered to hidden history state. Ordinary scalar recurrence commits finalized values and rolls building updates back to the same committed predecessor. `history(value, n)` remains an advanced explicit spelling.                                                                                            | Replay, building replacement, finalization, corrected-history reset, and unavailable-history behavior must agree.                       |
 | Persistent domain state       | Authored `var` declarations lower to hidden persistent slots with stable declaration/invocation identity, initialize-once semantics, copy-on-write building rollback, finalized commit, rebuild reset, and the existing 4,096 collection-item bound.                                                                                                            | State must exist only for indicator/domain needs; SDK-owned opaque handles must preserve reference identity through state cloning.      |
 | Stateful TA                   | Scalar TA kernels remain incremental with committed/provisional state. The authoring compiler canonicalizes ambiguous length-first source overloads such as `ta.ema(20, open)` and `ta.rsi(14, open)` before runtime execution while retaining direct-series provenance for MTF/signal semantics.                                                               | Source-first and approved length-first forms must be execution-equivalent; TA complexity gates remain bounded.                          |

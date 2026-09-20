@@ -195,6 +195,175 @@ for (const length of [9, 14]) {
   );
 });
 
+test("rejects input declarations inside repeated callbacks", async () => {
+  const fixtures = [
+    `[9, 14].forEach(() => { input.int(14, "Length"); });`,
+    `[9, 14].map(() => input.int(14, "Length"));`,
+    `[9, 14].filter(() => input.bool(true, "Enabled"));`,
+    `[9, 14].reduce((total) => total + input.int(14, "Length"), 0);`,
+    `[9, 14].sort(() => input.int(14, "Length"));`,
+    `[9, 14].toSorted(() => input.int(14, "Length"));`,
+    `Array.from([9, 14], () => input.int(14, "Length"));`,
+    `Array.fromAsync([9, 14], () => input.int(14, "Length"));`,
+  ];
+  for (const [index, statement] of fixtures.entries()) {
+    await assert.rejects(
+      () =>
+        transform(
+          `import { input } from "@erc-chart/indicator-sdk";\n${statement}\n`,
+          `src/repeated-callback-input-${index}.ts`,
+        ),
+      /input declarations cannot execute inside repeated callbacks/u,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+[9, 14].forEach(() => {
+  input.int(14, "Length");
+});
+`,
+        "src/repeated-callback-input.ts",
+      ),
+    /src\/repeated-callback-input\.ts:2:17 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects input helpers invoked by repeated callbacks", async () => {
+  const helperSource = `
+import { input } from "@erc-chart/indicator-sdk";
+function readLength() {
+  return input.int(14, "Length");
+}
+`;
+
+  await assert.rejects(
+    () =>
+      transform(`${helperSource}
+[9, 14].forEach(() => readLength());
+`),
+    /input declarations cannot execute inside repeated callbacks/u,
+  );
+
+  await assert.rejects(
+    () =>
+      transform(`${helperSource}
+[9, 14].forEach(readLength);
+`),
+    /input declarations cannot execute inside repeated callbacks/u,
+  );
+
+  await assert.rejects(
+    () =>
+      transform(`${helperSource}
+Array.from([9, 14], readLength);
+`),
+    /input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects direct input member references used as repeated callbacks", async () => {
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+[9, 14].forEach(input.int);
+`,
+        "src/direct-input-callback.ts",
+      ),
+    /src\/direct-input-callback\.ts:2:17 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects imported input aliases used as repeated callbacks", async () => {
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input as sdkInput } from "@erc-chart/indicator-sdk";
+Array.from([9, 14], sdkInput.int);
+`,
+        "src/import-aliased-input-callback.ts",
+      ),
+    /src\/import-aliased-input-callback\.ts:2:21 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("rejects local aliases of input members used as repeated callbacks", async () => {
+  await assert.rejects(
+    () =>
+      transform(
+        `import { input } from "@erc-chart/indicator-sdk";
+const readLength = input.int;
+[9, 14].forEach(readLength);
+`,
+        "src/local-aliased-input-callback.ts",
+      ),
+    /src\/local-aliased-input-callback\.ts:3:17 input declarations cannot execute inside repeated callbacks/u,
+  );
+});
+
+test("does not treat a shadowed Array.from helper as the built-in mapper", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const Array = { from(values, callback) { return callback(values[0]); } };
+const values = Array.from([9], () => input.int(14, "Length"));
+void values;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
+test("does not infer an array through a shadowed Array.from call", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const Array = {
+  from() {
+    return { forEach(callback) { return callback(); } };
+  },
+};
+const once = Array.from();
+const value = once.forEach(() => input.int(14, "Length"));
+void value;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
+test("does not treat same-named custom callback methods as repeated array callbacks", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const once = { forEach(callback) { return callback(); } };
+const value = once.forEach(() => input.int(14, "Length"));
+void value;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
+test("allows a single-execution IIFE to declare an input", async () => {
+  const result = await transform(`
+import { input } from "@erc-chart/indicator-sdk";
+const length = (() => input.int(14, "Length"))();
+void length;
+`);
+
+  assert.deepEqual(
+    result.callsites.map(({ kind, callee }) => [kind, callee]),
+    [["input", "input.int"]],
+  );
+});
+
 test("allows a statically single-execution helper to declare an input", async () => {
   const result = await transform(`
 import { input } from "@erc-chart/indicator-sdk";

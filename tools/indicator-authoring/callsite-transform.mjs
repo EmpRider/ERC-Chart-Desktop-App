@@ -183,6 +183,13 @@ const signalArrayElementCallbackMethods = new Set([
   "map",
   "some",
 ]);
+const inputRepeatedCallbackMethods = new Set([
+  ...signalArrayElementCallbackMethods,
+  "reduce",
+  "reduceRight",
+  "sort",
+  "toSorted",
+]);
 const scalarPlotKinds = new Map([
   ["line", "line"],
   ["hline", "hline"],
@@ -1752,6 +1759,7 @@ function signalExpressionIsProvableArray(expression, resolving = new Set()) {
     ts.isPropertyAccessExpression(callable) &&
     ts.isIdentifier(callable.expression) &&
     callable.expression.text === "Array" &&
+    !signalNameIsLexicallyBoundAt(callable, "Array") &&
     (callable.name.text === "from" || callable.name.text === "of")
   );
 }
@@ -2214,6 +2222,71 @@ function validateLoopInvokedInputHelpers(sourceFile, callsiteByNode, bindings) {
   visit(sourceFile);
 }
 
+function repeatedInputCallback(call) {
+  const callable = unwrapSignalCallable(call.expression);
+  if (!ts.isPropertyAccessExpression(callable)) return undefined;
+  if (
+    inputRepeatedCallbackMethods.has(callable.name.text) &&
+    signalExpressionIsProvableArray(callable.expression)
+  )
+    return call.arguments[0];
+  if (
+    (callable.name.text === "from" || callable.name.text === "fromAsync") &&
+    ts.isIdentifier(callable.expression) &&
+    callable.expression.text === "Array" &&
+    !signalNameIsLexicallyBoundAt(callable, "Array")
+  )
+    return call.arguments[1];
+  return undefined;
+}
+
+function inputCallableReference(expression, bindings, resolving = new Set()) {
+  const callable = unwrapSignalCallable(expression);
+  if (
+    ts.isPropertyAccessExpression(callable) &&
+    ts.isIdentifier(callable.expression)
+  )
+    return (
+      signalImportedBindingForIdentifier(callable.expression, bindings) ===
+      "input"
+    );
+  if (!ts.isIdentifier(callable)) return false;
+  const initializer = signalVariableInitializerForReference(callable);
+  if (initializer === undefined || resolving.has(initializer)) return false;
+  resolving.add(initializer);
+  const result = inputCallableReference(initializer, bindings, resolving);
+  resolving.delete(initializer);
+  return result;
+}
+
+function validateRepeatedInputCallbacks(sourceFile, callsiteByNode, bindings) {
+  const visit = (node) => {
+    if (ts.isCallExpression(node)) {
+      const callback = repeatedInputCallback(node);
+      if (callback !== undefined) {
+        if (inputCallableReference(callback, bindings))
+          throw syntaxError(
+            sourceFile,
+            callback,
+            "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
+          );
+        const analysis = signalCallableAnalysis(callback, bindings);
+        if (
+          analysis.kind === "helper" &&
+          helperContainsInputCall(analysis.helper, callsiteByNode, bindings)
+        )
+          throw syntaxError(
+            sourceFile,
+            callback,
+            "input declarations cannot execute inside repeated callbacks; declare each input once from a statically single-execution path",
+          );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
 function helperParticipatesInRecursion(functionLike, bindings) {
   const start = functionLike;
   const visited = new Set();
@@ -2338,7 +2411,8 @@ function mutuallyExclusiveBranchConstraints(node, container) {
   while (current !== undefined && current !== container) {
     if (ts.isIfStatement(current)) {
       if (current.thenStatement === child) constraints.set(current, "then");
-      else if (current.elseStatement === child) constraints.set(current, "else");
+      else if (current.elseStatement === child)
+        constraints.set(current, "else");
     } else if (ts.isConditionalExpression(current)) {
       if (current.whenTrue === child) constraints.set(current, "true");
       else if (current.whenFalse === child) constraints.set(current, "false");
@@ -2378,7 +2452,11 @@ function validateInputHelperExecutionCardinality(
     ))
       constraints.set(branch, side);
     const executions = executionsByHelper.get(helper) ?? [];
-    if (executions.some((previous) => executionPathsCanOverlap(previous, constraints)))
+    if (
+      executions.some((previous) =>
+        executionPathsCanOverlap(previous, constraints),
+      )
+    )
       throw syntaxError(
         sourceFile,
         call,
@@ -3159,6 +3237,11 @@ export function transformIndicatorCallsites(
     callsiteByNode,
     rootBindings.named,
   );
+  validateRepeatedInputCallbacks(
+    sourceFile,
+    callsiteByNode,
+    rootBindings.named,
+  );
   validateRecursiveInputHelpers(sourceFile, callsiteByNode, rootBindings.named);
   validateInputHelperExecutionCardinality(
     sourceFile,
@@ -3344,10 +3427,7 @@ export function transformIndicatorCallsites(
             ),
           );
         });
-        return factory.updateVariableDeclarationList(
-          node,
-          declarations,
-        );
+        return factory.updateVariableDeclarationList(node, declarations);
       }
       const persistentScope = persistentScopeByCall.get(node);
       if (persistentScope !== undefined && ts.isCallExpression(node)) {
