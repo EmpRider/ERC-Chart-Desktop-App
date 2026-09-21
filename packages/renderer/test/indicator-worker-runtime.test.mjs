@@ -847,6 +847,7 @@ test("provider-backed indicators keep building deltas while the source revision 
       providerProfileId: "profile-a",
       instrumentId: candle.instrumentId,
       timeframeId: "1m",
+      sourceTimeframeIds: ["1m"],
       parameters: {},
       data: {
         kind: "building",
@@ -928,6 +929,7 @@ test("provider-backed indicators rebuild when the source revision changes", asyn
       providerProfileId: "profile-a",
       instrumentId: candle.instrumentId,
       timeframeId: "1m",
+      sourceTimeframeIds: ["1m"],
       parameters: {},
       data: {
         kind: "building",
@@ -1021,6 +1023,7 @@ test("concurrent source acquisition for one instance retains only one releasable
     providerProfileId: "profile-a",
     instrumentId: candle.instrumentId,
     timeframeId: "1m",
+    sourceTimeframeIds: ["1m"],
     parameters: {},
     data: { kind: "building", candle },
     rebuildCandles: () => [candle],
@@ -1098,6 +1101,7 @@ test("disposeInstance fences a pending provider source acquisition and releases 
       providerProfileId: "profile-1",
       instrumentId: candle.instrumentId,
       timeframeId: candle.timeframeId,
+      sourceTimeframeIds: [candle.timeframeId],
       data: { kind: "rebuild", candles: [candle] },
       rebuildCandles: () => [candle],
     });
@@ -1171,6 +1175,7 @@ test("disposeInstance rejects provider source work that was queued before dispos
     providerProfileId: "profile-1",
     instrumentId: candle.instrumentId,
     timeframeId: candle.timeframeId,
+    sourceTimeframeIds: [candle.timeframeId],
     data: { kind: "rebuild", candles: [candle] },
     rebuildCandles: () => [candle],
   });
@@ -1268,7 +1273,11 @@ test("disposeInstance fences worker dispatch while obsolete source release is pe
       };
     },
   });
-  const request = (timeframeId, dataRevision, sourceTimeframeIds = []) => {
+  const request = (
+    timeframeId,
+    dataRevision,
+    sourceTimeframeIds = [timeframeId],
+  ) => {
     const sourceCandle = { ...candle, timeframeId };
     return {
       instanceId: "release-dispose-instance",
