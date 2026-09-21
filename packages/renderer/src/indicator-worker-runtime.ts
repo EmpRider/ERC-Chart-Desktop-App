@@ -77,6 +77,28 @@ export interface BrowserIndicatorRuntime {
   readonly dispose: () => void;
 }
 
+function dataUsesTimeframe(
+  data: BrowserIndicatorDataUpdate,
+  timeframeId: string,
+): boolean {
+  if (data.kind === "building") return data.candle.timeframeId === timeframeId;
+  if (data.kind === "rollover")
+    return (
+      data.finalized.timeframeId === timeframeId &&
+      data.building.timeframeId === timeframeId
+    );
+  return data.candles.every((candle) => candle.timeframeId === timeframeId);
+}
+
+function requiresProviderBackedSource(
+  request: BrowserIndicatorSyncRequest,
+): boolean {
+  if ((request.candleType ?? "standard") !== "standard") return true;
+  if ((request.sourceTimeframeIds?.length ?? 0) > 0) return true;
+  if ((request.sourceTimeframes?.length ?? 0) > 0) return true;
+  return !dataUsesTimeframe(request.data, request.timeframeId);
+}
+
 export function createRendererIndicatorSourceDataService(
   bridge: RendererIndicatorSourceBridge,
 ): IndicatorSourceDataService {
@@ -142,7 +164,8 @@ export function createBrowserIndicatorRuntime(
     if (
       sourceEngine === undefined ||
       request.providerProfileId === undefined ||
-      request.providerProfileId.length === 0
+      request.providerProfileId.length === 0 ||
+      !requiresProviderBackedSource(request)
     ) {
       const current = sourceLeases.get(request.instanceId);
       sourceLeases.delete(request.instanceId);
