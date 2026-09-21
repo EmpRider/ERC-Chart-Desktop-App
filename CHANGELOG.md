@@ -2,6 +2,13 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [1.1.2] - 2026-09-21
+
+### Indicator chart-source hotfix
+
+- Fixes standard same-timeframe plugin indicators that could render only `n/a` by evaluating them directly from the exact chart candles instead of reacquiring redundant provider history.
+- Keeps provider-backed source acquisition for multi-timeframe indicators, explicitly different-timeframe sources, and Heikin Ashi inputs.
+
 ## [1.1.1] - 2026-09-20
 
 ### SDK v2 corrected release identity
