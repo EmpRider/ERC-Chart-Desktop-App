@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Indicator SDK v2
+const curatedNotes = `# v1.1.2 Indicator Runtime Hotfix
 
-This release completes the v2-only indicator authoring/runtime model with compiler-owned hidden identity, deterministic history and conditional execution, provider-aware multi-timeframe and Heikin Ashi sources, source-confirmed signals, persistent drawing handles, and explicit cross-indicator dependency ordering.
+Fixes standard same-timeframe plugin indicators that could render only n/a by evaluating them directly from the exact chart candles instead of reacquiring redundant provider history.
 
-Worker transport, recovery, bounded resource handling, maintained v2 indicators, and the final correctness/performance acceptance are included in this delivery. Legacy indicator source compatibility is intentionally outside the SDK v2 contract. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+Provider-backed acquisition remains for multi-timeframe, explicitly different-timeframe, and Heikin Ashi inputs.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
