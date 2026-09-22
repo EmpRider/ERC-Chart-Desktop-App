@@ -166,7 +166,7 @@ test("requires the packaged ASAR manifest to carry the release version", () => {
 test("writes a conventional SHA-256 checksum line", () => {
   assert.equal(
     checksumLine("a".repeat(64), "ERC-Chart-Setup-1.1.2.exe"),
-    `${"a".repeat(64)}  ERC-Chart-Setup-1.1.1.exe\n`,
+    `${"a".repeat(64)}  ERC-Chart-Setup-1.1.2.exe\n`,
   );
   assert.throws(() => checksumLine("not-a-digest", "setup.exe"), /SHA-256/);
   assert.throws(() => checksumLine("a".repeat(64), "../setup.exe"), /filename/);
