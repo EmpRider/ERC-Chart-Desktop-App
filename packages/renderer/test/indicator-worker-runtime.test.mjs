@@ -368,6 +368,90 @@ test("provider-backed indicator sources rebuild workers from source-engine candl
   }
 });
 
+test("standard same-timeframe indicators forward chart candles without redundant provider history", async () => {
+  const posted = [];
+  const historyRequests = [];
+  let subscriptions = 0;
+  const chartCandle = { ...candle, close: 115 };
+  const runtime = createBrowserIndicatorRuntime({
+    sourceDataService: {
+      async requestHistory(providerProfileId, request) {
+        historyRequests.push({ providerProfileId, request });
+        return [{ ...chartCandle, close: 999 }];
+      },
+      async subscribe() {
+        subscriptions += 1;
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workerFactory() {
+      let onmessage = null;
+      return {
+        get onmessage() {
+          return onmessage;
+        },
+        set onmessage(value) {
+          onmessage = value;
+        },
+        onerror: null,
+        postMessage(message) {
+          posted.push(message);
+          if (message.type !== "sync") return;
+          queueMicrotask(() =>
+            onmessage?.({
+              data: {
+                type: "result",
+                instanceId: message.instanceId,
+                sequence: message.sequence,
+                dataRevision: message.dataRevision,
+                configGeneration: message.configGeneration,
+                result: {
+                  kind: "snapshot",
+                  snapshot: { points: [], overlays: [], signals: [] },
+                },
+              },
+            }),
+          );
+        },
+        terminate() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  try {
+    await runtime.sync({
+      instanceId: "same-timeframe-instance",
+      runtimeEntryUrl:
+        "erc-plugin://plugin/erc.indicator.fixture/1.0.0/dist/index.js",
+      pluginId: "erc.indicator.fixture",
+      definitionId: "erc.indicator.fixture.main",
+      providerProfileId: "profile-a",
+      instrumentId: candle.instrumentId,
+      timeframeId: candle.timeframeId,
+      candleType: "standard",
+      sourceTimeframeIds: [],
+      sourceTimeframes: [],
+      parameters: {},
+      data: { kind: "snapshot", candles: [chartCandle] },
+      rebuildCandles: () => [chartCandle],
+      dataRevision: 1,
+      configGeneration: 1,
+    });
+
+    assert.deepEqual(historyRequests, []);
+    assert.equal(subscriptions, 0);
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].data.kind, "snapshot");
+    assert.deepEqual(decodeWorkerSnapshot(posted[0].data.snapshot), [
+      chartCandle,
+    ]);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("provider-backed indicators acquire independent base and per-TA timeframe sources", async () => {
   const posted = [];
   const historyRequests = [];
@@ -763,6 +847,7 @@ test("provider-backed indicators keep building deltas while the source revision 
       providerProfileId: "profile-a",
       instrumentId: candle.instrumentId,
       timeframeId: "1m",
+      sourceTimeframeIds: ["1m"],
       parameters: {},
       data: {
         kind: "building",
@@ -844,6 +929,7 @@ test("provider-backed indicators rebuild when the source revision changes", asyn
       providerProfileId: "profile-a",
       instrumentId: candle.instrumentId,
       timeframeId: "1m",
+      sourceTimeframeIds: ["1m"],
       parameters: {},
       data: {
         kind: "building",
@@ -937,6 +1023,7 @@ test("concurrent source acquisition for one instance retains only one releasable
     providerProfileId: "profile-a",
     instrumentId: candle.instrumentId,
     timeframeId: "1m",
+    sourceTimeframeIds: ["1m"],
     parameters: {},
     data: { kind: "building", candle },
     rebuildCandles: () => [candle],
@@ -1014,6 +1101,7 @@ test("disposeInstance fences a pending provider source acquisition and releases 
       providerProfileId: "profile-1",
       instrumentId: candle.instrumentId,
       timeframeId: candle.timeframeId,
+      sourceTimeframeIds: [candle.timeframeId],
       data: { kind: "rebuild", candles: [candle] },
       rebuildCandles: () => [candle],
     });
@@ -1087,6 +1175,7 @@ test("disposeInstance rejects provider source work that was queued before dispos
     providerProfileId: "profile-1",
     instrumentId: candle.instrumentId,
     timeframeId: candle.timeframeId,
+    sourceTimeframeIds: [candle.timeframeId],
     data: { kind: "rebuild", candles: [candle] },
     rebuildCandles: () => [candle],
   });
@@ -1184,7 +1273,11 @@ test("disposeInstance fences worker dispatch while obsolete source release is pe
       };
     },
   });
-  const request = (timeframeId, dataRevision, sourceTimeframeIds = []) => {
+  const request = (
+    timeframeId,
+    dataRevision,
+    sourceTimeframeIds = [timeframeId],
+  ) => {
     const sourceCandle = { ...candle, timeframeId };
     return {
       instanceId: "release-dispose-instance",
