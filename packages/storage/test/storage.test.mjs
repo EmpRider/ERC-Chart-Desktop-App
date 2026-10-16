@@ -1309,7 +1309,7 @@ const migrationWorker = `
   database.close();
 `;
 
-function runMigrationWorker(databasePath) {
+function runMigrationWorker(databasePath, retries = 3) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -1324,11 +1324,21 @@ function runMigrationWorker(databasePath) {
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.on("error", reject);
     child.on("exit", (code, signal) => {
-      if (code === 0) resolve();
-      else
+      if (code === 0) {
+        resolve();
+      } else if (retries > 0 && /database is locked/i.test(stderr)) {
+        // ponytail: SQLITE_BUSY retry ceiling is 3 attempts with 200ms backoff; increase if CI contention grows
+        setTimeout(
+          () => {
+            runMigrationWorker(databasePath, retries - 1).then(resolve, reject);
+          },
+          200 * (4 - retries),
+        );
+      } else {
         reject(
           new Error(`Migration worker exited ${code ?? signal}: ${stderr}`),
         );
+      }
     });
   });
 }

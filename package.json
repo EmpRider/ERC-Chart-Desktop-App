@@ -56,5 +56,10 @@
   "allowScripts": {
     "esbuild@0.28.2": true,
     "electron-winstaller": false
+  },
+  "overrides": {
+    "brace-expansion": "5.0.12",
+    "http-cache-semantics": "4.3.0",
+    "undici": "8.12.2"
   }
 }
