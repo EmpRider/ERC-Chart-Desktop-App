@@ -404,11 +404,10 @@ function projectedPocCandidate(
   const profileStart = Math.max(0, barIndex - params.profilePeriod + 1);
   const fastPeriod = Math.min(params.fastPocPeriod, params.profilePeriod);
   const start = Math.max(0, barIndex - fastPeriod + 1);
-  const profileBars = bars.filter((bar) => bar.index >= profileStart);
-  const fastBars = bars.filter((bar) => bar.index >= start);
   let low = Number.POSITIVE_INFINITY;
   let high = Number.NEGATIVE_INFINITY;
-  for (const bar of profileBars) {
+  for (const bar of bars) {
+    if (bar.index < profileStart) continue;
     low = Math.min(low, bar.low);
     high = Math.max(high, bar.high);
   }
@@ -427,7 +426,8 @@ function projectedPocCandidate(
     score: 0,
   }));
   const relMax = Math.max(barIndex - start, 1);
-  for (const bar of fastBars) {
+  for (const bar of bars) {
+    if (bar.index < start) continue;
     const { plusDI: plus, minusDI: minus, adx } = bar.dmi;
     if (![plus, minus, adx].every(Number.isFinite)) continue;
     const total = Math.max(plus + minus, 0.000001);
@@ -445,7 +445,7 @@ function projectedPocCandidate(
     const bodyLow = Math.min(bar.open, bar.close);
     const bodyHigh = Math.max(bar.open, bar.close);
     const totalRows = Math.max(1, endRow - startRow + 1);
-    const bodyRows: number[] = [];
+    let bodyCount = 0;
     for (let row = startRow; row <= endRow; row += 1) {
       const rowLow = low + row * rowHeight;
       const rowHigh = rowLow + rowHeight;
@@ -454,17 +454,21 @@ function projectedPocCandidate(
           ? bodyLow >= rowLow && bodyLow <= rowHigh
           : bodyLow < rowHigh && bodyHigh > rowLow
       )
-        bodyRows.push(row);
+        bodyCount += 1;
     }
-    const bodyCount = Math.max(1, bodyRows.length);
+    bodyCount = Math.max(1, bodyCount);
     for (let row = startRow; row <= endRow; row += 1) {
       const target = rows[row];
       if (target === undefined) continue;
+      const rowLow = low + row * rowHeight;
+      const rowHigh = rowLow + rowHeight;
+      const bodyOverlapsRow =
+        bodyLow === bodyHigh
+          ? bodyLow >= rowLow && bodyLow <= rowHigh
+          : bodyLow < rowHigh && bodyHigh > rowLow;
       const contribution =
         (candleScore * (1 - params.bodyWeight)) / totalRows +
-        (bodyRows.includes(row)
-          ? (candleScore * params.bodyWeight) / bodyCount
-          : 0);
+        (bodyOverlapsRow ? (candleScore * params.bodyWeight) / bodyCount : 0);
       target.score += contribution;
     }
   }
@@ -476,16 +480,22 @@ function projectedPocCandidate(
         readonly previous: number;
       }
     | undefined;
+  // Both arrays are ordered by center. Keep a monotonic cursor so remapping
+  // the previous row scores remains O(rowCount) instead of scanning the full
+  // previous row set for every new row.
+  let previousScoreIndex = 0;
   const scoreLookup = rows.map((row, rowIndex) => {
-    let oldScore = 0;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (const old of previousScores) {
-      const distance = Math.abs(old.center - row.center);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        oldScore = old.score;
-      }
+    while (previousScoreIndex + 1 < previousScores.length) {
+      const current = previousScores[previousScoreIndex];
+      const next = previousScores[previousScoreIndex + 1];
+      if (current === undefined || next === undefined) break;
+      const currentDistance = Math.abs(current.center - row.center);
+      const nextDistance = Math.abs(next.center - row.center);
+      // Strict comparison preserves the old lower-center choice on ties.
+      if (nextDistance >= currentDistance) break;
+      previousScoreIndex += 1;
     }
+    const oldScore = previousScores[previousScoreIndex]?.score ?? 0;
     const velocity = row.score - oldScore;
     const projected = Math.max(0, row.score + velocity * params.projectionBars);
     if (best === undefined || projected > best.projected)
@@ -820,7 +830,11 @@ function renderZone(
     renderZoneSegment(zone, segment, params, currentIndex, currentTimeMs);
 }
 
-function trimZones(zones: readonly PocZone[], params: Params): PocZone[] {
+function trimZones(zones: PocZone[], params: Params): PocZone[] {
+  // Zones are already kept in creation order and new zones are appended.
+  // Avoid filtering and sorting the entire retained set on every bar when no
+  // retention work is required.
+  if (zones.length <= params.maxStoredZones) return zones;
   const active = zones.filter((zone) => !zone.frozen);
   const frozen = zones
     .filter((zone) => zone.frozen)
@@ -876,15 +890,17 @@ function stepPoc(
           params,
         );
       } else if (zoneMatches(candidate, current, params.bandMergeMode)) {
+        const needsRanking = current.activeRank !== 0 || current.frozen;
         updateZone(current, candidate, params);
         pendingMigration = undefined;
-        rankZones(
-          zones,
-          current,
-          currentBar.index,
-          currentBar.openTimeMs,
-          params,
-        );
+        if (needsRanking)
+          rankZones(
+            zones,
+            current,
+            currentBar.index,
+            currentBar.openTimeMs,
+            params,
+          );
         extendZones(
           zones,
           current,

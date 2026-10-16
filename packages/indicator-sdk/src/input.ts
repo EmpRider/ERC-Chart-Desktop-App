@@ -216,10 +216,14 @@ function readInput(
           : `Input declaration identity ${callsite.id} does not match the discovered input contract.`,
       );
   }
-  return normalizeIndicatorInputValue(
-    definition,
-    frame.parameters[definition.key],
-  );
+  // Instance parameters are normalized once when the runtime instance is
+  // created. Re-normalizing the same immutable value on every historical bar
+  // is pure duplicate work, especially for numeric inputs with step rounding.
+  // Discovery has no instance parameter map, so it still resolves the default
+  // through the canonical normalizer.
+  return frame.discovery
+    ? normalizeIndicatorInputValue(definition, undefined)
+    : (frame.parameters[definition.key] ?? definition.defaultValue);
 }
 
 function metadata(
