@@ -2,6 +2,111 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [1.1.2] - 2026-09-21
+
+### Indicator chart-source hotfix
+
+- Fixes standard same-timeframe plugin indicators that could render only `n/a` by evaluating them directly from the exact chart candles instead of reacquiring redundant provider history.
+- Keeps provider-backed source acquisition for multi-timeframe indicators, explicitly different-timeframe sources, and Heikin Ashi inputs.
+
+## [1.1.1] - 2026-09-20
+
+### SDK v2 corrected release identity
+
+- Publishes the corrected Indicator SDK v2 delivery under the new immutable `v1.1.1` release identity after `v1.1.0` was already published from the earlier accepted main.
+- Keeps the SDK/compiler/runtime behavior unchanged; this release advances package, installer, and release metadata only.
+
+## [1.1.0] - 2026-09-14
+
+### Indicator SDK v2
+
+- Completed the v2-only indicator authoring/runtime contract with compiler-owned
+  hidden identity for inputs, TA state, plots, drawings, and signals.
+- Added deterministic history and conditional execution, provider-aware
+  multi-timeframe and Heikin Ashi sources, source-confirmed signals, persistent
+  drawing handles, and explicit cross-indicator dependency ordering.
+- Hardened worker transport and recovery with typed snapshots, bounded deltas,
+  generation/revision validation, resource limits, and final correctness and
+  performance acceptance across maintained v2 indicators.
+
+### v1.1.0 release packaging
+
+- Publishes the completed SDK v2 delivery under the new immutable `v1.1.0`
+  release identity instead of reusing the published `v1.0.0` tag.
+- Adds a release preflight that rejects an application version when it does not
+  advance beyond the versions already represented by release tags.
+- Automatic updates remain disabled and the Windows installer remains unsigned.
+
+## [1.0.0] - 2026-09-08
+
+### MVP release hardening
+
+- Moved canonical market-data and SQLite ownership into the data utility process,
+  including cache-backed history, session/workspace persistence, provider/plugin
+  metadata access, cancellation fencing, and bounded request cleanup.
+- Hardened live/history correctness around shared upstream subscriptions,
+  timeframe aggregation, profile invalidation, gap repair, cache identity, and
+  canonical generation/revision metadata.
+- Added recoverable per-instance workspace sessions and shared-profile storage
+  protections so concurrent application instances do not overwrite one another.
+- Expanded indicator authoring with the public `defineIndicator`, `input`, `ta`,
+  `plot`, and signal APIs, plus reusable plugin packaging/build tooling and
+  example indicators.
+- Extended chart/plugin integration and regression coverage for provider controls,
+  runtime persistence, indicator settings, cached chart updates, and utility
+  process lifecycle behavior.
+
+### v1.0.0 release packaging
+
+- Major-version MVP release produced by the protected `task` -> `epic` -> `main`
+  workflow and the Windows release pipeline.
+- Automatic updates remain disabled and the Windows installer remains unsigned.
+- Final hardware-performance, provider-approval, and documented manual acceptance
+  checks remain explicit operational follow-ups.
+
+## [0.3.6] - 2026-09-06
+
+### Indicator worker runtime and SDK
+
+- Moved plugin indicator execution into a persistent worker runtime with
+  generation checks, result validation, incremental updates, and history
+  rebuild fallback when a worker needs to resynchronize.
+- Expanded the public indicator SDK with price-series helpers and reusable
+  technical-analysis primitives, including moving averages, ATR, DMI, RSI,
+  extrema, crossover, and crossunder kernels.
+- Added provider-series revision metadata so candle changes can distinguish
+  incremental updates from history rebuilds and keep indicator calculations in
+  sync with repaired or revised market data.
+- Refactored the ATR Rope + UT Bot example and renderer integration around the
+  public SDK/worker path, with regression coverage for incremental execution and
+  result validation.
+
+### v0.3.6 release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
+## [0.3.5] - 2026-09-06
+
+### Plugin Manager redesign
+
+- Replaced the provider-only management flow with a dedicated Plugin Manager
+  for both provider and indicator plugins.
+- Added separate Installed Providers and Installed Profiles views so provider
+  metadata, profile selection, profile editing, lifecycle controls, and profile
+  creation follow the same list-on-the-left/detail-on-the-right workflow.
+- Added ZIP and folder import entry points for both provider and indicator
+  plugins through the existing secure staging path.
+- Kept indicator instance parameters in the chart settings UI while exposing
+  installed indicator metadata and declared parameters in Plugin Manager.
+- Kept provider connection status visible beside the secure bridge status in
+  the application header.
+
+### v0.3.5 release packaging
+
+- Unsigned x64 per-user Windows installer.
+- Automatic updates and production code signing remain unavailable.
+
 ## [0.3.4] - 2026-09-06
 
 ### Chart controls and indicator runtime

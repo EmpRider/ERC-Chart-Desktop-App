@@ -3,6 +3,7 @@ import {
   isWorkspaceSaveRequest,
   type Candle,
   type PersistedWorkspace,
+  type ProviderSeriesChange,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
 import type {
@@ -15,6 +16,16 @@ import type {
 } from "@erc-chart/provider-sdk";
 import { assertTrustedIpcSender, type DesktopIpcSender } from "./security.js";
 import { secureWindowOptions, type SecureWindowOptions } from "./window.js";
+
+export interface DesktopProviderDataSink extends Omit<
+  ProviderDataSink,
+  "onCandles"
+> {
+  readonly onCandles: (
+    candles: readonly Candle[],
+    series: ProviderSeriesChange,
+  ) => void;
+}
 
 export interface DesktopArtifactPaths {
   readonly preloadPath: string;
@@ -97,7 +108,7 @@ export interface DesktopApplicationAdapters<ProviderLaunch = unknown> {
     readonly subscribe: (
       providerProfileId: string,
       request: ProviderSubscriptionRequest,
-      sink: ProviderDataSink,
+      sink: DesktopProviderDataSink,
     ) => Promise<ProviderSubscription>;
   };
   readonly workspacePersistence: {
@@ -131,7 +142,7 @@ export interface DesktopApplicationController<ProviderLaunch = unknown> {
   readonly subscribeProviderData: (
     providerProfileId: string,
     request: ProviderSubscriptionRequest,
-    sink: ProviderDataSink,
+    sink: DesktopProviderDataSink,
   ) => Promise<ProviderSubscription>;
   readonly shutdown: () => Promise<void>;
 }
@@ -275,19 +286,19 @@ export async function startDesktopApplication<ProviderLaunch>(
       stopped = true;
       let shutdownError: unknown;
       try {
-        await adapters.providerUtilities.shutdownAll();
+        await currentWindow?.flushWorkspace();
+        await adapters.workspacePersistence.flush();
       } catch (error) {
         shutdownError = error;
       }
       try {
-        await adapters.dataUtility.shutdown();
+        await adapters.providerUtilities.shutdownAll();
       } catch (error) {
         shutdownError ??= error;
       }
       try {
-        await currentWindow?.flushWorkspace();
-        await adapters.workspacePersistence.flush();
         await adapters.workspacePersistence.close();
+        await adapters.dataUtility.shutdown();
       } catch (error) {
         shutdownError ??= error;
       } finally {

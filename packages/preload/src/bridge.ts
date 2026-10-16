@@ -2,17 +2,12 @@ import {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
-  indicatorRuntimeDisposeChannel,
-  indicatorRuntimeSyncChannel,
-  indicatorRuntimeUpdateChannel,
+  indicatorRemoveChannel,
   indicatorsListChannel,
   isIndicatorImportPreviewResult,
-  isIndicatorRuntimeInstanceId,
-  isIndicatorRuntimeSnapshot,
-  isIndicatorRuntimeSyncRequest,
-  isIndicatorRuntimeUpdateRequest,
   isInstalledIndicatorList,
   isInstalledIndicatorSummary,
+  isPluginId,
   isImportedProviderSession,
   isProviderHistoryLoadRequest,
   isProviderHistoryResult,
@@ -25,6 +20,7 @@ import {
   isProviderProfileUpdateRequest,
   isProviderImportCredentialValues,
   isProviderImportPreviewResult,
+  isPluginImportSourceKind,
   isRuntimeInfo,
   isWorkspaceLoadResult,
   isWorkspaceSaveRequest,
@@ -47,9 +43,6 @@ import {
   workspaceSaveChannel,
   type Candle,
   type IndicatorImportPreview,
-  type IndicatorRuntimeSnapshot,
-  type IndicatorRuntimeSyncRequest,
-  type IndicatorRuntimeUpdateRequest,
   type ImportedProviderSession,
   type InstalledIndicatorSummary,
   type ProviderHistoryLoadRequest,
@@ -63,6 +56,7 @@ import {
   type PersistedWorkspace,
   type ProviderImportPreview,
   type ProviderImportCredentialValues,
+  type PluginImportSourceKind,
   type RuntimeInfo,
 } from "@erc-chart/contracts";
 
@@ -71,25 +65,23 @@ export interface ErcChartBridge {
   readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
   readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
   readonly flushWorkspace: () => Promise<void>;
-  readonly previewProviderImport: () => Promise<ProviderImportPreview | null>;
+  readonly previewProviderImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<ProviderImportPreview | null>;
   readonly approveProviderImport: (
     requestId: string,
     credentials?: ProviderImportCredentialValues,
   ) => Promise<ImportedProviderSession>;
   readonly cancelProviderImport: (requestId: string) => Promise<void>;
-  readonly previewIndicatorImport: () => Promise<IndicatorImportPreview | null>;
+  readonly previewIndicatorImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<IndicatorImportPreview | null>;
   readonly approveIndicatorImport: (
     requestId: string,
   ) => Promise<InstalledIndicatorSummary>;
   readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
   readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
-  readonly syncIndicator: (
-    request: IndicatorRuntimeSyncRequest,
-  ) => Promise<IndicatorRuntimeSnapshot>;
-  readonly updateIndicator: (
-    request: IndicatorRuntimeUpdateRequest,
-  ) => Promise<IndicatorRuntimeSnapshot>;
-  readonly disposeIndicator: (instanceId: string) => Promise<void>;
+  readonly removeIndicator: (pluginId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -155,22 +147,81 @@ export function createErcChartBridge(
   invoke: BridgeInvoke,
   listen?: BridgeListen,
 ): ErcChartBridge {
-  let latestSave: Promise<void> = Promise.resolve();
+  interface SaveWaiter {
+    readonly resolve: () => void;
+    readonly reject: (error: Error) => void;
+  }
+  let activeSave: Promise<void> | undefined;
+  let queuedWorkspace: PersistedWorkspace | undefined;
+  let queuedWaiters: SaveWaiter[] = [];
+  let flushWaiters: SaveWaiter[] = [];
+  let lastSaveError: Error | undefined;
   let providerSubscriptionSequence = 0;
+
+  const settleFlushWaiters = (): void => {
+    if (activeSave !== undefined || queuedWorkspace !== undefined) return;
+    const waiters = flushWaiters;
+    flushWaiters = [];
+    for (const waiter of waiters) {
+      if (lastSaveError === undefined) waiter.resolve();
+      else waiter.reject(lastSaveError);
+    }
+  };
+
+  const startWorkspaceSave = (
+    workspace: PersistedWorkspace,
+    waiters: readonly SaveWaiter[],
+  ): void => {
+    const run = (async (): Promise<void> => {
+      try {
+        const result = await invoke(workspaceSaveChannel, workspace);
+        if (result !== true) throw new Error();
+        lastSaveError = undefined;
+        for (const waiter of waiters) waiter.resolve();
+      } catch {
+        const error = new Error("Workspace could not be saved.");
+        lastSaveError = error;
+        for (const waiter of waiters) waiter.reject(error);
+      }
+    })();
+    activeSave = run;
+    void run.finally(() => {
+      if (activeSave === run) activeSave = undefined;
+      const nextWorkspace = queuedWorkspace;
+      if (nextWorkspace !== undefined) {
+        const nextWaiters = queuedWaiters;
+        queuedWorkspace = undefined;
+        queuedWaiters = [];
+        startWorkspaceSave(nextWorkspace, nextWaiters);
+      } else {
+        settleFlushWaiters();
+      }
+    });
+  };
+
   const saveWorkspace = (workspace: PersistedWorkspace): Promise<void> => {
     if (!isWorkspaceSaveRequest(workspace))
       return Promise.reject(new Error("Workspace could not be saved."));
-    latestSave = latestSave
-      .catch(() => undefined)
-      .then(async (): Promise<void> => {
-        try {
-          const result = await invoke(workspaceSaveChannel, workspace);
-          if (result !== true) throw new Error();
-        } catch {
-          throw new Error("Workspace could not be saved.");
-        }
-      });
-    return latestSave;
+    return new Promise<void>((resolve, reject) => {
+      const waiter: SaveWaiter = { resolve, reject };
+      if (activeSave === undefined) {
+        startWorkspaceSave(workspace, [waiter]);
+        return;
+      }
+      queuedWorkspace = workspace;
+      queuedWaiters.push(waiter);
+    });
+  };
+
+  const flushWorkspace = (): Promise<void> => {
+    if (activeSave === undefined && queuedWorkspace === undefined) {
+      return lastSaveError === undefined
+        ? Promise.resolve()
+        : Promise.reject(lastSaveError);
+    }
+    return new Promise<void>((resolve, reject) => {
+      flushWaiters.push({ resolve, reject });
+    });
   };
   return {
     getRuntimeInfo: async (): Promise<RuntimeInfo> => {
@@ -194,10 +245,13 @@ export function createErcChartBridge(
       }
     },
     saveWorkspace,
-    flushWorkspace: async (): Promise<void> => latestSave,
-    previewProviderImport: async (): Promise<ProviderImportPreview | null> => {
+    flushWorkspace,
+    previewProviderImport: async (
+      sourceKind: PluginImportSourceKind,
+    ): Promise<ProviderImportPreview | null> => {
       try {
-        const result = await invoke(providerImportPreviewChannel);
+        if (!isPluginImportSourceKind(sourceKind)) throw new Error();
+        const result = await invoke(providerImportPreviewChannel, sourceKind);
         if (!isProviderImportPreviewResult(result)) throw new Error();
         return result;
       } catch {
@@ -236,16 +290,18 @@ export function createErcChartBridge(
         throw new Error("Provider import could not be cancelled.");
       }
     },
-    previewIndicatorImport:
-      async (): Promise<IndicatorImportPreview | null> => {
-        try {
-          const result = await invoke(indicatorImportPreviewChannel);
-          if (!isIndicatorImportPreviewResult(result)) throw new Error();
-          return result;
-        } catch {
-          throw new Error("Indicator import could not be prepared.");
-        }
-      },
+    previewIndicatorImport: async (
+      sourceKind: PluginImportSourceKind,
+    ): Promise<IndicatorImportPreview | null> => {
+      try {
+        if (!isPluginImportSourceKind(sourceKind)) throw new Error();
+        const result = await invoke(indicatorImportPreviewChannel, sourceKind);
+        if (!isIndicatorImportPreviewResult(result)) throw new Error();
+        return result;
+      } catch {
+        throw new Error("Indicator import could not be prepared.");
+      }
+    },
     approveIndicatorImport: async (
       requestId: string,
     ): Promise<InstalledIndicatorSummary> => {
@@ -282,43 +338,13 @@ export function createErcChartBridge(
         throw new Error("Installed indicators could not be loaded.");
       }
     },
-    syncIndicator: async (
-      request: IndicatorRuntimeSyncRequest,
-    ): Promise<IndicatorRuntimeSnapshot> => {
-      if (!isIndicatorRuntimeSyncRequest(request)) {
-        throw new Error("Indicator runtime request is invalid.");
-      }
+    removeIndicator: async (pluginId: string): Promise<void> => {
       try {
-        const result = await invoke(indicatorRuntimeSyncChannel, request);
-        if (!isIndicatorRuntimeSnapshot(result)) throw new Error();
-        return result;
-      } catch {
-        throw new Error("Indicator could not be initialized.");
-      }
-    },
-    updateIndicator: async (
-      request: IndicatorRuntimeUpdateRequest,
-    ): Promise<IndicatorRuntimeSnapshot> => {
-      if (!isIndicatorRuntimeUpdateRequest(request)) {
-        throw new Error("Indicator runtime update is invalid.");
-      }
-      try {
-        const result = await invoke(indicatorRuntimeUpdateChannel, request);
-        if (!isIndicatorRuntimeSnapshot(result)) throw new Error();
-        return result;
-      } catch {
-        throw new Error("Indicator could not be updated.");
-      }
-    },
-    disposeIndicator: async (instanceId: string): Promise<void> => {
-      if (!isIndicatorRuntimeInstanceId(instanceId)) {
-        throw new Error("Indicator instance is invalid.");
-      }
-      try {
-        const result = await invoke(indicatorRuntimeDisposeChannel, instanceId);
+        if (!isPluginId(pluginId)) throw new Error();
+        const result = await invoke(indicatorRemoveChannel, pluginId);
         if (result !== true) throw new Error();
       } catch {
-        throw new Error("Indicator instance could not be disposed.");
+        throw new Error("Indicator could not be removed.");
       }
     },
     listProviderProfiles: async (): Promise<ProviderManagementSnapshot> => {

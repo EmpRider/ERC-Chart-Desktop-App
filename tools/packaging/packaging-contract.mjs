@@ -32,6 +32,91 @@ export function validateReleaseVersion(version) {
   return version;
 }
 
+function parseReleaseVersion(version) {
+  const validatedVersion = validateReleaseVersion(version);
+  const prereleaseSeparator = validatedVersion.indexOf("-");
+  const core =
+    prereleaseSeparator === -1
+      ? validatedVersion
+      : validatedVersion.slice(0, prereleaseSeparator);
+  const prerelease =
+    prereleaseSeparator === -1
+      ? undefined
+      : validatedVersion.slice(prereleaseSeparator + 1);
+  const [major, minor, patch] = core.split(".").map(BigInt);
+  return {
+    major,
+    minor,
+    patch,
+    prerelease: prerelease?.split(".") ?? null,
+  };
+}
+
+function comparePrereleaseIdentifiers(left, right) {
+  const leftNumeric = /^\d+$/.test(left);
+  const rightNumeric = /^\d+$/.test(right);
+
+  if (leftNumeric && rightNumeric) {
+    const leftValue = BigInt(left);
+    const rightValue = BigInt(right);
+    if (leftValue < rightValue) return -1;
+    if (leftValue > rightValue) return 1;
+    return 0;
+  }
+  if (leftNumeric) return -1;
+  if (rightNumeric) return 1;
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function compareReleaseVersions(leftVersion, rightVersion) {
+  const left = parseReleaseVersion(leftVersion);
+  const right = parseReleaseVersion(rightVersion);
+
+  for (const key of ["major", "minor", "patch"]) {
+    if (left[key] < right[key]) return -1;
+    if (left[key] > right[key]) return 1;
+  }
+
+  if (left.prerelease === null && right.prerelease === null) return 0;
+  if (left.prerelease === null) return 1;
+  if (right.prerelease === null) return -1;
+
+  const identifierCount = Math.max(
+    left.prerelease.length,
+    right.prerelease.length,
+  );
+  for (let index = 0; index < identifierCount; index += 1) {
+    const leftIdentifier = left.prerelease[index];
+    const rightIdentifier = right.prerelease[index];
+    if (leftIdentifier === undefined) return -1;
+    if (rightIdentifier === undefined) return 1;
+    const comparison = comparePrereleaseIdentifiers(
+      leftIdentifier,
+      rightIdentifier,
+    );
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
+export function assertReleaseVersionAdvances(version, releasedVersions) {
+  const validatedVersion = validateReleaseVersion(version);
+  if (!Array.isArray(releasedVersions)) {
+    throw new Error("Released versions must be an array.");
+  }
+
+  const hasEqualOrNewerRelease = releasedVersions.some(
+    (releasedVersion) =>
+      compareReleaseVersions(validatedVersion, releasedVersion) <= 0,
+  );
+  if (hasEqualOrNewerRelease) {
+    throw new Error("Release version must be newer than the latest release.");
+  }
+  return validatedVersion;
+}
+
 export function releaseTag(version) {
   return `v${validateReleaseVersion(version)}`;
 }

@@ -14,12 +14,12 @@ export {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
-  indicatorRuntimeDisposeChannel,
-  indicatorRuntimeSyncChannel,
-  indicatorRuntimeUpdateChannel,
+  indicatorRemoveChannel,
   indicatorsListChannel,
+  createIndicatorWorkerCandleSnapshot,
   isIndicatorImportPreview,
   isIndicatorImportPreviewResult,
+  isIndicatorWorkerCandleSnapshot,
   isIndicatorRuntimeInstanceId,
   isIndicatorRuntimeSnapshot,
   isIndicatorRuntimeSyncRequest,
@@ -27,6 +27,7 @@ export {
   isInstalledIndicatorDefinition,
   isInstalledIndicatorList,
   isInstalledIndicatorSummary,
+  materializeIndicatorWorkerCandleSnapshot,
 } from "./indicator-management.js";
 export type {
   IndicatorImportPreview,
@@ -38,9 +39,12 @@ export type {
   IndicatorRuntimeOverlay,
   IndicatorRuntimePoint,
   IndicatorRuntimeSignal,
+  IndicatorRuntimeSignalSource,
+  IndicatorRuntimeSignalSourceProvenance,
   IndicatorRuntimeSnapshot,
   IndicatorRuntimeSyncRequest,
   IndicatorRuntimeUpdateRequest,
+  IndicatorWorkerCandleSnapshot,
   InstalledIndicatorDefinition,
   InstalledIndicatorInputDefinition,
   InstalledIndicatorInputOption,
@@ -63,6 +67,7 @@ export {
   isProviderProfileSummary,
   isProviderProfileUpdateRequest,
   isProviderImportCredentialValues,
+  isPluginImportSourceKind,
   isProviderImportPreview,
   isProviderImportPreviewResult,
   providerHistoryLoadChannel,
@@ -88,6 +93,7 @@ export type {
   ProviderLiveErrorEvent,
   ProviderLiveEvent,
   ProviderLiveRequest,
+  ProviderSeriesChange,
   ProviderSessionRequest,
   ProviderLiveSubscriptionRequest,
   InstalledProviderSummary,
@@ -100,10 +106,14 @@ export type {
   ProviderProfileUpdateRequest,
   ProviderImportCredentialValues,
   ProviderImportPreview,
+  PluginImportSourceKind,
 } from "./provider-management.js";
 export {
   inspectPluginManifest,
+  isPluginId,
   isPluginManifest,
+  isPluginPackagePath,
+  isPluginVersion,
   pluginManifestSchema,
 } from "./plugins.js";
 export type {
@@ -139,6 +149,28 @@ export type {
   WorkspaceIndicatorInput,
   WorkspaceViewport,
 } from "./workspace-persistence.js";
+export {
+  isDataUtilityCommand,
+  dataUtilityUpstreamTimeoutMs,
+  dataUtilityProviderCommandTimeoutMs,
+  isDataUtilityEvent,
+  isDataUtilityInitMessage,
+  isDataUtilityResult,
+  isDataUtilityUpstreamEvent,
+  isDataUtilityUpstreamRequest,
+  isDataUtilityUpstreamResult,
+} from "./data-utility.js";
+export type {
+  DataUtilityCommand,
+  DataUtilityEvent,
+  DataUtilityInitMessage,
+  DataUtilityOperation,
+  DataUtilityResult,
+  DataUtilityUpstreamEvent,
+  DataUtilityUpstreamOperation,
+  DataUtilityUpstreamRequest,
+  DataUtilityUpstreamResult,
+} from "./data-utility.js";
 export {
   isUtilityControlMessage,
   isUtilityStatusMessage,

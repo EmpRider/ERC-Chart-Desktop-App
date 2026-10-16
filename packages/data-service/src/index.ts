@@ -22,11 +22,17 @@ export type { CandleGap, HistoricalCandleCache } from "./history-cache.js";
 export {
   aggregateTimeframeCandles,
   alignedOpenTime,
+  effectiveIndicatorTimeframes,
   parseTimeframeSeconds,
+  resolveEffectiveIndicatorTimeframe,
   resolveTimeframePlan,
   timeframeCapabilities,
 } from "./timeframes.js";
-export type { TimeframePlan } from "./timeframes.js";
+export type {
+  EffectiveIndicatorTimeframe,
+  EffectiveIndicatorTimeframeResolution,
+  TimeframePlan,
+} from "./timeframes.js";
 export { createBoundedTickBuffer } from "./tick-buffer.js";
 export type { BoundedTickBuffer, TickBufferKey } from "./tick-buffer.js";
 export { createProviderSelectorData } from "./selector-data.js";
@@ -47,5 +53,6 @@ export { createProviderDataService } from "./provider-bridge.js";
 export type {
   ProviderDataService,
   ProviderDataServiceOptions,
+  ProviderDataServiceSink,
   ProviderDataUpstream,
 } from "./provider-bridge.js";

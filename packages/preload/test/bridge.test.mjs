@@ -25,9 +25,7 @@ test("exposes only the allowlisted application bridge methods", async () => {
     "approveIndicatorImport",
     "cancelIndicatorImport",
     "listIndicators",
-    "syncIndicator",
-    "updateIndicator",
-    "disposeIndicator",
+    "removeIndicator",
     "listProviderProfiles",
     "createProviderProfile",
     "updateProviderProfile",
@@ -93,9 +91,7 @@ test("installs one application-specific global", () => {
         "approveIndicatorImport",
         "cancelIndicatorImport",
         "listIndicators",
-        "syncIndicator",
-        "updateIndicator",
-        "disposeIndicator",
+        "removeIndicator",
         "listProviderProfiles",
         "createProviderProfile",
         "updateProviderProfile",
@@ -108,6 +104,39 @@ test("installs one application-specific global", () => {
       ],
     ],
   ]);
+});
+
+test("validates indicator removal across the preload boundary", async () => {
+  const calls = [];
+  const bridge = createErcChartBridge(async (...args) => {
+    calls.push(args);
+    return true;
+  });
+
+  await bridge.removeIndicator("erc.indicator.fixture");
+  assert.deepEqual(calls, [
+    ["erc-chart:indicator-remove", "erc.indicator.fixture"],
+  ]);
+
+  await assert.rejects(
+    bridge.removeIndicator("invalid"),
+    new Error("Indicator could not be removed."),
+  );
+  assert.equal(calls.length, 1);
+
+  const falseBridge = createErcChartBridge(async () => false);
+  await assert.rejects(
+    falseBridge.removeIndicator("erc.indicator.fixture"),
+    new Error("Indicator could not be removed."),
+  );
+
+  const rejectedBridge = createErcChartBridge(async () => {
+    throw new Error("private IPC failure");
+  });
+  await assert.rejects(
+    rejectedBridge.removeIndicator("erc.indicator.fixture"),
+    new Error("Indicator could not be removed."),
+  );
 });
 
 test("validates provider management commands across the preload boundary", async () => {
@@ -257,6 +286,7 @@ test("starts, filters, and stops provider live subscriptions", async () => {
         close: 100.5,
       },
     ],
+    series: { generation: 1, revision: 2, kind: "incremental" },
   });
   assert.equal(events.length, 1);
 
@@ -310,7 +340,7 @@ test("validates provider import IPC results without exposing local paths", async
     throw new Error("unexpected");
   });
 
-  assert.deepEqual(await bridge.previewProviderImport(), preview);
+  assert.deepEqual(await bridge.previewProviderImport("folder"), preview);
   assert.deepEqual(
     await bridge.approveProviderImport("request-1", {
       binomo_cookie: "fixture-cookie",
@@ -319,7 +349,7 @@ test("validates provider import IPC results without exposing local paths", async
   );
   await bridge.cancelProviderImport("request-1");
   assert.deepEqual(calls, [
-    ["erc-chart:provider-import-preview"],
+    ["erc-chart:provider-import-preview", "folder"],
     [
       "erc-chart:provider-import-approve",
       "request-1",

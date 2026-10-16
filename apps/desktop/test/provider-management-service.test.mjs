@@ -4,9 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  createProviderProfile,
+  deleteProviderProfile,
   getProviderProfile,
+  listPlugins,
+  listProviderProfiles,
   openStorageDatabase,
   putPlugin,
+  updateProviderProfile,
 } from "../../../packages/storage/dist/index.js";
 import { createProviderManagementService } from "../dist/provider-management-service.js";
 
@@ -24,6 +29,29 @@ function providerManifest() {
       network: ["https://api.example.com/*"],
       credentials: ["auth_token"],
       storage: [],
+    },
+  };
+}
+
+function createStorage(database) {
+  return {
+    async listProviderProfiles() {
+      return listProviderProfiles(database);
+    },
+    async getProviderProfile(profileId) {
+      return getProviderProfile(database, profileId);
+    },
+    async createProviderProfile(input) {
+      return createProviderProfile(database, input);
+    },
+    async updateProviderProfile(profileId, input) {
+      return updateProviderProfile(database, profileId, input);
+    },
+    async deleteProviderProfile(profileId) {
+      return deleteProviderProfile(database, profileId);
+    },
+    async listPlugins() {
+      return listPlugins(database);
     },
   };
 }
@@ -104,7 +132,7 @@ test("creates, edits, stops, restarts, and removes provider profiles", async () 
       },
     };
     const service = createProviderManagementService({
-      database,
+      storage: createStorage(database),
       controller,
       credentialManager: {
         async write(target, value) {
@@ -120,7 +148,7 @@ test("creates, edits, stops, restarts, and removes provider profiles", async () 
       now: () => 1_800_000_000_000,
     });
 
-    assert.deepEqual(service.snapshot().profiles, []);
+    assert.deepEqual((await service.snapshot()).profiles, []);
     const session = await service.create({
       providerId: "erc.provider.fixture",
       displayName: "Primary account",
@@ -130,7 +158,7 @@ test("creates, edits, stops, restarts, and removes provider profiles", async () 
     assert.equal(session.profileId, "profile-a");
     assert.equal(session.instrument.id, "BTCUSD");
     assert.deepEqual(session.availableTimeframeIds, ["1m", "2m", "3m"]);
-    assert.equal(service.snapshot().profiles[0].status, "ready");
+    assert.equal((await service.snapshot()).profiles[0].status, "ready");
     assert.equal(
       getProviderProfile(database, "profile-a")?.displayName,
       "Primary account",
@@ -146,9 +174,9 @@ test("creates, edits, stops, restarts, and removes provider profiles", async () 
     assert.deepEqual(updated.settings, { region: "us" });
 
     await service.stop("profile-a");
-    assert.equal(service.snapshot().profiles[0].status, "stopped");
+    assert.equal((await service.snapshot()).profiles[0].status, "stopped");
     await service.start("profile-a");
-    assert.equal(service.snapshot().profiles[0].status, "ready");
+    assert.equal((await service.snapshot()).profiles[0].status, "ready");
     const derivedSession = await service.load({
       profileId: "profile-a",
       instrumentId: "BTCUSD",
@@ -159,7 +187,7 @@ test("creates, edits, stops, restarts, and removes provider profiles", async () 
     assert.equal(historyCalls.at(-1)[1], "profile-a");
     assert.equal(historyCalls.at(-1)[2].timeframeId, "3m");
     await service.delete("profile-a");
-    assert.deepEqual(service.snapshot().profiles, []);
+    assert.deepEqual((await service.snapshot()).profiles, []);
     assert.equal(getProviderProfile(database, "profile-a"), undefined);
   } finally {
     database.close();

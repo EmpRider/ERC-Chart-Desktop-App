@@ -58,7 +58,8 @@
     "packages/renderer": [
       "packages/contracts",
       "packages/provider-sdk",
-      "packages/indicator-sdk"
+      "packages/indicator-sdk",
+      "packages/indicator-runtime"
     ],
     "packages/storage": ["packages/contracts"],
     "packages/testing": [
@@ -73,5 +74,6 @@
       "packages/indicator-runtime",
       "packages/storage"
     ]
-  }
+  },
+  "dynamicImportFiles": ["packages/indicator-runtime/src/worker-entry.ts"]
 }

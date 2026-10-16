@@ -57,22 +57,30 @@ test("owns provider subscriptions per renderer and relays only candles/errors", 
     },
   ]);
   providerSink.onTicks([]);
-  providerSink.onCandles([
-    {
-      instrumentId: "BTCUSD",
-      timeframeId: "1m",
-      openTimeMs: 1_800_000_000_000,
-      open: 100,
-      high: 101,
-      low: 99,
-      close: 100.5,
-    },
-  ]);
+  providerSink.onCandles(
+    [
+      {
+        instrumentId: "BTCUSD",
+        timeframeId: "1m",
+        openTimeMs: 1_800_000_000_000,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100.5,
+      },
+    ],
+    { generation: 1, revision: 2, kind: "incremental" },
+  );
   providerSink.onError("LIVE_FAILED");
   assert.deepEqual(
     renderer.events.map(({ type }) => type),
     ["candles", "error"],
   );
+  assert.deepEqual(renderer.events[0].series, {
+    generation: 1,
+    revision: 2,
+    kind: "incremental",
+  });
   assert.equal(await manager.stop(request.subscriptionId, 99), false);
   assert.equal(unsubscribeCount, 0);
   assert.equal(await manager.stop(request.subscriptionId, 7), true);

@@ -63,6 +63,8 @@ export {
 export { reconcileBuiltInIndicators } from "./provider-chart.js";
 export { ProviderManager } from "./provider-manager.js";
 export type { ProviderManagerProps } from "./provider-manager.js";
+export { PluginManager } from "./provider-manager.js";
+export type { PluginManagerProps } from "./provider-manager.js";
 export {
   fromPersistedWorkspace,
   toPersistedWorkspace,

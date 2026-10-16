@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@erc-chart/contracts": "0.0.0",
+    "@erc-chart/indicator-runtime": "0.0.0",
     "klinecharts": "10.0.3",
     "react": "19.2.8",
     "react-dom": "19.2.8"

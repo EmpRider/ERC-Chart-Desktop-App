@@ -1,14 +1,13 @@
 import {
   ipcContractVersion,
   isUtilityStatusMessage,
-  type UtilityControlMessage,
 } from "@erc-chart/contracts";
 
 export type UtilitySupervisorStatus =
   "idle" | "starting" | "ready" | "stopping" | "stopped" | "failed";
 
 export interface UtilityChild {
-  readonly postMessage: (message: UtilityControlMessage) => void;
+  readonly postMessage: (message: unknown) => void;
   readonly kill: () => void;
   readonly onMessage: (listener: (message: unknown) => void) => () => void;
   readonly onExit: (listener: (code: number | null) => void) => () => void;
@@ -31,7 +30,10 @@ export interface UtilitySupervisor {
   readonly start: (
     entryPath: string,
     args?: readonly string[],
+    initialMessages?: readonly unknown[],
   ) => Promise<void>;
+  readonly postMessage: (message: unknown) => void;
+  readonly onMessage: (listener: (message: unknown) => void) => () => void;
   readonly shutdown: () => Promise<void>;
   readonly getStatus: () => UtilitySupervisorStatus;
 }
@@ -48,6 +50,7 @@ export function createUtilitySupervisor(
   let rejectStart: ((error: Error) => void) | undefined;
   let resolveShutdown: (() => void) | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  const externalMessageListeners = new Set<(message: unknown) => void>();
 
   const clearTimer = (): void => {
     if (timer === undefined) return;
@@ -77,7 +80,13 @@ export function createUtilitySupervisor(
     clearTimer();
     removeListeners();
     status = "failed";
-    if (terminate) child?.kill();
+    if (terminate) {
+      try {
+        child?.kill();
+      } catch {
+        // Startup failure still rejects even if termination reports failure.
+      }
+    }
     child = undefined;
     rejectStart?.(error);
     resolveStart = undefined;
@@ -95,6 +104,13 @@ export function createUtilitySupervisor(
   };
 
   const onMessage = (message: unknown): void => {
+    for (const listener of [...externalMessageListeners]) {
+      try {
+        listener(message);
+      } catch {
+        // One observer cannot block lifecycle processing or other observers.
+      }
+    }
     if (!isUtilityStatusMessage(message)) return;
     if (message.type === "ready" && status === "starting") {
       clearTimer();
@@ -126,15 +142,26 @@ export function createUtilitySupervisor(
   const start = (
     entryPath: string,
     args: readonly string[] = [],
+    initialMessages: readonly unknown[] = [],
   ): Promise<void> => {
-    if (status !== "idle") {
+    if (status !== "idle" && status !== "stopped" && status !== "failed") {
       return Promise.reject(new Error("Utility has already been started."));
     }
+    clearTimer();
+    removeListeners();
+    shutdownPromise = undefined;
+    resolveShutdown = undefined;
     status = "starting";
+
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStart = resolve;
+      rejectStart = reject;
+    });
     try {
       child = options.spawn(entryPath, args);
       removeMessage = child.onMessage(onMessage);
       removeExit = child.onExit(onExit);
+      for (const message of initialMessages) child.postMessage(message);
     } catch {
       try {
         removeListeners();
@@ -149,17 +176,22 @@ export function createUtilitySupervisor(
       }
       child = undefined;
       status = "failed";
-      return Promise.reject(new Error("Utility process could not start."));
+      rejectStart?.(new Error("Utility process could not start."));
+      resolveStart = undefined;
+      rejectStart = undefined;
+      return started;
     }
 
-    const started = new Promise<void>((resolve, reject) => {
-      resolveStart = resolve;
-      rejectStart = reject;
-    });
     timer = options.scheduler.setTimeout(() => {
       failStart(new Error("Utility failed to become ready."), true);
     }, options.startupTimeoutMs);
     return started;
+  };
+
+  const postMessage = (message: unknown): void => {
+    if ((status !== "starting" && status !== "ready") || child === undefined)
+      throw new Error("Utility is unavailable.");
+    child.postMessage(message);
   };
 
   const shutdown = (): Promise<void> => {
@@ -206,6 +238,13 @@ export function createUtilitySupervisor(
 
   return {
     start,
+    postMessage,
+    onMessage: (listener): (() => void) => {
+      externalMessageListeners.add(listener);
+      return (): void => {
+        externalMessageListeners.delete(listener);
+      };
+    },
     shutdown,
     getStatus: (): UtilitySupervisorStatus => status,
   };

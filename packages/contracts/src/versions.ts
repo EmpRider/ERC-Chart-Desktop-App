@@ -18,4 +18,5 @@ export const indicatorContractVersion: ContractVersion = contractVersion(1);
 export const manifestVersion: ContractVersion = contractVersion(1);
 export const workspaceSchemaVersion: ContractVersion = contractVersion(1);
 export const marketDataContractVersion: ContractVersion = contractVersion(1);
-export const databaseSchemaVersion: ContractVersion = contractVersion(1);
+// Highest supported on-disk SQLite migration; independent of IPC/workspace versions.
+export const databaseSchemaVersion: ContractVersion = contractVersion(3);

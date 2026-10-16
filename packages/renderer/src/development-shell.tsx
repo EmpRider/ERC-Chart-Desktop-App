@@ -1,8 +1,6 @@
 import {
   type Candle,
   type IndicatorImportPreview,
-  type IndicatorRuntimeSnapshot,
-  type IndicatorRuntimeSyncRequest,
   type ImportedProviderSession,
   type InstalledIndicatorSummary,
   type ProviderHistoryLoadRequest,
@@ -10,6 +8,7 @@ import {
   type ProviderLiveRequest,
   type ProviderImportCredentialValues,
   type ProviderImportPreview,
+  type PluginImportSourceKind,
   type ProviderManagementSnapshot,
   type ProviderProfileCreateRequest,
   type ProviderProfileSummary,
@@ -41,33 +40,41 @@ import {
   PluginPermissionReview,
   type PluginPermissionReviewPresentation,
 } from "./permission-review.js";
-import { ProviderChart } from "./provider-chart.js";
 import {
-  ProviderManager,
-  type ProviderManagerProps,
-} from "./provider-manager.js";
+  ProviderChart,
+  providerChartSessionCandles,
+  type ProviderChartSession,
+} from "./provider-chart.js";
+import { PluginManager, type PluginManagerProps } from "./provider-manager.js";
+import {
+  createBrowserIndicatorRuntime,
+  createRendererIndicatorSourceDataService,
+  type BrowserIndicatorRuntime,
+} from "./indicator-worker-runtime.js";
+import type { PluginIndicatorSync } from "./plugin-indicators.js";
 
 export interface RendererBridge {
   readonly getRuntimeInfo: () => Promise<RuntimeInfo>;
   readonly loadWorkspace: () => Promise<PersistedWorkspace | null>;
   readonly saveWorkspace: (workspace: PersistedWorkspace) => Promise<void>;
   readonly flushWorkspace: () => Promise<void>;
-  readonly previewProviderImport: () => Promise<ProviderImportPreview | null>;
+  readonly previewProviderImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<ProviderImportPreview | null>;
   readonly approveProviderImport: (
     requestId: string,
     credentials?: ProviderImportCredentialValues,
   ) => Promise<ImportedProviderSession>;
   readonly cancelProviderImport: (requestId: string) => Promise<void>;
-  readonly previewIndicatorImport: () => Promise<IndicatorImportPreview | null>;
+  readonly previewIndicatorImport: (
+    sourceKind: PluginImportSourceKind,
+  ) => Promise<IndicatorImportPreview | null>;
   readonly approveIndicatorImport: (
     requestId: string,
   ) => Promise<InstalledIndicatorSummary>;
   readonly cancelIndicatorImport: (requestId: string) => Promise<void>;
   readonly listIndicators: () => Promise<readonly InstalledIndicatorSummary[]>;
-  readonly syncIndicator: (
-    request: IndicatorRuntimeSyncRequest,
-  ) => Promise<IndicatorRuntimeSnapshot>;
-  readonly disposeIndicator: (instanceId: string) => Promise<void>;
+  readonly removeIndicator: (pluginId: string) => Promise<void>;
   readonly listProviderProfiles: () => Promise<ProviderManagementSnapshot>;
   readonly createProviderProfile: (
     request: ProviderProfileCreateRequest,
@@ -135,15 +142,10 @@ export interface ApplicationShellProps {
   readonly pluginPermissionReview?:
     PluginPermissionReviewPresentation | undefined;
   readonly providerSession?: ImportedProviderSession | undefined;
-  readonly providerSessions?: readonly ImportedProviderSession[] | undefined;
+  readonly providerSessions?: readonly ProviderChartSession[] | undefined;
   readonly installedIndicators?:
     readonly InstalledIndicatorSummary[] | undefined;
-  readonly onIndicatorImport?: (() => void) | undefined;
-  readonly syncIndicator?:
-    | ((
-        request: IndicatorRuntimeSyncRequest,
-      ) => Promise<IndicatorRuntimeSnapshot>)
-    | undefined;
+  readonly syncIndicator?: PluginIndicatorSync | undefined;
   readonly disposeIndicator?:
     ((instanceId: string) => Promise<void>) | undefined;
   readonly requestProviderHistory?:
@@ -154,8 +156,11 @@ export interface ApplicationShellProps {
   readonly onWorkspaceTimeframeSelect?:
     | ((tabId: string, workspaceId: string, timeframeId: string) => void)
     | undefined;
-  readonly onProviderManagerOpen?: (() => void) | undefined;
-  readonly providerManager?: ProviderManagerProps | undefined;
+  readonly onPluginManagerOpen?: (() => void) | undefined;
+  readonly pluginManager?: PluginManagerProps | undefined;
+  readonly liveDataStale?: boolean;
+  readonly workspaceSaveStatus?: "saved" | "saving" | "failed" | undefined;
+  readonly onRetryWorkspaceSave?: (() => void) | undefined;
 }
 
 export function ApplicationShell({
@@ -166,14 +171,16 @@ export function ApplicationShell({
   providerSession,
   providerSessions,
   installedIndicators,
-  onIndicatorImport,
   syncIndicator,
   disposeIndicator,
   requestProviderHistory,
   onProviderSessionSelect,
   onWorkspaceTimeframeSelect,
-  onProviderManagerOpen,
-  providerManager,
+  onPluginManagerOpen,
+  pluginManager,
+  liveDataStale,
+  workspaceSaveStatus,
+  onRetryWorkspaceSave,
 }: ApplicationShellProps): JSX.Element {
   const availableProviderSessions =
     providerSessions ??
@@ -221,6 +228,11 @@ export function ApplicationShell({
         <div className="runtime-state" role="status" aria-live="polite">
           <span className="status-dot" aria-hidden="true" />
           <span data-status={connection.kind}>{connection.label}</span>
+          {availableProviderSessions.length === 1 ? (
+            <span className="provider-loaded">
+              {`${availableProviderSessions[0]?.providerName ?? "Provider"} connected`}
+            </span>
+          ) : null}
           <span className="status-detail">{connection.message}</span>
         </div>
       </header>
@@ -319,19 +331,39 @@ export function ApplicationShell({
           {workspaceLimitReached ? (
             <span role="status">Maximum 4 workspaces</span>
           ) : null}
-          {availableProviderSessions.length === 1 ? (
-            <span className="provider-loaded" role="status">
-              {`${availableProviderSessions[0]?.providerName ?? "Provider"} connected`}
-            </span>
-          ) : null}
-          {onProviderManagerOpen === undefined ? null : (
+
+          {onPluginManagerOpen === undefined ? null : (
             <button
               type="button"
-              className="provider-manage"
-              onClick={onProviderManagerOpen}
+              className="plugin-manage"
+              onClick={onPluginManagerOpen}
             >
-              Providers
+              Plugin Manager
             </button>
+          )}
+          {liveDataStale ? (
+            <p role="status" data-live-status>
+              Live data stale
+            </p>
+          ) : null}
+          {workspaceSaveStatus === undefined ||
+          workspaceSaveStatus === "saved" ? null : (
+            <span
+              role={workspaceSaveStatus === "failed" ? "alert" : "status"}
+              aria-live={
+                workspaceSaveStatus === "failed" ? "assertive" : "polite"
+              }
+            >
+              {workspaceSaveStatus === "failed"
+                ? "Workspace not saved"
+                : "Saving workspace…"}
+              {workspaceSaveStatus === "failed" &&
+              onRetryWorkspaceSave !== undefined ? (
+                <button type="button" onClick={onRetryWorkspaceSave}>
+                  Retry workspace save
+                </button>
+              ) : null}
+            </span>
           )}
         </div>
 
@@ -402,7 +434,6 @@ export function ApplicationShell({
                     requestProviderHistory={requestProviderHistory}
                     indicators={slot.persisted?.indicators ?? []}
                     installedIndicators={installedIndicators}
-                    onIndicatorImport={onIndicatorImport}
                     syncIndicator={syncIndicator}
                     disposeIndicator={disposeIndicator}
                     selectedTimeframeId={
@@ -500,8 +531,8 @@ export function ApplicationShell({
       {pluginPermissionReview === undefined ? null : (
         <PluginPermissionReview {...pluginPermissionReview} />
       )}
-      {providerManager === undefined ? null : (
-        <ProviderManager {...providerManager} />
+      {pluginManager === undefined ? null : (
+        <PluginManager {...pluginManager} />
       )}
     </div>
   );
@@ -555,10 +586,24 @@ function mergeCandles(
   return merged.length > limit ? merged.slice(-limit) : merged;
 }
 
+function replaceCandles(
+  current: readonly Candle[],
+  incoming: readonly Candle[],
+): readonly Candle[] {
+  const candlesByOpenTime = new Map<number, Candle>();
+  for (const candle of incoming)
+    candlesByOpenTime.set(candle.openTimeMs, candle);
+  const replacement = [...candlesByOpenTime.values()].sort(
+    (left, right) => left.openTimeMs - right.openTimeMs,
+  );
+  const limit = Math.max(providerLiveCandleCacheMinimum, current.length);
+  return replacement.length > limit ? replacement.slice(-limit) : replacement;
+}
+
 function mergeProviderSession(
-  current: readonly ImportedProviderSession[],
+  current: readonly ProviderChartSession[],
   session: ImportedProviderSession,
-): readonly ImportedProviderSession[] {
+): readonly ProviderChartSession[] {
   const key = providerSessionKey(session);
   const existing = current.find(
     (candidate) => providerSessionKey(candidate) === key,
@@ -568,7 +613,14 @@ function mergeProviderSession(
       ? session
       : {
           ...session,
-          candles: mergeCandles(session.candles, existing.candles),
+          ...(existing.series === undefined ? {} : { series: existing.series }),
+          ...(existing.rebuildRevision === undefined
+            ? {}
+            : { rebuildRevision: existing.rebuildRevision }),
+          candles: mergeCandles(
+            session.candles,
+            providerChartSessionCandles(existing),
+          ),
         };
   return [
     ...current.filter((candidate) => providerSessionKey(candidate) !== key),
@@ -577,10 +629,11 @@ function mergeProviderSession(
 }
 
 export function mergeProviderSessionCandles(
-  current: readonly ImportedProviderSession[],
+  current: readonly ProviderChartSession[],
   request: ProviderLiveRequest,
   candles: readonly Candle[],
-): readonly ImportedProviderSession[] {
+  series?: ProviderChartSession["series"],
+): readonly ProviderChartSession[] {
   let changed = false;
   const next = current.map((session) => {
     if (
@@ -590,8 +643,45 @@ export function mergeProviderSessionCandles(
     ) {
       return session;
     }
+    if (
+      series !== undefined &&
+      session.series !== undefined &&
+      (series.generation < session.series.generation ||
+        (series.generation === session.series.generation &&
+          series.revision <= session.series.revision))
+    )
+      return session;
     changed = true;
-    return { ...session, candles: mergeCandles(session.candles, candles) };
+    const rebuildRevision =
+      series === undefined
+        ? session.rebuildRevision
+        : series.kind === "rebuild" ||
+            session.series === undefined ||
+            series.generation !== session.series.generation ||
+            (series.previousRevision ?? series.revision - 1) !==
+              session.series.revision
+          ? series.revision
+          : (session.rebuildRevision ?? 0);
+    const liveCandle =
+      candles.length === 1 &&
+      series?.kind === "incremental" &&
+      candles[0]?.openTimeMs === session.candles.at(-1)?.openTimeMs
+        ? candles[0]
+        : undefined;
+    const { liveCandle: _previousLiveCandle, ...base } = session;
+    void _previousLiveCandle;
+    return {
+      ...base,
+      ...(series === undefined ? {} : { series }),
+      ...(rebuildRevision === undefined ? {} : { rebuildRevision }),
+      ...(liveCandle === undefined ? {} : { liveCandle }),
+      candles:
+        liveCandle !== undefined
+          ? session.candles
+          : series?.kind === "rebuild"
+            ? replaceCandles(session.candles, candles)
+            : mergeCandles(providerChartSessionCandles(session), candles),
+    };
   });
   return changed ? next : current;
 }
@@ -804,14 +894,14 @@ function HydratedRuntimeApplicationShell({
     readonly InstalledIndicatorSummary[]
   >([]);
   const [providerSessions, setProviderSessions] = useState<
-    readonly ImportedProviderSession[]
+    readonly ProviderChartSession[]
   >([]);
   const [providerImportBusy, setProviderImportBusy] = useState(false);
   const [providerImportError, setProviderImportError] = useState<
     string | undefined
   >();
   const [indicatorImportBusy, setIndicatorImportBusy] = useState(false);
-  const [providerManagerOpen, setProviderManagerOpen] = useState(false);
+  const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [providerManagement, setProviderManagement] =
     useState<ProviderManagementSnapshot>({
       installedProviders: [],
@@ -821,6 +911,35 @@ function HydratedRuntimeApplicationShell({
   const [providerManagementError, setProviderManagementError] = useState<
     string | undefined
   >();
+  const [indicatorImportError, setIndicatorImportError] = useState<
+    string | undefined
+  >();
+  const [workspaceSaveStatus, setWorkspaceSaveStatus] = useState<
+    "saved" | "saving" | "failed"
+  >("saved");
+  const pendingWorkspaceSave = useRef<PersistedWorkspace | undefined>(
+    undefined,
+  );
+  const failedWorkspaceSave = useRef<PersistedWorkspace | undefined>(undefined);
+  const workspaceSaveRunning = useRef(false);
+  const indicatorRuntimeRef = useRef<BrowserIndicatorRuntime | undefined>(
+    undefined,
+  );
+  if (indicatorRuntimeRef.current === undefined) {
+    indicatorRuntimeRef.current = createBrowserIndicatorRuntime({
+      sourceDataService: createRendererIndicatorSourceDataService(bridge),
+    });
+  }
+  const indicatorRuntime = indicatorRuntimeRef.current;
+  useEffect(
+    () => () => {
+      indicatorRuntime.dispose();
+    },
+    [indicatorRuntime],
+  );
+  const [staleLiveRequests, setStaleLiveRequests] = useState<readonly string[]>(
+    [],
+  );
   const liveSubscriptions = useRef(
     new Map<
       string,
@@ -855,14 +974,49 @@ function HydratedRuntimeApplicationShell({
     .map(providerLiveRequestKey)
     .sort()
     .join("\n");
+  const runWorkspaceSave = (): void => {
+    if (workspaceSaveRunning.current) return;
+    const next = pendingWorkspaceSave.current;
+    if (next === undefined) return;
+    pendingWorkspaceSave.current = undefined;
+    workspaceSaveRunning.current = true;
+    setWorkspaceSaveStatus("saving");
+    void bridge
+      .saveWorkspace(next)
+      .then(() => {
+        failedWorkspaceSave.current = undefined;
+        setWorkspaceSaveStatus(
+          pendingWorkspaceSave.current === undefined ? "saved" : "saving",
+        );
+      })
+      .catch(() => {
+        failedWorkspaceSave.current = pendingWorkspaceSave.current ?? next;
+        pendingWorkspaceSave.current = undefined;
+        setWorkspaceSaveStatus("failed");
+      })
+      .finally(() => {
+        workspaceSaveRunning.current = false;
+        if (pendingWorkspaceSave.current !== undefined) runWorkspaceSave();
+      });
+  };
+  const queueWorkspaceSave = (document: PersistedWorkspace): void => {
+    pendingWorkspaceSave.current = document;
+    failedWorkspaceSave.current = undefined;
+    runWorkspaceSave();
+  };
+  const retryWorkspaceSave = (): void => {
+    const retry = failedWorkspaceSave.current;
+    if (retry === undefined) return;
+    pendingWorkspaceSave.current = retry;
+    failedWorkspaceSave.current = undefined;
+    runWorkspaceSave();
+  };
   const dispatch = (action: WorkspaceAction): void => {
     const before = store.getSnapshot();
     store.dispatch(action);
     const after = store.getSnapshot();
     if (after === before) return;
-    void bridge
-      .saveWorkspace(toPersistedWorkspace(after))
-      .catch(() => undefined);
+    queueWorkspaceSave(toPersistedWorkspace(after));
   };
   const bindProviderSession = (
     tabId: string,
@@ -956,7 +1110,7 @@ function HydratedRuntimeApplicationShell({
           );
           if (!active) return;
           setProviderSessions((current) =>
-            restored.reduce<readonly ImportedProviderSession[]>(
+            restored.reduce<readonly ProviderChartSession[]>(
               (next, restoredSession) =>
                 restoredSession === undefined
                   ? next
@@ -984,6 +1138,7 @@ function HydratedRuntimeApplicationShell({
       requests.map((request) => [providerLiveRequestKey(request), request]),
     );
 
+    setStaleLiveRequests((keys) => keys.filter((key) => desired.has(key)));
     for (const [key, current] of liveSubscriptions.current) {
       if (desired.has(key)) continue;
       liveSubscriptions.current.delete(key);
@@ -1003,13 +1158,25 @@ function HydratedRuntimeApplicationShell({
         .subscribeProviderData(request, (event) => {
           if (
             current.cancelled ||
-            liveSubscriptions.current.get(key) !== current ||
-            event.type !== "candles"
+            liveSubscriptions.current.get(key) !== current
           ) {
             return;
           }
+          setStaleLiveRequests((keys) =>
+            event.type === "error"
+              ? keys.includes(key)
+                ? keys
+                : [...keys, key]
+              : keys.filter((value) => value !== key),
+          );
+          if (event.type !== "candles") return;
           setProviderSessions((sessions) =>
-            mergeProviderSessionCandles(sessions, request, event.candles),
+            mergeProviderSessionCandles(
+              sessions,
+              request,
+              event.candles,
+              event.series,
+            ),
           );
         })
         .then((unsubscribe) => {
@@ -1024,6 +1191,9 @@ function HydratedRuntimeApplicationShell({
         })
         .catch(() => {
           if (liveSubscriptions.current.get(key) === current) {
+            setStaleLiveRequests((keys) =>
+              keys.includes(key) ? keys : [...keys, key],
+            );
             liveSubscriptions.current.delete(key);
           }
         });
@@ -1148,12 +1318,12 @@ function HydratedRuntimeApplicationShell({
     }
   };
 
-  const beginProviderImport = (): void => {
+  const beginProviderImport = (sourceKind: PluginImportSourceKind): void => {
     if (providerImportBusy) return;
     setProviderImportBusy(true);
     setProviderImportError(undefined);
     void bridge
-      .previewProviderImport()
+      .previewProviderImport(sourceKind)
       .then((preview) => {
         if (preview !== null) setProviderPreview(preview);
       })
@@ -1165,15 +1335,20 @@ function HydratedRuntimeApplicationShell({
       .finally(() => setProviderImportBusy(false));
   };
 
-  const beginIndicatorImport = (): void => {
+  const beginIndicatorImport = (sourceKind: PluginImportSourceKind): void => {
     if (indicatorImportBusy) return;
     setIndicatorImportBusy(true);
+    setIndicatorImportError(undefined);
     void bridge
-      .previewIndicatorImport()
+      .previewIndicatorImport(sourceKind)
       .then((preview) => {
         if (preview !== null) setIndicatorPreview(preview);
       })
-      .catch(() => undefined)
+      .catch(() =>
+        setIndicatorImportError(
+          "Indicator import could not be prepared. Check the package and try again.",
+        ),
+      )
       .finally(() => setIndicatorImportBusy(false));
   };
 
@@ -1212,7 +1387,7 @@ function HydratedRuntimeApplicationShell({
                 upsertProviderSession(session);
                 bindActiveTabIfUnconfigured(session);
                 setProviderPreview(undefined);
-                if (providerManagerOpen) void refreshProviderManagement();
+                if (pluginManagerOpen) void refreshProviderManagement();
               })
               .catch(() => {
                 setProviderImportError(
@@ -1255,6 +1430,10 @@ function HydratedRuntimeApplicationShell({
                   setInstalledIndicators(await bridge.listIndicators());
                   setIndicatorPreview(undefined);
                 })
+                .catch(() => {
+                  setIndicatorPreview(undefined);
+                  setIndicatorImportError("Indicator could not be installed.");
+                })
                 .finally(() => setIndicatorImportBusy(false));
             },
           }
@@ -1265,30 +1444,61 @@ function HydratedRuntimeApplicationShell({
       connection={connection}
       workspace={workspace}
       onWorkspaceAction={dispatch}
+      liveDataStale={staleLiveRequests.some((key) =>
+        liveRequestSignature.split("\n").includes(key),
+      )}
+      workspaceSaveStatus={workspaceSaveStatus}
+      onRetryWorkspaceSave={retryWorkspaceSave}
       pluginPermissionReview={pluginPermissionReview}
       providerSessions={providerSessions}
       installedIndicators={installedIndicators}
-      onIndicatorImport={beginIndicatorImport}
-      syncIndicator={bridge.syncIndicator}
-      disposeIndicator={bridge.disposeIndicator}
+      syncIndicator={indicatorRuntime.sync}
+      disposeIndicator={async (instanceId): Promise<void> => {
+        indicatorRuntime.disposeInstance(instanceId);
+      }}
       requestProviderHistory={bridge.requestProviderHistory}
       onProviderSessionSelect={selectProviderSession}
       onWorkspaceTimeframeSelect={selectWorkspaceTimeframe}
-      onProviderManagerOpen={() => {
-        setProviderManagerOpen(true);
-        void refreshProviderManagement().catch(() => undefined);
+      onPluginManagerOpen={() => {
+        setPluginManagerOpen(true);
+        void Promise.all([
+          refreshProviderManagement(),
+          bridge.listIndicators().then(setInstalledIndicators),
+        ]).catch(() => undefined);
       }}
-      providerManager={
-        providerManagerOpen
+      pluginManager={
+        pluginManagerOpen
           ? {
               snapshot: providerManagement,
+              indicators: installedIndicators,
               busy: providerManagementBusy,
               error: providerManagementError,
-              importBusy: providerImportBusy,
-              importError: providerImportError,
-              onClose: () => setProviderManagerOpen(false),
-              onImport: beginProviderImport,
-              onRefresh: refreshProviderManagement,
+              providerImportBusy,
+              providerImportError,
+              indicatorImportBusy,
+              indicatorImportError,
+              onClose: () => setPluginManagerOpen(false),
+              onProviderImport: beginProviderImport,
+              onIndicatorImport: beginIndicatorImport,
+              onIndicatorRemove: async (pluginId) => {
+                if (indicatorImportBusy) return;
+                setIndicatorImportBusy(true);
+                setIndicatorImportError(undefined);
+                try {
+                  await bridge.removeIndicator(pluginId);
+                  setInstalledIndicators(await bridge.listIndicators());
+                } catch {
+                  setIndicatorImportError("Indicator could not be removed.");
+                } finally {
+                  setIndicatorImportBusy(false);
+                }
+              },
+              onRefresh: async () => {
+                await Promise.all([
+                  refreshProviderManagement(),
+                  bridge.listIndicators().then(setInstalledIndicators),
+                ]);
+              },
               onCreate: (request) =>
                 runProviderManagementAction(async () => {
                   const session = await bridge.createProviderProfile(request);

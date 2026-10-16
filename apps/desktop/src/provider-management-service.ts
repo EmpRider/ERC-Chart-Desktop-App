@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import {
   isPluginManifest,
   type ImportedProviderSession,
@@ -20,16 +19,8 @@ import type {
   ProviderUtilityLaunchDescriptor,
   ProviderUtilitySupervisorStatus,
 } from "@erc-chart/provider-runtime";
-import {
-  createProviderProfile,
-  deleteProviderProfile,
-  getProviderProfile,
-  listPlugins,
-  listProviderProfiles,
-  updateProviderProfile,
-  type PluginRegistryEntry,
-  type ProviderProfile,
-} from "@erc-chart/storage";
+import type { PluginRegistryEntry, ProviderProfile } from "@erc-chart/storage";
+import type { DataUtilityStorage } from "./data-utility-storage.js";
 
 type ProviderController = Pick<
   DesktopApplicationController<ProviderUtilityLaunchDescriptor>,
@@ -42,7 +33,7 @@ type ProviderController = Pick<
 >;
 
 export interface ProviderManagementServiceOptions {
-  readonly database: DatabaseSync;
+  readonly storage: DataUtilityStorage;
   readonly controller: ProviderController;
   readonly credentialManager: Pick<
     WindowsGenericCredentialManager,
@@ -55,7 +46,7 @@ export interface ProviderManagementServiceOptions {
 }
 
 export interface ProviderManagementService {
-  readonly snapshot: () => ProviderManagementSnapshot;
+  readonly snapshot: () => Promise<ProviderManagementSnapshot>;
   readonly create: (
     request: ProviderProfileCreateRequest,
   ) => Promise<ImportedProviderSession>;
@@ -83,11 +74,11 @@ function requireProfileId(value: string): string {
   return value;
 }
 
-function activeProviderPlugin(
-  database: DatabaseSync,
+async function activeProviderPlugin(
+  storage: DataUtilityStorage,
   providerId: string,
-): PluginRegistryEntry {
-  const plugin = listPlugins(database).find(
+): Promise<PluginRegistryEntry> {
+  const plugin = (await storage.listPlugins()).find(
     (candidate) =>
       candidate.pluginId === providerId &&
       candidate.kind === "provider" &&
@@ -169,8 +160,8 @@ export function createProviderManagementService(
   const createProfileId =
     options.createProfileId ?? (() => `profile-${randomUUID()}`);
 
-  const snapshot = (): ProviderManagementSnapshot => {
-    const plugins = listPlugins(options.database).filter(
+  const snapshot = async (): Promise<ProviderManagementSnapshot> => {
+    const plugins = (await options.storage.listPlugins()).filter(
       (plugin) => plugin.kind === "provider" && plugin.status === "active",
     );
     const installedProviders = plugins.map((plugin) => {
@@ -184,10 +175,15 @@ export function createProviderManagementService(
         credentialKeys: plugin.manifest.permissions.credentials,
       };
     });
-    const profiles = listProviderProfiles(options.database).map((profile) => {
-      const plugin = activeProviderPlugin(options.database, profile.providerId);
-      return summary(profile, plugin, options.getStatus(profile.id));
-    });
+    const profiles = await Promise.all(
+      (await options.storage.listProviderProfiles()).map(async (profile) => {
+        const plugin = await activeProviderPlugin(
+          options.storage,
+          profile.providerId,
+        );
+        return summary(profile, plugin, options.getStatus(profile.id));
+      }),
+    );
     return { installedProviders, profiles };
   };
 
@@ -262,10 +258,13 @@ export function createProviderManagementService(
     profileIdValue: string,
   ): Promise<ImportedProviderSession> => {
     const profileId = requireProfileId(profileIdValue);
-    const profile = getProviderProfile(options.database, profileId);
+    const profile = await options.storage.getProviderProfile(profileId);
     if (profile === undefined)
       throw new Error("Provider profile was not found.");
-    const plugin = activeProviderPlugin(options.database, profile.providerId);
+    const plugin = await activeProviderPlugin(
+      options.storage,
+      profile.providerId,
+    );
     await ensureStarted(profile, plugin);
     return loadSession(profile, plugin);
   };
@@ -273,13 +272,16 @@ export function createProviderManagementService(
   return {
     snapshot,
     create: async (request): Promise<ImportedProviderSession> => {
-      const plugin = activeProviderPlugin(options.database, request.providerId);
+      const plugin = await activeProviderPlugin(
+        options.storage,
+        request.providerId,
+      );
       const profileId = requireProfileId(createProfileId());
       const credentialTarget = windowsCredentialTarget(
         plugin.pluginId,
         profileId,
       );
-      const profile = createProviderProfile(options.database, {
+      const profile = await options.storage.createProviderProfile({
         id: profileId,
         providerId: plugin.pluginId,
         displayName: request.displayName,
@@ -301,7 +303,9 @@ export function createProviderManagementService(
         await options.controller
           .stopProviderProfile(profile.id)
           .catch(() => undefined);
-        deleteProviderProfile(options.database, profile.id);
+        await options.storage
+          .deleteProviderProfile(profile.id)
+          .catch(() => false);
         if (credentialsWritten) {
           await options.credentialManager
             .delete(credentialTarget)
@@ -312,10 +316,13 @@ export function createProviderManagementService(
     },
     update: async (request): Promise<ProviderProfileSummary> => {
       const profileId = requireProfileId(request.profileId);
-      const profile = getProviderProfile(options.database, profileId);
+      const profile = await options.storage.getProviderProfile(profileId);
       if (profile === undefined)
         throw new Error("Provider profile was not found.");
-      const plugin = activeProviderPlugin(options.database, profile.providerId);
+      const plugin = await activeProviderPlugin(
+        options.storage,
+        profile.providerId,
+      );
       let settings = request.settings;
       if (options.getStatus(profile.id) === "ready") {
         const change = await options.controller.reconfigureProviderProfile(
@@ -324,7 +331,7 @@ export function createProviderManagementService(
         );
         settings = change.settings;
       }
-      const updated = updateProviderProfile(options.database, profile.id, {
+      const updated = await options.storage.updateProviderProfile(profile.id, {
         displayName: request.displayName,
         settings,
       });
@@ -343,16 +350,19 @@ export function createProviderManagementService(
     start,
     load: async (request): Promise<ImportedProviderSession> => {
       const profileId = requireProfileId(request.profileId);
-      const profile = getProviderProfile(options.database, profileId);
+      const profile = await options.storage.getProviderProfile(profileId);
       if (profile === undefined)
         throw new Error("Provider profile was not found.");
-      const plugin = activeProviderPlugin(options.database, profile.providerId);
+      const plugin = await activeProviderPlugin(
+        options.storage,
+        profile.providerId,
+      );
       await ensureStarted(profile, plugin);
       return loadSession(profile, plugin, request);
     },
     stop: async (profileIdValue): Promise<void> => {
       const profileId = requireProfileId(profileIdValue);
-      if (getProviderProfile(options.database, profileId) === undefined) {
+      if ((await options.storage.getProviderProfile(profileId)) === undefined) {
         throw new Error("Provider profile was not found.");
       }
       const status = options.getStatus(profileId);
@@ -362,7 +372,7 @@ export function createProviderManagementService(
     },
     delete: async (profileIdValue): Promise<void> => {
       const profileId = requireProfileId(profileIdValue);
-      const profile = getProviderProfile(options.database, profileId);
+      const profile = await options.storage.getProviderProfile(profileId);
       if (profile === undefined)
         throw new Error("Provider profile was not found.");
       const status = options.getStatus(profileId);
@@ -372,7 +382,7 @@ export function createProviderManagementService(
       await options.credentialManager
         .delete(profile.credentialReference)
         .catch(() => undefined);
-      if (!deleteProviderProfile(options.database, profileId)) {
+      if (!(await options.storage.deleteProviderProfile(profileId))) {
         throw new Error("Provider profile could not be removed.");
       }
     },

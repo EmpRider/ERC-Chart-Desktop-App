@@ -28,3 +28,7 @@ release/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# AI tooling artifacts
+.archify/
+.serena/

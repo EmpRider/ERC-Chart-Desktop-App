@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import nodeProcess from "node:process";
 import path from "node:path";
 import {
@@ -13,8 +14,10 @@ import {
 import {
   createWindowsGenericCredentialManager,
   createUtilitySupervisor,
+  createDataUtilityClient,
   assertTrustedIpcSender,
   startDesktopApplication,
+  type DataUtilityClient,
   type DesktopApplicationController,
   type SecureWindowOptions,
   type UtilityChild,
@@ -25,20 +28,12 @@ import {
   type ProviderUtilityLaunchDescriptor,
 } from "@erc-chart/provider-runtime";
 import {
-  createProviderDataService,
-  type ProviderDataService,
-} from "@erc-chart/data-service";
-import {
   indicatorImportApproveChannel,
   indicatorImportCancelChannel,
   indicatorImportPreviewChannel,
-  indicatorRuntimeDisposeChannel,
-  indicatorRuntimeSyncChannel,
-  indicatorRuntimeUpdateChannel,
+  indicatorRemoveChannel,
   indicatorsListChannel,
-  isIndicatorRuntimeInstanceId,
-  isIndicatorRuntimeSyncRequest,
-  isIndicatorRuntimeUpdateRequest,
+  isPluginId,
   isProviderHistoryLoadRequest,
   isProviderLiveSubscriptionId,
   isProviderLiveSubscriptionRequest,
@@ -60,19 +55,15 @@ import {
   providerProfileStopChannel,
   providerProfileUpdateChannel,
   isProviderImportCredentialValues,
+  isPluginImportSourceKind,
   runtimeInfoChannel,
   workspaceLoadChannel,
   workspaceSaveChannel,
   type PersistedWorkspace,
 } from "@erc-chart/contracts";
-import { createIndicatorRuntimeHost } from "@erc-chart/indicator-runtime";
-import {
-  loadWorkspace,
-  openStorageDatabase,
-  saveWorkspace,
-} from "@erc-chart/storage";
 import {
   finishDesktopSmoke,
+  flushWorkspaceBeforeQuit,
   launchDesktopMainWithProtocol,
 } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
@@ -82,6 +73,7 @@ import { createIndicatorImportService } from "./indicator-import-service.js";
 import { createProviderImportService } from "./provider-import-service.js";
 import { createProviderLiveSubscriptionManager } from "./provider-live-subscriptions.js";
 import { createProviderManagementService } from "./provider-management-service.js";
+import { createDataUtilityStorage } from "./data-utility-storage.js";
 
 import { installWindowSecurity } from "./window-security.js";
 
@@ -133,7 +125,7 @@ function isSmokeResult(value: unknown): value is SmokeResult {
 
 const paths = resolveDesktopArtifacts(import.meta.url);
 const lastWorkspaceId = "last-workspace";
-const desktopInstanceId = "desktop-main";
+const desktopInstanceId = `instance:${randomUUID()}`;
 const smokeMode = nodeProcess.argv.includes("--erc-chart-smoke");
 const workspaceSeedMode = nodeProcess.argv.includes(
   "--erc-chart-workspace-seed",
@@ -169,14 +161,13 @@ const dataUtility = createUtilitySupervisor({
   startupTimeoutMs: 5_000,
   shutdownTimeoutMs: 2_000,
   onUnavailable: (): void => {
+    dataUtilityClient?.markUnavailable();
     console.error("ERC Chart data utility unavailable.");
   },
 });
 const providerLaunches = new Map<string, ProviderUtilityLaunchDescriptor>();
 const providerCredentialManager = createWindowsGenericCredentialManager();
-const providerDataReference: { current: ProviderDataService | undefined } = {
-  current: undefined,
-};
+let dataUtilityClient: DataUtilityClient | undefined;
 const providerUtilities = createProviderUtilitySupervisor({
   spawn: (entryPath, args): ProviderUtilityChild =>
     adaptUtilityChild<Parameters<ProviderUtilityChild["postMessage"]>[0]>(
@@ -195,15 +186,19 @@ const providerUtilities = createProviderUtilitySupervisor({
   shutdownTimeoutMs: 2_000,
   onUnavailable: (providerProfileId, code): void => {
     providerLaunches.delete(providerProfileId);
-    void providerDataReference.current
-      ?.invalidateProfile(providerProfileId)
+    void dataUtilityClient
+      ?.request("provider-invalidate", { profileId: providerProfileId })
       .catch(() => undefined);
     console.error(`ERC Chart provider utility unavailable (${code}).`);
   },
   onProfileInvalidated: (providerProfileId): Promise<void> | undefined =>
-    providerDataReference.current?.invalidateProfile(providerProfileId),
+    dataUtilityClient?.request("provider-invalidate", {
+      profileId: providerProfileId,
+    }),
   onProfileRestored: (providerProfileId): Promise<void> | undefined =>
-    providerDataReference.current?.restoreProfile(providerProfileId),
+    dataUtilityClient?.request("provider-restore", {
+      profileId: providerProfileId,
+    }),
   hostBroker: createDesktopProviderHostBroker({
     launches: providerLaunches,
     credentialManager: providerCredentialManager,
@@ -226,8 +221,7 @@ const providerUtilities = createProviderUtilitySupervisor({
     now: () => Date.now(),
   }),
 });
-const providerData = createProviderDataService(providerUtilities);
-providerDataReference.current = providerData;
+let activeBrowserWindow: BrowserWindow | undefined;
 
 function createWindow(options: SecureWindowOptions): {
   loadURL: (url: string) => Promise<void>;
@@ -239,6 +233,10 @@ function createWindow(options: SecureWindowOptions): {
 } {
   reportSmokeStage("window-created");
   const window = new BrowserWindow(options);
+  activeBrowserWindow = window;
+  window.once("closed", () => {
+    if (activeBrowserWindow === window) activeBrowserWindow = undefined;
+  });
   installWindowSecurity({
     onWillNavigate: (handler): void => {
       window.webContents.on("will-navigate", (event, url) =>
@@ -400,9 +398,21 @@ async function startDesktopMain(): Promise<void> {
   const userDataRoot =
     userDataArgument?.slice("--erc-chart-user-data-path=".length) ??
     app.getPath("userData");
-  const workspaceDatabase = await openStorageDatabase(
-    path.join(userDataRoot, "erc-chart.sqlite"),
-  );
+  const client = createDataUtilityClient({
+    transport: dataUtility,
+    upstream: providerUtilities,
+    scheduler: {
+      setTimeout: (callback, delayMs): NodeJS.Timeout =>
+        setTimeout(callback, delayMs),
+      clearTimeout: (timer): void => clearTimeout(timer as NodeJS.Timeout),
+    },
+    requestTimeoutMs: 5_000,
+    databasePath: path.join(userDataRoot, "erc-chart.sqlite"),
+    instanceId: desktopInstanceId,
+    legacyWorkspaceId: lastWorkspaceId,
+  });
+  dataUtilityClient = client;
+  const storage = createDataUtilityStorage(client);
   const senderFromEvent = (event: Electron.IpcMainInvokeEvent) => {
     const senderFrame = event.senderFrame;
     return senderFrame === null
@@ -456,14 +466,15 @@ async function startDesktopMain(): Promise<void> {
               fetch: (url): Promise<Response> => net.fetch(url),
             },
             rootPath,
+            path.join(userDataRoot, "indicator-plugins"),
           ),
         createWindow,
         dataUtility: {
           start: async (entryPath, args): Promise<void> => {
-            await dataUtility.start(entryPath, args);
+            await client.start(entryPath, args);
             reportSmokeStage("data-utility-ready");
           },
-          shutdown: (): Promise<void> => dataUtility.shutdown(),
+          shutdown: (): Promise<void> => client.shutdown(),
         },
         providerUtilities: {
           start: async (
@@ -499,7 +510,11 @@ async function startDesktopMain(): Promise<void> {
           },
           shutdown: async (providerProfileId): Promise<void> => {
             try {
-              await providerData.invalidateProfile(providerProfileId);
+              await client
+                .request("provider-invalidate", {
+                  profileId: providerProfileId,
+                })
+                .catch(() => undefined);
               await providerUtilities.shutdown(providerProfileId);
             } finally {
               providerLaunches.delete(providerProfileId);
@@ -507,24 +522,22 @@ async function startDesktopMain(): Promise<void> {
           },
           shutdownAll: async (): Promise<void> => {
             try {
-              await providerData.shutdown();
+              await client
+                .request("provider-shutdown", null)
+                .catch(() => undefined);
               await providerUtilities.shutdownAll();
             } finally {
               providerLaunches.clear();
             }
           },
         },
-        providerData,
+        providerData: client,
         workspacePersistence: {
-          load: async (): Promise<PersistedWorkspace | null> =>
-            loadWorkspace(workspaceDatabase, lastWorkspaceId) ?? null,
-          save: async (workspace): Promise<void> => {
-            saveWorkspace(workspaceDatabase, workspace, desktopInstanceId);
-          },
+          load: (): Promise<PersistedWorkspace | null> =>
+            client.loadWorkspace(),
+          save: (workspace): Promise<void> => client.saveWorkspace(workspace),
           flush: async (): Promise<void> => undefined,
-          close: async (): Promise<void> => {
-            workspaceDatabase.close();
-          },
+          close: async (): Promise<void> => undefined,
         },
       },
       paths,
@@ -579,21 +592,19 @@ async function startDesktopMain(): Promise<void> {
   };
 
   const providerImportService = createProviderImportService({
-    database: workspaceDatabase,
+    storage,
     controller,
     credentialManager: providerCredentialManager,
     stagingRoot: path.join(userDataRoot, "provider-staging"),
     installationRoot: path.join(userDataRoot, "provider-plugins"),
   });
-  const indicatorRuntimeHost = createIndicatorRuntimeHost();
   const indicatorImportService = createIndicatorImportService({
-    database: workspaceDatabase,
-    runtimeHost: indicatorRuntimeHost,
+    storage,
     stagingRoot: path.join(userDataRoot, "indicator-staging"),
     installationRoot: path.join(userDataRoot, "indicator-plugins"),
   });
   const providerManagementService = createProviderManagementService({
-    database: workspaceDatabase,
+    storage,
     controller,
     credentialManager: providerCredentialManager,
     installationRoot: path.join(userDataRoot, "provider-plugins"),
@@ -683,19 +694,28 @@ async function startDesktopMain(): Promise<void> {
       return true;
     },
   );
-  ipcMain.handle(providerImportPreviewChannel, async (event) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    const selection = await dialog.showOpenDialog({
-      title: "Import ERC Chart provider",
-      properties: ["openDirectory"],
-    });
-    const selectedPath = selection.filePaths[0];
-    if (selection.canceled || selectedPath === undefined) return null;
-    return providerImportService.preview({
-      kind: "folder",
-      path: selectedPath,
-    });
-  });
+  ipcMain.handle(
+    providerImportPreviewChannel,
+    async (event, sourceKind: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isPluginImportSourceKind(sourceKind)) {
+        throw new Error("Provider import source is invalid.");
+      }
+      const selection = await dialog.showOpenDialog({
+        title: "Import ERC Chart provider",
+        properties: sourceKind === "zip" ? ["openFile"] : ["openDirectory"],
+        ...(sourceKind === "zip"
+          ? { filters: [{ name: "ERC Chart plugin", extensions: ["zip"] }] }
+          : {}),
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || selectedPath === undefined) return null;
+      return providerImportService.preview({
+        kind: sourceKind,
+        path: selectedPath,
+      });
+    },
+  );
   ipcMain.handle(
     providerImportApproveChannel,
     async (event, requestId: unknown, credentials: unknown) => {
@@ -721,19 +741,28 @@ async function startDesktopMain(): Promise<void> {
     },
   );
 
-  ipcMain.handle(indicatorImportPreviewChannel, async (event) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    const selection = await dialog.showOpenDialog({
-      title: "Import ERC Chart indicator",
-      properties: ["openDirectory"],
-    });
-    const selectedPath = selection.filePaths[0];
-    if (selection.canceled || selectedPath === undefined) return null;
-    return indicatorImportService.preview({
-      kind: "folder",
-      path: selectedPath,
-    });
-  });
+  ipcMain.handle(
+    indicatorImportPreviewChannel,
+    async (event, sourceKind: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isPluginImportSourceKind(sourceKind)) {
+        throw new Error("Indicator import source is invalid.");
+      }
+      const selection = await dialog.showOpenDialog({
+        title: "Import ERC Chart indicator",
+        properties: sourceKind === "zip" ? ["openFile"] : ["openDirectory"],
+        ...(sourceKind === "zip"
+          ? { filters: [{ name: "ERC Chart plugin", extensions: ["zip"] }] }
+          : {}),
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || selectedPath === undefined) return null;
+      return indicatorImportService.preview({
+        kind: sourceKind,
+        path: selectedPath,
+      });
+    },
+  );
   ipcMain.handle(
     indicatorImportApproveChannel,
     async (event, requestId: unknown) => {
@@ -759,31 +788,13 @@ async function startDesktopMain(): Promise<void> {
     assertTrustedIpcSender(senderFromEvent(event));
     return indicatorImportService.list();
   });
-  ipcMain.handle(indicatorRuntimeSyncChannel, (event, request: unknown) => {
+  ipcMain.handle(indicatorRemoveChannel, async (event, pluginId: unknown) => {
     assertTrustedIpcSender(senderFromEvent(event));
-    if (!isIndicatorRuntimeSyncRequest(request)) {
-      throw new Error("Indicator runtime request is invalid.");
+    if (!isPluginId(pluginId)) {
+      throw new Error("Indicator plugin ID is invalid.");
     }
-    return indicatorRuntimeHost.sync(request);
+    return indicatorImportService.remove(pluginId);
   });
-  ipcMain.handle(indicatorRuntimeUpdateChannel, (event, request: unknown) => {
-    assertTrustedIpcSender(senderFromEvent(event));
-    if (!isIndicatorRuntimeUpdateRequest(request)) {
-      throw new Error("Indicator runtime update is invalid.");
-    }
-    return indicatorRuntimeHost.update(request);
-  });
-  ipcMain.handle(
-    indicatorRuntimeDisposeChannel,
-    (event, instanceId: unknown) => {
-      assertTrustedIpcSender(senderFromEvent(event));
-      if (!isIndicatorRuntimeInstanceId(instanceId)) {
-        throw new Error("Indicator runtime instance ID is invalid.");
-      }
-      indicatorRuntimeHost.disposeInstance(instanceId);
-      return true;
-    },
-  );
 
   const removeProviderImportHandlers = (): void => {
     ipcMain.removeHandler(providerImportPreviewChannel);
@@ -795,9 +806,7 @@ async function startDesktopMain(): Promise<void> {
     ipcMain.removeHandler(indicatorImportApproveChannel);
     ipcMain.removeHandler(indicatorImportCancelChannel);
     ipcMain.removeHandler(indicatorsListChannel);
-    ipcMain.removeHandler(indicatorRuntimeSyncChannel);
-    ipcMain.removeHandler(indicatorRuntimeUpdateChannel);
-    ipcMain.removeHandler(indicatorRuntimeDisposeChannel);
+    ipcMain.removeHandler(indicatorRemoveChannel);
   };
   const removeProviderManagementHandlers = (): void => {
     ipcMain.removeHandler(providerProfilesListChannel);
@@ -816,6 +825,38 @@ async function startDesktopMain(): Promise<void> {
     event.preventDefault();
     quitting = true;
     void (async (): Promise<void> => {
+      const canQuit = await flushWorkspaceBeforeQuit(
+        async (): Promise<void> => {
+          const window = activeBrowserWindow;
+          if (window === undefined || window.isDestroyed()) return;
+          await window.webContents.executeJavaScript(
+            "globalThis.ercChart?.flushWorkspace?.()",
+          );
+        },
+        async (): Promise<"retry" | "cancel"> => {
+          const options = {
+            type: "warning" as const,
+            title: "Workspace not saved",
+            message: "Workspace not saved.",
+            detail:
+              "ERC Chart could not save your latest workspace changes. Retry saving or cancel closing to keep working.",
+            buttons: ["Retry", "Cancel"],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true,
+          };
+          const window = activeBrowserWindow;
+          const result =
+            window === undefined
+              ? await dialog.showMessageBox(options)
+              : await dialog.showMessageBox(window, options);
+          return result.response === 0 ? "retry" : "cancel";
+        },
+      );
+      if (!canQuit) {
+        quitting = false;
+        return;
+      }
       let shutdownError: unknown;
       try {
         await providerImportService.shutdown();

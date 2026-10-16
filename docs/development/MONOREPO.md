@@ -1,5 +1,8 @@
 # TypeScript Monorepo
 
+For scalar indicator development with generated inputs/plots and incremental
+worker execution, see [Indicator authoring](INDICATOR-AUTHORING.md).
+
 ## Toolchain
 
 ERC Chart uses Node.js `26.8.1`, npm `12.0.2`, TypeScript `7.0.2` for
@@ -49,7 +52,8 @@ v1. In particular:
 - contracts depend on no application package;
 - provider and indicator SDKs may depend only on contracts;
 - preload may depend only on contracts;
-- renderer may depend on contracts, klinecharts, and public SDK types;
+- renderer may depend on contracts, klinecharts, public SDK types, and the
+  browser-only indicator runtime supervisor;
 - provider runtime may depend only on contracts and provider SDK;
 - indicator runtime may depend only on contracts and indicator SDK;
 - storage may depend only on contracts;
@@ -64,24 +68,24 @@ rule. The same validation is part of `npm run lint` and CI.
 
 ## Root Commands
 
-| Command                        | Purpose                                                           |
-| ------------------------------ | ----------------------------------------------------------------- |
-| `npm run format:check`         | Verify formatting without changing files                          |
-| `npm run lint`                 | Validate package boundaries and lint source/configuration files   |
-| `npm run typecheck`            | Type-check every TypeScript project and contract type fixture     |
-| `npm run test:unit`            | Run deterministic contract and governance unit tests              |
-| `npm run test:integration`     | Exercise workspace rules against real filesystem fixtures         |
-| `npm run build`                | Build every declared TypeScript project without packaging         |
-| `npm run build:runtime`        | Build TypeScript plus preload, renderer, and static runtime files |
-| `npm start`                    | Build and launch the Electron development shell                   |
-| `npm run smoke:electron`       | Boot Electron and verify the secure renderer bridge               |
-| `npm run smoke:multi-instance` | Boot two Electron processes concurrently with isolated profiles   |
-| `npm run package:win`          | Build the unsigned x64 per-user NSIS installer on Windows         |
-| `npm run smoke:installer`      | Install, smoke two packaged instances, and uninstall on Windows   |
-| `npm run checksum:installer`   | Write the installer's conventional SHA-256 sidecar                |
-| `npm run test:performance`     | Report the honest ECDD-54 scaffold performance disposition        |
-| `npm run audit:ci`             | Fail on high or critical dependency vulnerabilities               |
-| `npm run version:check`        | Revalidate pinned versions and package consistency                |
+| Command                        | Purpose                                                               |
+| ------------------------------ | --------------------------------------------------------------------- |
+| `npm run format:check`         | Verify formatting without changing files                              |
+| `npm run lint`                 | Validate package boundaries and lint source/configuration files       |
+| `npm run typecheck`            | Type-check every TypeScript project and contract type fixture         |
+| `npm run test:unit`            | Run deterministic contract and governance unit tests                  |
+| `npm run test:integration`     | Exercise workspace rules against real filesystem fixtures             |
+| `npm run build`                | Build every declared TypeScript project without packaging             |
+| `npm run build:runtime`        | Build TypeScript plus preload, renderer, and static runtime files     |
+| `npm start`                    | Build and launch the Electron development shell                       |
+| `npm run smoke:electron`       | Boot Electron and verify the secure renderer bridge                   |
+| `npm run smoke:multi-instance` | Verify isolated boot and concurrent shared-storage autosaves/recovery |
+| `npm run package:win`          | Build the unsigned x64 per-user NSIS installer on Windows             |
+| `npm run smoke:installer`      | Install, smoke two packaged instances, and uninstall on Windows       |
+| `npm run checksum:installer`   | Write the installer's conventional SHA-256 sidecar                    |
+| `npm run test:performance`     | Report the honest ECDD-54 scaffold performance disposition            |
+| `npm run audit:ci`             | Fail on high or critical dependency vulnerabilities                   |
+| `npm run version:check`        | Revalidate pinned versions and package consistency                    |
 
 ECDD-62 activates `package:win` and `smoke:installer` on Windows. Development
 installers are unsigned prerelease builds; production code signing remains a
@@ -90,11 +94,22 @@ does not include an automatic-update client.
 
 ## Electron Development Shell
 
-ECDD-55 adds the minimal executable process skeleton. `npm start` launches one
-Electron instance, starts the data utility process, installs the narrow
-`window.ercChart.getRuntimeInfo()` bridge, and renders deterministic dummy
-content. The provider utility entry and SDK contracts are present, but no
-provider is launched or connected at startup.
+Source version `1.1.2` launches the secure Electron shell with live provider
+selection/history, klinecharts, built-in indicators, controlled plugin imports,
+and indicator workers. Provider connections require a configured profile; no real
+provider connection is part of deterministic smoke validation.
+
+The data utility owns canonical market data, native/derived history, finalized
+history cache access, workspace sessions, and profile/plugin SQLite operations.
+Main supervises providers and mediates credential/network access; it no longer
+opens SQLite or creates the canonical data service. Each application instance
+uses independent session/owner IDs; the renderer retains workspace schema v1.
+
+The [data-integrity/runtime implementation plan](../superpowers/plans/2026-09-07-data-integrity-runtime-implementation.md)
+and [Phase 6 validation and recovery evidence](DATA-INTEGRITY-VALIDATION.md)
+distinguish implemented source behavior from verified release gates. The latter
+records command results, fixture sizes, migration compatibility, recovery steps,
+and the remaining shared-storage and performance validation.
 
 The renderer is sandboxed and has Node integration disabled. The preload is a
 single CommonJS bundle because sandboxed preload scripts cannot load arbitrary
@@ -105,7 +120,11 @@ under `xvfb-run`; a local headless environment without X11/Wayland reports the
 missing display instead of hanging.
 
 The release workflow publishes only after the exact current `main` commit passes
-the complete Windows release pipeline. The current application release is
-`0.3.4` with immutable prerelease tag `v0.3.4`, plus the unsigned Windows `.exe`
-and `.sha256` assets. Prior releases remain immutable. Automatic updates remain
-disabled, and production code signing remains a later release decision.
+the complete Windows release pipeline. Package manifests identify source `1.1.2`,
+which maps to tag `v1.1.2` and installer `ERC-Chart-Setup-1.1.2.exe`. The release
+preflight rejects a version that does not advance beyond the versions represented
+by existing release tags, so an already-published release identity is never
+retargeted. Prior tags and changelog entries remain historical records.
+Automatic updates remain disabled; production code signing is an open release
+gate. `test:performance` explicitly reports **NOT MEASURED** and cannot satisfy
+the measured application performance gate.

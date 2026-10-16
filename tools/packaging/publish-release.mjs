@@ -63,11 +63,11 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Chart controls and indicator runtime
+const curatedNotes = `# v1.1.2 Indicator Runtime Hotfix
 
-This release expands the KLineCharts workspace with chart-native timeframe and chart controls, drawing tools, screenshot/fullscreen support, persisted indicator instances, and the indicator plugin import/runtime path with SDK metadata-driven settings.
+Fixes standard same-timeframe plugin indicators that could render only n/a by evaluating them directly from the exact chart candles instead of reacquiring redundant provider history.
 
-It also adds the ATR Rope + UT Bot example indicator, grouped Inputs/Style settings, dynamic presentation metadata, and fixes color-transition line gaps by keeping logical indicator lines continuous across state changes. Automatic updates and production code signing remain unavailable; the installer is unsigned.
+Provider-backed acquisition remains for multi-timeframe, explicitly different-timeframe, and Heikin Ashi inputs.
 `;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
@@ -95,7 +95,7 @@ const release =
         name: tag,
         body: notes,
         draft: true,
-        prerelease: true,
+        prerelease: false,
       }),
     },
     [201],
@@ -145,7 +145,7 @@ const published = await request(`${apiRoot}/releases/${release.id}`, {
     name: tag,
     body: notes,
     draft: false,
-    prerelease: true,
+    prerelease: false,
     target_commitish: commitSha,
   }),
 });

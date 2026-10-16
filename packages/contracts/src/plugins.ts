@@ -504,8 +504,26 @@ function inspectApiVersionRange(
   return sawValidAlternative ? "incompatible" : "malformed";
 }
 
-function isPackagePath(value: string): boolean {
-  return value.length <= 240 && packagePathExpression.test(value);
+export function isPluginId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 3 &&
+    value.length <= 128 &&
+    pluginIdExpression.test(value)
+  );
+}
+
+export function isPluginVersion(value: unknown): value is string {
+  return typeof value === "string" && semanticVersionExpression.test(value);
+}
+
+export function isPluginPackagePath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 240 &&
+    packagePathExpression.test(value)
+  );
 }
 
 function isPublisher(value: unknown): value is PluginManifestPublisher {
@@ -557,7 +575,7 @@ function isIntegrity(
     entries.length <= 4096 &&
     entries.every(
       ([path, digest]) =>
-        isPackagePath(path) &&
+        isPluginPackagePath(path) &&
         typeof digest === "string" &&
         digestExpression.test(digest),
     ) &&
@@ -626,10 +644,7 @@ function inspectPluginManifestValue(
       ),
     ]);
   }
-  if (
-    !isBoundedString(value.id, 3, 128) ||
-    !pluginIdExpression.test(value.id)
-  ) {
+  if (!isPluginId(value.id)) {
     return malformed("manifest.id", "Plugin ID is malformed.");
   }
   if (value.kind !== "provider" && value.kind !== "indicator") {
@@ -650,10 +665,7 @@ function inspectPluginManifestValue(
   if (value.publisher !== undefined && !isPublisher(value.publisher)) {
     return malformed("manifest.publisher", "Plugin publisher is malformed.");
   }
-  if (
-    typeof value.version !== "string" ||
-    !semanticVersionExpression.test(value.version)
-  ) {
+  if (!isPluginVersion(value.version)) {
     return malformed(
       "manifest.version",
       "Plugin version must be valid SemVer.",
@@ -682,7 +694,7 @@ function inspectPluginManifestValue(
   if (
     !isBoundedString(value.entry, 1, 240) ||
     !value.entry.startsWith("dist/") ||
-    !isPackagePath(value.entry) ||
+    !isPluginPackagePath(value.entry) ||
     !/\.m?js$/u.test(value.entry)
   ) {
     return malformed(

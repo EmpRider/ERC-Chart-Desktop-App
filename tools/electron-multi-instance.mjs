@@ -67,4 +67,5 @@ if (
   path.resolve(process.argv[1]) === currentFile
 ) {
   await runMultiInstanceSmoke();
+  await import("./electron-shared-storage.mjs");
 }

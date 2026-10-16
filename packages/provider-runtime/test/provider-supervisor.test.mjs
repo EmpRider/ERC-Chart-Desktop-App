@@ -531,6 +531,36 @@ test("rolls back the previous launch when a configuration restart fails", async 
   ]);
 });
 
+test("protocol diagnostics identify recognized message kinds without logging payloads", async () => {
+  for (const type of ["provider-history-response", "credential-secret"]) {
+    const logs = [];
+    const fixture = createFixture({
+      hostBroker: { log: (...args) => logs.push(args) },
+    });
+    const started = fixture.supervisor.start(
+      "profile-a",
+      "/runtime/provider.js",
+      createLaunch(),
+    );
+    const rejected = assert.rejects(started, /protocol violation/u);
+    fixture.children[0].emitMessage({ type, cookie: "credential-secret" });
+    await rejected;
+    assert.deepEqual(logs, [
+      [
+        "profile-a",
+        "error",
+        "PROVIDER_PROTOCOL_REJECTED",
+        {
+          reason: `invalid-message:${type === "provider-history-response" ? type : "unknown"}`,
+          state: "starting",
+        },
+      ],
+    ]);
+    assert.equal(JSON.stringify(logs).includes("credential-secret"), false);
+    assert.equal(fixture.children[0].getKillCount(), 1);
+  }
+});
+
 test("fails closed on malformed or out-of-sequence provider messages", async () => {
   const fixture = createFixture();
   const started = fixture.supervisor.start(

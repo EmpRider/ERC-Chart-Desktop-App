@@ -14,7 +14,6 @@ test("review runbook distinguishes machine gates from manual AI evidence", async
   const runbook = await read("docs/governance/REVIEW-RUNBOOK.md");
   const required = [
     "Deterministic checks run before any AI review",
-    "CodeRabbit runs before Qodo",
     "/agentic_review",
     "stable head",
     "Code Review AI is reserved for epic-to-main",
@@ -29,6 +28,11 @@ test("review runbook distinguishes machine gates from manual AI evidence", async
     "GitHub rulesets do not enforce Qodo or Code Review AI",
     "manual, non-blocking review evidence",
     "machine-enforced merge contract",
+    "CodeRabbit required status remains mandatory at both pull-request levels",
+    "Manual comprehensive CodeRabbit review is mandatory only for epic-to-main",
+    "maintainer code review",
+    "If quota is unavailable or rate-limited, record that fact and continue",
+    "must not delay a task-to-epic merge solely for manual CodeRabbit review capacity",
   ];
   for (const phrase of required) assert.ok(runbook.includes(phrase), phrase);
 
@@ -37,10 +41,14 @@ test("review runbook distinguishes machine gates from manual AI evidence", async
   )?.[0];
   assert.ok(restartRule, "post-evidence restart rule");
   for (const phrase of [
-    "After any code or governance commit made after CodeRabbit, Qodo, or Code Review AI evidence",
+    "After any code or governance commit",
     "return to step 4",
     "including CodeRabbit",
-    "fresh manual reviews",
+    "task-to-epic",
+    "maintainer code review",
+    "manual comprehensive CodeRabbit review only when quota is available",
+    "epic-to-main",
+    "fresh comprehensive CodeRabbit review remains mandatory",
     "record the approved unavailability explicitly",
   ])
     assert.ok(restartRule.includes(phrase), phrase);
@@ -116,7 +124,8 @@ test("delivery workflow executes every governance verification command", async (
 });
 
 test("release workflow ignores documentation and workflow-only pushes", async () => {
-  const workflow = parse(await read(".github/workflows/release.yml"));
+  const source = await read(".github/workflows/release.yml");
+  const workflow = parse(source);
   assert.deepEqual(workflow.on.push.branches, ["main"]);
   assert.deepEqual(workflow.on.push.paths, [
     "apps/**",
@@ -132,6 +141,10 @@ test("release workflow ignores documentation and workflow-only pushes", async ()
     "tsconfig.tests.json",
   ]);
   assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
+  assert.ok(
+    source.includes('["tag", "--merged", "HEAD", "--list", "v*"]'),
+    "release preflight must consider only release tags reachable from HEAD",
+  );
 });
 
 test("calibration evidence schema requires solo-maintainer enforcement assertions", async () => {

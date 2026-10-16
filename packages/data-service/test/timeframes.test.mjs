@@ -108,3 +108,43 @@ test("rejects invalid derived declarations instead of guessing a base timeframe"
     /declaration is invalid/,
   );
 });
+
+test("aligns fixed-origin boundaries exactly", () => {
+  const alignment = { mode: "epoch", originMs: 30_000, timeZone: "UTC" };
+  assert.deepEqual(
+    [89_999, 90_000, 100_000, 149_999, 150_000].map((timestampMs) =>
+      alignedOpenTime(timestampMs, 60, alignment),
+    ),
+    [30_000, 90_000, 90_000, 90_000, 150_000],
+  );
+});
+
+test("rejects unsafe alignment metadata and negative aligned opens", () => {
+  assert.throws(
+    () =>
+      alignedOpenTime(10_000, 60, {
+        mode: "epoch",
+        originMs: 30_000,
+        timeZone: "UTC",
+      }),
+    /aligned open|non-negative/i,
+  );
+  assert.throws(
+    () =>
+      alignedOpenTime(100_000, Number.MAX_SAFE_INTEGER, {
+        mode: "epoch",
+        originMs: 0,
+        timeZone: "UTC",
+      }),
+    /duration|safe/i,
+  );
+  assert.throws(
+    () =>
+      alignedOpenTime(100_000, 60, {
+        mode: "calendar",
+        originMs: 0,
+        timeZone: "UTC",
+      }),
+    /alignment|mode/i,
+  );
+});
