@@ -2,6 +2,14 @@
 
 All notable changes to ERC Chart are documented here.
 
+## [1.1.3] - 2026-10-16
+
+### ATR Rope history performance
+
+- Eliminates per-bar parameter normalization and input re-normalization during finalized history replay.
+- Removes redundant deep clones in persistentVar for finalized replay phase.
+- Rewrites projectedPocCandidate to single-pass monotonic cursor (O(n) → O(1) per row).
+- Adds Windows EBUSY retry guard for storage test cleanup.
 ## [1.1.2] - 2026-09-21
 
 ### Indicator chart-source hotfix
