@@ -24,7 +24,7 @@ import {
 test("defines klinecharts architecture release identity", () => {
   assert.equal(applicationVersion, "1.1.3");
   assert.equal(packageIdentityName, "erc-chart-desktop-app");
-  assert.equal(releaseTag(applicationVersion), "v1.1.2");
+  assert.equal(releaseTag(applicationVersion), "v1.1.3");
   assert.equal(
     installerArtifactName(applicationVersion),
     "ERC-Chart-Setup-1.1.2.exe",
