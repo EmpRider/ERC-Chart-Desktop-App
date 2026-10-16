@@ -1328,9 +1328,12 @@ function runMigrationWorker(databasePath, retries = 3) {
         resolve();
       } else if (retries > 0 && /database is locked/i.test(stderr)) {
         // ponytail: SQLITE_BUSY retry ceiling is 3 attempts with 200ms backoff; increase if CI contention grows
-        setTimeout(() => {
-          runMigrationWorker(databasePath, retries - 1).then(resolve, reject);
-        }, 200 * (4 - retries));
+        setTimeout(
+          () => {
+            runMigrationWorker(databasePath, retries - 1).then(resolve, reject);
+          },
+          200 * (4 - retries),
+        );
       } else {
         reject(
           new Error(`Migration worker exited ${code ?? signal}: ${stderr}`),
