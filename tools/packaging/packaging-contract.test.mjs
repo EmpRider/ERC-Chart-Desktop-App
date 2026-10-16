@@ -22,7 +22,7 @@ import {
 } from "./packaging-contract.mjs";
 
 test("defines klinecharts architecture release identity", () => {
-  assert.equal(applicationVersion, "1.1.2");
+  assert.equal(applicationVersion, "1.1.3");
   assert.equal(packageIdentityName, "erc-chart-desktop-app");
   assert.equal(releaseTag(applicationVersion), "v1.1.2");
   assert.equal(
@@ -53,7 +53,7 @@ test("requires a release version to advance beyond all published versions", () =
   );
 
   assert.doesNotThrow(() =>
-    packagingContract.assertReleaseVersionAdvances("1.1.2", [
+    packagingContract.assertReleaseVersionAdvances("1.1.3", [
       "0.3.6",
       "1.0.0",
       "1.1.0",
@@ -156,7 +156,7 @@ test("creates packaged smoke arguments without a development entry path", () => 
 });
 
 test("requires the packaged ASAR manifest to carry the release version", () => {
-  assert.doesNotThrow(() => assertPackagedVersion("1.1.2"));
+  assert.doesNotThrow(() => assertPackagedVersion("1.1.3"));
   assert.throws(
     () => assertPackagedVersion("0.1.0-dev.1"),
     /Packaged application/,
