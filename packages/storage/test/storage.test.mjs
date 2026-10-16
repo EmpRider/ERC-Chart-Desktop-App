@@ -201,7 +201,9 @@ async function withDatabase(run) {
         break;
       } catch (error) {
         if (error?.code !== "EBUSY" || attempt === 4) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 200 * (attempt + 1)),
+        );
       }
     }
   }
