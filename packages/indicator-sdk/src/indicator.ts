@@ -33,6 +33,7 @@ import {
   createSignalState,
   resetSignalState,
 } from "./internal/signals.js";
+import { normalizeIndicatorParameters } from "./input.js";
 import { compilerPlotDefinitions } from "./plot.js";
 import type { SeriesNumber } from "./series.js";
 
@@ -224,6 +225,10 @@ export function defineIndicator(
       parameters: Readonly<Record<string, IndicatorInputValue>>,
       context: IndicatorInstanceContext,
     ): RuntimeIndicatorInstance {
+      const normalizedParameters = normalizeIndicatorParameters(
+        definition.inputs,
+        parameters,
+      );
       let kernels: KernelSlot[] = [];
       let points: IndicatorResultPoint[] = [];
       let committedDrawings = new Map<string, IndicatorOverlay>();
@@ -327,7 +332,7 @@ export function defineIndicator(
           timeframeInputs: [],
           candleTypeInputs: [],
           taTimeframeIds: new Set(),
-          parameters,
+          parameters: normalizedParameters,
           plots,
           plotIndex: 0,
           point: newPoint(candle.openTimeMs),
