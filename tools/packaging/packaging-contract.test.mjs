@@ -27,7 +27,7 @@ test("defines klinecharts architecture release identity", () => {
   assert.equal(releaseTag(applicationVersion), "v1.1.3");
   assert.equal(
     installerArtifactName(applicationVersion),
-    "ERC-Chart-Setup-1.1.2.exe",
+    "ERC-Chart-Setup-1.1.3.exe",
   );
 });
 
