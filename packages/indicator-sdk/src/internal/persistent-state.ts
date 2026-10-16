@@ -94,7 +94,17 @@ export function persistentVar<T>(
   );
   let value: T;
   if (state.initialized) {
-    value = cloneSeriesState(state.committed as T);
+    // A finalized history replay is transactional at the replay level: any
+    // calculation failure marks the instance failed, and the next onHistory()
+    // call replaces the kernel store before replaying from bar zero. Reusing
+    // the committed working value here therefore cannot leak a failed history
+    // mutation into live calculation, while avoiding a deep clone on every
+    // retained historical bar. Building bars and live finalization keep the
+    // isolated-copy path so provisional rollback remains exact.
+    value =
+      frame.historyReplay && frame.phase === "finalized"
+        ? (state.committed as T)
+        : cloneSeriesState(state.committed as T);
   } else {
     const initial = initialize();
     assertBoundedSeriesCollections(initial);
@@ -205,10 +215,15 @@ export function finalizePersistentState(frame: AuthoringFrame): void {
     pendingPersistentState.delete(frame);
     const values = pending.map((entry) => entry.readCurrent());
     assertBoundedSeriesCollectionGroup(values);
-    const committedValues =
-      frame.phase === "finalized"
-        ? values.map((value) => cloneSeriesState(value))
-        : undefined;
+    // persistentVar() already gives each evaluation an isolated working copy
+    // of the last committed value. Once a finalized evaluation succeeds and
+    // the aggregate collection budget is validated, that working copy can be
+    // adopted as the next committed value. Cloning it again here doubled the
+    // cost of large persistent states (for example ATR Rope POC history) on
+    // every historical bar without adding rollback isolation: provisional
+    // bars never reach this assignment, and the next evaluation clones the
+    // committed value before author code can mutate it.
+    const committedValues = frame.phase === "finalized" ? values : undefined;
     for (const [index, entry] of pending.entries()) {
       if (committedValues !== undefined) {
         entry.state.committed = committedValues[index];

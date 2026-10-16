@@ -273,7 +273,7 @@ test("never finalizes a signal on the currently building candle", () => {
   }
 });
 
-test("keeps rope and trailing-stop series continuous while their colors change", () => {
+test("keeps rope, direction bands and trailing-stop series finite after warm-up", () => {
   const instance = atrRopeUtBotIndicator.createInstance(
     defaults({
       ropePeriod: 2,
@@ -288,20 +288,40 @@ test("keeps rope and trailing-stop series continuous while their colors change",
     instance.onHistory(candles());
     const snapshot = instance.snapshot();
     const ropeKey = plotOutputKey("ATR Rope");
+    const upperKey = plotOutputKey("Direction Upper");
+    const lowerKey = plotOutputKey("Direction Lower");
     const stopKey = plotOutputKey("UT Stop");
 
     const firstRope = snapshot.points.findIndex(
       (point) => point.values[ropeKey] !== null,
     );
+    const firstUpper = snapshot.points.findIndex(
+      (point) => point.values[upperKey] !== null,
+    );
+    const firstLower = snapshot.points.findIndex(
+      (point) => point.values[lowerKey] !== null,
+    );
     const firstStop = snapshot.points.findIndex(
       (point) => point.values[stopKey] !== null,
     );
     assert.ok(firstRope >= 0);
+    assert.ok(firstUpper >= 0);
+    assert.ok(firstLower >= 0);
     assert.ok(firstStop >= 0);
     assert.ok(
       snapshot.points
         .slice(firstRope)
         .every((point) => Number.isFinite(point.values[ropeKey])),
+    );
+    assert.ok(
+      snapshot.points
+        .slice(firstUpper)
+        .every((point) => Number.isFinite(point.values[upperKey])),
+    );
+    assert.ok(
+      snapshot.points
+        .slice(firstLower)
+        .every((point) => Number.isFinite(point.values[lowerKey])),
     );
     assert.ok(
       snapshot.points
