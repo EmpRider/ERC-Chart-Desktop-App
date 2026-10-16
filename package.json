@@ -56,5 +56,9 @@
   "allowScripts": {
     "esbuild@0.28.2": true,
     "electron-winstaller": false
+  },
+  "overrides": {
+    "brace-expansion@^1.0.0": "1.1.21",
+    "brace-expansion@^2.0.0": "2.1.7"
   }
 }
