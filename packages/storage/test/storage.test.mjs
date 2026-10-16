@@ -191,6 +191,7 @@ const expectedTables = [
 
 async function withDatabase(run) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "erc-storage-"));
+  let cleanupError;
   try {
     await run(path.join(directory, "data", "erc-chart.sqlite3"));
   } finally {
@@ -198,15 +199,20 @@ async function withDatabase(run) {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         await rm(directory, { recursive: true, force: true });
+        cleanupError = undefined;
         break;
       } catch (error) {
-        if (error?.code !== "EBUSY" || attempt === 4) throw error;
+        if (error?.code !== "EBUSY" || attempt === 4) {
+          cleanupError = error;
+          break;
+        }
         await new Promise((resolve) =>
           setTimeout(resolve, 200 * (attempt + 1)),
         );
       }
     }
   }
+  if (cleanupError) throw cleanupError;
 }
 
 test("persists and restores workspace tabs, layouts, charts, and indicators", async () => {
