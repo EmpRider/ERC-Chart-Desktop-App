@@ -194,7 +194,16 @@ async function withDatabase(run) {
   try {
     await run(path.join(directory, "data", "erc-chart.sqlite3"));
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    // Windows SQLite handles can linger after close; retry rm to avoid EBUSY.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await rm(directory, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if (error?.code !== "EBUSY" || attempt === 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+    }
   }
 }
 
