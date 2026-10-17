@@ -35,6 +35,12 @@ import {
   updateBuiltInIndicatorParameters,
   type BuiltInIndicatorDefinition,
 } from "./builtin-indicators.js";
+import {
+  createDrawingHistory,
+  captureDrawingSnapshot,
+  restoreDrawingSnapshot,
+  type DrawingHistory,
+} from "./drawing-persistence.js";
 import { registerApplicationBuiltInIndicators } from "./kline-builtins.js";
 import {
   createPluginWorkspaceIndicator,
@@ -634,6 +640,9 @@ export function ProviderChart({
   const authoritativeResetCandles = useRef<readonly Candle[] | undefined>(
     undefined,
   );
+  const drawingHistory = useRef<DrawingHistory>(createDrawingHistory());
+  const [canUndoDrawing, setCanUndoDrawing] = useState(false);
+  const [canRedoDrawing, setCanRedoDrawing] = useState(false);
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [timezone, setTimezone] = useState("Etc/UTC");
@@ -990,7 +999,7 @@ export function ProviderChart({
         ...reconciliation.ownerByRuntimeId,
         ...pluginReconciliation.ownerByRuntimeId,
       ]);
-    });
+          });
     return (): void => {
       disposed = true;
       updateData.current = undefined;
@@ -1500,11 +1509,54 @@ export function ProviderChart({
               key={tool.name}
               title={tool.label}
               aria-label={tool.label}
-              onClick={() => chartInstance.current?.createOverlay(tool.name)}
+              onClick={() => {
+              const chart = chartInstance.current;
+              if (chart === undefined) return;
+              chart.createOverlay(tool.name);
+              // ponytail: klinecharts has no onOverlayDraw event; capture on click is best-effort for undo stack
+              setTimeout(() => {
+                const snapshot = captureDrawingSnapshot(chart);
+                drawingHistory.current.push(snapshot);
+                setCanUndoDrawing(drawingHistory.current.canUndo());
+                setCanRedoDrawing(drawingHistory.current.canRedo());
+              }, 0);
+            }}
             >
               <span aria-hidden="true">{tool.glyph}</span>
             </button>
           ))}
+          <button
+            type="button"
+            title="Undo drawing"
+            aria-label="Undo drawing"
+            disabled={!canUndoDrawing}
+            onClick={() => {
+              const chart = chartInstance.current;
+              if (chart === undefined) return;
+              const snapshot = drawingHistory.current.undo();
+              if (snapshot !== undefined) restoreDrawingSnapshot(chart, snapshot);
+              setCanUndoDrawing(drawingHistory.current.canUndo());
+              setCanRedoDrawing(drawingHistory.current.canRedo());
+            }}
+          >
+            <span aria-hidden="true">↩</span>
+          </button>
+          <button
+            type="button"
+            title="Redo drawing"
+            aria-label="Redo drawing"
+            disabled={!canRedoDrawing}
+            onClick={() => {
+              const chart = chartInstance.current;
+              if (chart === undefined) return;
+              const snapshot = drawingHistory.current.redo();
+              if (snapshot !== undefined) restoreDrawingSnapshot(chart, snapshot);
+              setCanUndoDrawing(drawingHistory.current.canUndo());
+              setCanRedoDrawing(drawingHistory.current.canRedo());
+            }}
+          >
+            <span aria-hidden="true">↪</span>
+          </button>
           <button
             type="button"
             className="provider-drawing-clear"
