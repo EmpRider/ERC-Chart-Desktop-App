@@ -87,6 +87,7 @@ const coreDrawingTools = [
   { name: "priceChannelLine", label: "Price channel", glyph: "∥" },
   { name: "parallelStraightLine", label: "Parallel lines", glyph: "//" },
   { name: "brush", label: "Brush", glyph: "✎" },
+  { name: "rect", label: "Rectangle", glyph: "▭" },
   { name: "simpleAnnotation", label: "Annotation", glyph: "A" },
 ] as const;
 
