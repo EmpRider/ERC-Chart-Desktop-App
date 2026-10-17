@@ -109,8 +109,8 @@ describe("captureDrawingSnapshot / restoreDrawingSnapshot", () => {
           extendData: undefined,
         },
       ],
-      createOverlay: () => {},
-      removeOverlay: () => {},
+      createOverlay: () => undefined,
+      removeOverlay: () => undefined,
     };
     const snapshot = captureDrawingSnapshot(mockChart);
     assert.equal(snapshot.overlays.length, 1);
