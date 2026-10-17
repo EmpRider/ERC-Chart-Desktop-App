@@ -999,7 +999,7 @@ export function ProviderChart({
         ...reconciliation.ownerByRuntimeId,
         ...pluginReconciliation.ownerByRuntimeId,
       ]);
-          });
+    });
     return (): void => {
       disposed = true;
       updateData.current = undefined;
@@ -1510,17 +1510,17 @@ export function ProviderChart({
               title={tool.label}
               aria-label={tool.label}
               onClick={() => {
-              const chart = chartInstance.current;
-              if (chart === undefined) return;
-              chart.createOverlay(tool.name);
-              // ponytail: klinecharts has no onOverlayDraw event; capture on click is best-effort for undo stack
-              setTimeout(() => {
-                const snapshot = captureDrawingSnapshot(chart);
-                drawingHistory.current.push(snapshot);
-                setCanUndoDrawing(drawingHistory.current.canUndo());
-                setCanRedoDrawing(drawingHistory.current.canRedo());
-              }, 0);
-            }}
+                const chart = chartInstance.current;
+                if (chart === undefined) return;
+                chart.createOverlay(tool.name);
+                // ponytail: klinecharts has no onOverlayDraw event; capture on click is best-effort for undo stack
+                setTimeout(() => {
+                  const snapshot = captureDrawingSnapshot(chart);
+                  drawingHistory.current.push(snapshot);
+                  setCanUndoDrawing(drawingHistory.current.canUndo());
+                  setCanRedoDrawing(drawingHistory.current.canRedo());
+                }, 0);
+              }}
             >
               <span aria-hidden="true">{tool.glyph}</span>
             </button>
@@ -1534,7 +1534,8 @@ export function ProviderChart({
               const chart = chartInstance.current;
               if (chart === undefined) return;
               const snapshot = drawingHistory.current.undo();
-              if (snapshot !== undefined) restoreDrawingSnapshot(chart, snapshot);
+              if (snapshot !== undefined)
+                restoreDrawingSnapshot(chart, snapshot);
               setCanUndoDrawing(drawingHistory.current.canUndo());
               setCanRedoDrawing(drawingHistory.current.canRedo());
             }}
@@ -1550,7 +1551,8 @@ export function ProviderChart({
               const chart = chartInstance.current;
               if (chart === undefined) return;
               const snapshot = drawingHistory.current.redo();
-              if (snapshot !== undefined) restoreDrawingSnapshot(chart, snapshot);
+              if (snapshot !== undefined)
+                restoreDrawingSnapshot(chart, snapshot);
               setCanUndoDrawing(drawingHistory.current.canUndo());
               setCanRedoDrawing(drawingHistory.current.canRedo());
             }}

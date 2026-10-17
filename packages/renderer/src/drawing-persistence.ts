@@ -92,15 +92,11 @@ export function restoreDrawingSnapshot(
   }
 }
 
-export function serializeDrawingSnapshot(
-  snapshot: DrawingSnapshot,
-): string {
+export function serializeDrawingSnapshot(snapshot: DrawingSnapshot): string {
   return JSON.stringify(snapshot);
 }
 
-export function deserializeDrawingSnapshot(
-  raw: string,
-): DrawingSnapshot {
+export function deserializeDrawingSnapshot(raw: string): DrawingSnapshot {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
