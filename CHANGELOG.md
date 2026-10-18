@@ -1,3 +1,12 @@
+## [1.1.4] - 2026-10-18
+### Drawing tools integration (Epic 6)
+- Adds 9 drawing tools to chart toolbar: trend line, horizontal line, vertical line, Fibonacci, price channel, parallel lines, brush, rectangle, and annotation.
+- Implements color picker and width slider for restyling selected overlays via `chart.overrideOverlay()`.
+- Adds undo/redo with 50-depth history stack using klinecharts overlay snapshots (`drawing-persistence.ts`).
+- Session-only persistence — drawings discarded on application exit per DRAW-009.
+- Clear button resets selection and pushes undo snapshot.
+- Creating an overlay auto-selects it for immediate restyling.
+
 # Changelog
 
 All notable changes to ERC Chart are documented here.
