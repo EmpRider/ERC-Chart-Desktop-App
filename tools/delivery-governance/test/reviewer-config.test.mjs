@@ -10,8 +10,11 @@ async function text(path) {
   return readFile(new URL(path, root), "utf8");
 }
 
-test("CODEOWNERS assigns every path to EmpRider", async () => {
-  assert.equal((await text(".github/CODEOWNERS")).trim(), "* @EmpRider");
+test("CODEOWNERS assigns every path to EmpRider and AnuruddhaWijesiri", async () => {
+  assert.equal(
+    (await text(".github/CODEOWNERS")).trim(),
+    "* @EmpRider @AnuruddhaWijesiri",
+  );
 });
 
 test("CodeRabbit enforces the approved current-head review controls", async () => {

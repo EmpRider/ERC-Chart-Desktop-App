@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "com.erc-chart.provider.binomo",
-  "kind": "data-provider",
+  "kind": "provider",
   "name": "Binomo Provider",
   "description": "First-party ERC-chart provider for Binomo historical candles and live ticks.",
   "publisher": {
@@ -18,14 +18,8 @@
       "wss://as.binomo.com/",
       "wss://ws.binomo.com/"
     ],
-    "credentials": [
-      "authtoken",
-      "device_id"
-    ],
-    "storage": [
-      "provider-cache",
-      "plugin-settings"
-    ]
+    "credentials": ["authtoken", "device_id"],
+    "storage": ["provider-cache", "plugin-settings"]
   },
   "capabilities": {
     "historicalCandles": true,

@@ -1,0 +1,1612 @@
+﻿import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { databaseSchemaVersion } from "@erc-chart/contracts";
+import {
+  activatePlugin,
+  claimWorkspace,
+  createProviderProfile,
+  deleteAppSetting,
+  deleteCandlesBefore,
+  deletePlugin,
+  deleteProviderProfile,
+  disablePlugin,
+  getAppSetting,
+  getCandles,
+  getCandlesInRange,
+  getNewestCandles,
+  getPlugin,
+  getProviderProfile,
+  listAppSettings,
+  listPlugins,
+  listProviderProfiles,
+  loadLatestWorkspaceSession,
+  loadWorkspace,
+  openStorageDatabase,
+  parseWorkspaceV1,
+  putAppSetting,
+  putPlugin,
+  recoverStorageDatabase,
+  retainNewestCandles,
+  rollbackPlugin,
+  saveWorkspace,
+  serializeWorkspaceV1,
+  StorageDatabaseCorruptionError,
+  updateProviderProfile,
+  upsertCandles,
+  validateWorkspaceV1,
+  withTransaction,
+} from "../dist/index.js";
+
+const validWorkspace = {
+  schemaVersion: 1,
+  id: "workspace-default",
+  name: "Default Workspace",
+  activeTabId: "tab-main",
+  tabs: [
+    {
+      id: "tab-main",
+      title: "Main",
+      layout: "grid-1",
+      chartSlots: [
+        {
+          id: "chart-1",
+          providerProfileId: "profile-binomo-main",
+          instrumentId: "Z-CRY/IDX",
+          timeframeSeconds: 60,
+          chartType: "candlestick",
+          viewport: {
+            visibleBars: 120,
+            rightOffsetBars: 0,
+            priceScaleMode: "auto",
+          },
+          indicators: [
+            {
+              instanceId: "rsi-1",
+              pluginId: "erc.rsi",
+              definitionId: "rsi",
+              enabled: true,
+              parameters: { period: 14 },
+              inputs: { source: { kind: "candles" } },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  savedAtMs: 1_785_398_400_000,
+};
+
+test("validates, serializes, and parses workspace version 1", () => {
+  assert.equal(validateWorkspaceV1(validWorkspace), true);
+  const serialized = serializeWorkspaceV1(validWorkspace);
+  assert.equal(serialized, JSON.stringify(validWorkspace));
+  assert.deepEqual(parseWorkspaceV1(serialized), validWorkspace);
+});
+
+test("rejects malformed and unsupported workspace documents", () => {
+  const sparseTabs = Array(1);
+  for (const invalid of [
+    { ...validWorkspace, tabs: sparseTabs },
+    { ...validWorkspace, drawings: [] },
+    { ...validWorkspace, savedAtMs: Number.NaN },
+    {
+      ...validWorkspace,
+      tabs: [
+        {
+          ...validWorkspace.tabs[0],
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              viewport: {
+                visibleBars: 120,
+                rightOffsetBars: 0,
+                priceScaleMode: "manual",
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...validWorkspace,
+      tabs: [
+        {
+          ...validWorkspace.tabs[0],
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              indicators: [
+                {
+                  ...validWorkspace.tabs[0].chartSlots[0].indicators[0],
+                  parameters: { createdAt: new Date(0) },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...validWorkspace,
+      tabs: [
+        {
+          ...validWorkspace.tabs[0],
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              indicators: [
+                {
+                  ...validWorkspace.tabs[0].chartSlots[0].indicators[0],
+                  parameters: { unsafe: Number.POSITIVE_INFINITY },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ]) {
+    assert.equal(validateWorkspaceV1(invalid), false);
+    assert.throws(() => serializeWorkspaceV1(invalid), /Invalid workspace v1/);
+  }
+  const hostileWorkspace = new Proxy(validWorkspace, {
+    ownKeys() {
+      throw new Error("hostile object");
+    },
+  });
+  assert.equal(validateWorkspaceV1(hostileWorkspace), false);
+  assert.throws(
+    () => serializeWorkspaceV1(hostileWorkspace),
+    /Invalid workspace v1/,
+  );
+  assert.throws(
+    () => serializeWorkspaceV1({ ...validWorkspace, schemaVersion: 2 }),
+    /Unsupported workspace schema version: 2/,
+  );
+  assert.throws(
+    () =>
+      parseWorkspaceV1(JSON.stringify({ ...validWorkspace, schemaVersion: 2 })),
+    /Unsupported workspace schema version: 2/,
+  );
+  assert.throws(() => parseWorkspaceV1("{"), /valid JSON/);
+});
+
+const expectedTables = [
+  "app_settings",
+  "candles",
+  "diagnostic_events",
+  "instruments",
+  "plugin_permissions",
+  "plugins",
+  "provider_profiles",
+  "schema_migrations",
+  "series_cache_state",
+  "workspaces",
+];
+
+async function withDatabase(run) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "erc-storage-"));
+  let cleanupError;
+  try {
+    await run(path.join(directory, "data", "erc-chart.sqlite3"));
+  } finally {
+    // Windows SQLite handles can linger after close; retry rm to avoid EBUSY.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await rm(directory, { recursive: true, force: true });
+        cleanupError = undefined;
+        break;
+      } catch (error) {
+        if (error?.code !== "EBUSY" || attempt === 4) {
+          cleanupError = error;
+          break;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, 200 * (attempt + 1)),
+        );
+      }
+    }
+  }
+  if (cleanupError) throw cleanupError;
+}
+
+test("persists and restores workspace tabs, layouts, charts, and indicators", async () => {
+  await withDatabase(async (databasePath) => {
+    const workspace = {
+      ...validWorkspace,
+      activeTabId: "tab-secondary",
+      tabs: [
+        validWorkspace.tabs[0],
+        {
+          id: "tab-secondary",
+          title: "Secondary",
+          layout: "split-vertical",
+          chartSlots: [
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              id: "chart-2",
+              instrumentId: "EURUSD",
+              timeframeSeconds: 300,
+              chartType: "line",
+            },
+            {
+              ...validWorkspace.tabs[0].chartSlots[0],
+              id: "chart-3",
+              instrumentId: "GBPUSD",
+              timeframeSeconds: 900,
+              chartType: "area",
+              indicators: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(
+        saveWorkspace(database, workspace, "desktop-instance-1"),
+        workspace,
+      );
+    } finally {
+      database.close();
+    }
+
+    const reopened = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(loadWorkspace(reopened, workspace.id), workspace);
+      const stored = reopened
+        .prepare(
+          "SELECT schema_version, name, instance_id, document_json FROM workspaces WHERE id = ?",
+        )
+        .get(workspace.id);
+      assert.deepEqual(
+        {
+          schemaVersion: stored.schema_version,
+          name: stored.name,
+          instanceId: stored.instance_id,
+          document: JSON.parse(stored.document_json),
+        },
+        {
+          schemaVersion: 1,
+          name: workspace.name,
+          instanceId: "desktop-instance-1",
+          document: workspace,
+        },
+      );
+      assert.equal(stored.document_json.includes('"drawings"'), false);
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+test("loads the newest valid session before legacy workspace fallback", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const legacy = { ...validWorkspace, id: "last-workspace" };
+      saveWorkspace(database, legacy, "legacy-owner");
+      database
+        .prepare("UPDATE workspaces SET updated_at_ms = ? WHERE id = ?")
+        .run(0, legacy.id);
+      assert.equal(loadLatestWorkspaceSession(database).id, "last-workspace");
+
+      const firstSession = {
+        ...validWorkspace,
+        id: "session:aaa",
+        tabs: [{ ...validWorkspace.tabs[0], title: "First session" }],
+      };
+      const secondSession = {
+        ...validWorkspace,
+        id: "session:bbb",
+        tabs: [{ ...validWorkspace.tabs[0], title: "Second session" }],
+      };
+      saveWorkspace(database, firstSession, "instance-a");
+      saveWorkspace(database, secondSession, "instance-b");
+      database
+        .prepare("UPDATE workspaces SET updated_at_ms = ? WHERE id = ?")
+        .run(10, firstSession.id);
+      database
+        .prepare("UPDATE workspaces SET updated_at_ms = ? WHERE id = ?")
+        .run(20, secondSession.id);
+      database
+        .prepare(
+          `INSERT INTO workspaces
+            (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("session:corrupt", 1, "Corrupt", "{", "instance-corrupt", 30, 30);
+
+      assert.equal(
+        loadLatestWorkspaceSession(database)?.tabs[0].title,
+        "Second session",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("workspace save rejects changing an existing document owner", async () => {
+  await withDatabase(async (databasePath) => {
+    const first = await openStorageDatabase(databasePath);
+    const second = await openStorageDatabase(databasePath);
+    try {
+      const workspace = { ...validWorkspace, id: "last-workspace" };
+      saveWorkspace(first, workspace, "instance-a");
+      assert.throws(
+        () =>
+          saveWorkspace(
+            second,
+            {
+              ...workspace,
+              tabs: [{ ...workspace.tabs[0], title: "Instance B work" }],
+              savedAtMs: workspace.savedAtMs + 1,
+            },
+            "instance-b",
+          ),
+        /owner|conflict/i,
+      );
+      assert.equal(loadWorkspace(first, workspace.id).tabs[0].title, "Main");
+      assert.equal(claimWorkspace(second, workspace.id, "instance-b"), true);
+      saveWorkspace(
+        second,
+        {
+          ...workspace,
+          tabs: [{ ...workspace.tabs[0], title: "Instance B work" }],
+          savedAtMs: workspace.savedAtMs + 1,
+        },
+        "instance-b",
+      );
+      assert.equal(
+        loadWorkspace(first, workspace.id).tabs[0].title,
+        "Instance B work",
+      );
+      assert.equal(
+        first.prepare("SELECT count(*) AS count FROM workspaces").get().count,
+        1,
+      );
+    } finally {
+      second.close();
+      first.close();
+    }
+  });
+});
+
+test("workspace persistence rejects drawings and malformed stored documents", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          saveWorkspace(
+            database,
+            { ...validWorkspace, drawings: [{ id: "drawing-1" }] },
+            "desktop-instance-1",
+          ),
+        /Invalid workspace v1/,
+      );
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM workspaces").get()
+          .count,
+        0,
+      );
+
+      database
+        .prepare(
+          `INSERT INTO workspaces
+            (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+           VALUES (?, 1, ?, ?, ?, 0, 0)`,
+        )
+        .run("malformed", "Malformed", '{"schemaVersion":1}', "instance");
+      assert.throws(
+        () => loadWorkspace(database, "malformed"),
+        /Invalid workspace v1/,
+      );
+      assert.equal(loadWorkspace(database, "missing"), undefined);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("creates the versioned SQLite schema and records its migration", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const tables = database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map(({ name }) => name);
+      const migrations = database
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all()
+        .map(({ version }) => version);
+
+      assert.deepEqual(tables, expectedTables);
+      assert.deepEqual(migrations, [1, 2, 3]);
+      assert.equal(migrations.at(-1), databaseSchemaVersion);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("runs migrations idempotently", async () => {
+  await withDatabase(async (databasePath) => {
+    const first = await openStorageDatabase(databasePath);
+    first.close();
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM schema_migrations")
+          .get().count,
+        3,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("cache identity migration preserves every non-cache table byte-for-byte and rebuilds disposable cache", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const setup = new DatabaseSync(databasePath);
+    setup.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at_ms INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO schema_migrations (version, applied_at_ms) VALUES (1, 1), (2, 2);
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        schema_version INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        document_json TEXT NOT NULL,
+        instance_id TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE candles (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL CHECK (timeframe_sec > 0),
+        open_time_ms INTEGER NOT NULL CHECK (open_time_ms >= 0),
+        open REAL NOT NULL,
+        high REAL NOT NULL,
+        low REAL NOT NULL,
+        close REAL NOT NULL,
+        volume REAL,
+        revision INTEGER NOT NULL CHECK (revision >= 0),
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec, open_time_ms)
+      ) STRICT;
+      CREATE INDEX candles_newest
+        ON candles (feed_id, instrument_id, timeframe_sec, open_time_ms DESC);
+      CREATE TABLE series_cache_state (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL,
+        oldest_time_ms INTEGER,
+        newest_time_ms INTEGER,
+        revision INTEGER NOT NULL,
+        synchronized_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec)
+      ) STRICT;
+      INSERT INTO candles
+        (feed_id, instrument_id, timeframe_sec, open_time_ms, open, high, low, close, volume, revision)
+      VALUES ('legacy-feed', 'BTCUSD', 60, 0, 1, 2, 1, 2, 3, 1);
+      INSERT INTO series_cache_state VALUES ('legacy-feed', 'BTCUSD', 60, 0, 0, 1, 1);
+      CREATE TABLE provider_profiles (id TEXT PRIMARY KEY, provider_id TEXT NOT NULL,
+        display_name TEXT NOT NULL, credential_target TEXT NOT NULL UNIQUE,
+        created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+        settings_json TEXT NOT NULL DEFAULT '{}') STRICT;
+      CREATE TABLE instruments (provider_profile_id TEXT NOT NULL, instrument_id TEXT NOT NULL,
+        metadata_json TEXT NOT NULL, updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY(provider_profile_id, instrument_id),
+        FOREIGN KEY(provider_profile_id) REFERENCES provider_profiles(id)) STRICT;
+      CREATE TABLE plugins (plugin_id TEXT NOT NULL, version TEXT NOT NULL, kind TEXT NOT NULL,
+        trust TEXT NOT NULL, status TEXT NOT NULL, manifest_json TEXT NOT NULL,
+        integrity_hash TEXT NOT NULL, PRIMARY KEY(plugin_id, version)) STRICT;
+      CREATE TABLE plugin_permissions (plugin_id TEXT NOT NULL, version TEXT NOT NULL,
+        permission TEXT NOT NULL, granted_at_ms INTEGER NOT NULL,
+        PRIMARY KEY(plugin_id, version, permission),
+        FOREIGN KEY(plugin_id, version) REFERENCES plugins(plugin_id, version)) STRICT;
+      CREATE TABLE app_settings (key TEXT PRIMARY KEY, schema_version INTEGER NOT NULL,
+        value_json TEXT NOT NULL, updated_at_ms INTEGER NOT NULL) STRICT;
+      CREATE TABLE diagnostic_events (id INTEGER PRIMARY KEY, occurred_at_ms INTEGER NOT NULL,
+        level TEXT NOT NULL, code TEXT NOT NULL, metadata_json TEXT NOT NULL) STRICT;
+      INSERT INTO provider_profiles VALUES ('fixture', 'synthetic', 'Preserved profile',
+        'synthetic-reference-only', 11, 12, '{ "region": "test" }');
+      INSERT INTO instruments VALUES ('fixture', 'BTCUSD', '{ "name": "Bitcoin" }', 13);
+      INSERT INTO plugins VALUES ('fixture', '1.0.0', 'provider', 'local', 'active',
+        '{ "id": "fixture" }', 'synthetic-integrity');
+      INSERT INTO plugin_permissions VALUES ('fixture', '1.0.0', 'network', 14);
+      INSERT INTO app_settings VALUES ('theme', 1, '{ "theme": "dark" }', 15);
+      INSERT INTO diagnostic_events VALUES (1, 16, 'info', 'SYNTHETIC', '{ "count": 1 }');
+    `);
+    setup
+      .prepare(
+        `INSERT INTO workspaces
+          (id, schema_version, name, document_json, instance_id, created_at_ms, updated_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        validWorkspace.id,
+        validWorkspace.schemaVersion,
+        validWorkspace.name,
+        serializeWorkspaceV1(validWorkspace),
+        "instance-preserved",
+        1,
+        1,
+      );
+    const protectedTables = expectedTables.filter(
+      (table) =>
+        !["candles", "series_cache_state", "schema_migrations"].includes(table),
+    );
+    const before = protectedTables.map((table) =>
+      setup.prepare(`SELECT * FROM ${table} ORDER BY 1`).all(),
+    );
+    const migrationRows = setup
+      .prepare("SELECT * FROM schema_migrations ORDER BY version")
+      .all();
+    setup.close();
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(
+        protectedTables.map((table) =>
+          database.prepare(`SELECT * FROM ${table} ORDER BY 1`).all(),
+        ),
+        before,
+      );
+      assert.deepEqual(
+        database
+          .prepare(
+            "SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version",
+          )
+          .all(),
+        migrationRows,
+      );
+      assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM series_cache_state")
+          .get().count,
+        0,
+      );
+      assert.deepEqual(
+        loadWorkspace(database, validWorkspace.id),
+        validWorkspace,
+      );
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM candles").get().count,
+        0,
+      );
+      assert.deepEqual(
+        database
+          .prepare("SELECT version FROM schema_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2, 3],
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("upgrades version-1 provider profiles with empty non-secret settings", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const setup = new DatabaseSync(databasePath);
+    setup.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at_ms INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO schema_migrations (version, applied_at_ms) VALUES (1, 1);
+      CREATE TABLE candles (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL CHECK (timeframe_sec > 0),
+        open_time_ms INTEGER NOT NULL CHECK (open_time_ms >= 0),
+        open REAL NOT NULL,
+        high REAL NOT NULL,
+        low REAL NOT NULL,
+        close REAL NOT NULL,
+        volume REAL,
+        revision INTEGER NOT NULL CHECK (revision >= 0),
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec, open_time_ms)
+      ) STRICT;
+      CREATE INDEX candles_newest
+        ON candles (feed_id, instrument_id, timeframe_sec, open_time_ms DESC);
+      CREATE TABLE series_cache_state (
+        feed_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        timeframe_sec INTEGER NOT NULL,
+        oldest_time_ms INTEGER,
+        newest_time_ms INTEGER,
+        revision INTEGER NOT NULL,
+        synchronized_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (feed_id, instrument_id, timeframe_sec)
+      ) STRICT;
+      CREATE TABLE provider_profiles (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        credential_target TEXT NOT NULL UNIQUE,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO provider_profiles
+        (id, provider_id, display_name, credential_target, created_at_ms, updated_at_ms)
+      VALUES
+        ('legacy', 'binomo', 'Legacy', 'ERC-chart/provider/binomo/legacy', 1, 1);
+    `);
+    setup.close();
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.deepEqual(getProviderProfile(database, "legacy"), {
+        id: "legacy",
+        providerId: "binomo",
+        displayName: "Legacy",
+        credentialReference: "ERC-chart/provider/binomo/legacy",
+        settings: {},
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      });
+      assert.deepEqual(
+        database
+          .prepare("SELECT version FROM schema_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2, 3],
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("configures WAL, foreign keys, and a five-second busy timeout", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.equal(
+        database.prepare("PRAGMA journal_mode").get().journal_mode,
+        "wal",
+      );
+      assert.equal(
+        database.prepare("PRAGMA foreign_keys").get().foreign_keys,
+        1,
+      );
+      assert.equal(
+        database.prepare("PRAGMA busy_timeout").get().timeout,
+        5_000,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("SQLite busy and full failures preserve the acknowledged workspace and recovery rows", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    const blocker = await openStorageDatabase(databasePath);
+    try {
+      saveWorkspace(database, validWorkspace, "owner");
+      const before = database
+        .prepare("SELECT * FROM workspaces ORDER BY id")
+        .all();
+      database.exec("PRAGMA busy_timeout=0");
+      blocker.exec("BEGIN IMMEDIATE");
+      assert.throws(
+        () =>
+          saveWorkspace(
+            database,
+            { ...validWorkspace, name: "unsaved" },
+            "owner",
+          ),
+        (error) => error.errcode === 5,
+      );
+      blocker.exec("ROLLBACK");
+      assert.deepEqual(
+        database.prepare("SELECT * FROM workspaces ORDER BY id").all(),
+        before,
+      );
+      const pages = database.prepare("PRAGMA page_count").get().page_count;
+      database.exec(`PRAGMA max_page_count=${pages}`);
+      const large = structuredClone(validWorkspace);
+      large.tabs[0].chartSlots[0].indicators[0].parameters.note = "x".repeat(
+        200_000,
+      );
+      assert.equal(validateWorkspaceV1(large), true);
+      assert.throws(
+        () => saveWorkspace(database, large, "owner"),
+        (error) => error.errcode === 13,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.deepEqual(
+        database.prepare("SELECT * FROM workspaces ORDER BY id").all(),
+        before,
+      );
+      assert.equal(
+        database.prepare("PRAGMA integrity_check").get().integrity_check,
+        "ok",
+      );
+      database.exec("PRAGMA max_page_count=1073741823");
+      saveWorkspace(
+        database,
+        { ...validWorkspace, name: "retry saved" },
+        "owner",
+      );
+      assert.equal(
+        loadWorkspace(database, validWorkspace.id).name,
+        "retry saved",
+      );
+    } finally {
+      if (blocker.isTransaction) blocker.exec("ROLLBACK");
+      blocker.close();
+      database.close();
+    }
+  });
+});
+
+test("commits successful transactions and rolls back failed transactions", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const insert = database.prepare(
+        "INSERT INTO app_settings (key, schema_version, value_json, updated_at_ms) VALUES (?, 1, '{}', 0)",
+      );
+      assert.equal(
+        withTransaction(database, () => insert.run("committed").changes),
+        1,
+      );
+      assert.throws(
+        () =>
+          withTransaction(database, () => {
+            insert.run("rolled-back");
+            throw new Error("stop");
+          }),
+        /stop/,
+      );
+      assert.throws(
+        () => withTransaction(database, () => Promise.resolve()),
+        /must be synchronous/,
+      );
+      assert.equal(database.isTransaction, false);
+      assert.deepEqual(
+        database
+          .prepare("SELECT key FROM app_settings ORDER BY key")
+          .all()
+          .map(({ key }) => key),
+        ["committed"],
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("preserves a corrupt database before rebuilding it", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const corruptContents = Buffer.from("not a sqlite database");
+    const corruptWalContents = Buffer.from("corrupt wal");
+    const corruptShmContents = Buffer.from("corrupt shm");
+    await writeFile(databasePath, corruptContents);
+
+    const corruption = await openStorageDatabase(databasePath).then(
+      () => assert.fail("Expected corrupt database rejection."),
+      (error) => {
+        assert.ok(error instanceof StorageDatabaseCorruptionError);
+        return error;
+      },
+    );
+    assert.deepEqual(await readFile(databasePath), corruptContents);
+    await writeFile(`${databasePath}-wal`, corruptWalContents);
+    await writeFile(`${databasePath}-shm`, corruptShmContents);
+    await assert.rejects(
+      recoverStorageDatabase(new StorageDatabaseCorruptionError(databasePath)),
+      /requires a diagnosed corruption/,
+    );
+
+    const { database, quarantinePath } =
+      await recoverStorageDatabase(corruption);
+    try {
+      assert.match(quarantinePath, /\.corrupt-\d+$/);
+      assert.deepEqual(await readFile(quarantinePath), corruptContents);
+      assert.deepEqual(
+        await readFile(`${quarantinePath}-wal`),
+        corruptWalContents,
+      );
+      assert.deepEqual(
+        await readFile(`${quarantinePath}-shm`),
+        corruptShmContents,
+      );
+      assert.equal(
+        database.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+      assert.equal(
+        database.prepare("PRAGMA journal_mode").get().journal_mode,
+        "wal",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rolls back and closes the database when a migration fails", async () => {
+  await withDatabase(async (databasePath) => {
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    const setup = new DatabaseSync(databasePath);
+    setup.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE diagnostic_events (preexisting INTEGER) STRICT;
+    `);
+    setup.close();
+
+    const originalClose = DatabaseSync.prototype.close;
+    let closeCalls = 0;
+    DatabaseSync.prototype.close = function () {
+      closeCalls += 1;
+      return originalClose.call(this);
+    };
+    try {
+      await assert.rejects(
+        openStorageDatabase(databasePath),
+        /table diagnostic_events already exists/,
+      );
+      assert.equal(closeCalls, 1);
+    } finally {
+      DatabaseSync.prototype.close = originalClose;
+    }
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      const tables = database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map(({ name }) => name);
+      const migrations = database
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all();
+
+      assert.deepEqual(tables, ["diagnostic_events", "schema_migrations"]);
+      assert.deepEqual(migrations, []);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("creates, reads, lists, updates, and deletes provider metadata", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const created = createProviderProfile(database, {
+        id: "primary",
+        providerId: "binomo",
+        displayName: "Primary account",
+        credentialReference: "ERC-chart/provider/binomo/primary",
+        settings: { endpoint: "https://api.example.com", sandbox: false },
+      });
+      assert.equal(created.createdAtMs, created.updatedAtMs);
+      assert.deepEqual(getProviderProfile(database, "primary"), created);
+      assert.deepEqual(listProviderProfiles(database), [created]);
+
+      const updated = updateProviderProfile(database, "primary", {
+        displayName: "Renamed account",
+        settings: { endpoint: "https://api.example.com/v2", sandbox: true },
+      });
+      assert.equal(updated.displayName, "Renamed account");
+      assert.deepEqual(updated.settings, {
+        endpoint: "https://api.example.com/v2",
+        sandbox: true,
+      });
+      assert.equal(updated.createdAtMs, created.createdAtMs);
+      assert.ok(updated.updatedAtMs >= created.updatedAtMs);
+
+      assert.equal(deleteProviderProfile(database, "primary"), true);
+      assert.equal(deleteProviderProfile(database, "primary"), false);
+      assert.equal(getProviderProfile(database, "primary"), undefined);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects raw secret-like provider profile fields without persisting them", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      for (const secretField of ["authtoken", "device_id", "password"]) {
+        assert.throws(
+          () =>
+            createProviderProfile(database, {
+              id: "unsafe",
+              providerId: "binomo",
+              displayName: "Unsafe account",
+              credentialReference: "ERC-chart/provider/binomo/unsafe",
+              [secretField]: "raw-secret",
+            }),
+          new RegExp(`Unsupported provider profile field: ${secretField}`),
+        );
+      }
+      assert.throws(
+        () =>
+          updateProviderProfile(database, "unsafe", {
+            displayName: "Unsafe account",
+            authtoken: "raw-secret",
+          }),
+        /Unsupported provider profile update field: authtoken/,
+      );
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: "unsafe-settings",
+            providerId: "binomo",
+            displayName: "Unsafe settings",
+            credentialReference: "ERC-chart/provider/binomo/unsafe-settings",
+            settings: { authToken: "raw-secret" },
+          }),
+        /cannot be persisted/,
+      );
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM provider_profiles")
+          .get().count,
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("requires an opaque credential reference matching provider and profile", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: "primary",
+            providerId: "binomo",
+            displayName: "Primary account",
+            credentialReference: "raw-secret-value",
+          }),
+        /credentialReference/,
+      );
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: "primary",
+            providerId: "binomo",
+            displayName: "Primary account",
+            credentialReference: "ERC-chart/provider/other/primary",
+          }),
+        /credentialReference/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects invalid metadata and missing updates", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          createProviderProfile(database, {
+            id: " ",
+            providerId: "binomo",
+            displayName: "Primary account",
+            credentialReference: "ERC-chart/provider/binomo/primary",
+          }),
+        /id/,
+      );
+      assert.throws(
+        () => updateProviderProfile(database, "missing", { displayName: "X" }),
+        /Provider profile not found: missing/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("persists versioned app settings with last-writer-wins updates", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const first = putAppSetting(database, {
+        key: "developer-mode",
+        schemaVersion: 1,
+        value: { enabled: false },
+      });
+      assert.deepEqual(getAppSetting(database, "developer-mode"), first);
+
+      const updated = putAppSetting(database, {
+        key: "developer-mode",
+        schemaVersion: 2,
+        value: { enabled: true, acceptedWarning: true },
+      });
+      assert.equal(updated.schemaVersion, 2);
+      assert.ok(updated.updatedAtMs >= first.updatedAtMs);
+      assert.deepEqual(listAppSettings(database), [updated]);
+      assert.equal(deleteAppSetting(database, "developer-mode"), true);
+      assert.equal(deleteAppSetting(database, "developer-mode"), false);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("persists plugin versions, permissions, and deterministic registry order", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const mutablePermissions = ["network:binomo.com", "credentials:profile"];
+      const newer = putPlugin(database, {
+        pluginId: "erc.provider.binomo",
+        version: "2.0.0",
+        kind: "provider",
+        trust: "signed",
+        status: "active",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"b".repeat(64)}`,
+        permissions: mutablePermissions,
+      });
+      const older = putPlugin(database, {
+        pluginId: "erc.provider.binomo",
+        version: "1.0.0",
+        kind: "provider",
+        trust: "signed",
+        status: "disabled",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"a".repeat(64)}`,
+        permissions: [],
+      });
+
+      assert.deepEqual(mutablePermissions, [
+        "network:binomo.com",
+        "credentials:profile",
+      ]);
+      assert.deepEqual(
+        getPlugin(database, newer.pluginId, newer.version),
+        newer,
+      );
+      assert.deepEqual(listPlugins(database), [older, newer]);
+
+      const disabled = putPlugin(database, {
+        ...newer,
+        status: "disabled",
+        permissions: ["network:binomo.com"],
+      });
+      assert.equal(disabled.status, "disabled");
+      assert.deepEqual(disabled.permissions, ["network:binomo.com"]);
+      assert.equal(deletePlugin(database, newer.pluginId, newer.version), true);
+      assert.equal(
+        getPlugin(database, newer.pluginId, newer.version),
+        undefined,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("manages plugin activation, disable, rollback, and uninstall transactionally", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      const base = {
+        pluginId: "erc.provider.binomo",
+        kind: "provider",
+        trust: "signed",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        permissions: [],
+      };
+      putPlugin(database, {
+        ...base,
+        version: "1.0.0",
+        status: "disabled",
+        integrityHash: `sha256:${"a".repeat(64)}`,
+      });
+      putPlugin(database, {
+        ...base,
+        version: "2.0.0",
+        status: "active",
+        integrityHash: `sha256:${"b".repeat(64)}`,
+      });
+      putPlugin(database, {
+        ...base,
+        version: "3.0.0+build.7",
+        status: "incompatible",
+        integrityHash: `sha256:${"c".repeat(64)}`,
+      });
+      putPlugin(database, {
+        pluginId: "erc.indicator.rsi",
+        version: "1.0.0",
+        kind: "indicator",
+        trust: "bundled",
+        status: "active",
+        manifest: { manifestVersion: 1, entry: "dist/index.js" },
+        integrityHash: `sha256:${"d".repeat(64)}`,
+        permissions: [],
+      });
+
+      assert.equal(
+        putPlugin(database, {
+          ...base,
+          version: "1.0.0",
+          status: "active",
+          integrityHash: `sha256:${"a".repeat(64)}`,
+        }).status,
+        "active",
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        getPlugin(database, "erc.indicator.rsi", "1.0.0").status,
+        "active",
+      );
+
+      assert.throws(
+        () => activatePlugin(database, "erc.provider.binomo", "3.0.0+build.7"),
+        /cannot be activated/,
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "active",
+      );
+
+      assert.equal(
+        disablePlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        rollbackPlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "active",
+      );
+      assert.throws(
+        () => deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        /must be disabled/,
+      );
+      assert.equal(
+        disablePlugin(database, "erc.provider.binomo", "2.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        true,
+      );
+      assert.equal(
+        deletePlugin(database, "erc.provider.binomo", "2.0.0"),
+        false,
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "1.0.0").status,
+        "disabled",
+      );
+      assert.equal(
+        getPlugin(database, "erc.provider.binomo", "3.0.0+build.7").status,
+        "incompatible",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects malformed settings and plugin registry records", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.throws(
+        () =>
+          putAppSetting(database, {
+            key: "bad",
+            schemaVersion: 1,
+            value: { unsafe: undefined },
+          }),
+        /JSON-compatible/,
+      );
+      assert.throws(
+        () =>
+          putAppSetting(database, {
+            key: "sparse",
+            schemaVersion: 1,
+            value: Array(1),
+          }),
+        /JSON-compatible/,
+      );
+      assert.throws(
+        () =>
+          putPlugin(database, {
+            pluginId: "bad id",
+            version: "1.0.0",
+            kind: "provider",
+            trust: "signed",
+            status: "active",
+            manifest: {},
+            integrityHash: `sha256:${"a".repeat(64)}`,
+            permissions: [],
+          }),
+        /pluginId/,
+      );
+      assert.throws(
+        () =>
+          putPlugin(database, {
+            pluginId: "erc.provider.binomo",
+            version: "1.0.0",
+            kind: "provider",
+            trust: "signed",
+            status: "active",
+            manifest: {},
+            integrityHash: `sha256:${"a".repeat(64)}`,
+            permissions: ["network:binomo.com", "network:binomo.com"],
+          }),
+        /permissions must be unique/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("rejects a database created by a newer application version", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    database.exec("DELETE FROM schema_migrations");
+    database
+      .prepare(
+        "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?, ?)",
+      )
+      .run(999, Date.now());
+    database.close();
+
+    await assert.rejects(
+      openStorageDatabase(databasePath),
+      new Error(
+        "Database schema version 999 is newer than supported version 3.",
+      ),
+    );
+
+    const reopened = new DatabaseSync(databasePath);
+    reopened.close();
+  });
+});
+
+const migrationWorker = `
+  import { openStorageDatabase } from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};
+  const database = await openStorageDatabase(process.env.ERC_TEST_DATABASE);
+  database.close();
+`;
+
+function runMigrationWorker(databasePath, retries = 3) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", migrationWorker],
+      {
+        env: { ...process.env, ERC_TEST_DATABASE: databasePath },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else if (retries > 0 && /database is locked/i.test(stderr)) {
+        // ponytail: SQLITE_BUSY retry ceiling is 3 attempts with 200ms backoff; increase if CI contention grows
+        setTimeout(
+          () => {
+            runMigrationWorker(databasePath, retries - 1).then(resolve, reject);
+          },
+          200 * (4 - retries),
+        );
+      } else {
+        reject(
+          new Error(`Migration worker exited ${code ?? signal}: ${stderr}`),
+        );
+      }
+    });
+  });
+}
+
+test("serializes two-process first-open migrations and applies each version once", async () => {
+  await withDatabase(async (databasePath) => {
+    await Promise.all([
+      runMigrationWorker(databasePath),
+      runMigrationWorker(databasePath),
+    ]);
+    const database = new DatabaseSync(databasePath);
+    try {
+      assert.deepEqual(
+        database
+          .prepare("SELECT version FROM schema_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2, 3],
+      );
+      assert.equal(
+        database.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+const candleWorker = `
+  import { getCandles, openStorageDatabase, upsertCandles } from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};
+  const database = await openStorageDatabase(process.env.ERC_TEST_DATABASE);
+  try {
+    const offset = Number(process.env.ERC_TEST_OFFSET);
+    for (let index = 0; index < 40; index += 1) {
+      const open = offset + index + 1;
+      upsertCandles(database, [{
+        cacheKeyVersion: 1,
+        cacheKey: "storage-test-v1",
+        feedId: "feed-main",
+        instrumentId: "EURUSD",
+        timeframeSec: 60,
+        openTimeMs: (offset + index) * 60_000,
+        open,
+        high: open + 1,
+        low: open - 1,
+        close: open + 0.5,
+        volume: index,
+        revision: 1,
+      }]);
+      getCandles(database, {
+        cacheKeyVersion: 1,
+        cacheKey: "storage-test-v1",
+        feedId: "feed-main",
+        instrumentId: "EURUSD",
+        timeframeSec: 60,
+      });
+    }
+  } finally {
+    database.close();
+  }
+`;
+
+function runCandleWorker(databasePath, offset) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", candleWorker],
+      {
+        env: {
+          ...process.env,
+          ERC_TEST_DATABASE: databasePath,
+          ERC_TEST_OFFSET: String(offset),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else
+        reject(new Error(`Candle worker exited ${code ?? signal}: ${stderr}`));
+    });
+  });
+}
+
+test("upserts and reads a validated candle series", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    try {
+      upsertCandles(database, [
+        {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+          openTimeMs: 60_000,
+          open: 2,
+          high: 3,
+          low: 1,
+          close: 2.5,
+          revision: 1,
+        },
+        {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+          openTimeMs: 0,
+          open: 1,
+          high: 2,
+          low: 0.5,
+          close: 1.5,
+          volume: 10,
+          revision: 1,
+        },
+      ]);
+      upsertCandles(database, [
+        {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+          openTimeMs: 0,
+          open: 3,
+          high: 4,
+          low: 2,
+          close: 3.5,
+          volume: 20,
+          revision: 2,
+        },
+      ]);
+
+      const candles = getCandles(database, {
+        cacheKeyVersion: 1,
+        cacheKey: "storage-test-v1",
+        feedId: "feed-main",
+        instrumentId: "EURUSD",
+        timeframeSec: 60,
+      });
+      assert.deepEqual(
+        candles.map(({ openTimeMs, open, volume, revision }) => ({
+          openTimeMs,
+          open,
+          volume,
+          revision,
+        })),
+        [
+          { openTimeMs: 0, open: 3, volume: 20, revision: 2 },
+          { openTimeMs: 60_000, open: 2, volume: undefined, revision: 1 },
+        ],
+      );
+      assert.throws(
+        () =>
+          upsertCandles(database, [
+            {
+              cacheKeyVersion: 1,
+              cacheKey: "storage-test-v1",
+              feedId: "feed-main",
+              instrumentId: "EURUSD",
+              timeframeSec: 0,
+              openTimeMs: 0,
+              open: 1,
+              high: 2,
+              low: 0,
+              close: 1,
+              revision: 1,
+            },
+          ]),
+        /timeframeSec/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("queries newest/ranged candles, accepts later valid source rows regardless of process-local revision, and applies retention", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = await openStorageDatabase(databasePath);
+    const key = {
+      cacheKeyVersion: 1,
+      cacheKey: "storage-test-v1",
+      feedId: "feed-main",
+      instrumentId: "EURUSD",
+      timeframeSec: 60,
+    };
+    try {
+      upsertCandles(
+        database,
+        Array.from({ length: 5 }, (_, index) => ({
+          ...key,
+          openTimeMs: index * 60_000,
+          open: index + 1,
+          high: index + 2,
+          low: index,
+          close: index + 1.5,
+          revision: 5,
+        })),
+      );
+      upsertCandles(database, [
+        {
+          ...key,
+          openTimeMs: 120_000,
+          open: 99,
+          high: 100,
+          low: 98,
+          close: 99.5,
+          revision: 4,
+        },
+      ]);
+      assert.equal(getCandles(database, key)[2].open, 99);
+      assert.deepEqual(
+        getNewestCandles(database, key, 2).map(({ openTimeMs }) => openTimeMs),
+        [180_000, 240_000],
+      );
+      assert.deepEqual(
+        getCandlesInRange(database, key, 60_000, 180_000).map(
+          ({ openTimeMs }) => openTimeMs,
+        ),
+        [60_000, 120_000, 180_000],
+      );
+      assert.equal(deleteCandlesBefore(database, key, 60_000), 1);
+      assert.equal(retainNewestCandles(database, key, 2), 2);
+      assert.deepEqual(
+        getCandles(database, key).map(({ openTimeMs }) => openTimeMs),
+        [180_000, 240_000],
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("two processes concurrently read and upsert candles without corruption", async () => {
+  await withDatabase(async (databasePath) => {
+    const setup = await openStorageDatabase(databasePath);
+    setup.close();
+
+    await Promise.all([
+      runCandleWorker(databasePath, 0),
+      runCandleWorker(databasePath, 40),
+    ]);
+
+    const database = await openStorageDatabase(databasePath);
+    try {
+      assert.equal(
+        database.prepare("PRAGMA quick_check").get().quick_check,
+        "ok",
+      );
+      assert.equal(
+        getCandles(database, {
+          cacheKeyVersion: 1,
+          cacheKey: "storage-test-v1",
+          feedId: "feed-main",
+          instrumentId: "EURUSD",
+          timeframeSec: 60,
+        }).length,
+        80,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});

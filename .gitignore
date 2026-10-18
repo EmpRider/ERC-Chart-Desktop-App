@@ -28,3 +28,9 @@ release/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# AI tooling artifacts
+.archify/
+.serena/
+.audit-log.txt
+bash.exe.stackdump

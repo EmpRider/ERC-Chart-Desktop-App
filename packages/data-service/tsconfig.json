@@ -5,5 +5,16 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../storage"
+    },
+    {
+      "path": "../provider-sdk"
+    }
+  ]
 }

@@ -2,6 +2,7 @@ import type {
   Candle,
   ContractVersion,
   InstrumentId,
+  PluginManifest,
   RequestEnvelope,
 } from "../src/index.js";
 
@@ -26,6 +27,24 @@ const request: RequestEnvelope<Candle> = {
 };
 
 void request;
+
+const pluginManifest: PluginManifest = {
+  manifestVersion: contractVersion,
+  id: "com.erc-chart.provider.fixture",
+  kind: "provider",
+  name: "Fixture Provider",
+  version: "1.0.0",
+  apiVersion: "^1.0.0",
+  entry: "dist/index.js",
+  authoringLanguage: "typescript",
+  permissions: {
+    network: ["https://api.example.com/"],
+    credentials: ["auth_token"],
+    storage: ["provider-cache"],
+  },
+};
+
+void pluginManifest;
 
 // @ts-expect-error Contract versions must be created through the validated constructor.
 const invalidVersion: ContractVersion = 1;

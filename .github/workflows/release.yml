@@ -3,7 +3,22 @@ name: Release
 on:
   push:
     branches:
-      - master
+      - main
+    # Immutable application tags are created only for release-relevant source
+    # changes. Documentation and workflow-only merges are covered by Delivery
+    # gates and must not attempt to republish the current application version.
+    paths:
+      - apps/**
+      - packages/**
+      - tools/**
+      - package.json
+      - package-lock.json
+      - .npmrc
+      - .nvmrc
+      - eslint.config.mjs
+      - tsconfig.base.json
+      - tsconfig.json
+      - tsconfig.tests.json
   workflow_dispatch:
 
 permissions:
@@ -31,17 +46,19 @@ jobs:
       - name: Set up pinned Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 26.8.1
           cache: npm
           cache-dependency-path: package-lock.json
-      - name: Verify master release source
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - name: Verify main release source
         shell: pwsh
         env:
           RELEASE_REF: ${{ github.ref }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          if ($env:RELEASE_REF -ne "refs/heads/master") {
-            throw "Releases must run from the master branch."
+          if ($env:RELEASE_REF -ne "refs/heads/main") {
+            throw "Releases must run from the main branch."
           }
           $headSha = git rev-parse HEAD
           if ($headSha -ne $env:RELEASE_SHA) {
@@ -56,7 +73,7 @@ jobs:
         id: release
         shell: pwsh
         run: |
-          $metadataJson = node --input-type=module -e 'import { applicationVersion, installerArtifactName, releaseTag } from "./tools/packaging/packaging-contract.mjs"; console.log(JSON.stringify({ version: applicationVersion, tag: releaseTag(applicationVersion), installer: installerArtifactName(applicationVersion) }));'
+          $metadataJson = node --input-type=module -e 'import { execFileSync } from "node:child_process"; import { applicationVersion, assertReleaseVersionAdvances, installerArtifactName, releaseTag } from "./tools/packaging/packaging-contract.mjs"; const releasedVersions = execFileSync("git", ["tag", "--merged", "HEAD", "--list", "v*"], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean).map((tag) => tag.slice(1)); assertReleaseVersionAdvances(applicationVersion, releasedVersions); console.log(JSON.stringify({ version: applicationVersion, tag: releaseTag(applicationVersion), installer: installerArtifactName(applicationVersion) }));'
           if ($LASTEXITCODE -ne 0) {
             throw "Release identity validation failed."
           }
@@ -66,7 +83,7 @@ jobs:
           "tag=$($metadata.tag)" >> $env:GITHUB_OUTPUT
           "version=$($metadata.version)" >> $env:GITHUB_OUTPUT
       - name: Install locked dependencies
-        run: npm ci
+        run: npm ci --audit=false
       - name: Validate repository governance
         run: npm --workspace @erc-chart/delivery-governance run validate:repository
       - name: Lint Markdown
@@ -83,6 +100,8 @@ jobs:
         run: npm run test:integration
       - name: Build production runtime (Release mode)
         run: npm run build:runtime
+      - name: Smoke-test workspace persistence across restart
+        run: npm run smoke:workspace-restart
       - name: Smoke-test independent instances
         run: npm run smoke:multi-instance
       - name: Run performance gates
@@ -98,7 +117,7 @@ jobs:
       - name: Generate SHA-256 checksum
         run: npm run checksum:installer
       - name: Upload verified Windows release candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.release.outputs.artifact }}
           path: |
@@ -117,7 +136,7 @@ jobs:
           "### Verified Windows release candidate" >> $env:GITHUB_STEP_SUMMARY
           "- Tag: ``$env:RELEASE_TAG``" >> $env:GITHUB_STEP_SUMMARY
           "- Installer: ``$env:RELEASE_INSTALLER``" >> $env:GITHUB_STEP_SUMMARY
-          "- Source: ``$env:RELEASE_SHA`` on ``master``" >> $env:GITHUB_STEP_SUMMARY
+          "- Source: ``$env:RELEASE_SHA`` on ``main``" >> $env:GITHUB_STEP_SUMMARY
 
   publish:
     name: Publish GitHub Release
@@ -136,10 +155,10 @@ jobs:
       - name: Set up pinned Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 26.8.1
           package-manager-cache: false
       - name: Download verified Windows release candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ needs.build-and-test.outputs.artifact }}
           path: release

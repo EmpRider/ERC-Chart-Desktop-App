@@ -5,7 +5,7 @@ export default {
   appId: "com.ercchart.desktop",
   productName,
   executableName: productName,
-  electronVersion: "43.2.0",
+  electronVersion: "44.0.0",
   artifactName: "ERC-Chart-Setup-${version}.${ext}",
   directories: {
     app: "out/package-app",
@@ -16,12 +16,18 @@ export default {
     version: applicationVersion,
   },
   asar: true,
+  asarUnpack: [
+    "packages/data-service/dist/utility-entry.js",
+    "packages/provider-runtime/dist/utility-entry.js",
+    "packages/provider-sdk/dist/index.js",
+  ],
   npmRebuild: false,
   electronFuses: electronFusePolicy,
   win: {
     target: [{ target: "nsis", arch: ["x64"] }],
   },
   nsis: {
+    include: "tools/packaging/installer.nsh",
     oneClick: true,
     perMachine: false,
     allowElevation: false,

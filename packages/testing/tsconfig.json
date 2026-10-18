@@ -5,5 +5,37 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../electron-main"
+    },
+    {
+      "path": "../preload"
+    },
+    {
+      "path": "../renderer"
+    },
+    {
+      "path": "../data-service"
+    },
+    {
+      "path": "../provider-sdk"
+    },
+    {
+      "path": "../provider-runtime"
+    },
+    {
+      "path": "../indicator-sdk"
+    },
+    {
+      "path": "../indicator-runtime"
+    },
+    {
+      "path": "../storage"
+    }
+  ]
 }

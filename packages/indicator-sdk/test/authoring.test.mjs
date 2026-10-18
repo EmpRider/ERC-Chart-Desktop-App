@@ -1,0 +1,718 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  candle as candleType,
+  indicator,
+  input,
+  plot,
+  signal,
+  ta,
+  timeframe,
+} from "../dist/index.js";
+import { defineIndicator } from "../dist/indicator.js";
+import {
+  isInstalledIndicatorDefinition,
+  isIndicatorRuntimeSnapshot,
+} from "@erc-chart/contracts";
+
+const context = { instrumentId: "TEST", timeframeId: "1m" };
+const candle = (index, close = 10 + index) => ({
+  ...context,
+  openTimeMs: index * 60_000,
+  open: close - 1,
+  high: close + 2,
+  low: close - 2,
+  close,
+  volume: 1,
+});
+const history = Array.from({ length: 40 }, (_, index) =>
+  candle(index, 20 + Math.sin(index) * 4),
+);
+
+function example() {
+  return defineIndicator(
+    { id: "erc.indicator.author-test.main", name: "Author test" },
+    ({ close, low }) => {
+      const length = input.int(3, { title: "Length", min: 1, max: 100 });
+      const color = input.color("#00ff00", { title: "Color" });
+      const average = ta.ema(close, length);
+      const atr = ta.atr(length);
+      const crossed = ta.crossover(close, average);
+      plot.line(average, { title: "EMA", color, width: 2 });
+      plot.line(atr, { title: "ATR" });
+      plot.histogram(ta.rsi(length), { title: "RSI" });
+      plot.shape(crossed ? low : null, { title: "Up", direction: "up" });
+      plot.hline(50, { title: "Middle" });
+      signal(crossed, "long");
+    },
+  );
+}
+
+test("scalar authoring generates valid definitions and dense results without output declarations", () => {
+  const plugin = example();
+  assert.equal(isInstalledIndicatorDefinition(plugin.definition), true);
+  assert.equal(plugin.definition.indicatorContractVersion, 1);
+  assert.equal(plugin.definition.hostCompatibility.minimumHostApiVersion, 1);
+  assert.equal(plugin.definition.inputs.length, 2);
+  assert.equal(plugin.definition.outputs.length, 5);
+  assert.deepEqual(
+    plugin.definition.plots.map((value) => value.kind),
+    ["line", "line", "histogram", "shape", "hline"],
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory(history);
+  assert.equal(isIndicatorRuntimeSnapshot(instance.snapshot()), true);
+  const ema = ta.movingAverage(
+    history.map((value) => value.close),
+    "ema",
+    3,
+  );
+  const atr = ta.atr(history, 3);
+  const rsi = ta.rsi(
+    history.map((value) => value.close),
+    3,
+  );
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    ema.map((value) => (Number.isFinite(value) ? value : null)),
+  );
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_1),
+    atr.map((value) => (Number.isFinite(value) ? value : null)),
+  );
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_2),
+    rsi.map((value) => (Number.isFinite(value) ? value : null)),
+  );
+  assert.equal(instance.snapshot().points.at(-1).colors.plot_0, "#00ff00");
+  instance.dispose();
+});
+
+test("source inputs consume host-bound indicator output by declared input identity", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.main", name: "Bound source" },
+    () => {
+      const source = input.source("close", "Source");
+      plot.line(source, { title: "Bound" });
+    },
+  );
+
+  assert.deepEqual(plugin.definition.inputs, [
+    {
+      key: "input_0",
+      label: "Source",
+      type: "source",
+      defaultValue: "close",
+    },
+  ]);
+
+  const candles = [candle(0, 10), candle(1, 11)];
+  const bound = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: {
+          outputKey: "upstream",
+          points: [
+            { openTimeMs: 0, values: { upstream: 42 } },
+            { openTimeMs: 60_000, values: { upstream: 43 } },
+          ],
+        },
+      },
+    },
+  );
+  bound.onHistory(candles);
+  assert.deepEqual(
+    bound.snapshot().points.map((point) => point.values.plot_0),
+    [42, 43],
+  );
+  bound.dispose();
+
+  const fallback = plugin.createInstance({}, context);
+  fallback.onHistory(candles);
+  assert.deepEqual(
+    fallback.snapshot().points.map((point) => point.values.plot_0),
+    [10, 11],
+  );
+  fallback.dispose();
+});
+
+test("source inputs select their bound output from shared multi-output dependency points", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.outputs", name: "Bound outputs" },
+    () => {
+      plot.line(input.source("close", "Fast"), { title: "Fast" });
+      plot.line(input.source("close", "Slow"), { title: "Slow" });
+    },
+  );
+  const points = [
+    { openTimeMs: 0, values: { fast: 42, slow: 7 } },
+    { openTimeMs: 60_000, values: { fast: 43, slow: 8 } },
+  ];
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: { outputKey: "fast", points },
+        input_1: { outputKey: "slow", points },
+      },
+    },
+  );
+
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+  assert.deepEqual(
+    instance
+      .snapshot()
+      .points.map((point) => [point.values.plot_0, point.values.plot_1]),
+    [
+      [42, 7],
+      [43, 8],
+    ],
+  );
+  instance.dispose();
+});
+
+test("source inputs preindex dependency history instead of scanning it once per bar", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.indexed", name: "Indexed bound source" },
+    () => {
+      plot.line(input.source("close", "Source"), { title: "Bound" });
+    },
+  );
+  const dependency = [
+    { openTimeMs: 0, values: { upstream: 42 } },
+    { openTimeMs: 60_000, values: { upstream: 43 } },
+  ];
+  dependency.find = () => {
+    throw new Error("dependency history was scanned");
+  };
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: { outputKey: "upstream", points: dependency },
+      },
+    },
+  );
+
+  assert.doesNotThrow(() => instance.onHistory([candle(0, 10), candle(1, 11)]));
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [42, 43],
+  );
+  instance.dispose();
+});
+
+test("source inputs accept bounded live dependency point updates without replay", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.bound-source.live", name: "Live bound source" },
+    () => {
+      plot.line(input.source("close", "Source"), { title: "Bound" });
+    },
+  );
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...context,
+      dependencyInputs: {
+        input_0: {
+          outputKey: "upstream",
+          points: [
+            { openTimeMs: 0, values: { upstream: 42 } },
+            { openTimeMs: 60_000, values: { upstream: 43 } },
+          ],
+        },
+      },
+    },
+  );
+  instance.onHistory([candle(0, 10), candle(1, 11)]);
+
+  instance.updateDependencyInputs({
+    input_0: {
+      outputKey: "upstream",
+      points: [{ openTimeMs: 60_000, values: { upstream: 99 } }],
+    },
+  });
+  instance.onBuildingBar(candle(1, 12));
+
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 99);
+  instance.dispose();
+});
+
+test("timeframe authoring declares dynamic host metadata without static provider options", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.timeframe.main", name: "Timeframe" },
+    () => {
+      const selected = input.timeframe(timeframe.chart, "Timeframe");
+      indicator.timeframe(selected, "input_0");
+      plot.line(ta.ema(200, "1h"));
+    },
+  );
+
+  assert.deepEqual(plugin.definition.inputs, [
+    {
+      key: "input_0",
+      label: "Timeframe",
+      type: "string",
+      defaultValue: "chart",
+      editor: "timeframe",
+    },
+  ]);
+  assert.equal(plugin.definition.inputs[0].options, undefined);
+  assert.deepEqual(plugin.definition.source, {
+    timeframe: {
+      requestedTimeframeId: "chart",
+      inputKey: "input_0",
+    },
+    taTimeframeIds: ["1h"],
+  });
+  assert.equal(isInstalledIndicatorDefinition(plugin.definition), true);
+});
+
+test("candle type authoring declares a dynamic source selection with stable input identity", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.candle-type.main", name: "Candle type" },
+    () => {
+      const selected = input.candleType(candleType.heikinAshi, "Candle Type");
+      indicator.candleType(selected, "input_0");
+      plot.line(1);
+    },
+  );
+
+  assert.deepEqual(plugin.definition.inputs, [
+    {
+      key: "input_0",
+      label: "Candle Type",
+      type: "string",
+      defaultValue: "heikin-ashi",
+      editor: "candle-type",
+      options: [
+        { value: "standard", label: "Standard" },
+        { value: "heikin-ashi", label: "Heikin Ashi" },
+      ],
+    },
+  ]);
+  assert.deepEqual(plugin.definition.source?.candleType, {
+    requestedCandleType: "heikin-ashi",
+    inputKey: "input_0",
+  });
+  assert.equal(isInstalledIndicatorDefinition(plugin.definition), true);
+});
+
+test("per-TA higher timeframe values align only after the foreign candle closes", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.mtf-alignment.main", name: "MTF alignment" },
+    () => {
+      plot.line(ta.ema(1, "1h"));
+    },
+  );
+  const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
+  const baseCandles = Array.from({ length: 9 }, (_, index) => ({
+    ...baseContext,
+    openTimeMs: index * 15 * 60_000,
+    open: 10 + index,
+    high: 11 + index,
+    low: 9 + index,
+    close: 10 + index,
+    volume: 1,
+  }));
+  const higherCandles = [0, 60, 120].map((minute, index) => ({
+    instrumentId: "TEST",
+    timeframeId: "1h",
+    openTimeMs: minute * 60_000,
+    open: 100 + index * 100,
+    high: 100 + index * 100,
+    low: 100 + index * 100,
+    close: 100 + index * 100,
+    volume: 1,
+  }));
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...baseContext,
+      sourceCandles: { "1h": higherCandles },
+    },
+  );
+
+  instance.onHistory(baseCandles);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [null, null, null, 100, 100, 100, 100, 200, 200],
+  );
+  instance.dispose();
+});
+
+test("per-TA alignment keeps a source candle provisional until a successor confirms it", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.mtf-final-source.main", name: "MTF final source" },
+    () => {
+      plot.line(ta.ema(1, "1h"));
+    },
+  );
+  const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
+  const baseCandles = Array.from({ length: 5 }, (_, index) => ({
+    ...baseContext,
+    openTimeMs: index * 15 * 60_000,
+    open: 10 + index,
+    high: 11 + index,
+    low: 9 + index,
+    close: 10 + index,
+    volume: 1,
+  }));
+  const higherCandles = [
+    {
+      instrumentId: "TEST",
+      timeframeId: "1h",
+      openTimeMs: 0,
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100,
+      volume: 1,
+    },
+  ];
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...baseContext,
+      sourceCandles: { "1h": higherCandles },
+    },
+  );
+
+  instance.onHistory(baseCandles);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [null, null, null, null, null],
+  );
+  instance.dispose();
+});
+
+test("per-TA alignment closes parseable source candles across provider data gaps", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.mtf-gap.main", name: "MTF gap" },
+    () => {
+      plot.line(ta.ema(1, "1h"));
+    },
+  );
+  const baseContext = { instrumentId: "TEST", timeframeId: "15m" };
+  const baseCandles = Array.from({ length: 6 }, (_, index) => ({
+    ...baseContext,
+    openTimeMs: index * 15 * 60_000,
+    open: 10 + index,
+    high: 11 + index,
+    low: 9 + index,
+    close: 10 + index,
+    volume: 1,
+  }));
+  const higherCandles = [0, 180].map((minute, index) => ({
+    instrumentId: "TEST",
+    timeframeId: "1h",
+    openTimeMs: minute * 60_000,
+    open: 100 + index * 100,
+    high: 101 + index * 100,
+    low: 99 + index * 100,
+    close: 100 + index * 100,
+    volume: 1,
+  }));
+  const instance = plugin.createInstance(
+    {},
+    {
+      ...baseContext,
+      sourceCandles: { "1h": higherCandles },
+    },
+  );
+
+  instance.onHistory(baseCandles);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.values.plot_0),
+    [null, null, null, 100, 100, 100],
+  );
+  instance.dispose();
+});
+
+test("history replay marks the finalized tail before the building candle", () => {
+  const seen = [];
+  const plugin = defineIndicator(
+    { id: "erc.indicator.history-flags.main", name: "History flags" },
+    (bar) => {
+      plot.line(bar.close);
+      seen.push({
+        index: bar.index,
+        confirmed: bar.isConfirmed,
+        history: bar.isHistory,
+        finalizedTail: bar.isHistoryFinalizedTail,
+      });
+    },
+  );
+  seen.length = 0;
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0), candle(1), candle(2)]);
+  assert.deepEqual(seen, [
+    { index: 0, confirmed: true, history: true, finalizedTail: false },
+    { index: 1, confirmed: true, history: true, finalizedTail: true },
+    { index: 2, confirmed: false, history: true, finalizedTail: false },
+  ]);
+  instance.onBuildingBar(candle(2, 99));
+  assert.deepEqual(seen.at(-1), {
+    index: 2,
+    confirmed: false,
+    history: false,
+    finalizedTail: false,
+  });
+  instance.onBuildingBar(candle(3, 100));
+  assert.equal(
+    seen.filter((value) => value.confirmed).length,
+    3,
+    "newer building candles auto-finalize the previous building candle",
+  );
+  assert.deepEqual(seen.slice(-2), [
+    { index: 2, confirmed: true, history: false, finalizedTail: false },
+    { index: 3, confirmed: false, history: false, finalizedTail: false },
+  ]);
+  assert.deepEqual(
+    instance.snapshot().points.map((point) => point.openTimeMs),
+    [0, 60_000, 120_000, 180_000],
+  );
+  instance.onFinalizedBar(candle(2, 99));
+  assert.throws(
+    () => instance.onFinalizedBar(candle(2, 98)),
+    /history rebuild/u,
+  );
+  instance.dispose();
+});
+
+test("building replacements and finalization match a fresh history run and do not compound state", () => {
+  const plugin = example();
+  const instance = plugin.createInstance({}, context);
+  const reference = plugin.createInstance({}, context);
+  instance.onHistory(history);
+  const originalPoints = instance.snapshot().points;
+  for (const close of [27, 19, 28, 21]) {
+    const replacement = candle(39, close);
+    instance.onBuildingBar(replacement);
+    reference.onHistory([...history.slice(0, -1), replacement]);
+    assert.deepEqual(instance.snapshot().points, reference.snapshot().points);
+    assert.deepEqual(instance.snapshot().signals, reference.snapshot().signals);
+    assert.strictEqual(instance.snapshot().points, originalPoints);
+  }
+  const finalized = candle(39, 21);
+  instance.onFinalizedBar(finalized);
+  const afterFinalization = structuredClone(instance.snapshot());
+  instance.onFinalizedBar(finalized);
+  assert.deepEqual(
+    instance.snapshot(),
+    afterFinalization,
+    "duplicate finalization commits exactly once",
+  );
+  instance.onBuildingBar(candle(40, 24));
+  reference.onHistory([...history.slice(0, -1), finalized, candle(40, 24)]);
+  assert.deepEqual(instance.snapshot().points, reference.snapshot().points);
+  assert.deepEqual(instance.snapshot().signals, reference.snapshot().signals);
+  instance.dispose();
+  reference.dispose();
+});
+
+test("provisional drawings roll back and finalized drawings persist without author-owned arrays", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.draw.main", name: "Draw" },
+    ({ close, openTimeMs }) => {
+      plot.line(close, { color: close > 15 ? "#00ff00" : "#ff0000" });
+      if (close > 15)
+        plot.box({
+          left: openTimeMs,
+          right: openTimeMs + 60_000,
+          top: close,
+          bottom: close - 1,
+          color: "#008800",
+        });
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 10), candle(1, 12)]);
+  instance.onBuildingBar(candle(1, 20));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  instance.onBuildingBar(candle(1, 12));
+  assert.equal(instance.snapshot().overlays.length, 0);
+  instance.onFinalizedBar(candle(1, 20));
+  instance.onBuildingBar(candle(2, 10));
+  assert.equal(instance.snapshot().overlays[0].top, 20);
+  const revision = instance.snapshot().visualRevision;
+  instance.onBuildingBar(candle(2, 11));
+  assert.equal(instance.snapshot().visualRevision, revision);
+  instance.dispose();
+});
+
+test("plot discovery rejects duplicate output keys", () => {
+  assert.throws(
+    () =>
+      defineIndicator(
+        { id: "erc.indicator.duplicate-plot.main", name: "Duplicate plot" },
+        () => {
+          plot.line(1, { key: "shared" });
+          plot.histogram(2, { key: "shared" });
+        },
+      ),
+    /Plot keys must be unique/u,
+  );
+});
+
+test("direct drawing calls reuse hidden identity across building replacements", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.direct-draw.main", name: "Direct draw" },
+    ({ close, openTimeMs }) => {
+      if (close <= 15) return;
+      plot.box({
+        left: 0,
+        right: openTimeMs + 60_000,
+        top: close,
+        bottom: close - 1,
+        color: "#008800",
+      });
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory([candle(0, 20), candle(1, 20)]);
+  assert.equal(instance.snapshot().overlays.length, 1);
+  const id = instance.snapshot().overlays[0].id;
+
+  instance.onBuildingBar(candle(1, 22));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].id, id);
+  assert.equal(instance.snapshot().overlays[0].top, 22);
+
+  instance.onBuildingBar(candle(1, 24));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].id, id);
+  assert.equal(instance.snapshot().overlays[0].top, 24);
+
+  instance.onFinalizedBar(candle(1, 24));
+  instance.onBuildingBar(candle(2, 10));
+  assert.equal(instance.snapshot().overlays.length, 1);
+  assert.equal(instance.snapshot().overlays[0].id, id);
+  assert.equal(instance.snapshot().overlays[0].top, 24);
+  instance.dispose();
+});
+
+test("input changes initialize new kernels and generated colors use the supplied parameters", () => {
+  const plugin = example();
+  const instance = plugin.createInstance(
+    { input_0: 7, input_1: "#ff0000" },
+    context,
+  );
+  instance.onHistory(history);
+  assert.equal(
+    instance.snapshot().points.at(-1).values.plot_0,
+    ta
+      .movingAverage(
+        history.map((candle) => candle.close),
+        "ema",
+        7,
+      )
+      .at(-1),
+  );
+  assert.equal(instance.snapshot().points.at(-1).colors.plot_0, "#ff0000");
+  instance.dispose();
+
+  const migrated = plugin.createInstance(
+    { input_0: 0, input_1: 42, removed_old_key: "ignored" },
+    context,
+  );
+  migrated.onHistory(history);
+  assert.equal(
+    migrated.snapshot().points.at(-1).values.plot_0,
+    ta
+      .movingAverage(
+        history.map((candle) => candle.close),
+        "ema",
+        1,
+      )
+      .at(-1),
+  );
+  assert.equal(migrated.snapshot().points.at(-1).colors.plot_0, "#00ff00");
+  migrated.dispose();
+});
+
+test("stale option, boolean and numeric parameters normalize to the current declaration", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.input-migration.main", name: "Input migration" },
+    () => {
+      const length = input.int(3, { key: "length", min: 1, max: 5 });
+      const mode = input.string("close", {
+        key: "mode",
+        options: ["close", "open"],
+      });
+      const enabled = input.bool(true, { key: "enabled" });
+      plot.line(length + (mode === "open" ? 10 : 0) + (enabled ? 100 : 0));
+    },
+  );
+  const instance = plugin.createInstance(
+    {
+      length: 99,
+      mode: "removed-mode",
+      enabled: "legacy-true",
+      oldSetting: 123,
+    },
+    context,
+  );
+  instance.onHistory([candle(0), candle(1)]);
+  assert.equal(instance.snapshot().points.at(-1).values.plot_0, 105);
+  instance.dispose();
+});
+
+test("conditional stateful declarations fail locally and history reload resets a failed instance", () => {
+  const plugin = defineIndicator(
+    { id: "erc.indicator.order.main", name: "Order" },
+    ({ close }) => {
+      if (close < 10) plot.line(ta.ema(3));
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  assert.throws(() => instance.onHistory([candle(0, 20)]), /same order/);
+  assert.throws(() => instance.onBuildingBar(candle(0, 2)), /failed/);
+  instance.onHistory([candle(0, 2)]);
+  assert.equal(instance.snapshot().points.length, 1);
+  instance.dispose();
+  assert.throws(() => plot.line(1), /defineIndicator/);
+  assert.throws(() => ta.ema(14), /defineIndicator/);
+  assert.throws(
+    () =>
+      defineIndicator(
+        { id: "erc.indicator.async.main", name: "Async" },
+        async () => undefined,
+      ),
+    /synchronous/,
+  );
+});
+
+test("ordinary updates execute once and never iterate the retained output history", () => {
+  let evaluations = 0;
+  const plugin = defineIndicator(
+    { id: "erc.indicator.constant.main", name: "Constant" },
+    ({ close }) => {
+      evaluations += 1;
+      plot.line(ta.sma(close, 14));
+      plot.line(ta.highest(14));
+      plot.line(ta.lowest(14));
+    },
+  );
+  const instance = plugin.createInstance({}, context);
+  instance.onHistory(
+    Array.from({ length: 100_000 }, (_, index) => candle(index)),
+  );
+  const points = instance.snapshot().points;
+  Object.defineProperty(points, Symbol.iterator, {
+    value() {
+      throw new Error("tick scanned output history");
+    },
+  });
+  const before = evaluations;
+  for (let index = 0; index < 100; index += 1)
+    instance.onBuildingBar(candle(99_999, 100_010 + index));
+  assert.equal(evaluations - before, 100);
+  assert.strictEqual(instance.snapshot().points, points);
+  assert.equal(points.length, 100_000);
+  instance.dispose();
+});

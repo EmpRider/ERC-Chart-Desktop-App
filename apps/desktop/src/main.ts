@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
 import nodeProcess from "node:process";
+import path from "node:path";
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   net,
   protocol,
@@ -9,20 +12,74 @@ import {
   type UtilityProcess,
 } from "electron";
 import {
+  createWindowsGenericCredentialManager,
   createUtilitySupervisor,
+  createDataUtilityClient,
+  assertTrustedIpcSender,
   startDesktopApplication,
+  type DataUtilityClient,
   type DesktopApplicationController,
   type SecureWindowOptions,
   type UtilityChild,
 } from "@erc-chart/electron-main";
-import { runtimeInfoChannel } from "@erc-chart/contracts";
+import {
+  createProviderUtilitySupervisor,
+  type ProviderUtilityChild,
+  type ProviderUtilityLaunchDescriptor,
+} from "@erc-chart/provider-runtime";
+import {
+  indicatorImportApproveChannel,
+  indicatorImportCancelChannel,
+  indicatorImportPreviewChannel,
+  indicatorRemoveChannel,
+  indicatorsListChannel,
+  isPluginId,
+  isProviderHistoryLoadRequest,
+  isProviderLiveSubscriptionId,
+  isProviderLiveSubscriptionRequest,
+  isProviderProfileCreateRequest,
+  isProviderProfileUpdateRequest,
+  isProviderSessionRequest,
+  providerImportApproveChannel,
+  providerImportCancelChannel,
+  providerImportPreviewChannel,
+  providerHistoryLoadChannel,
+  providerLiveEventChannel,
+  providerLiveSubscribeChannel,
+  providerLiveUnsubscribeChannel,
+  providerProfileCreateChannel,
+  providerProfileDeleteChannel,
+  providerProfilesListChannel,
+  providerProfileStartChannel,
+  providerSessionLoadChannel,
+  providerProfileStopChannel,
+  providerProfileUpdateChannel,
+  isProviderImportCredentialValues,
+  isPluginImportSourceKind,
+  runtimeInfoChannel,
+  workspaceLoadChannel,
+  workspaceSaveChannel,
+  type PersistedWorkspace,
+} from "@erc-chart/contracts";
 import {
   finishDesktopSmoke,
+  flushWorkspaceBeforeQuit,
   launchDesktopMainWithProtocol,
 } from "./launcher.js";
 import { resolveDesktopArtifacts, validateDesktopArtifacts } from "./paths.js";
 import { installRendererProtocol } from "./protocol.js";
+import { createDesktopProviderHostBroker } from "./provider-host-broker.js";
+import { createIndicatorImportService } from "./indicator-import-service.js";
+import { createProviderImportService } from "./provider-import-service.js";
+import { createProviderLiveSubscriptionManager } from "./provider-live-subscriptions.js";
+import { createProviderManagementService } from "./provider-management-service.js";
+import { createDataUtilityStorage } from "./data-utility-storage.js";
+
 import { installWindowSecurity } from "./window-security.js";
+
+type DesktopProviderHistoryRequest = Parameters<
+  DesktopApplicationController["requestProviderHistory"]
+>[1];
 
 interface SmokeResult {
   readonly ready: boolean;
@@ -30,7 +87,12 @@ interface SmokeResult {
   readonly requireType: string;
 }
 
-function adaptUtilityChild(child: UtilityProcess): UtilityChild {
+function adaptUtilityChild<Message>(child: UtilityProcess): {
+  readonly postMessage: (message: Message) => void;
+  readonly kill: () => void;
+  readonly onMessage: (listener: (message: unknown) => void) => () => void;
+  readonly onExit: (listener: (code: number | null) => void) => () => void;
+} {
   return {
     postMessage: (message): void => child.postMessage(message),
     kill: (): void => {
@@ -62,20 +124,30 @@ function isSmokeResult(value: unknown): value is SmokeResult {
 }
 
 const paths = resolveDesktopArtifacts(import.meta.url);
+const lastWorkspaceId = "last-workspace";
+const desktopInstanceId = `instance:${randomUUID()}`;
 const smokeMode = nodeProcess.argv.includes("--erc-chart-smoke");
+const workspaceSeedMode = nodeProcess.argv.includes(
+  "--erc-chart-workspace-seed",
+);
+const workspaceVerifyMode = nodeProcess.argv.includes(
+  "--erc-chart-workspace-verify",
+);
 const reportSmokeStage = (stage: string): void => {
   if (smokeMode) console.log(`ERC_CHART_SMOKE_STAGE ${stage}`);
 };
 let resolveController: (
-  controller: DesktopApplicationController,
+  controller: DesktopApplicationController<ProviderUtilityLaunchDescriptor>,
 ) => void = (): void => undefined;
-const controllerReady = new Promise<DesktopApplicationController>((resolve) => {
+const controllerReady = new Promise<
+  DesktopApplicationController<ProviderUtilityLaunchDescriptor>
+>((resolve) => {
   resolveController = resolve;
 });
 
 const dataUtility = createUtilitySupervisor({
   spawn: (entryPath, args): UtilityChild =>
-    adaptUtilityChild(
+    adaptUtilityChild<Parameters<UtilityChild["postMessage"]>[0]>(
       utilityProcess.fork(entryPath, [...args], {
         serviceName: "ERC Chart Data Service",
         stdio: "ignore",
@@ -89,13 +161,82 @@ const dataUtility = createUtilitySupervisor({
   startupTimeoutMs: 5_000,
   shutdownTimeoutMs: 2_000,
   onUnavailable: (): void => {
+    dataUtilityClient?.markUnavailable();
     console.error("ERC Chart data utility unavailable.");
   },
 });
+const providerLaunches = new Map<string, ProviderUtilityLaunchDescriptor>();
+const providerCredentialManager = createWindowsGenericCredentialManager();
+let dataUtilityClient: DataUtilityClient | undefined;
+const providerUtilities = createProviderUtilitySupervisor({
+  spawn: (entryPath, args): ProviderUtilityChild =>
+    adaptUtilityChild<Parameters<ProviderUtilityChild["postMessage"]>[0]>(
+      utilityProcess.fork(entryPath, [...args], {
+        serviceName: "ERC Chart Provider",
+        stdio: "ignore",
+        env: {},
+      }),
+    ),
+  scheduler: {
+    setTimeout: (callback, delayMs): NodeJS.Timeout =>
+      setTimeout(callback, delayMs),
+    clearTimeout: (timer): void => clearTimeout(timer as NodeJS.Timeout),
+  },
+  startupTimeoutMs: 5_000,
+  shutdownTimeoutMs: 2_000,
+  onUnavailable: (providerProfileId, code): void => {
+    providerLaunches.delete(providerProfileId);
+    void dataUtilityClient
+      ?.request("provider-invalidate", { profileId: providerProfileId })
+      .catch(() => undefined);
+    console.error(`ERC Chart provider utility unavailable (${code}).`);
+  },
+  onProfileInvalidated: (providerProfileId): Promise<void> | undefined =>
+    dataUtilityClient?.request("provider-invalidate", {
+      profileId: providerProfileId,
+    }),
+  onProfileRestored: (providerProfileId): Promise<void> | undefined =>
+    dataUtilityClient?.request("provider-restore", {
+      profileId: providerProfileId,
+    }),
+  hostBroker: createDesktopProviderHostBroker({
+    launches: providerLaunches,
+    credentialManager: providerCredentialManager,
+    fetch: (url, init): Promise<Response> => net.fetch(url, init),
+    log: (providerProfileId, level, code, metadata): void => {
+      const writer =
+        level === "error"
+          ? console.error
+          : level === "warn"
+            ? console.warn
+            : console.log;
+      writer(
+        `ERC Chart provider ${providerProfileId} ${code}.`,
+        metadata ?? {},
+      );
+    },
+    reportStatus: (providerProfileId, status): void => {
+      console.log(`ERC Chart provider ${providerProfileId} status ${status}.`);
+    },
+    now: () => Date.now(),
+  }),
+});
+let activeBrowserWindow: BrowserWindow | undefined;
 
-function createWindow(options: SecureWindowOptions): BrowserWindow {
+function createWindow(options: SecureWindowOptions): {
+  loadURL: (url: string) => Promise<void>;
+  waitUntilRendererReady: () => Promise<boolean>;
+  flushWorkspace: () => Promise<void>;
+  show: () => void;
+  destroy: () => void;
+  isDestroyed: () => boolean;
+} {
   reportSmokeStage("window-created");
   const window = new BrowserWindow(options);
+  activeBrowserWindow = window;
+  window.once("closed", () => {
+    if (activeBrowserWindow === window) activeBrowserWindow = undefined;
+  });
   installWindowSecurity({
     onWillNavigate: (handler): void => {
       window.webContents.on("will-navigate", (event, url) =>
@@ -112,9 +253,28 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
       void (async (): Promise<void> => {
         const result: unknown = await window.webContents.executeJavaScript(`
           new Promise((resolve) => {
-            const inspect = () => {
+            let processing = false;
+            const inspect = async () => {
               const status = document.querySelector('[data-status]')?.textContent;
               if (status !== 'Secure bridge connected') return false;
+              if (processing) return true;
+              processing = true;
+              const add = document.querySelector('.workspace-add');
+              if (${workspaceSeedMode ? "true" : "false"}) {
+                if (!(add instanceof HTMLButtonElement)) return false;
+                add.click();
+                await new Promise((done) => setTimeout(done, 300));
+                document.querySelector('.workspace-add')?.click();
+                await new Promise((done) => setTimeout(done, 600));
+                const slotCount = document.querySelectorAll('[data-chart-slot]').length;
+                resolve({
+                  ready: slotCount === 3,
+                  processType: typeof globalThis.process,
+                  requireType: typeof globalThis.require
+                });
+                return true;
+              }
+              if (${workspaceVerifyMode ? "true" : "false"} && document.querySelectorAll('[data-chart-slot]').length !== 3) return false;
               resolve({
                 ready: true,
                 processType: typeof globalThis.process,
@@ -122,19 +282,23 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
               });
               return true;
             };
-            if (inspect()) return;
-            const observer = new MutationObserver(() => {
-              if (inspect()) observer.disconnect();
+            void inspect().then((matched) => {
+              if (matched) return;
+              const observer = new MutationObserver(() => {
+                void inspect().then((found) => {
+                  if (found) observer.disconnect();
+                });
+              });
+              observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                characterData: true
+              });
+              setTimeout(() => {
+                observer.disconnect();
+                resolve({ ready: false });
+              }, 5000);
             });
-            observer.observe(document.documentElement, {
-              childList: true,
-              subtree: true,
-              characterData: true
-            });
-            setTimeout(() => {
-              observer.disconnect();
-              resolve({ ready: false });
-            }, 5000);
           });
         `);
         if (!isSmokeResult(result)) {
@@ -150,7 +314,17 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
         }
         reportSmokeStage("renderer-ready");
         const controller = await controllerReady;
-        console.log("ERC_CHART_SMOKE_READY");
+        console.log(
+          workspaceSeedMode
+            ? "ERC_CHART_WORKSPACE_SEEDED"
+            : workspaceVerifyMode
+              ? "ERC_CHART_WORKSPACE_RESTORED"
+              : "ERC_CHART_SMOKE_READY",
+        );
+        if (workspaceSeedMode) {
+          app.quit();
+          return;
+        }
         await controller.shutdown();
         app.exit(0);
       })().catch(() => {
@@ -160,74 +334,558 @@ function createWindow(options: SecureWindowOptions): BrowserWindow {
       });
     });
   }
-  return window;
+  return {
+    loadURL: (url: string): Promise<void> => window.loadURL(url),
+    waitUntilRendererReady: async (): Promise<boolean> => {
+      if (window.isDestroyed()) return false;
+      try {
+        const ready: unknown = await window.webContents.executeJavaScript(`
+          new Promise((resolve) => {
+            const root = document.getElementById('app');
+            if (!(root instanceof HTMLElement)) {
+              resolve(false);
+              return;
+            }
+            if (root.childElementCount > 0) {
+              resolve(true);
+              return;
+            }
+            const observer = new MutationObserver(() => {
+              if (root.childElementCount === 0) return;
+              observer.disconnect();
+              clearTimeout(timeout);
+              resolve(true);
+            });
+            const timeout = setTimeout(() => {
+              observer.disconnect();
+              resolve(false);
+            }, 5000);
+            observer.observe(root, { childList: true });
+          });
+        `);
+        return ready === true;
+      } catch {
+        return false;
+      }
+    },
+    flushWorkspace: async (): Promise<void> => {
+      if (window.isDestroyed()) return;
+      await window.webContents.executeJavaScript(
+        "globalThis.ercChart?.flushWorkspace?.()",
+      );
+    },
+    show: (): void => window.show(),
+    destroy: (): void => window.destroy(),
+    isDestroyed: (): boolean => window.isDestroyed(),
+  };
 }
 
 async function startDesktopMain(): Promise<void> {
   reportSmokeStage("artifacts-validating");
   await validateDesktopArtifacts(paths);
   reportSmokeStage("artifacts-valid");
-  const controller = await startDesktopApplication(
-    {
-      app: {
-        platform: nodeProcess.platform,
-        whenReady: async (): Promise<void> => {
-          await app.whenReady();
-          reportSmokeStage("app-ready");
-        },
-        onActivate: (handler): void => {
-          app.on("activate", handler);
-        },
-        onWindowAllClosed: (handler): void => {
-          app.on("window-all-closed", handler);
-        },
-        quit: (): void => app.quit(),
-      },
-      registerRuntimeInfoHandler: (handler): (() => void) => {
-        ipcMain.handle(runtimeInfoChannel, (event) => {
-          const senderFrame = event.senderFrame;
-          return handler(
-            senderFrame === null
-              ? undefined
-              : {
-                  url: senderFrame.url,
-                  isMainFrame: senderFrame.parent === null,
-                },
-          );
-        });
-        return (): void => ipcMain.removeHandler(runtimeInfoChannel);
-      },
-      registerRendererProtocol: (rootPath): Promise<() => void> =>
-        installRendererProtocol(
-          {
-            handle: (scheme, handler): void => protocol.handle(scheme, handler),
-            unhandle: (scheme): void => protocol.unhandle(scheme),
-            fetch: (url): Promise<Response> => net.fetch(url),
-          },
-          rootPath,
-        ),
-      createWindow,
-      dataUtility: {
-        start: async (entryPath, args): Promise<void> => {
-          await dataUtility.start(entryPath, args);
-          reportSmokeStage("data-utility-ready");
-        },
-        shutdown: (): Promise<void> => dataUtility.shutdown(),
-      },
+  const userDataSwitch = smokeMode
+    ? app.commandLine.getSwitchValue("erc-chart-user-data-path")
+    : "";
+  const userDataArgument = smokeMode
+    ? [
+        ...nodeProcess.argv,
+        ...(userDataSwitch === ""
+          ? []
+          : [`--erc-chart-user-data-path=${userDataSwitch}`]),
+      ].find((argument) => argument.startsWith("--erc-chart-user-data-path="))
+    : undefined;
+  const userDataRoot =
+    userDataArgument?.slice("--erc-chart-user-data-path=".length) ??
+    app.getPath("userData");
+  const client = createDataUtilityClient({
+    transport: dataUtility,
+    upstream: providerUtilities,
+    scheduler: {
+      setTimeout: (callback, delayMs): NodeJS.Timeout =>
+        setTimeout(callback, delayMs),
+      clearTimeout: (timer): void => clearTimeout(timer as NodeJS.Timeout),
     },
-    paths,
-  );
+    requestTimeoutMs: 5_000,
+    databasePath: path.join(userDataRoot, "erc-chart.sqlite"),
+    instanceId: desktopInstanceId,
+    legacyWorkspaceId: lastWorkspaceId,
+  });
+  dataUtilityClient = client;
+  const storage = createDataUtilityStorage(client);
+  const senderFromEvent = (event: Electron.IpcMainInvokeEvent) => {
+    const senderFrame = event.senderFrame;
+    return senderFrame === null
+      ? undefined
+      : {
+          url: senderFrame.url,
+          isMainFrame: senderFrame.parent === null,
+        };
+  };
+  const controller =
+    await startDesktopApplication<ProviderUtilityLaunchDescriptor>(
+      {
+        app: {
+          platform: nodeProcess.platform,
+          whenReady: async (): Promise<void> => {
+            await app.whenReady();
+            reportSmokeStage("app-ready");
+          },
+          onActivate: (handler): void => {
+            app.on("activate", handler);
+          },
+          onWindowAllClosed: (handler): void => {
+            app.on("window-all-closed", handler);
+          },
+          quit: (): void => app.quit(),
+        },
+        registerRuntimeInfoHandler: (handler): (() => void) => {
+          ipcMain.handle(runtimeInfoChannel, (event) =>
+            handler(senderFromEvent(event)),
+          );
+          return (): void => ipcMain.removeHandler(runtimeInfoChannel);
+        },
+        registerWorkspaceLoadHandler: (handler): (() => void) => {
+          ipcMain.handle(workspaceLoadChannel, (event) =>
+            handler(senderFromEvent(event)),
+          );
+          return (): void => ipcMain.removeHandler(workspaceLoadChannel);
+        },
+        registerWorkspaceSaveHandler: (handler): (() => void) => {
+          ipcMain.handle(workspaceSaveChannel, (event, workspace: unknown) =>
+            handler(senderFromEvent(event), workspace).then(() => true),
+          );
+          return (): void => ipcMain.removeHandler(workspaceSaveChannel);
+        },
+        registerRendererProtocol: (rootPath): Promise<() => void> =>
+          installRendererProtocol(
+            {
+              handle: (scheme, handler): void =>
+                protocol.handle(scheme, handler),
+              unhandle: (scheme): void => protocol.unhandle(scheme),
+              fetch: (url): Promise<Response> => net.fetch(url),
+            },
+            rootPath,
+            path.join(userDataRoot, "indicator-plugins"),
+          ),
+        createWindow,
+        dataUtility: {
+          start: async (entryPath, args): Promise<void> => {
+            await client.start(entryPath, args);
+            reportSmokeStage("data-utility-ready");
+          },
+          shutdown: (): Promise<void> => client.shutdown(),
+        },
+        providerUtilities: {
+          start: async (
+            providerProfileId,
+            entryPath,
+            launch,
+          ): Promise<void> => {
+            providerLaunches.set(providerProfileId, launch);
+            try {
+              await providerUtilities.start(
+                providerProfileId,
+                entryPath,
+                launch,
+              );
+            } catch (error) {
+              providerLaunches.delete(providerProfileId);
+              throw error;
+            }
+          },
+          reconfigure: async (providerProfileId, settings) => {
+            const previousLaunch = providerLaunches.get(providerProfileId);
+            if (previousLaunch === undefined)
+              throw new Error("Provider profile is not active.");
+            const result = await providerUtilities.reconfigure(
+              providerProfileId,
+              settings,
+            );
+            providerLaunches.set(providerProfileId, {
+              ...previousLaunch,
+              settings: result.settings,
+            });
+            return result;
+          },
+          shutdown: async (providerProfileId): Promise<void> => {
+            try {
+              await client
+                .request("provider-invalidate", {
+                  profileId: providerProfileId,
+                })
+                .catch(() => undefined);
+              await providerUtilities.shutdown(providerProfileId);
+            } finally {
+              providerLaunches.delete(providerProfileId);
+            }
+          },
+          shutdownAll: async (): Promise<void> => {
+            try {
+              await client
+                .request("provider-shutdown", null)
+                .catch(() => undefined);
+              await providerUtilities.shutdownAll();
+            } finally {
+              providerLaunches.clear();
+            }
+          },
+        },
+        providerData: client,
+        workspacePersistence: {
+          load: (): Promise<PersistedWorkspace | null> =>
+            client.loadWorkspace(),
+          save: (workspace): Promise<void> => client.saveWorkspace(workspace),
+          flush: async (): Promise<void> => undefined,
+          close: async (): Promise<void> => undefined,
+        },
+      },
+      paths,
+    );
   resolveController(controller);
+
+  const providerLiveSubscriptions =
+    createProviderLiveSubscriptionManager(controller);
+  ipcMain.handle(
+    providerLiveSubscribeChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderLiveSubscriptionRequest(request)) {
+        throw new Error("Provider live subscription request is invalid.");
+      }
+      const sender = event.sender;
+      await providerLiveSubscriptions.start(request, {
+        ownerId: sender.id,
+        isClosed: (): boolean => sender.isDestroyed(),
+        send: (payload): void => {
+          if (!sender.isDestroyed())
+            sender.send(providerLiveEventChannel, payload);
+        },
+        onClosed: (listener): (() => void) => {
+          sender.once("destroyed", listener);
+          return (): void => {
+            sender.off("destroyed", listener);
+          };
+        },
+      });
+      return true;
+    },
+  );
+  ipcMain.handle(
+    providerLiveUnsubscribeChannel,
+    async (event, subscriptionId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderLiveSubscriptionId(subscriptionId)) {
+        throw new Error("Provider live subscription ID is invalid.");
+      }
+      if (
+        !(await providerLiveSubscriptions.stop(subscriptionId, event.sender.id))
+      ) {
+        throw new Error("Provider live subscription is unavailable.");
+      }
+      return true;
+    },
+  );
+  const removeProviderLiveHandlers = (): void => {
+    ipcMain.removeHandler(providerLiveSubscribeChannel);
+    ipcMain.removeHandler(providerLiveUnsubscribeChannel);
+  };
+
+  const providerImportService = createProviderImportService({
+    storage,
+    controller,
+    credentialManager: providerCredentialManager,
+    stagingRoot: path.join(userDataRoot, "provider-staging"),
+    installationRoot: path.join(userDataRoot, "provider-plugins"),
+  });
+  const indicatorImportService = createIndicatorImportService({
+    storage,
+    stagingRoot: path.join(userDataRoot, "indicator-staging"),
+    installationRoot: path.join(userDataRoot, "indicator-plugins"),
+  });
+  const providerManagementService = createProviderManagementService({
+    storage,
+    controller,
+    credentialManager: providerCredentialManager,
+    installationRoot: path.join(userDataRoot, "provider-plugins"),
+    getStatus: (profileId) => providerUtilities.getStatus(profileId),
+  });
+  ipcMain.handle(providerProfilesListChannel, (event) => {
+    assertTrustedIpcSender(senderFromEvent(event));
+    return providerManagementService.snapshot();
+  });
+  ipcMain.handle(
+    providerProfileCreateChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderProfileCreateRequest(request)) {
+        throw new Error("Provider profile create request is invalid.");
+      }
+      return providerManagementService.create(request);
+    },
+  );
+  ipcMain.handle(
+    providerProfileUpdateChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderProfileUpdateRequest(request)) {
+        throw new Error("Provider profile update request is invalid.");
+      }
+      return providerManagementService.update(request);
+    },
+  );
+  ipcMain.handle(
+    providerProfileStartChannel,
+    async (event, profileId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof profileId !== "string") {
+        throw new Error("Provider profile ID is invalid.");
+      }
+      return providerManagementService.start(profileId);
+    },
+  );
+  ipcMain.handle(
+    providerSessionLoadChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderSessionRequest(request)) {
+        throw new Error("Provider session request is invalid.");
+      }
+      return providerManagementService.load(request);
+    },
+  );
+  ipcMain.handle(
+    providerHistoryLoadChannel,
+    async (event, request: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isProviderHistoryLoadRequest(request)) {
+        throw new Error("Provider history request is invalid.");
+      }
+      return controller.requestProviderHistory(request.profileId, {
+        instrumentId:
+          request.instrumentId as DesktopProviderHistoryRequest["instrumentId"],
+        timeframeId:
+          request.timeframeId as DesktopProviderHistoryRequest["timeframeId"],
+        ...(request.fromMs === undefined ? {} : { fromMs: request.fromMs }),
+        ...(request.toMs === undefined ? {} : { toMs: request.toMs }),
+        ...(request.limit === undefined ? {} : { limit: request.limit }),
+      });
+    },
+  );
+  ipcMain.handle(
+    providerProfileStopChannel,
+    async (event, profileId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof profileId !== "string") {
+        throw new Error("Provider profile ID is invalid.");
+      }
+      await providerManagementService.stop(profileId);
+      return true;
+    },
+  );
+  ipcMain.handle(
+    providerProfileDeleteChannel,
+    async (event, profileId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof profileId !== "string") {
+        throw new Error("Provider profile ID is invalid.");
+      }
+      await providerManagementService.delete(profileId);
+      return true;
+    },
+  );
+  ipcMain.handle(
+    providerImportPreviewChannel,
+    async (event, sourceKind: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isPluginImportSourceKind(sourceKind)) {
+        throw new Error("Provider import source is invalid.");
+      }
+      const selection = await dialog.showOpenDialog({
+        title: "Import ERC Chart provider",
+        properties: sourceKind === "zip" ? ["openFile"] : ["openDirectory"],
+        ...(sourceKind === "zip"
+          ? { filters: [{ name: "ERC Chart plugin", extensions: ["zip"] }] }
+          : {}),
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || selectedPath === undefined) return null;
+      return providerImportService.preview({
+        kind: sourceKind,
+        path: selectedPath,
+      });
+    },
+  );
+  ipcMain.handle(
+    providerImportApproveChannel,
+    async (event, requestId: unknown, credentials: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (
+        typeof requestId !== "string" ||
+        !isProviderImportCredentialValues(credentials)
+      ) {
+        throw new Error("Provider import request is invalid.");
+      }
+      return providerImportService.approve(requestId, credentials);
+    },
+  );
+  ipcMain.handle(
+    providerImportCancelChannel,
+    async (event, requestId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof requestId !== "string") {
+        throw new Error("Provider import request is invalid.");
+      }
+      await providerImportService.cancel(requestId);
+      return true;
+    },
+  );
+
+  ipcMain.handle(
+    indicatorImportPreviewChannel,
+    async (event, sourceKind: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (!isPluginImportSourceKind(sourceKind)) {
+        throw new Error("Indicator import source is invalid.");
+      }
+      const selection = await dialog.showOpenDialog({
+        title: "Import ERC Chart indicator",
+        properties: sourceKind === "zip" ? ["openFile"] : ["openDirectory"],
+        ...(sourceKind === "zip"
+          ? { filters: [{ name: "ERC Chart plugin", extensions: ["zip"] }] }
+          : {}),
+      });
+      const selectedPath = selection.filePaths[0];
+      if (selection.canceled || selectedPath === undefined) return null;
+      return indicatorImportService.preview({
+        kind: sourceKind,
+        path: selectedPath,
+      });
+    },
+  );
+  ipcMain.handle(
+    indicatorImportApproveChannel,
+    async (event, requestId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof requestId !== "string") {
+        throw new Error("Indicator import request is invalid.");
+      }
+      return indicatorImportService.approve(requestId);
+    },
+  );
+  ipcMain.handle(
+    indicatorImportCancelChannel,
+    async (event, requestId: unknown) => {
+      assertTrustedIpcSender(senderFromEvent(event));
+      if (typeof requestId !== "string") {
+        throw new Error("Indicator import request is invalid.");
+      }
+      await indicatorImportService.cancel(requestId);
+      return true;
+    },
+  );
+  ipcMain.handle(indicatorsListChannel, async (event) => {
+    assertTrustedIpcSender(senderFromEvent(event));
+    return indicatorImportService.list();
+  });
+  ipcMain.handle(indicatorRemoveChannel, async (event, pluginId: unknown) => {
+    assertTrustedIpcSender(senderFromEvent(event));
+    if (!isPluginId(pluginId)) {
+      throw new Error("Indicator plugin ID is invalid.");
+    }
+    return indicatorImportService.remove(pluginId);
+  });
+
+  const removeProviderImportHandlers = (): void => {
+    ipcMain.removeHandler(providerImportPreviewChannel);
+    ipcMain.removeHandler(providerImportApproveChannel);
+    ipcMain.removeHandler(providerImportCancelChannel);
+  };
+  const removeIndicatorHandlers = (): void => {
+    ipcMain.removeHandler(indicatorImportPreviewChannel);
+    ipcMain.removeHandler(indicatorImportApproveChannel);
+    ipcMain.removeHandler(indicatorImportCancelChannel);
+    ipcMain.removeHandler(indicatorsListChannel);
+    ipcMain.removeHandler(indicatorRemoveChannel);
+  };
+  const removeProviderManagementHandlers = (): void => {
+    ipcMain.removeHandler(providerProfilesListChannel);
+    ipcMain.removeHandler(providerProfileCreateChannel);
+    ipcMain.removeHandler(providerProfileUpdateChannel);
+    ipcMain.removeHandler(providerProfileStartChannel);
+    ipcMain.removeHandler(providerSessionLoadChannel);
+    ipcMain.removeHandler(providerHistoryLoadChannel);
+    ipcMain.removeHandler(providerProfileStopChannel);
+    ipcMain.removeHandler(providerProfileDeleteChannel);
+  };
 
   let quitting = false;
   app.on("before-quit", (event) => {
-    if (quitting || smokeMode) return;
+    if (quitting || (smokeMode && !workspaceSeedMode)) return;
     event.preventDefault();
     quitting = true;
-    void controller
-      .shutdown()
-      .then(() => app.quit())
-      .catch(() => app.exit(1));
+    void (async (): Promise<void> => {
+      const canQuit = await flushWorkspaceBeforeQuit(
+        async (): Promise<void> => {
+          const window = activeBrowserWindow;
+          if (window === undefined || window.isDestroyed()) return;
+          await window.webContents.executeJavaScript(
+            "globalThis.ercChart?.flushWorkspace?.()",
+          );
+        },
+        async (): Promise<"retry" | "cancel"> => {
+          const options = {
+            type: "warning" as const,
+            title: "Workspace not saved",
+            message: "Workspace not saved.",
+            detail:
+              "ERC Chart could not save your latest workspace changes. Retry saving or cancel closing to keep working.",
+            buttons: ["Retry", "Cancel"],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true,
+          };
+          const window = activeBrowserWindow;
+          const result =
+            window === undefined
+              ? await dialog.showMessageBox(options)
+              : await dialog.showMessageBox(window, options);
+          return result.response === 0 ? "retry" : "cancel";
+        },
+      );
+      if (!canQuit) {
+        quitting = false;
+        return;
+      }
+      let shutdownError: unknown;
+      try {
+        await providerImportService.shutdown();
+      } catch (error) {
+        shutdownError = error;
+      }
+      try {
+        await indicatorImportService.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
+      }
+      try {
+        await providerLiveSubscriptions.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
+      }
+      try {
+        await controller.shutdown();
+      } catch (error) {
+        shutdownError ??= error;
+      } finally {
+        removeProviderLiveHandlers();
+        removeProviderImportHandlers();
+        removeIndicatorHandlers();
+        removeProviderManagementHandlers();
+      }
+      if (shutdownError !== undefined) throw shutdownError;
+      app.quit();
+    })().catch(() => app.exit(1));
   });
 }
 

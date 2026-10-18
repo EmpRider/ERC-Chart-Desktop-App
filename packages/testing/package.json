@@ -10,5 +10,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "dependencies": {
+    "@erc-chart/contracts": "0.0.0",
+    "@erc-chart/provider-sdk": "0.0.0"
   }
 }

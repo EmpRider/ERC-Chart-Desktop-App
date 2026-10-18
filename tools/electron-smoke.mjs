@@ -8,6 +8,10 @@ import {
 } from "./electron-smoke-process.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+const dataUtilitySmokePath = path.join(
+  root,
+  "tools/electron-data-utility-smoke.mjs",
+);
 const entryPath = path.join(root, "apps/desktop/dist/main.js");
 if (process.platform === "linux" && process.env.DISPLAY === undefined) {
   throw new Error("Electron smoke test requires a display server on Linux.");
@@ -21,6 +25,17 @@ const electronArguments = createElectronArguments({
 });
 
 try {
+  await runElectronProcess({
+    executable: electronPath,
+    args: [dataUtilitySmokePath],
+    cwd: root,
+    env: {
+      ...process.env,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+    },
+    timeoutMs: 15_000,
+    readyMarker: "ERC_CHART_DATA_UTILITY_SMOKE_READY",
+  });
   await runElectronProcess({
     executable: electronPath,
     args: electronArguments,

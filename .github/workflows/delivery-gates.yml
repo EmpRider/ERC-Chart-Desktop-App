@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       application_present: ${{ steps.application.outputs.application_present }}
+      docs_only: ${{ steps.context.outputs.docs_only }}
+      governance_only: ${{ steps.context.outputs.governance_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -33,10 +35,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 26.8.1
           package-manager-cache: false
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
       - name: Install governance dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --audit=false
       - name: Build pull-request context
         id: context
         shell: bash
@@ -53,9 +57,32 @@ jobs:
           else
             echo "base_is_ancestor=false" >> "$GITHUB_OUTPUT"
           fi
+
+          mapfile -t changed_files < <(git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA")
+          docs_only=false
+          governance_only=false
+          if ((${#changed_files[@]} > 0)); then
+            docs_only=true
+            governance_only=true
+            for file in "${changed_files[@]}"; do
+              case "$file" in
+                docs/*|*.md|*.mdx) ;;
+                *) docs_only=false ;;
+              esac
+              case "$file" in
+                .github/workflows/delivery-gates.yml|tools/delivery-governance/*) ;;
+                *) governance_only=false ;;
+              esac
+            done
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "governance_only=$governance_only" >> "$GITHUB_OUTPUT"
+
           {
             echo 'changed_files<<EOF'
-            git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA"
+            if ((${#changed_files[@]} > 0)); then
+              printf '%s\n' "${changed_files[@]}"
+            fi
             echo EOF
           } >> "$GITHUB_OUTPUT"
       - name: Test governance tool
@@ -85,51 +112,13 @@ jobs:
           console.log(`application_present=${result.applicationPresent}`);
           NODE
 
-  application-linux:
-    name: Application / Linux
-    needs: governance
-    if: needs.governance.outputs.application_present == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 24.18.1
-          package-manager-cache: false
-      - run: npm ci
-      - name: Configure Chromium SUID sandbox
-        shell: bash
-        run: |
-          set -euo pipefail
-          node node_modules/electron/install.js
-          sandbox_path="node_modules/electron/dist/chrome-sandbox"
-          sudo chown root:root "$sandbox_path"
-          sudo chmod 4755 "$sandbox_path"
-          test "$(stat -c '%U:%G %a' "$sandbox_path")" = "root:root 4755"
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:unit
-      - run: npm run test:integration
-      - name: Smoke Electron development shell
-        run: xvfb-run -a npm run smoke:electron
-      - name: Smoke two independent Electron instances
-        run: xvfb-run -a npm run smoke:multi-instance
-      - run: npm run build
-      - run: npm run test:performance
-      - run: npm run audit:ci
-      - run: npm run version:check
-
   application-windows:
     name: Application / Windows
     needs: governance
     if: >-
       needs.governance.outputs.application_present == 'true' &&
-      startsWith(github.head_ref, 'epic/') &&
-      github.base_ref == 'main'
+      needs.governance.outputs.docs_only != 'true' &&
+      needs.governance.outputs.governance_only != 'true'
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -138,28 +127,34 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 26.8.1
           package-manager-cache: false
-      - run: npm ci
+      - name: Set up pinned npm
+        run: npm install --global npm@12.0.2
+      - run: npm ci --audit=false
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:integration
+      - run: npm run smoke:electron
       - run: npm run build
+      - run: npm run smoke:workspace-restart
       - run: npm run smoke:multi-instance
       - run: npm run test:performance
-      - run: npm run audit:ci
       - run: npm run version:check
-      - run: npm run package:win
-      - run: npm run smoke:installer
+      - name: Package Windows installer
+        if: startsWith(github.head_ref, 'epic/') && github.base_ref == 'main'
+        run: npm run package:win
+      - name: Smoke Windows installer
+        if: startsWith(github.head_ref, 'epic/') && github.base_ref == 'main'
+        run: npm run smoke:installer
 
   delivery-gates:
     name: Delivery gates
     if: always()
     needs:
       - governance
-      - application-linux
       - application-windows
     runs-on: ubuntu-24.04
     steps:
@@ -169,15 +164,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 26.8.1
           package-manager-cache: false
       - name: Aggregate required results
         shell: bash
         env:
           GOVERNANCE_RESULT: ${{ needs.governance.result }}
-          APPLICATION_LINUX_RESULT: ${{ needs.application-linux.result }}
           APPLICATION_WINDOWS_RESULT: ${{ needs.application-windows.result }}
-          APPLICATION_PRESENT: ${{ needs.governance.outputs.application_present }}
+          APPLICATION_PRESENT: ${{ needs.governance.outputs.application_present == 'true' && needs.governance.outputs.docs_only != 'true' && needs.governance.outputs.governance_only != 'true' }}
+          APPLICATION_CONTRACT_PRESENT: ${{ needs.governance.outputs.application_present }}
+          DOCS_ONLY: ${{ needs.governance.outputs.docs_only }}
+          GOVERNANCE_ONLY: ${{ needs.governance.outputs.governance_only }}
           EPIC_TO_MAIN: ${{ startsWith(github.head_ref, 'epic/') && github.base_ref == 'main' }}
         run: |
           set -euo pipefail

@@ -52,6 +52,10 @@ export async function preparePackage({ root, outputRoot }) {
       "packages/provider-runtime/src/utility-entry.ts",
       path.join(outputRoot, "packages/provider-runtime/dist/utility-entry.js"),
     ),
+    bundleEntry(
+      "packages/provider-sdk/src/index.ts",
+      path.join(outputRoot, "packages/provider-sdk/dist/index.js"),
+    ),
   ]);
 
   await cp(

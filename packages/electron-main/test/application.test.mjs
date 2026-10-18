@@ -9,8 +9,15 @@ function createFixture(platform = "win32") {
   const windows = [];
   let runtimeInfoHandler;
   let shutdownCount = 0;
+  let providerShutdownAllCount = 0;
+  const providerStartCalls = [];
+  const providerReconfigureCalls = [];
+  const providerShutdownCalls = [];
+  const providerDataCalls = [];
   let quitCount = 0;
   let loadUrlError;
+  let rendererReadyResults = [true];
+  let rendererReadyIndex = 0;
   let shutdownError;
 
   const adapters = {
@@ -34,6 +41,14 @@ function createFixture(platform = "win32") {
       runtimeInfoHandler = handler;
       return () => events.push("ipc:remove");
     },
+    registerWorkspaceLoadHandler() {
+      events.push("workspace-load:register");
+      return () => events.push("workspace-load:remove");
+    },
+    registerWorkspaceSaveHandler() {
+      events.push("workspace-save:register");
+      return () => events.push("workspace-save:remove");
+    },
     async registerRendererProtocol(rootPath) {
       events.push(`protocol:register:${rootPath}`);
       return () => events.push("protocol:remove");
@@ -47,6 +62,18 @@ function createFixture(platform = "win32") {
         async loadURL(url) {
           events.push(`window:load:${url}`);
           if (loadUrlError !== undefined) throw loadUrlError;
+        },
+        async waitUntilRendererReady() {
+          events.push("window:renderer-ready");
+          const index = Math.min(
+            rendererReadyIndex,
+            rendererReadyResults.length - 1,
+          );
+          rendererReadyIndex += 1;
+          return rendererReadyResults[index];
+        },
+        async flushWorkspace() {
+          events.push("window:flush");
         },
         show() {
           this.shown = true;
@@ -68,8 +95,70 @@ function createFixture(platform = "win32") {
         events.push(`data:start:${entryPath}:${args.length}`);
       },
       async shutdown() {
+        events.push("data:shutdown");
         shutdownCount += 1;
         if (shutdownError !== undefined) throw shutdownError;
+      },
+    },
+    providerUtilities: {
+      async start(providerProfileId, entryPath, launch) {
+        providerStartCalls.push({ providerProfileId, entryPath, launch });
+      },
+      async reconfigure(providerProfileId, settings) {
+        providerReconfigureCalls.push({ providerProfileId, settings });
+        return {
+          impact: "restart",
+          settings,
+          changedKeys: Object.keys(settings),
+        };
+      },
+      async shutdown(providerProfileId) {
+        providerShutdownCalls.push(providerProfileId);
+      },
+      async shutdownAll() {
+        providerShutdownAllCount += 1;
+      },
+    },
+    providerData: {
+      async getCapabilities(providerProfileId) {
+        providerDataCalls.push({ type: "capabilities", providerProfileId });
+        return {
+          instruments: true,
+          nativeTimeframes: ["1m"],
+          liveData: true,
+          derivedTimeframes: true,
+        };
+      },
+      async getInstruments(providerProfileId) {
+        providerDataCalls.push({ type: "instruments", providerProfileId });
+        return [{ id: "BTCUSD", symbol: "BTCUSD", name: "Bitcoin / USD" }];
+      },
+      async requestHistory(providerProfileId, request) {
+        providerDataCalls.push({ type: "history", providerProfileId, request });
+        return [];
+      },
+      async subscribe(providerProfileId, request, sink) {
+        providerDataCalls.push({
+          type: "subscribe",
+          providerProfileId,
+          request,
+          sink,
+        });
+        return { unsubscribe: async () => undefined };
+      },
+    },
+    workspacePersistence: {
+      async load() {
+        return null;
+      },
+      async save() {
+        return undefined;
+      },
+      async flush() {
+        events.push("workspace:flush");
+      },
+      async close() {
+        events.push("workspace:close");
       },
     },
   };
@@ -81,9 +170,18 @@ function createFixture(platform = "win32") {
     windows,
     getRuntimeInfoHandler: () => runtimeInfoHandler,
     getShutdownCount: () => shutdownCount,
+    getProviderShutdownAllCount: () => providerShutdownAllCount,
+    providerStartCalls,
+    providerReconfigureCalls,
+    providerShutdownCalls,
+    providerDataCalls,
     getQuitCount: () => quitCount,
     setLoadUrlError: (error) => {
       loadUrlError = error;
+    },
+    setRendererReadyResults: (results) => {
+      rendererReadyResults = results;
+      rendererReadyIndex = 0;
     },
     setShutdownError: (error) => {
       shutdownError = error;
@@ -106,11 +204,14 @@ test("registers fixed IPC before loading one secure window", async () => {
 
   assert.deepEqual(fixture.events, [
     "ipc:register",
+    "workspace-load:register",
+    "workspace-save:register",
     "app:ready",
     "protocol:register:/runtime",
     "data:start:/runtime/data-utility.js:0",
     "window:create",
     "window:load:erc-app://app/index.html",
+    "window:renderer-ready",
     "window:show",
   ]);
   assert.deepEqual(
@@ -141,6 +242,82 @@ test("registers fixed IPC before loading one secure window", async () => {
   });
 });
 
+test("keeps provider utilities idle at boot and exposes profile-scoped lifecycle", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  const launch = { pluginId: "com.example.provider" };
+
+  assert.deepEqual(fixture.providerStartCalls, []);
+  await controller.startProviderProfile("profile-a", launch);
+  const changed = await controller.reconfigureProviderProfile("profile-a", {
+    region: "eu",
+  });
+  await controller.stopProviderProfile("profile-a");
+
+  assert.deepEqual(fixture.providerStartCalls, [
+    {
+      providerProfileId: "profile-a",
+      entryPath: "/runtime/provider-utility.js",
+      launch,
+    },
+  ]);
+  assert.deepEqual(fixture.providerReconfigureCalls, [
+    { providerProfileId: "profile-a", settings: { region: "eu" } },
+  ]);
+  assert.deepEqual(changed, {
+    impact: "restart",
+    settings: { region: "eu" },
+    changedKeys: ["region"],
+  });
+  assert.deepEqual(fixture.providerShutdownCalls, ["profile-a"]);
+  await controller.shutdown();
+  assert.equal(fixture.getProviderShutdownAllCount(), 1);
+});
+
+test("exposes provider-neutral discovery/history/live data through the application controller", async () => {
+  const fixture = createFixture();
+  const controller = await startDesktopApplication(fixture.adapters, paths);
+  const request = { instrumentId: "BTCUSD", timeframeId: "1m" };
+  const sink = {
+    onCandles() {
+      return undefined;
+    },
+    onTicks() {
+      return undefined;
+    },
+    onError() {
+      return undefined;
+    },
+  };
+
+  assert.equal(
+    (await controller.getProviderCapabilities("profile-a")).liveData,
+    true,
+  );
+  assert.equal(
+    (await controller.getProviderInstruments("profile-a"))[0].symbol,
+    "BTCUSD",
+  );
+  assert.deepEqual(
+    await controller.requestProviderHistory("profile-a", request),
+    [],
+  );
+  await controller.subscribeProviderData("profile-a", request, sink);
+
+  assert.deepEqual(
+    fixture.providerDataCalls.map(({ type, providerProfileId }) => ({
+      type,
+      providerProfileId,
+    })),
+    [
+      { type: "capabilities", providerProfileId: "profile-a" },
+      { type: "instruments", providerProfileId: "profile-a" },
+      { type: "history", providerProfileId: "profile-a" },
+      { type: "subscribe", providerProfileId: "profile-a" },
+    ],
+  );
+});
+
 test("recreates a missing window and quits only on non-macOS", async () => {
   const fixture = createFixture();
   await startDesktopApplication(fixture.adapters, paths);
@@ -166,6 +343,17 @@ test("shuts down the data utility and IPC registration idempotently", async () =
   await controller.shutdown();
 
   assert.equal(fixture.getShutdownCount(), 1);
+  assert.equal(fixture.getProviderShutdownAllCount(), 1);
+  assert.ok(
+    fixture.events.indexOf("window:flush") <
+      fixture.events.indexOf("data:shutdown"),
+    "workspace window flush must complete before terminating the data utility",
+  );
+  assert.ok(
+    fixture.events.indexOf("workspace:flush") <
+      fixture.events.indexOf("data:shutdown"),
+    "workspace persistence flush must complete before terminating the data utility",
+  );
   assert.equal(
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,
@@ -213,6 +401,39 @@ test("cleans a failed initial window load without exposing partial UI", async ()
     fixture.events.filter((event) => event === "ipc:remove").length,
     1,
   );
+  assert.equal(fixture.windows.length, 1);
+  assert.equal(fixture.windows[0].shown, false);
+  assert.equal(fixture.windows[0].destroyed, true);
+});
+
+test("retries one renderer load before showing a window with an empty UI", async () => {
+  const fixture = createFixture();
+  fixture.setRendererReadyResults([false, true]);
+
+  await startDesktopApplication(fixture.adapters, paths);
+
+  assert.deepEqual(
+    fixture.events.filter((event) => event.startsWith("window:")),
+    [
+      "window:create",
+      "window:load:erc-app://app/index.html",
+      "window:renderer-ready",
+      "window:load:erc-app://app/index.html",
+      "window:renderer-ready",
+      "window:show",
+    ],
+  );
+});
+
+test("never shows a window when the renderer stays empty after retry", async () => {
+  const fixture = createFixture();
+  fixture.setRendererReadyResults([false, false]);
+
+  await assert.rejects(
+    startDesktopApplication(fixture.adapters, paths),
+    new Error("Desktop application failed to start."),
+  );
+
   assert.equal(fixture.windows.length, 1);
   assert.equal(fixture.windows[0].shown, false);
   assert.equal(fixture.windows[0].destroyed, true);

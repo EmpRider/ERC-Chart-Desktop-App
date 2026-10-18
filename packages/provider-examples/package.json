@@ -1,0 +1,17 @@
+{
+  "name": "@erc-chart/provider-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Public-SDK-only example provider plugins",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@erc-chart/provider-sdk": "0.0.0"
+  }
+}

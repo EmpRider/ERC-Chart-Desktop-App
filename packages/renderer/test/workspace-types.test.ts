@@ -1,17 +1,23 @@
 import type { WorkspaceAction } from "../src/workspace.js";
 
-const validLayoutAction: WorkspaceAction = {
+const validAddAction: WorkspaceAction = {
+  type: "add-workspace",
+  tabId: "tab-1",
+};
+
+const validRemoveAction: WorkspaceAction = {
+  type: "remove-workspace",
+  tabId: "tab-1",
+  workspaceId: "tab-1-chart-2",
+};
+
+const removedLayoutAction: WorkspaceAction = {
+  // @ts-expect-error Numeric layout selection is no longer a workspace action.
   type: "set-layout",
   tabId: "tab-1",
   layoutSize: 4,
 };
 
-const invalidLayoutAction: WorkspaceAction = {
-  type: "set-layout",
-  tabId: "tab-1",
-  // @ts-expect-error Layout actions accept only the closed one-to-four domain.
-  layoutSize: 5,
-};
-
-void validLayoutAction;
-void invalidLayoutAction;
+void validAddAction;
+void validRemoveAction;
+void removedLayoutAction;

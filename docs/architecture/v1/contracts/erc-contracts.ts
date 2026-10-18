@@ -8,7 +8,7 @@
 export const ERC_HOST_API_VERSION = '1.0.0' as const;
 
 export type EpochMs = number;
-export type PluginKind = 'data-provider' | 'indicator';
+export type PluginKind = 'provider' | 'indicator';
 export type ChartType = 'candlestick' | 'line' | 'area';
 export type ConnectionState =
     | 'disconnected'
@@ -202,7 +202,7 @@ export interface ProviderNetworkBroker {
     openWebSocket(request: WebSocketOpenRequest): Promise<WebSocketConnection>;
 }
 
-export interface ProviderContext {
+export interface ProviderHostServices {
     profileId: string;
     credentials: CredentialLease;
     network: ProviderNetworkBroker;
@@ -218,16 +218,26 @@ export interface ProviderSubscription {
     timeframeSeconds?: number;
 }
 
+export interface ProviderSubscriptionHandle {
+    unsubscribe(): Promise<void>;
+}
+
 export interface ProviderAdapter {
-    readonly descriptor: ProviderDescriptor;
-    initialize(context: ProviderContext): Promise<ProviderCapabilities>;
     connect(): Promise<void>;
-    listInstruments(): Promise<Instrument[]>;
-    fetchHistory(request: HistoryRequest): Promise<HistoryPage>;
-    subscribe(subscription: ProviderSubscription): Promise<void>;
-    unsubscribe(subscription: ProviderSubscription): Promise<void>;
     disconnect(): Promise<void>;
-    dispose(): Promise<void>;
+    getCapabilities(): Promise<ProviderCapabilities>;
+    getInstruments(): Promise<Instrument[]>;
+    requestHistory(request: HistoryRequest): Promise<HistoryPage>;
+    subscribe(subscription: ProviderSubscription): Promise<ProviderSubscriptionHandle>;
+}
+
+export interface ProviderDefinition {
+    readonly descriptor: ProviderDescriptor;
+    readonly configSchema: JsonObject;
+    create(
+        host: ProviderHostServices,
+        normalizedConfig: JsonObject,
+    ): ProviderAdapter | Promise<ProviderAdapter>;
 }
 
 export type IndicatorValueType = 'number-series' | 'boolean-series' | 'scalar';
@@ -237,6 +247,7 @@ export interface IndicatorInputDefinition {
     label: string;
     type: IndicatorValueType | 'candles' | 'ticks';
     required: boolean;
+    affects: 'calculation' | 'presentation';
 }
 
 export interface IndicatorOutputDefinition {
@@ -275,6 +286,7 @@ export interface IndicatorInstanceConfig {
     definitionId: string;
     enabled: boolean;
     parameters: JsonObject;
+    style: JsonObject;
     inputs: Record<string, IndicatorInputBinding>;
 }
 
@@ -293,27 +305,48 @@ export interface BarEvent {
     candle: Candle;
 }
 
-export interface IndicatorContext {
-    readonly instanceId: string;
-    readonly definition: IndicatorDefinition;
-    getInput(key: string): CandleSnapshot | Float64Array | Uint8Array | Tick[];
-    publish(batch: IndicatorOutputBatch): void;
-    now(): EpochMs;
-    log(level: 'debug' | 'info' | 'warn' | 'error', code: string, metadata?: JsonObject): void;
+/**
+ * Normalized host result. Raw klinecharts indicator.result values never cross
+ * the renderer adapter boundary.
+ */
+export interface IndicatorResultPoint {
+    indicatorInstanceId: string;
+    outputKey: string;
+    barOpenTimeMs: EpochMs;
+    value: number | boolean | null;
+    state: 'provisional' | 'finalized';
+    sourceRevision: number;
+    configGeneration: number;
 }
 
-export interface IndicatorInstance {
-    initialize(context: IndicatorContext, config: IndicatorInstanceConfig): void | Promise<void>;
-    onHistory(snapshot: CandleSnapshot): void | Promise<void>;
-    onTick?(tick: Tick): void | Promise<void>;
-    onBar?(event: BarEvent): void | Promise<void>;
-    updateConfig?(config: IndicatorInstanceConfig): void | Promise<void>;
-    dispose(): void | Promise<void>;
+export interface IndicatorResultReadOptions {
+    outputKey?: string;
+    finalizedOnly?: boolean;
 }
 
-export interface IndicatorPlugin {
-    readonly definitions: IndicatorDefinition[];
-    create(definitionId: string): IndicatorInstance;
+/**
+ * Host-only bounded reader used by signal processing. It is not exported to
+ * indicator plugins and does not expose candle storage or klinecharts objects.
+ */
+export interface IndicatorResultReader {
+    latest(
+        indicatorInstanceId: string,
+        options?: IndicatorResultReadOptions,
+    ): IndicatorResultPoint | null;
+    last(
+        indicatorInstanceId: string,
+        count: number,
+        options?: IndicatorResultReadOptions,
+    ): readonly IndicatorResultPoint[];
+}
+
+/**
+ * Indicator plugin entry modules register definitions through the clean
+ * indicator()/input/plot/ta facade. Runtime context and lifecycle ports are
+ * deliberately host-private and are not part of this public sketch.
+ */
+export interface IndicatorPluginModule {
+    readonly definitions: readonly IndicatorDefinition[];
 }
 
 export interface PlotBase {

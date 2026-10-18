@@ -1,0 +1,12 @@
+---
+description: Treat Signal as behavioral reference only; preserve ERC-chart architecture and implementation independence
+alwaysApply: true
+---
+
+# Signal Reference Boundary
+
+- Use the Signal repository only as behavioral and protocol evidence.
+- Reimplement accepted behavior against ERC-chart contracts and architecture.
+- Do not copy Signal source, module structure, runtime architecture, or browser/userscript mechanics.
+- Do not introduce a Signal dependency or import path.
+- Record parity as tests, requirements, or provider protocol findings without credentials.

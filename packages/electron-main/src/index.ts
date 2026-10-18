@@ -1,19 +1,37 @@
 export { startDesktopApplication } from "./application.js";
+export { createLocalDiagnosticLog } from "./local-diagnostic-log.js";
 export { secureWindowOptions } from "./window.js";
 export { createUtilitySupervisor } from "./utility-supervisor.js";
+export { createDataUtilityClient } from "./data-utility-client.js";
 export {
+  createWindowsGenericCredentialManager,
+  windowsCredentialTarget,
+} from "./windows-credentials.js";
+export {
+  indicatorPluginOrigin,
+  indicatorPluginProtocolScheme,
+  indicatorPluginSchemeRegistration,
   rendererEntryUrl,
   rendererProtocolScheme,
   rendererSchemeRegistration,
+  resolveIndicatorPluginAssetUrl,
   resolveRendererAssetUrl,
 } from "./protocol.js";
 export {
   assertTrustedIpcSender,
   electronFusePolicy,
+  indicatorWorkerContentSecurityPolicy,
   isTrustedRendererDocument,
   rendererContentSecurityPolicy,
 } from "./security.js";
 export type { DesktopIpcSender } from "./security.js";
+export type {
+  DiagnosticEvent,
+  DiagnosticLevel,
+  DiagnosticMetadata,
+  LocalDiagnosticLog,
+  LocalDiagnosticLogOptions,
+} from "./local-diagnostic-log.js";
 export type { RendererSchemeRegistration } from "./protocol.js";
 export type {
   DesktopAppAdapter,
@@ -23,6 +41,19 @@ export type {
   DesktopWindow,
 } from "./application.js";
 export type { SecureWebPreferences, SecureWindowOptions } from "./window.js";
+export type {
+  WindowsCredentialBridgeRequest,
+  WindowsCredentialBridgeResponse,
+  WindowsGenericCredentialManager,
+  WindowsGenericCredentialManagerOptions,
+} from "./windows-credentials.js";
+export type {
+  DataUtilityClient,
+  DataUtilityClientOptions,
+  DataUtilityClientTransport,
+  DataUtilityLiveSink,
+  DataUtilityUpstreamBridge,
+} from "./data-utility-client.js";
 export type {
   UtilityChild,
   UtilityScheduler,

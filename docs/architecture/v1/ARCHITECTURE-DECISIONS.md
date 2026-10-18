@@ -38,14 +38,14 @@ The MVP is a Windows `.exe`, and all third-party authoring is JavaScript/TypeScr
 
 ### Decision
 
-Use a current supported Electron release with strict TypeScript, a React application shell, and an independent TypeScript chart engine. Build an x64 NSIS `.exe` through electron-builder.
+Use a current supported Electron release with strict TypeScript, a React application shell, and pinned klinecharts integrated through the renderer. Build an x64 NSIS `.exe` through electron-builder.
 
 ### Consequences
 
 - One language and contract model spans the application and SDK.
 - Electron/Chromium security updates become release responsibilities.
 - Memory performance must be tested under the full four-chart workload.
-- The chart engine must not import Electron or React.
+- klinecharts integration must remain inside the renderer and must not leak Electron or provider internals.
 
 ## ADR-003 — Privilege and failure boundaries
 
@@ -74,7 +74,7 @@ Use:
 
 ## ADR-004 — Custom layered Canvas 2D chart engine
 
-Status: **Proposed**
+Status: **Superseded by ADR-015**
 
 ### Context
 
@@ -90,6 +90,10 @@ Build a custom layered Canvas 2D engine from zero. Store series in typed arrays,
 - The engine can later adopt WebGL behind its renderer interface if measurements require it.
 - Accessibility and non-canvas controls remain in the React shell.
 - Renderer performance tests become a release gate.
+
+### Supersession note
+
+Superseded on 2026-08-31 by ADR-015. The custom `@erc-chart/chart-core` package is removed; klinecharts v10 replaces the entire chart rendering, interaction, and drawing layer.
 
 ## ADR-005 — Versioned, capability-declared plugin packages
 
@@ -218,7 +222,7 @@ Workspace schema version 1 stores tabs, layouts, chart configuration, viewport, 
 
 ### Consequences
 
-- Drawing undo/redo is session-only.
+- Drawing history is not part of the MVP; adding undo/redo later requires a separate product decision and bounded command model.
 - The schema reserves no ambiguous drawing field.
 - Adding drawing persistence later requires a new workspace schema version and migration.
 
@@ -274,3 +278,100 @@ Implement Binomo as a first-party TypeScript provider plugin behind the generic 
 - Protocol changes affect the adapter rather than chart core.
 - Release depends on confirming authentication, instruments, timeframes, TLS, rate limits, and permitted use.
 - The reference credential must be rotated if valid.
+
+## ADR-015 — klinecharts v10 replaces custom chart engine
+
+Status: **Accepted**
+
+### Context
+
+ADR-004 proposed building a custom layered Canvas 2D chart engine from zero as `@erc-chart/chart-core`. Before implementation began the package contained only an empty stub (`export {}`). Building a production-quality chart engine with candlestick/line/area rendering, layered canvas, pointer-anchored zoom, pan, crosshair, axis interactions, drawings, and hit testing is a large engineering effort that duplicates mature open-source work.
+
+klinecharts v10.0.3 is a lightweight, high-performance financial charting library that supplies the MVP candlestick and area presentations, Canvas 2D rendering, pointer zoom, pan, crosshair, axis interaction, built-in overlays such as `fibonacciLine`, horizontal/vertical lines, `simpleAnnotation`, and `simpleTag`, plus extension APIs for technical indicators, overlays, and figures. Rectangle and free-text drawings require small ERC-chart overlay extensions built from klinecharts figures. Line presentation uses area mode with transparent fill or, only if parity requires it, a thin presentation extension. klinecharts has no native drawing undo/redo stack.
+
+### Decision
+
+Remove the `@erc-chart/chart-core` package entirely. Use klinecharts v10 as the chart rendering, interaction, and drawing engine. The ERC-chart architecture now focuses on three integration layers:
+
+1. **SDK and plugin-based provider system** — provider SDK, provider runtime, and Binomo adapter remain unchanged.
+2. **klinecharts integration layer** — a thin adapter in `@erc-chart/renderer` that bridges klinecharts with the ERC-chart data service, provider feeds, and workspace state.
+3. **Indicator implementation** — indicator SDK and runtime feed calculation results into klinecharts through its technical indicator and overlay plugin APIs.
+
+The drawing subsystem (Epic 6) uses klinecharts built-in overlays where available plus tiny rectangle and text overlay extensions. ERC-chart does not implement a separate chart engine, coordinate renderer, or MVP drawing undo/redo stack.
+
+### Consequences
+
+- `packages/chart-core` directory and `@erc-chart/chart-core` package are removed from the monorepo, workspace map, contract baseline, and dependency rules.
+- Epic 5 scope reduces from building a chart engine to integrating and configuring klinecharts.
+- Epic 6 scope reduces from building a drawing subsystem to configuring klinecharts overlays, adding thin rectangle/text overlay definitions, and mapping session state.
+- `@erc-chart/renderer` gains a direct dependency on `klinecharts` instead of `@erc-chart/chart-core`.
+- Indicator plot rendering uses klinecharts custom technical indicator and overlay APIs instead of a custom `IndicatorPresentation` module.
+- Viewport, crosshair, and selection state ownership shifts from chart-core to the klinecharts instance, observed by the renderer.
+- The architecture no longer owns the chart rendering internals; klinecharts upstream changes become a dependency risk managed through version pinning.
+- Large-dataset performance (100,000 candles) must be validated against klinecharts rather than a custom engine.
+- Signal candidate contract and post-MVP signal features remain unchanged.
+
+## ADR-016 — Clean indicator authoring facade and synchronized runtime configuration
+
+Status: **Accepted**
+
+### Context
+
+The indicator runtime needs internal context, canonical series, provider subscriptions, multi-timeframe acquisition, revisions, worker transport, and klinecharts integration. Exposing those details directly would make plugin code tightly coupled to ERC-chart internals and force indicator authors to manage data plumbing manually.
+
+The product owner also confirmed that klinecharts indicator settings, such as RSI length and line color, must participate in ERC-chart configuration rather than being treated as ephemeral chart-only state.
+
+### Decision
+
+Expose a clean authoring facade based on direct series aliases and `ta.*` helpers. Never expose an internal `ctx` object to indicator authors.
+
+Preferred usage includes:
+
+```ts
+ta.rsi(14);
+ta.rsi(14, open);
+ta.rsi(14, "1h");
+ta.rsi({ length: 14, value: open, tf: "1h" });
+```
+
+Omitted source defaults to `close`; omitted timeframe defaults to the active chart timeframe. Each distinct `ta.*` call is treated internally as a declarative data/calculation dependency. ERC-chart discovers required history, resolves provider-native or safely derived timeframes, subscribes to updates, reuses canonical upstream series when safe, and processes later changes incrementally and silently from the plugin author's point of view.
+
+klinecharts remains responsible for chart/indicator presentation and its native settings UI. ERC-chart remains the owner of normalized indicator-instance configuration. Changes made through klinecharts settings are translated back into ERC-chart configuration. Calculation-affecting changes increment the configuration generation and invalidate stale results; style-only changes update presentation without unnecessary history reload or recalculation.
+
+Dynamic provider configuration follows the same principle: changes are validated and applied through controlled reconnect/rebuild/resubscription paths instead of mutable hidden side effects.
+
+Detailed implementation guidance is recorded in `SDK-IMPLEMENTATION-DECISIONS.md`.
+
+### Consequences
+
+- Indicator source code remains concise and independent of provider, renderer, transport, storage, and worker internals.
+- The SDK needs overload normalization and a canonical TA-function metadata/signature registry.
+- The runtime needs an internal dependency representation for `ta.*` calls, history-requirement discovery, MTF resolution, deduplication of compatible upstream data needs, and incremental snapshot/delta processing.
+- Data revision and indicator configuration generation must be tracked separately.
+- klinecharts instances are not persistence sources of truth; workspace persistence stores normalized ERC-chart indicator configuration.
+- Calculation inputs and presentation styles must be classified so style-only edits do not create unnecessary provider/worker churn.
+- Equivalent positional and object-form TA calls must produce equivalent semantics and contract tests.
+
+## ADR-017 — Stateful TA ownership and bounded indicator-result access
+
+Status: **Accepted**
+
+### Context
+
+klinecharts calculates registered indicators during its chart pipeline but does not expose a stable universal method dedicated to returning indicator values for signal evaluation. Its internal result representation is also a dependency-version compatibility concern. Signal processing needs only the latest or a bounded tail of normalized values, while the public `ta.*` facade requires deterministic incremental semantics that klinecharts does not provide as a Pine-like dependency engine.
+
+### Decision
+
+ERC-chart owns the public `ta.*` semantics, warm-up rules, retained rolling state, multi-timeframe dependencies, revisions, and performance contract. Steady-state SMA, EMA, RSI, ATR, and crossover updates are O(1); highest/lowest are amortized O(1). Initial history is O(N), while configuration changes and historical corrections rebuild only the required history or dirty range.
+
+The renderer owns one pinned klinecharts compatibility adapter. It validates and normalizes calculated `indicator.result` values against canonical candle timestamps/revisions and fails closed on an unknown layout. No plugin receives the raw chart instance or result object.
+
+A host-only bounded result reader supplies O(1) latest access and O(requested count) last-N access for signal processing. Finalized-only is the default for actionable signals; provisional evaluation is explicit. ERC-chart also owns the settings Save/apply transaction and uses verified klinecharts override APIs instead of assuming a generic settings-committed callback.
+
+### Consequences
+
+- klinecharts remains the chart scheduler, result-storage integration point, and presentation engine without becoming the SDK semantic authority.
+- A klinecharts version upgrade requires result-layout, readiness, override, and stale-callback compatibility fixtures.
+- Signal evaluation never scans complete candle history during an ordinary update.
+- Building-bar state is provisional and can be replaced without corrupting the last committed rolling state.
+- Implementation tasks must measure the required steady-state complexity bounds and reject oversized tail requests.

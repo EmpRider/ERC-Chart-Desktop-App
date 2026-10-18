@@ -1,6 +1,6 @@
 {
-  "nodeVersion": "24.18.1",
-  "npmVersion": "11.9.0",
+  "nodeVersion": "26.8.1",
+  "npmVersion": "12.0.2",
   "requiredScripts": [
     "format:check",
     "lint",
@@ -24,7 +24,6 @@
       "packages/electron-main",
       "packages/preload",
       "packages/renderer",
-      "packages/chart-core",
       "packages/data-service",
       "packages/provider-sdk",
       "packages/provider-runtime",
@@ -33,33 +32,34 @@
       "packages/storage"
     ],
     "packages/contracts": [],
-    "packages/electron-main": [
-      "packages/contracts",
-      "packages/provider-sdk",
-      "packages/indicator-sdk"
-    ],
-    "packages/preload": ["packages/contracts"],
-    "packages/renderer": [
-      "packages/contracts",
-      "packages/chart-core",
-      "packages/provider-sdk",
-      "packages/indicator-sdk"
-    ],
-    "packages/chart-core": ["packages/contracts"],
     "packages/data-service": [
       "packages/contracts",
       "packages/storage",
       "packages/provider-sdk"
     ],
-    "packages/provider-sdk": ["packages/contracts"],
+    "packages/electron-main": [
+      "packages/contracts",
+      "packages/provider-sdk",
+      "packages/indicator-sdk"
+    ],
+    "packages/indicator-runtime": [
+      "packages/contracts",
+      "packages/indicator-sdk"
+    ],
+    "packages/indicator-examples": ["packages/indicator-sdk"],
+    "packages/indicator-sdk": ["packages/contracts"],
+    "packages/preload": ["packages/contracts"],
+    "packages/provider-examples": ["packages/provider-sdk"],
     "packages/provider-runtime": [
       "packages/contracts",
       "packages/provider-sdk"
     ],
-    "packages/indicator-sdk": ["packages/contracts"],
-    "packages/indicator-runtime": [
+    "packages/provider-sdk": ["packages/contracts"],
+    "packages/renderer": [
       "packages/contracts",
-      "packages/indicator-sdk"
+      "packages/provider-sdk",
+      "packages/indicator-sdk",
+      "packages/indicator-runtime"
     ],
     "packages/storage": ["packages/contracts"],
     "packages/testing": [
@@ -67,7 +67,6 @@
       "packages/electron-main",
       "packages/preload",
       "packages/renderer",
-      "packages/chart-core",
       "packages/data-service",
       "packages/provider-sdk",
       "packages/provider-runtime",
@@ -75,5 +74,6 @@
       "packages/indicator-runtime",
       "packages/storage"
     ]
-  }
+  },
+  "dynamicImportFiles": ["packages/indicator-runtime/src/worker-entry.ts"]
 }

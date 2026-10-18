@@ -63,7 +63,12 @@ if (matchingRelease !== undefined && matchingRelease.draft !== true) {
 if (tagResponse.status === 200 && matchingRelease === undefined) {
   throw new Error(`Tag ${tag} exists without its release.`);
 }
-const curatedNotes = `# Development Version 1\n\nEpic: ECDD-53\n\nThis unsigned pre-release contains the reviewed Epic 1 secure desktop shell. It includes the custom renderer protocol, desktop trust boundaries, React tabs and one-to-four chart layouts, concurrent-instance proof, and the x64 per-user NSIS installer.\n\nKnown limitations: chart rendering, data-provider connectivity, persistence, plugins, and production code signing are delivered by later epics. Automatic updates are disabled.\n`;
+const curatedNotes = `# v1.1.2 Indicator Runtime Hotfix
+
+Fixes standard same-timeframe plugin indicators that could render only n/a by evaluating them directly from the exact chart candles instead of reacquiring redundant provider history.
+
+Provider-backed acquisition remains for multi-timeframe, explicitly different-timeframe, and Heikin Ashi inputs.
+`;
 const generatedNotes = await request(
   `${apiRoot}/releases/generate-notes`,
   {
@@ -90,7 +95,7 @@ const release =
         name: tag,
         body: notes,
         draft: true,
-        prerelease: true,
+        prerelease: false,
       }),
     },
     [201],
@@ -140,7 +145,7 @@ const published = await request(`${apiRoot}/releases/${release.id}`, {
     name: tag,
     body: notes,
     draft: false,
-    prerelease: true,
+    prerelease: false,
     target_commitish: commitSha,
   }),
 });

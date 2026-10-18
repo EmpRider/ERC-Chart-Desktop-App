@@ -7,16 +7,31 @@ function fail(summary) {
 
 export function aggregateResults({
   governance,
-  applicationLinux,
   applicationWindows,
   applicationPresent,
+  docsOnly = false,
+  governanceOnly = false,
   epicToMain,
 }) {
   if (governance !== "success")
     return fail(`Delivery gates failed: Governance result is '${governance}'.`);
 
+  if (docsOnly || governanceOnly) {
+    if (applicationWindows !== "skipped") {
+      return fail(
+        "Delivery gates failed: application jobs must be skipped for documentation-only or delivery-governance-only pull requests.",
+      );
+    }
+    return {
+      ok: true,
+      summary: docsOnly
+        ? "Delivery gates passed. Application gates are not applicable to documentation-only changes."
+        : "Delivery gates passed. Application gates are not applicable to delivery-governance-only changes.",
+    };
+  }
+
   if (!applicationPresent) {
-    if (applicationLinux !== "skipped" || applicationWindows !== "skipped") {
+    if (applicationWindows !== "skipped") {
       return fail(
         "Delivery gates failed: application jobs must be skipped when root package.json is absent.",
       );
@@ -28,35 +43,32 @@ export function aggregateResults({
     };
   }
 
-  if (applicationLinux !== "success") {
-    return fail(
-      `Delivery gates failed: Application / Linux result is '${applicationLinux}'.`,
-    );
-  }
-  if (epicToMain && applicationWindows !== "success") {
+  if (applicationWindows !== "success") {
     return fail(
       `Delivery gates failed: Application / Windows result is '${applicationWindows}'.`,
     );
   }
-  if (!epicToMain && applicationWindows !== "skipped") {
-    return fail(
-      "Delivery gates failed: Application / Windows must be skipped for task-to-epic pull requests.",
-    );
-  }
+
   return {
     ok: true,
     summary: epicToMain
       ? "Delivery gates passed for epic-to-main, including Windows packaging checks."
-      : "Delivery gates passed for task-to-epic; Windows packaging checks are not applicable.",
+      : "Delivery gates passed for task-to-epic on Windows; packaging checks are not applicable.",
   };
 }
 
 export function aggregateFromEnvironment(environment) {
+  const applicationPresent =
+    environment.APPLICATION_CONTRACT_PRESENT === undefined
+      ? environment.APPLICATION_PRESENT === "true"
+      : environment.APPLICATION_CONTRACT_PRESENT === "true";
+
   return aggregateResults({
     governance: environment.GOVERNANCE_RESULT,
-    applicationLinux: environment.APPLICATION_LINUX_RESULT,
     applicationWindows: environment.APPLICATION_WINDOWS_RESULT,
-    applicationPresent: environment.APPLICATION_PRESENT === "true",
+    applicationPresent,
+    docsOnly: environment.DOCS_ONLY === "true",
+    governanceOnly: environment.GOVERNANCE_ONLY === "true",
     epicToMain: environment.EPIC_TO_MAIN === "true",
   });
 }

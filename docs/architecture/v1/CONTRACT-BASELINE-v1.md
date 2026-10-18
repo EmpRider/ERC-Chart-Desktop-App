@@ -21,13 +21,12 @@ ECDD-54 must create or preserve these logical units. A unit may initially contai
 | `packages/contracts` | pure versioned data shapes, error codes, capability identifiers, and validators | no application package |
 | `packages/electron-main` | lifecycle, privileged APIs, process supervision, protocols, security policy | `contracts`, SDK public types where required |
 | `packages/preload` | narrow renderer bridge generated from allowlisted IPC contracts | `contracts` only |
-| `packages/renderer` | React shell, chart-slot composition, UI state and views | `contracts`, `chart-core`, public SDK types |
-| `packages/chart-core` | framework-independent chart domain, viewport, rendering and interaction | `contracts` only |
+| `packages/renderer` | React shell, chart-slot composition, klinecharts integration, UI state and views | `contracts`, `klinecharts`, public SDK types |
 | `packages/data-service` | canonical market-data state, candle building, cache coordination and revisions | `contracts`, `storage`, provider SDK public types |
-| `packages/provider-sdk` | provider manifest and adapter authoring API | `contracts` only |
+| `packages/provider-sdk` | provider definition/configuration, instrument/capability contracts, and minimal adapter authoring API | `contracts` only |
 | `packages/provider-runtime` | validated provider loading and utility-process protocol | `contracts`, `provider-sdk` |
-| `packages/indicator-sdk` | indicator manifest, inputs, outputs and plot authoring API | `contracts` only |
-| `packages/indicator-runtime` | worker lifecycle, dependency graph, budgets and output validation | `contracts`, `indicator-sdk` |
+| `packages/indicator-sdk` | indicator manifest, inputs, outputs, plots, direct series aliases, and clean `ta.*` authoring API; no runtime context exposure | `contracts` only |
+| `packages/indicator-runtime` | worker lifecycle, TA dependency normalization, history/MTF resolution coordination, dependency graph, config generations, budgets and output validation | `contracts`, `indicator-sdk` |
 | `packages/storage` | SQLite, workspace persistence and migration APIs | `contracts` only |
 | `packages/testing` | contract fixtures, builders and conformance helpers | public package APIs only |
 
@@ -37,14 +36,15 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 
 1. `packages/contracts` is the lowest-level shared package and imports no application package.
 2. SDK packages import only `packages/contracts` and language/runtime standard libraries.
-3. `packages/chart-core` imports no Electron, React, provider, storage, SQLite, Windows, Node privileged, or application-shell module.
-4. `packages/renderer` must not import Electron main internals, filesystem APIs, provider runtime internals, SQLite drivers, or Credential Manager code.
-5. `packages/preload` exposes only allowlisted, typed contracts and must not export raw `ipcRenderer`.
-6. Provider packages and runtime code must not import renderer or chart internals.
+3. `packages/renderer` integrates klinecharts for chart rendering and must not import Electron main internals, filesystem APIs, provider runtime internals, SQLite drivers, or Credential Manager code.
+4. `packages/preload` exposes only allowlisted, typed contracts and must not export raw `ipcRenderer`.
+5. Provider packages and runtime code must not import renderer or chart internals.
+6. Public provider SDK exports must not expose klinecharts/renderer objects, SQLite/storage internals, workspace documents, Electron/Node/process/filesystem internals, or raw Credential Manager APIs.
 7. Indicator packages and runtime code must not import renderer, provider, storage, Electron, filesystem, process, or credential internals.
-8. Storage code owns persistence implementation; consumers use its public API and do not import SQLite drivers directly.
-9. Cross-process messages use `packages/contracts`; private implementation objects never cross process boundaries.
-10. Circular package dependencies are forbidden and must fail CI.
+8. Public indicator SDK exports must not expose runtime-only context, worker transport, MessagePort, provider profile, cache, klinecharts instance, or revision-envelope implementation types.
+9. Storage code owns persistence implementation; consumers use its public API and do not import SQLite drivers directly.
+10. Cross-process messages use `packages/contracts`; private implementation objects never cross process boundaries.
+11. Circular package dependencies are forbidden and must fail CI.
 
 ## State ownership
 
@@ -53,17 +53,21 @@ Package names may use a repository scope such as `@erc-chart/*`. The directory n
 | Application/window lifecycle | `packages/electron-main` | none |
 | Privileged protocol and IPC authorization | `packages/electron-main` | `packages/preload` exposes an allowlisted view |
 | Renderer bridge surface | `packages/preload` | `packages/renderer` consumes the exposed API |
-| Viewport | `packages/renderer` | `packages/chart-core` receives immutable viewport input |
-| Selection | `packages/renderer` | `packages/chart-core` receives selection input |
-| Crosshair | `packages/chart-core` | `packages/renderer` observes crosshair output |
-| Session drawings | `packages/renderer` | `packages/chart-core` receives immutable drawing snapshots |
+| Viewport | klinecharts instance in `packages/renderer` | `packages/renderer` observes klinecharts viewport state |
+| Selection | klinecharts instance in `packages/renderer` | `packages/renderer` observes selection state |
+| Crosshair | klinecharts instance in `packages/renderer` | `packages/renderer` observes crosshair output |
+| Session drawings | klinecharts instance in `packages/renderer` | drawings are session-only, not persisted |
 | Canonical normalized market-data revision | `packages/data-service` | consumers receive versioned projections |
 | Provider connection and adapter state | provider utility process through `packages/provider-runtime` | main/data service receive contract messages |
+| Normalized provider-profile configuration | ERC-chart provider configuration model | provider runtime receives validated generation-scoped configuration; secrets remain external |
+| Provider instrument and capability snapshot | provider runtime from validated adapter output | renderer/data service consume provider-neutral projections |
 | Indicator calculation state | worker through `packages/indicator-runtime` | renderer/data service receive validated outputs |
+| Indicator TA dependency graph and configuration generation | `packages/indicator-runtime` | renderer observes status/results; data service receives provider-neutral series needs |
+| Normalized indicator-instance configuration | ERC-chart indicator configuration model | renderer/klinecharts and indicator runtime receive validated projections |
 | Database and workspace persistence | `packages/storage` | `packages/data-service` and `packages/electron-main` issue commands through the public storage API and do not write persistence directly |
 | Provider secrets | Windows Credential Manager through main-owned bridge | no package receives raw secret persistence access |
 
-A projection must not mutate the source-owned state or become an independent source of truth.
+A projection must not mutate the source-owned state or become an independent source of truth. In particular, a klinecharts technical-indicator instance may expose editable UI state, but it is not the persisted source of truth for ERC-chart indicator configuration.
 
 ## Contract families
 
@@ -81,6 +85,43 @@ The following identifiers are the initial compatibility versions. Package semant
 | Database | `databaseSchemaVersion` | `1` | storage |
 
 All persisted or cross-boundary documents must carry their applicable version identifier. Unknown major versions fail closed with a clear compatibility error.
+
+## Provider authoring contract rules
+
+The public provider contract must preserve the following semantic rules even if internal implementation changes:
+
+- provider plugins and indicator plugins remain separate installable plugin kinds;
+- the provider authoring surface has one provider-definition/registration concept plus a minimal runtime adapter contract;
+- the required adapter responsibilities are connect, disconnect, capability discovery, instrument discovery, historical data requests, and live subscription;
+- subscription disposal belongs to the returned subscription handle rather than a separate global provider method;
+- every historical/live market event is normalized into provider-neutral `Candle`, `Tick`, instrument, timeframe, and error contracts before Data Service consumes it;
+- instrument identity is explicit and deterministic; ERC-chart must not assume that an upstream stream contains only the currently visible symbol;
+- provider-specific request construction, authentication, remote paging/chunking, provider timestamp semantics, remote payload parsing, and protocol error interpretation stay inside the provider adapter/runtime boundary;
+- Data Service, not provider plugins, owns canonical storage/cache policy, overall history-gap decisions, canonical revisions, tick-to-candle construction, live building/finalized candle state, general MTF aggregation, and chart/indicator distribution;
+- providers declare native timeframe support and safe derivation/alignment metadata; Data Service performs general derived-timeframe aggregation;
+- compatible consumers may share upstream provider subscriptions without the provider plugin knowing how many charts/indicators consume the canonical series;
+- provider configuration is dynamic, but the minimum contract does not require an in-place `updateConfig()` method; controlled disconnect/recreate/reconnect is the safe default transition;
+- provider secrets remain external to normal provider configuration and are accessed only through a controlled credential lease;
+- provider network access is brokered and permission-controlled rather than unrestricted;
+- provider plugins never receive direct renderer/klinecharts, SQLite/storage, workspace, raw Electron/Node/process/filesystem, or raw Credential Manager access.
+
+The exact configuration DSL spelling, instrument catalogue paging shape, provider status enum, and internal transport envelopes are not public compatibility surfaces until separately frozen.
+
+## Indicator authoring contract rules
+
+The public indicator contract must preserve the following semantic rules even if internal implementation changes:
+
+- no public `ctx` or equivalent runtime-context object is required for normal authoring;
+- common canonical series are addressable directly through SDK-provided aliases;
+- omitted TA source defaults to `close` unless a function documents a different semantic default;
+- omitted TA timeframe defaults to the active chart timeframe;
+- positional overloads and equivalent object/named-parameter forms normalize to equivalent semantics;
+- requesting another timeframe creates a background data dependency and must not change the visible chart timeframe;
+- every TA dependency is resolved through provider-declared capabilities and provider-neutral data-service contracts;
+- calculation-affecting configuration changes and presentation-only style changes are distinguishable so generation invalidation is deterministic;
+- changes originating from klinecharts settings UI are normalized into the same indicator-instance configuration contract used by ERC-chart UI and workspace restore.
+
+Internal dependency keys, history planners, worker transport, cache identities, revision counters, and klinecharts objects are not public compatibility surfaces.
 
 ## Minimum contract content for ECDD-54
 
@@ -104,6 +145,7 @@ Business behavior, complete provider fields, indicator algorithms, database tabl
 - New enum values require consumers to handle an unknown value safely or require a version increase.
 - Every boundary validator rejects malformed, unsupported, or non-finite data.
 - Contract tests must include oldest-supported, current, malformed, unknown-version, and stale-generation fixtures.
+- Equivalent SDK overload forms are behavioral aliases; changing their normalized meaning is a breaking authoring-contract change.
 
 ## Change control
 
@@ -123,6 +165,8 @@ Implementation convenience alone is not sufficient justification for a boundary 
 The following values are intentionally not frozen here:
 
 - exact package/library versions: ECDD-54 implementation;
+- exact provider configuration DSL spelling, complete `Instrument` metadata field set, and large-catalogue paging shape: Epic 3 provider SDK implementation;
+- complete built-in `ta.*` function catalogue and exact overload set: Epic 7 indicator SDK implementation;
 - exact Binomo authentication and instrument fields: ECDD-43 before Epic 4 adapter implementation;
 - Credential Manager bridge library/API: ECDD-44 before Epic 2 credential implementation;
 - final SQLite busy timeout and cache limits: ECDD-45 and OD-007 before Epic 2 storage feature freeze;
@@ -130,4 +174,4 @@ The following values are intentionally not frozen here:
 - final code-signing and trusted plugin authority: OD-005 and OD-006 before their release/plugin gates;
 - final UI language and line/area source options: OD-008 and OD-009 before UI/chart feature freeze.
 
-These deferred details do not block ECDD-54 because the frozen package boundaries and version identifiers do not depend on their final values.
+These deferred details do not block the frozen package boundaries and version identifiers.

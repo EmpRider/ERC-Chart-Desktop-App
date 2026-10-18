@@ -1,0 +1,515 @@
+import { sameDrawing } from "./drawing-equality.js";
+import {
+  hostApiVersion,
+  indicatorContractVersion,
+  isInstalledIndicatorDefinition,
+  isIndicatorRuntimeSnapshot,
+  type Candle,
+} from "@erc-chart/contracts";
+import {
+  newPoint,
+  withAuthoringFrame,
+  type AuthoringFrame,
+  type KernelSlot,
+} from "./authoring-context.js";
+import type {
+  IndicatorDefinition,
+  IndicatorInputDefinition,
+  IndicatorInputValue,
+  IndicatorOverlay,
+  IndicatorPlotDefinition,
+  IndicatorResultPoint,
+} from "./index.js";
+import type {
+  IndicatorInstanceContext,
+  IndicatorPluginModule,
+  RuntimeIndicatorInstance,
+  SignalCandidate,
+} from "./internal/runtime-contracts.js";
+import { validateDrawingUsage } from "./internal/drawings.js";
+import { finalizePersistentState } from "./internal/persistent-state.js";
+import {
+  commitSignalEvents,
+  createSignalState,
+  resetSignalState,
+} from "./internal/signals.js";
+import { normalizeIndicatorParameters } from "./input.js";
+import { compilerPlotDefinitions } from "./plot.js";
+import type { SeriesNumber } from "./series.js";
+
+export interface IndicatorOptions {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly placement?: "overlay" | "pane";
+}
+
+export type IndicatorBar = Omit<
+  Candle,
+  "open" | "high" | "low" | "close" | "volume"
+> & {
+  readonly open: SeriesNumber;
+  readonly high: SeriesNumber;
+  readonly low: SeriesNumber;
+  readonly close: SeriesNumber;
+  readonly volume: SeriesNumber;
+  readonly index: number;
+  readonly isConfirmed: boolean;
+  readonly isHistory: boolean;
+  readonly isHistoryFinalizedTail: boolean;
+  readonly hl2: SeriesNumber;
+  readonly hlc3: SeriesNumber;
+  readonly ohlc4: SeriesNumber;
+};
+
+export type IndicatorCalculation = (bar: IndicatorBar) => void;
+
+function overlaysEqual(
+  left: readonly IndicatorOverlay[],
+  right: readonly IndicatorOverlay[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined || b === undefined || !sameDrawing(a, b)) return false;
+  }
+  return true;
+}
+
+function barContext(
+  candle: Candle,
+  index: number,
+  confirmed: boolean,
+  historyReplay: boolean,
+  historyFinalizedTail: boolean,
+): IndicatorBar {
+  return Object.freeze({
+    ...candle,
+    volume: candle.volume ?? Number.NaN,
+    index,
+    isConfirmed: confirmed,
+    isHistory: historyReplay,
+    isHistoryFinalizedTail: historyFinalizedTail,
+    hl2: (candle.high + candle.low) / 2,
+    hlc3: (candle.high + candle.low + candle.close) / 3,
+    ohlc4: (candle.open + candle.high + candle.low + candle.close) / 4,
+  }) as unknown as IndicatorBar;
+}
+
+/** Declares metadata once; executes one scalar calculation per building/finalized bar. */
+export function defineIndicator(
+  options: IndicatorOptions,
+  calculate: IndicatorCalculation,
+): IndicatorPluginModule {
+  const inputs: IndicatorInputDefinition[] = [];
+  const plots: IndicatorPlotDefinition[] = compilerPlotDefinitions();
+  const sample: Candle = {
+    instrumentId: "metadata" as Candle["instrumentId"],
+    timeframeId: "1m" as Candle["timeframeId"],
+    openTimeMs: 0,
+    open: 1,
+    high: 1,
+    low: 1,
+    close: 1,
+    volume: 0,
+  };
+  const discovery: AuthoringFrame = {
+    candle: sample,
+    sourceCandles: {},
+    sourceMetadata: {},
+    dependencyInputs: {},
+    phase: "building",
+    historyReplay: false,
+    historyFinalizedTail: false,
+    discovery: true,
+    kernels: [],
+    kernelIndex: 0,
+    inputs,
+    inputIndex: 0,
+    timeframeInputs: [],
+    candleTypeInputs: [],
+    taTimeframeIds: new Set(),
+    parameters: {},
+    plots,
+    plotIndex: 0,
+    point: newPoint(0),
+    overlayUpdates: new Map(),
+    signalDependencies: new Map(),
+    signalState: createSignalState(),
+    signals: [],
+    signalIndex: 0,
+  };
+  const run = (frame: AuthoringFrame, index: number): void => {
+    const result: unknown = withAuthoringFrame(frame, () =>
+      calculate(
+        barContext(
+          frame.candle,
+          index,
+          frame.phase === "finalized",
+          frame.historyReplay,
+          frame.historyFinalizedTail,
+        ),
+      ),
+    );
+    if (result !== undefined) {
+      // Surface the contract error synchronously and consume a rejected async callback result.
+      if (result instanceof Promise) void result.catch(() => undefined);
+      throw new TypeError(
+        "Indicator calculations must be synchronous and return no value.",
+      );
+    }
+  };
+  run(discovery, 0);
+  const requestedTimeframeId = discovery.indicatorTimeframeId;
+  const matchingTimeframeInputKey = discovery.indicatorTimeframeInputKey;
+  const requestedCandleType = discovery.indicatorCandleType;
+  const matchingCandleTypeInputKey = discovery.indicatorCandleTypeInputKey;
+  const definition: IndicatorDefinition = Object.freeze({
+    ...options,
+    indicatorContractVersion,
+    hostCompatibility: {
+      minimumHostApiVersion: hostApiVersion,
+      maximumHostApiVersion: hostApiVersion,
+    },
+    placement: options.placement ?? "overlay",
+    requiresLiveTicks: false,
+    inputs: Object.freeze(inputs.map((value) => Object.freeze(value))),
+    outputs: Object.freeze(
+      plots.map((value) =>
+        Object.freeze({
+          key: value.outputKey ?? value.key,
+          label: value.label ?? value.key,
+        }),
+      ),
+    ),
+    plots: Object.freeze(plots.map((value) => Object.freeze(value))),
+    ...(requestedTimeframeId === undefined &&
+    requestedCandleType === undefined &&
+    discovery.taTimeframeIds.size === 0
+      ? {}
+      : {
+          source: Object.freeze({
+            ...(requestedTimeframeId === undefined
+              ? {}
+              : {
+                  timeframe: Object.freeze({
+                    requestedTimeframeId,
+                    ...(matchingTimeframeInputKey === undefined
+                      ? {}
+                      : { inputKey: matchingTimeframeInputKey }),
+                  }),
+                }),
+            ...(requestedCandleType === undefined
+              ? {}
+              : {
+                  candleType: Object.freeze({
+                    requestedCandleType,
+                    ...(matchingCandleTypeInputKey === undefined
+                      ? {}
+                      : { inputKey: matchingCandleTypeInputKey }),
+                  }),
+                }),
+            taTimeframeIds: Object.freeze([...discovery.taTimeframeIds]),
+          }),
+        }),
+  });
+  if (!isInstalledIndicatorDefinition(definition))
+    throw new TypeError(
+      "Generated indicator metadata is invalid; check names, inputs and plot options.",
+    );
+
+  return Object.freeze({
+    definition,
+    createInstance(
+      parameters: Readonly<Record<string, IndicatorInputValue>>,
+      context: IndicatorInstanceContext,
+    ): RuntimeIndicatorInstance {
+      const normalizedParameters = normalizeIndicatorParameters(
+        definition.inputs,
+        parameters,
+      );
+      let kernels: KernelSlot[] = [];
+      let points: IndicatorResultPoint[] = [];
+      let committedDrawings = new Map<string, IndicatorOverlay>();
+      let committedOverlays: readonly IndicatorOverlay[] = [];
+      let overlays: readonly IndicatorOverlay[] = [];
+      let signals: SignalCandidate[] = [];
+      const signalState = createSignalState();
+      let visualRevision = 0;
+      let finalizedCount = 0;
+      let lastFinalized: Candle | undefined;
+      let building: Candle | undefined;
+      let disposed = false;
+      let failed = false;
+      const dependencyPointMaps = new Map<
+        readonly IndicatorResultPoint[],
+        Map<number, IndicatorResultPoint>
+      >();
+      const dependencyInputs: Record<
+        string,
+        {
+          readonly outputKey: string;
+          readonly points: Map<number, IndicatorResultPoint>;
+        }
+      > = Object.fromEntries(
+        Object.entries(context.dependencyInputs ?? {}).map(
+          ([key, dependency]) => {
+            let points = dependencyPointMaps.get(dependency.points);
+            if (points === undefined) {
+              points = new Map(
+                dependency.points.map((point) => [point.openTimeMs, point]),
+              );
+              dependencyPointMaps.set(dependency.points, points);
+            }
+            return [key, { outputKey: dependency.outputKey, points }];
+          },
+        ),
+      );
+      const updateDependencyInputs = (
+        updates: Readonly<
+          Record<
+            string,
+            {
+              readonly outputKey: string;
+              readonly points: readonly IndicatorResultPoint[];
+            }
+          >
+        >,
+      ): void => {
+        for (const [key, dependency] of Object.entries(updates)) {
+          const current = dependencyInputs[key];
+          const points =
+            current?.points ?? new Map<number, IndicatorResultPoint>();
+          dependencyInputs[key] = { outputKey: dependency.outputKey, points };
+          for (const point of dependency.points)
+            points.set(point.openTimeMs, point);
+          while (points.size > 100_000) {
+            const oldest = points.keys().next().value;
+            if (oldest === undefined) break;
+            points.delete(oldest);
+          }
+        }
+      };
+      const validate = (candle: Candle): void => {
+        if (disposed) throw new Error("Indicator instance was disposed.");
+        if (failed)
+          throw new Error(
+            "Indicator calculation failed; reload history before continuing.",
+          );
+        if (
+          candle.instrumentId !== context.instrumentId ||
+          candle.timeframeId !== context.timeframeId ||
+          !Number.isSafeInteger(candle.openTimeMs) ||
+          candle.openTimeMs < 0 ||
+          ![candle.open, candle.high, candle.low, candle.close].every(
+            Number.isFinite,
+          )
+        )
+          throw new TypeError("Candle does not match the indicator instance.");
+      };
+      const evaluate = (
+        candle: Candle,
+        phase: "building" | "finalized",
+        historyReplay = false,
+        historyFinalizedTail = false,
+      ): void => {
+        validate(candle);
+        const previousOverlays = overlays;
+        const frame: AuthoringFrame = {
+          candle,
+          sourceCandles: context.sourceCandles ?? {},
+          sourceMetadata: context.sourceMetadata ?? {},
+          dependencyInputs,
+          phase,
+          historyReplay,
+          historyFinalizedTail,
+          discovery: false,
+          kernels,
+          kernelIndex: 0,
+          inputs,
+          inputIndex: 0,
+          timeframeInputs: [],
+          candleTypeInputs: [],
+          taTimeframeIds: new Set(),
+          parameters: normalizedParameters,
+          plots,
+          plotIndex: 0,
+          point: newPoint(candle.openTimeMs),
+          overlayUpdates: new Map(),
+          signalDependencies: new Map(),
+          signalState,
+          signals: [],
+          signalIndex: 0,
+        };
+        try {
+          run(frame, finalizedCount);
+          validateDrawingUsage(frame);
+          if (
+            frame.kernelIndex !== discovery.kernelIndex ||
+            frame.inputIndex !== inputs.length ||
+            frame.plotIndex !== discovery.plotIndex ||
+            kernels.some(
+              (slot, index) =>
+                slot.signature.split(":")[0] !==
+                discovery.kernels[index]?.signature.split(":")[0],
+            )
+          )
+            throw new Error(
+              "Input, TA and plot calls must run in the same order on every bar. Use null to hide plots.",
+            );
+          let nextDrawings = committedDrawings;
+          if (frame.overlayUpdates.size > 0) {
+            nextDrawings = new Map(committedDrawings);
+            for (const [id, value] of frame.overlayUpdates) {
+              if (value === null) nextDrawings.delete(id);
+              else nextDrawings.set(id, value);
+            }
+            while (nextDrawings.size > 2_000) {
+              const oldest = nextDrawings.keys().next().value;
+              if (oldest !== undefined) nextDrawings.delete(oldest);
+            }
+            const candidateOverlays = [...nextDrawings.values()];
+            overlays = overlaysEqual(candidateOverlays, previousOverlays)
+              ? previousOverlays
+              : candidateOverlays;
+          } else overlays = committedOverlays;
+          // Validate only this point and changed bounded geometry, never the historical point array.
+          const emitted: SignalCandidate[] = frame.signals.map((value) => ({
+            signalContractVersion: indicatorContractVersion,
+            id: value.eventKey,
+            indicatorId: definition.id,
+            instrumentId: context.instrumentId,
+            timeframeId: context.timeframeId,
+            occurredAtMs: value.occurredAtMs,
+            direction: value.direction,
+            finalized: true,
+            ...(value.sources.length === 0 ? {} : { sources: value.sources }),
+            ...(value.confidence === undefined
+              ? {}
+              : { confidence: value.confidence }),
+          }));
+          if (
+            !isIndicatorRuntimeSnapshot({
+              points: [frame.point],
+              overlays: frame.overlayUpdates.size > 0 ? overlays : [],
+              signals: emitted,
+            })
+          )
+            throw new TypeError(
+              "Indicator produced an invalid plot or drawing.",
+            );
+          if (finalizedCount >= 100_000)
+            throw new RangeError(
+              "Reload retained history at the 100,000-candle limit.",
+            );
+          finalizePersistentState(frame);
+          points[finalizedCount] = frame.point;
+          if (overlays !== previousOverlays || emitted.length > 0)
+            visualRevision += 1;
+          if (phase === "finalized") {
+            commitSignalEvents(signalState, frame.signals);
+            signals.push(...emitted);
+            if (signals.length > 10_000)
+              signals.splice(0, signals.length - 10_000);
+            committedDrawings = nextDrawings;
+            committedOverlays = overlays;
+            lastFinalized = { ...candle };
+            finalizedCount += 1;
+            building = undefined;
+          } else building = { ...candle };
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      };
+      return {
+        updateDependencyInputs,
+        onHistory(history) {
+          if (disposed) throw new Error("Indicator instance was disposed.");
+          if (history.length > 100_000)
+            throw new RangeError("Indicator history exceeds 100,000 candles.");
+          kernels = [];
+          points = [];
+          signals = [];
+          resetSignalState(signalState);
+          committedDrawings = new Map();
+          committedOverlays = [];
+          overlays = [];
+          finalizedCount = 0;
+          lastFinalized = undefined;
+          building = undefined;
+          failed = false;
+          visualRevision = 0;
+          let previous = -1;
+          const lastFinalizedIndex = history.length - 2;
+          for (let index = 0; index < history.length; index += 1) {
+            const candle = history[index];
+            if (candle === undefined || candle.openTimeMs <= previous) {
+              failed = true;
+              throw new RangeError(
+                "History must be strictly ordered and unique.",
+              );
+            }
+            evaluate(
+              candle,
+              index === history.length - 1 ? "building" : "finalized",
+              true,
+              index === lastFinalizedIndex,
+            );
+            previous = candle.openTimeMs;
+          }
+        },
+        onBuildingBar(candle) {
+          validate(candle);
+          if (
+            (lastFinalized !== undefined &&
+              candle.openTimeMs <= lastFinalized.openTimeMs) ||
+            (building !== undefined && candle.openTimeMs < building.openTimeMs)
+          )
+            throw new Error(
+              "Building update is older than the current indicator state; reload corrected history.",
+            );
+          if (building !== undefined && candle.openTimeMs > building.openTimeMs)
+            evaluate(building, "finalized");
+          evaluate(candle, "building");
+        },
+        onFinalizedBar(candle) {
+          validate(candle);
+          if (lastFinalized?.openTimeMs === candle.openTimeMs) {
+            if (
+              ["open", "high", "low", "close", "volume"].every(
+                (key) =>
+                  candle[key as keyof Candle] ===
+                  lastFinalized?.[key as keyof Candle],
+              )
+            )
+              return;
+            throw new Error(
+              "A finalized-bar correction requires a history rebuild.",
+            );
+          }
+          if (
+            (lastFinalized !== undefined &&
+              candle.openTimeMs < lastFinalized.openTimeMs) ||
+            (building !== undefined &&
+              candle.openTimeMs !== building.openTimeMs)
+          )
+            throw new Error("Finalized update does not match the current bar.");
+          evaluate(candle, "finalized");
+        },
+        snapshot: () => ({ points, overlays, signals, visualRevision }),
+        dispose() {
+          disposed = true;
+          kernels = [];
+          points = [];
+          signals = [];
+          resetSignalState(signalState);
+          committedDrawings.clear();
+          overlays = [];
+          committedOverlays = [];
+        },
+      };
+    },
+  });
+}

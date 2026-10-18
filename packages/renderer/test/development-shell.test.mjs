@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ipcContractVersion } from "@erc-chart/contracts";
-import { createElement } from "react";
+import { parseHTML } from "linkedom";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   ApplicationShell,
@@ -12,17 +14,56 @@ import {
   workspaceReducer,
 } from "../dist/index.js";
 
-function renderShell(connection, workspace = createInitialWorkspace()) {
+function renderShell(
+  connection,
+  workspace = createInitialWorkspace(),
+  overrides = {},
+) {
   return renderToStaticMarkup(
     createElement(ApplicationShell, {
       connection,
       workspace,
       onWorkspaceAction: () => undefined,
+      ...overrides,
     }),
   );
 }
 
-test("renders the semantic dark application shell without deferred controls", () => {
+async function mountShell(t, workspace, onWorkspaceAction, overrides = {}) {
+  const { document, window } = parseHTML(
+    '<!doctype html><html><body><main id="test-root"></main></body></html>',
+  );
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.document = document;
+  globalThis.window = window;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.getElementById("test-root");
+  assert.ok(container);
+  const root = createRoot(container);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  });
+
+  await act(async () => {
+    root.render(
+      createElement(ApplicationShell, {
+        connection: connectingShellState,
+        workspace,
+        onWorkspaceAction,
+        ...overrides,
+      }),
+    );
+  });
+
+  return document;
+}
+
+test("renders the semantic dark application shell without a global provider import action", () => {
   const markup = renderShell(connectingShellState);
 
   assert.match(markup, /<header/);
@@ -32,7 +73,255 @@ test("renders the semantic dark application shell without deferred controls", ()
   assert.match(markup, /Desktop workspace/);
   assert.match(markup, /Workspace ready/);
   assert.match(markup, /Connecting secure bridge/);
-  assert.doesNotMatch(markup, /settings|provider/i);
+  assert.doesNotMatch(markup, /Import provider/);
+  assert.doesNotMatch(markup, /settings/i);
+});
+
+test("renders loaded provider candles in the primary chart workspace", () => {
+  const workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  const markup = renderShell(connectingShellState, workspace, {
+    providerSession: {
+      profileId: "erc.provider.binomo.default",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "1m",
+      candles: [
+        {
+          instrumentId: "Z-CRY/IDX",
+          timeframeId: "1m",
+          openTimeMs: 1_800_000_000_000,
+          open: 100,
+          high: 102,
+          low: 99,
+          close: 101,
+        },
+      ],
+    },
+  });
+  const { document } = parseHTML(markup);
+
+  assert.match(markup, /Binomo connected/);
+  assert.match(markup, /Z-CRY\/IDX/);
+  assert.equal(document.querySelector(".provider-chart-meta"), null);
+  assert.ok(document.querySelector("[data-provider-chart]"));
+  assert.equal(
+    document.querySelector(".provider-indicator-button")?.textContent,
+    "Indicator",
+  );
+  assert.equal(document.querySelector(".chart-provider-select"), null);
+  assert.doesNotMatch(markup, /Awaiting market data/);
+});
+
+test("newly added configured workspaces render indicator controls", () => {
+  let workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "erc.provider.binomo.default",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  workspace = workspaceReducer(workspace, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-1",
+    persisted: {
+      ...workspace.tabs[0].slots[0].persisted,
+      chartType: "heikin-ashi",
+    },
+  });
+  workspace = workspaceReducer(workspace, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+
+  const markup = renderShell(connectingShellState, workspace, {
+    providerSession: {
+      profileId: "erc.provider.binomo.default",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "1m",
+      availableTimeframeIds: ["1m", "2m", "3m", "5m"],
+      candles: [],
+    },
+  });
+  const { document } = parseHTML(markup);
+
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 2);
+  assert.equal(
+    document.querySelectorAll(".provider-indicator-button").length,
+    2,
+  );
+  assert.equal(workspace.tabs[0].slots[1].persisted?.chartType, "heikin-ashi");
+});
+
+test("renders provider connection status beside the secure bridge status", () => {
+  const markup = renderShell(connectingShellState, createInitialWorkspace(), {
+    providerSession: {
+      profileId: "erc.provider.binomo.default",
+      providerId: "erc.provider.binomo",
+      providerName: "Binomo",
+      instrument: {
+        id: "Z-CRY/IDX",
+        symbol: "Z-CRY/IDX",
+        name: "Z-CRY/IDX",
+      },
+      timeframeId: "1m",
+      candles: [],
+    },
+    onPluginManagerOpen: () => undefined,
+  });
+  const { document } = parseHTML(markup);
+  const runtimeState = document.querySelector(".runtime-state");
+  const bridgeStatus = runtimeState?.querySelector("[data-status]");
+  const providerStatus = runtimeState?.querySelector(".provider-loaded");
+  const toolbar = document.querySelector(".workspace-toolbar");
+
+  assert.ok(bridgeStatus);
+  assert.ok(providerStatus);
+  assert.equal(bridgeStatus.nextElementSibling, providerStatus);
+  assert.equal(providerStatus.textContent?.trim(), "Binomo connected");
+  assert.equal(toolbar?.querySelector(".provider-loaded"), null);
+  const pluginManager = toolbar?.querySelector(".plugin-manage");
+  assert.ok(pluginManager);
+  assert.equal(pluginManager.textContent?.trim(), "Plugin Manager");
+});
+
+test("changes provider at chart-tab scope", async (t) => {
+  const workspace = workspaceReducer(createInitialWorkspace(), {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-missing",
+    instrumentId: "EURUSD",
+    timeframeSeconds: 60,
+  });
+  const selections = [];
+  const document = await mountShell(t, workspace, () => undefined, {
+    providerSessions: [
+      {
+        profileId: "profile-a",
+        providerId: "erc.provider.fixture",
+        providerName: "Fixture",
+        instrument: { id: "EURUSD", symbol: "EURUSD", name: "EURUSD" },
+        timeframeId: "1m",
+        candles: [],
+      },
+      {
+        profileId: "profile-b",
+        providerId: "erc.provider.fixture",
+        providerName: "Fixture 2",
+        instrument: { id: "BTCUSD", symbol: "BTCUSD", name: "BTCUSD" },
+        timeframeId: "1m",
+        candles: [],
+      },
+    ],
+    onProviderSessionSelect: (tabId, profileId) =>
+      selections.push([tabId, profileId]),
+  });
+  const select = document.querySelector(".tab-provider-select select");
+  assert.ok(select);
+  assert.equal(select.getAttribute("aria-label"), "Provider for Chart 1");
+  assert.equal(document.querySelector(".chart-provider-select"), null);
+  Object.defineProperty(select, "value", {
+    configurable: true,
+    value: "profile-b",
+  });
+  await act(async () =>
+    select.dispatchEvent(
+      new globalThis.window.Event("change", { bubbles: true }),
+    ),
+  );
+  assert.deepEqual(selections, [["tab-1", "profile-b"]]);
+});
+
+test("renders an independent timeframe selector for each chart workspace", () => {
+  const withSecondWorkspace = workspaceReducer(createInitialWorkspace(), {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const configured = workspaceReducer(withSecondWorkspace, {
+    type: "configure-tab-provider",
+    tabId: "tab-1",
+    providerProfileId: "profile-a",
+    instrumentId: "Z-CRY/IDX",
+    timeframeSeconds: 60,
+  });
+  const secondAtThreeMinutes = workspaceReducer(configured, {
+    type: "configure-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-2",
+    persisted: {
+      ...configured.tabs[0].slots[1].persisted,
+      timeframeSeconds: 180,
+    },
+  });
+  const baseSession = {
+    profileId: "profile-a",
+    providerId: "erc.provider.binomo",
+    providerName: "Binomo",
+    instrument: {
+      id: "Z-CRY/IDX",
+      symbol: "Z-CRY/IDX",
+      name: "Z-CRY/IDX",
+    },
+    availableTimeframeIds: ["1m", "2m", "3m", "5m"],
+    candles: [],
+  };
+  const markup = renderShell(connectingShellState, secondAtThreeMinutes, {
+    providerSessions: [
+      { ...baseSession, timeframeId: "1m" },
+      { ...baseSession, timeframeId: "3m" },
+    ],
+    onWorkspaceTimeframeSelect: () => undefined,
+  });
+  const { document } = parseHTML(markup);
+  const selectors = document.querySelectorAll(".provider-timeframe-select");
+
+  assert.equal(selectors.length, 2);
+  assert.equal(selectors[0]?.getAttribute("value"), null);
+  assert.equal(
+    selectors[0]?.querySelector("option[selected]")?.textContent,
+    "1m",
+  );
+  assert.equal(
+    selectors[1]?.querySelector("option[selected]")?.textContent,
+    "3m",
+  );
+  assert.equal(document.querySelector(".provider-chart-meta"), null);
+  const navigationGroups = document.querySelectorAll(
+    ".provider-chart-navigation",
+  );
+  assert.equal(navigationGroups.length, 2);
+  for (const navigationGroup of navigationGroups) {
+    assert.equal(navigationGroup.querySelectorAll("button").length, 5);
+    assert.deepEqual(
+      Array.from(navigationGroup.querySelectorAll("button")).map((button) =>
+        button.getAttribute("aria-label"),
+      ),
+      [
+        "Pan chart left",
+        "Go to latest candles",
+        "Pan chart right",
+        "Zoom out",
+        "Zoom in",
+      ],
+    );
+  }
 });
 
 test("resolves and renders a connected secure bridge", async () => {
@@ -87,23 +376,158 @@ test("fails closed on the initial render when the preload bridge is missing", ()
   assert.doesNotMatch(markup, /Connecting secure bridge/);
 });
 
-test("renders accessible tabs and exact one-to-four layout state", () => {
+test("renders accessible chart tabs and one enabled workspace add control", () => {
+  const markup = renderShell(connectingShellState);
+  const { document } = parseHTML(markup);
+  const addWorkspace = document.querySelector(".workspace-add");
+
+  assert.ok(addWorkspace);
+  assert.equal(addWorkspace.getAttribute("aria-label"), "Add workspace");
+  assert.equal(addWorkspace.hasAttribute("disabled"), false);
+  assert.equal(addWorkspace.getAttribute("title"), null);
+  const closeWorkspace = document.querySelector(".workspace-close");
+  assert.ok(closeWorkspace);
+  assert.equal(closeWorkspace.hasAttribute("disabled"), true);
+  assert.equal(
+    closeWorkspace.getAttribute("title"),
+    "At least one workspace must remain",
+  );
+  assert.equal(document.querySelector(".layout-selector"), null);
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 1);
+  assert.ok(document.querySelector('[role="tablist"]'));
+  assert.ok(document.querySelector('[role="tab"][aria-selected="true"]'));
+});
+
+test("disables workspace addition at four and exposes the maximum hint", () => {
   const initial = createInitialWorkspace();
-  const added = workspaceReducer(initial, { type: "add-tab" });
-  const four = workspaceReducer(added, {
-    type: "set-layout",
-    tabId: "tab-2",
-    layoutSize: 4,
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const four = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
   });
   const markup = renderShell(connectingShellState, four);
+  const { document } = parseHTML(markup);
+  const addWorkspace = document.querySelector(".workspace-add");
+  const chartSlots = document.querySelectorAll("[data-chart-slot]");
 
-  assert.match(markup, /role="tablist"/);
-  assert.match(markup, /role="tab"[^>]*aria-selected="true"[^>]*>Chart 2/);
-  assert.match(markup, /aria-label="Add chart tab"/);
-  assert.match(
-    markup,
-    /aria-label="Use four chart layout"[^>]*aria-pressed="true"/,
+  assert.ok(addWorkspace);
+  assert.equal(addWorkspace.hasAttribute("disabled"), true);
+  assert.equal(addWorkspace.getAttribute("title"), "Maximum 4 workspaces");
+  assert.equal(
+    addWorkspace.getAttribute("aria-label"),
+    "Add workspace. Maximum 4 workspaces",
   );
-  assert.equal((markup.match(/data-chart-slot=/g) ?? []).length, 4);
-  assert.match(markup, /data-layout="4"/);
+  assert.match(
+    document.querySelector('.workspace-toolbar [role="status"]')?.textContent ??
+      "",
+    /Maximum 4 workspaces/,
+  );
+  assert.equal(chartSlots.length, 4);
+  assert.equal(document.querySelectorAll(".workspace-close").length, 4);
+  assert.ok(chartSlots[0]?.querySelector(".workspace-close"));
+  assert.equal(
+    Array.from(document.querySelectorAll(".workspace-close")).some((button) =>
+      button.hasAttribute("disabled"),
+    ),
+    false,
+  );
+  assert.equal(
+    document.querySelector(".chart-grid")?.getAttribute("data-layout"),
+    "4",
+  );
+});
+
+test("re-enables addition after an added workspace is removed", () => {
+  const initial = createInitialWorkspace();
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const four = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const maximumMarkup = renderShell(connectingShellState, four);
+  const maximumDocument = parseHTML(maximumMarkup).document;
+  const maximumAdd = maximumDocument.querySelector(".workspace-add");
+
+  assert.ok(maximumAdd);
+  assert.equal(maximumAdd.hasAttribute("disabled"), true);
+  assert.equal(maximumAdd.getAttribute("title"), "Maximum 4 workspaces");
+
+  const removed = workspaceReducer(four, {
+    type: "remove-workspace",
+    tabId: "tab-1",
+    workspaceId: "tab-1-chart-3",
+  });
+  const markup = renderShell(connectingShellState, removed);
+  const { document } = parseHTML(markup);
+  const addWorkspace = document.querySelector(".workspace-add");
+  const closeWorkspace = document.querySelector(".workspace-close");
+
+  assert.ok(addWorkspace);
+  assert.equal(addWorkspace.hasAttribute("disabled"), false);
+  assert.equal(addWorkspace.getAttribute("title"), null);
+  assert.equal(addWorkspace.getAttribute("aria-label"), "Add workspace");
+  assert.equal(
+    document.querySelector('.workspace-toolbar [role="status"]'),
+    null,
+  );
+  assert.equal(document.querySelectorAll("[data-chart-slot]").length, 3);
+  assert.equal(document.querySelectorAll(".workspace-close").length, 3);
+  assert.equal(closeWorkspace?.getAttribute("aria-label"), "Close workspace 1");
+});
+
+test("dispatches the exact add workspace action", async (t) => {
+  const actions = [];
+  const document = await mountShell(t, createInitialWorkspace(), (action) => {
+    actions.push(action);
+  });
+  const addWorkspace = document.querySelector(".workspace-add");
+
+  assert.ok(addWorkspace);
+  await act(async () => addWorkspace.click());
+  assert.deepEqual(actions, [{ type: "add-workspace", tabId: "tab-1" }]);
+});
+
+test("dispatches the exact close action for an arbitrary workspace", async (t) => {
+  const initial = createInitialWorkspace();
+  const two = workspaceReducer(initial, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const three = workspaceReducer(two, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const four = workspaceReducer(three, {
+    type: "add-workspace",
+    tabId: "tab-1",
+  });
+  const actions = [];
+  const document = await mountShell(t, four, (action) => {
+    actions.push(action);
+  });
+  const closeWorkspaces = document.querySelectorAll(".workspace-close");
+
+  assert.equal(closeWorkspaces.length, 4);
+  await act(async () => closeWorkspaces[2]?.click());
+  assert.deepEqual(actions, [
+    {
+      type: "remove-workspace",
+      tabId: "tab-1",
+      workspaceId: "tab-1-chart-3",
+    },
+  ]);
 });
