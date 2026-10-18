@@ -1589,6 +1589,41 @@ textarea {
   background: #24151b;
   color: #ff9ca7;
 }
+.provider-drawing-restyle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.4rem 0.25rem;
+  border-top: 1px solid #1b2838;
+  background: #0d1520;
+}
+.provider-drawing-restyle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: #8291a5;
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
+}
+.provider-drawing-restyle-label input[type="color"] {
+  width: 100%;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid #1b2838;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+.provider-drawing-restyle-label input[type="range"] {
+  width: 100%;
+  accent-color: #2196f3;
+  cursor: pointer;
+}
+.provider-drawing-restyle-label span {
+  color: #5a6a7e;
+  font-size: 0.6rem;
+  text-align: right;
+}
 
 .provider-indicator-settings {
   position: absolute;
