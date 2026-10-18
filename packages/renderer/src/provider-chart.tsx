@@ -35,6 +35,12 @@ import {
   updateBuiltInIndicatorParameters,
   type BuiltInIndicatorDefinition,
 } from "./builtin-indicators.js";
+import {
+  createDrawingHistory,
+  captureDrawingSnapshot,
+  restoreDrawingSnapshot,
+  type DrawingHistory,
+} from "./drawing-persistence.js";
 import { registerApplicationBuiltInIndicators } from "./kline-builtins.js";
 import {
   createPluginWorkspaceIndicator,
@@ -81,6 +87,7 @@ const coreDrawingTools = [
   { name: "priceChannelLine", label: "Price channel", glyph: "∥" },
   { name: "parallelStraightLine", label: "Parallel lines", glyph: "//" },
   { name: "brush", label: "Brush", glyph: "✎" },
+  { name: "rect", label: "Rectangle", glyph: "▭" },
   { name: "simpleAnnotation", label: "Annotation", glyph: "A" },
 ] as const;
 
@@ -634,6 +641,14 @@ export function ProviderChart({
   const authoritativeResetCandles = useRef<readonly Candle[] | undefined>(
     undefined,
   );
+  const drawingHistory = useRef<DrawingHistory>(createDrawingHistory());
+  const [canUndoDrawing, setCanUndoDrawing] = useState(false);
+  const [canRedoDrawing, setCanRedoDrawing] = useState(false);
+  const [selectedOverlayId, setSelectedOverlayId] = useState<
+    string | undefined
+  >(undefined);
+  const [overlayColor, setOverlayColor] = useState("#2196f3");
+  const [overlayWidth, setOverlayWidth] = useState(1);
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [timezone, setTimezone] = useState("Etc/UTC");
@@ -1500,20 +1515,144 @@ export function ProviderChart({
               key={tool.name}
               title={tool.label}
               aria-label={tool.label}
-              onClick={() => chartInstance.current?.createOverlay(tool.name)}
+              onClick={() => {
+                const chart = chartInstance.current;
+                if (chart === undefined) return;
+                const overlayId = chart.createOverlay(tool.name) as
+                  string | null;
+                if (overlayId !== null) setSelectedOverlayId(overlayId);
+                // ponytail: klinecharts has no onOverlayDraw event; capture on click is best-effort for undo stack
+                setTimeout(() => {
+                  const snapshot = captureDrawingSnapshot(chart);
+                  drawingHistory.current.push(snapshot);
+                  setCanUndoDrawing(drawingHistory.current.canUndo());
+                  setCanRedoDrawing(drawingHistory.current.canRedo());
+                }, 0);
+              }}
             >
               <span aria-hidden="true">{tool.glyph}</span>
             </button>
           ))}
           <button
             type="button"
+            title="Undo drawing"
+            aria-label="Undo drawing"
+            disabled={!canUndoDrawing}
+            onClick={() => {
+              const chart = chartInstance.current;
+              if (chart === undefined) return;
+              const snapshot = drawingHistory.current.undo();
+              if (snapshot !== undefined)
+                restoreDrawingSnapshot(chart, snapshot);
+              setCanUndoDrawing(drawingHistory.current.canUndo());
+              setCanRedoDrawing(drawingHistory.current.canRedo());
+            }}
+          >
+            <span aria-hidden="true">↩</span>
+          </button>
+          <button
+            type="button"
+            title="Redo drawing"
+            aria-label="Redo drawing"
+            disabled={!canRedoDrawing}
+            onClick={() => {
+              const chart = chartInstance.current;
+              if (chart === undefined) return;
+              const snapshot = drawingHistory.current.redo();
+              if (snapshot !== undefined)
+                restoreDrawingSnapshot(chart, snapshot);
+              setCanUndoDrawing(drawingHistory.current.canUndo());
+              setCanRedoDrawing(drawingHistory.current.canRedo());
+            }}
+          >
+            <span aria-hidden="true">↪</span>
+          </button>
+          <button
+            type="button"
             className="provider-drawing-clear"
             title="Clear drawings"
             aria-label="Clear drawings"
-            onClick={() => chartInstance.current?.removeOverlay()}
+            onClick={() => {
+              const chart = chartInstance.current;
+              if (chart === undefined) return;
+              chart.removeOverlay();
+              setSelectedOverlayId(undefined);
+              const snapshot = captureDrawingSnapshot(chart);
+              drawingHistory.current.push(snapshot);
+              setCanUndoDrawing(drawingHistory.current.canUndo());
+              setCanRedoDrawing(drawingHistory.current.canRedo());
+            }}
           >
             <span aria-hidden="true">×</span>
           </button>
+          {selectedOverlayId !== undefined && (
+            <div
+              className="provider-drawing-restyle"
+              role="group"
+              aria-label="Restyle selected overlay"
+            >
+              <label
+                htmlFor="overlay-color-picker"
+                className="provider-drawing-restyle-label"
+              >
+                Color
+                <input
+                  id="overlay-color-picker"
+                  type="color"
+                  value={overlayColor}
+                  onChange={(e) => {
+                    const chart = chartInstance.current;
+                    if (chart === undefined || selectedOverlayId === undefined)
+                      return;
+                    const newColor = e.target.value;
+                    setOverlayColor(newColor);
+                    chart.overrideOverlay({
+                      id: selectedOverlayId,
+                      styles: { line: { color: newColor, size: overlayWidth } },
+                    });
+                    setTimeout(() => {
+                      const snapshot = captureDrawingSnapshot(chart);
+                      drawingHistory.current.push(snapshot);
+                      setCanUndoDrawing(drawingHistory.current.canUndo());
+                      setCanRedoDrawing(drawingHistory.current.canRedo());
+                    }, 0);
+                  }}
+                />
+              </label>
+              <label
+                htmlFor="overlay-width-picker"
+                className="provider-drawing-restyle-label"
+              >
+                Width
+                <input
+                  id="overlay-width-picker"
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={overlayWidth}
+                  onChange={(e) => {
+                    const chart = chartInstance.current;
+                    if (chart === undefined || selectedOverlayId === undefined)
+                      return;
+                    const newWidth = Number(e.target.value);
+                    setOverlayWidth(newWidth);
+                    chart.overrideOverlay({
+                      id: selectedOverlayId,
+                      styles: { line: { color: overlayColor, size: newWidth } },
+                    });
+                    setTimeout(() => {
+                      const snapshot = captureDrawingSnapshot(chart);
+                      drawingHistory.current.push(snapshot);
+                      setCanUndoDrawing(drawingHistory.current.canUndo());
+                      setCanRedoDrawing(drawingHistory.current.canRedo());
+                    }, 0);
+                  }}
+                />
+                <span aria-hidden="true">{overlayWidth}px</span>
+              </label>
+            </div>
+          )}
         </aside>
         <div className="provider-chart-stage">
           <div
